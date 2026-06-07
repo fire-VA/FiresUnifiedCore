@@ -243,14 +243,14 @@ namespace FiresCore.UI
             WriteVec2(sb, i, "OffsetMax", n.OffsetMax); sb.AppendLine(",");
             if (n.Rotation != 0) { WriteFloat(sb, i, "Rotation", n.Rotation); sb.AppendLine(","); }
 
-            // State — only write non-defaults
+            // State ï¿½ only write non-defaults
             if (!n.Active) { WriteBool(sb, i, "Active", n.Active); sb.AppendLine(","); }
             if (!n.Interactable) { WriteBool(sb, i, "Interactable", n.Interactable); sb.AppendLine(","); }
             if (n.HasMask) { WriteBool(sb, i, "HasMask", n.HasMask); sb.AppendLine(","); }
             if (n.HasRectMask2D) { WriteBool(sb, i, "HasRectMask2D", n.HasRectMask2D); sb.AppendLine(","); }
             if (n.TransformLocked) { WriteBool(sb, i, "TransformLocked", n.TransformLocked); sb.AppendLine(","); }
 
-            // Per-element metadata — only if non-empty
+            // Per-element metadata ï¿½ only if non-empty
             if (n.Metadata != null && n.Metadata.Count > 0)
             {
                 Indent(sb, i); sb.Append("\"Metadata\": [");
@@ -275,7 +275,7 @@ namespace FiresCore.UI
                 WriteStyle(sb, n.Style, i); sb.AppendLine(",");
             }
 
-            // Optional components — SKIP null entries entirely.
+            // Optional components ï¿½ SKIP null entries entirely.
             // The deserializer already handles missing keys via ContainsKey checks.
             if (n.LayoutGroup != null) { WriteOptional(sb, i, "LayoutGroup", n.LayoutGroup, WriteLayoutGroup); sb.AppendLine(","); }
             if (n.GridLayoutGroup != null) { WriteOptional(sb, i, "GridLayoutGroup", n.GridLayoutGroup, WriteGridLayoutGroup); sb.AppendLine(","); }
@@ -292,7 +292,7 @@ namespace FiresCore.UI
             if (n.SliderData != null) { WriteOptional(sb, i, "SliderData", n.SliderData, WriteSlider); sb.AppendLine(","); }
             if (n.RenderCameraData != null) { WriteOptional(sb, i, "RenderCameraData", n.RenderCameraData, WriteRenderCamera); sb.AppendLine(","); }
 
-            // Children — always last (no trailing comma issue)
+            // Children ï¿½ always last (no trailing comma issue)
             Indent(sb, i); sb.Append("\"Children\": ");
             if (n.Children != null && n.Children.Count > 0)
             {
@@ -604,6 +604,9 @@ namespace FiresCore.UI
 
         private static string F(float val)
         {
+            // JSON has no NaN/Infinity literal - emitting "NaN" produces invalid JSON that the reader
+            // chokes on ("Expected '}' got 'N'"). Sanitize to 0 so every dump stays parseable.
+            if (float.IsNaN(val) || float.IsInfinity(val)) return "0";
             return val.ToString("G9", CultureInfo.InvariantCulture);
         }
 
@@ -687,6 +690,10 @@ namespace FiresCore.UI
             if (c == 'n') { pos += 4; return null; }
             if (c == 't') { pos += 4; return true; }
             if (c == 'f') { pos += 5; return false; }
+            // Tolerate invalid NaN/Infinity tokens left by older dumps (consume them so we don't stall).
+            if (c == 'N') { pos += 3; return 0d; }                                                   // NaN
+            if (c == 'I') { pos += 8; return 0d; }                                                   // Infinity
+            if (c == '-' && pos + 1 < json.Length && json[pos + 1] == 'I') { pos += 9; return 0d; }  // -Infinity
             return ParseNumber(json, ref pos);
         }
 
@@ -720,6 +727,7 @@ namespace FiresCore.UI
         {
             int start = pos;
             while (pos < json.Length && "0123456789.eE+-".IndexOf(json[pos]) >= 0) pos++;
+            if (pos == start) { pos++; return 0d; }   // safety: never stall on an unexpected char
             string num = json.Substring(start, pos - start);
             double.TryParse(num, NumberStyles.Any, CultureInfo.InvariantCulture, out double val);
             return val;
