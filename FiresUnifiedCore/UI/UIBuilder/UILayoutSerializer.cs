@@ -49,6 +49,44 @@ namespace FiresCore.UI
             }
         }
 
+        // --- Self-write suppression -----------------------------------------------------------------
+        // A server-side file watcher (in consuming mods) reloads ALL layouts on any UILayouts change. The
+        // local capture writes layouts itself AND updates the codex in-memory (UILayoutCodex.AddOrReplace),
+        // so the watcher reloading on OUR OWN writes is pure overhead and causes a reload cascade. We record
+        // every path we write so the watcher can skip it. Thread-safe (the watcher fires off-thread).
+        private static readonly Dictionary<string, DateTime> _selfWrites =
+            new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private static readonly object _selfWriteLock = new object();
+        private const double SelfWriteExpirySeconds = 8.0;
+
+        private static string NormPath(string path)
+        {
+            try { return Path.GetFullPath(path); } catch { return path; }
+        }
+
+        /// <summary>Record that we just wrote this file, so a file watcher can ignore the change.</summary>
+        public static void MarkSelfWritten(string fullPath)
+        {
+            if (string.IsNullOrEmpty(fullPath)) return;
+            lock (_selfWriteLock) { _selfWrites[NormPath(fullPath)] = DateTime.UtcNow; }
+        }
+
+        /// <summary>True if WE wrote this file within the last few seconds (so a watcher should skip it).</summary>
+        public static bool WasRecentlySelfWritten(string fullPath)
+        {
+            if (string.IsNullOrEmpty(fullPath)) return false;
+            string key = NormPath(fullPath);
+            lock (_selfWriteLock)
+            {
+                if (_selfWrites.TryGetValue(key, out var t))
+                {
+                    if ((DateTime.UtcNow - t).TotalSeconds < SelfWriteExpirySeconds) return true;
+                    _selfWrites.Remove(key);
+                }
+                return false;
+            }
+        }
+
         public static void SaveToFile(UILayoutDefinition layout, string relativePath)
         {
             if (layout == null || string.IsNullOrEmpty(relativePath)) return;
@@ -56,6 +94,7 @@ namespace FiresCore.UI
             string dir = Path.GetDirectoryName(fullPath);
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
+            MarkSelfWritten(fullPath);
             File.WriteAllText(fullPath, Serialize(layout), Encoding.UTF8);
         }
 
@@ -70,6 +109,7 @@ namespace FiresCore.UI
             string dir = Path.GetDirectoryName(fullPath);
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
+            MarkSelfWritten(fullPath);
             File.WriteAllText(fullPath, json, Encoding.UTF8);
         }
 
