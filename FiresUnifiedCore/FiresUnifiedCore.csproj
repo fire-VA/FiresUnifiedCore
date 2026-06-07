@@ -1,0 +1,532 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{240DF341-0B95-4314-9D8F-6A40FF2D72E5}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>FiresUnifiedCore</RootNamespace>
+    <AssemblyName>FiresUnifiedCore</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <LangVersion>latest</LangVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublicTest Condition=" '$(PublicTest)' == '' ">false</PublicTest>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(PublicTest)' == 'true' ">
+    <DefineConstants>$(DefineConstants);PUBLIC_TEST</DefineConstants>
+  </PropertyGroup>
+  <Choose>
+    <When Condition="($(OS) == 'Unix' OR $(OS) == 'OSX') AND $(GamePath) == ''">
+      <PropertyGroup>
+        <GamePath Condition="!Exists('$(GamePath)')">$(HOME)/.steam/steam/steamapps/common/Valheim</GamePath>
+        <GamePath Condition="!Exists('$(GamePath)')">$(HOME)/Library/Application Support/Steam/steamapps/common/Valheim/Contents/MacOS</GamePath>
+      </PropertyGroup>
+    </When>
+    <When Condition="($(OS) == 'Windows_NT') AND $(GamePath) == ''">
+      <PropertyGroup>
+        <GamePath Condition="!Exists('$(GamePath)')">$([MSBuild]::GetRegistryValueFromView('HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 892970', 'InstallLocation', null, RegistryView.Registry64, RegistryView.Registry32))</GamePath>
+        <_SteamLibraryPath>$([MSBuild]::GetRegistryValueFromView('HKEY_CURRENT_USER\SOFTWARE\Valve\Steam', 'SteamPath', null, RegistryView.Registry32))</_SteamLibraryPath>
+        <GamePath Condition="!Exists('$(GamePath)') AND '$(_SteamLibraryPath)' != ''">$(_SteamLibraryPath)\steamapps\common\Valheim</GamePath>
+        <GamePath Condition="!Exists('$(GamePath)')">C:\Program Files\Steam\steamapps\common\Valheim</GamePath>
+        <GamePath Condition="!Exists('$(GamePath)')">C:\Program Files (x86)\Steam\steamapps\common\Valheim</GamePath>
+      </PropertyGroup>
+    </When>
+  </Choose>
+  <ItemGroup>
+    <Reference Include="0Harmony">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim dedicated server\BepInEx\core\0Harmony.dll</HintPath>
+    </Reference>
+    <Reference Include="assembly_guiutils">
+      <HintPath>..\libs\assembly_guiutils_publicized.dll</HintPath>
+    </Reference>
+    <Reference Include="assembly_utils">
+      <HintPath>..\..\assembly_valheim\lib\assembly_utils.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="assembly_valheim">
+      <HintPath>..\libs\assembly_valheim_publicized.dll</HintPath>
+    </Reference>
+    <Reference Include="BepInEx">
+      <HintPath>..\..\..\customspawnsmod\lib\BepInEx.dll</HintPath>
+    </Reference>
+    <Reference Include="gui_framework">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\gui_framework.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\packages\Newtonsoft.Json.13.0.4\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="LiteDB">
+      <HintPath>..\libs\LiteDB.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Splatform, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\Splatform.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AssetBundleModule">
+      <HintPath>..\libs\UnityEngine.AssetBundleModule_publicized.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AudioModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.AudioModule.dll</HintPath>
+    </Reference>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="System.Data.DataSetExtensions" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Xml" />
+    <Reference Include="UnityEngine.ClothModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.ClothModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.ImageConversionModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.InputModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.InputModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.ParticleSystemModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.UI.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.UnityWebRequestModule.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="FiresUnifiedCore.cs" />
+    <Compile Include="Terrain\HeightmapOverrideConfig.cs" />
+    <Compile Include="Terrain\HeightmapOverridePatches.cs" />
+    <Compile Include="Terrain\VASnapToGroundSpreadPatch.cs" />
+    <Compile Include="Bridge\ModUiRegistry.cs" />
+    <Compile Include="Bridge\NpcCompanionBridge.cs" />
+    <Compile Include="Bridge\CompanionBridge.cs" />
+    <Compile Include="Bridge\DiscordSink.cs" />
+    <Compile Include="Bridge\NpcModeBridge.cs" />
+    <Compile Include="Bridge\CompanionEventBridge.cs" />
+    <Compile Include="Bridge\NpcInteractionBridge.cs" />
+    <Compile Include="Bridge\CompanionVaultBridge.cs" />
+    <Compile Include="Bridge\NpcUiBridge.cs" />
+    <Compile Include="Bridge\NpcConfigBridge.cs" />
+    <Compile Include="Bridge\NpcAssetBridge.cs" />
+    <Compile Include="Bridge\NpcFashionBridge.cs" />
+    <Compile Include="Bridge\NpcHostBridge.cs" />
+    <Compile Include="ClientLogRelay\ClientLogRelay.cs" />
+    <Compile Include="ClientLogRelay\ClientLogArtifacts.cs" />
+    <Compile Include="ClientLogRelay\IClientLogConsumer.cs" />
+    <Compile Include="ClientLogRelay\LogErrorWarningExtractor.cs" />
+    <Compile Include="ClientLogRelay\ModListDiff.cs" />
+    <Compile Include="ClientLogRelay\ClientLogArtifactWriter.cs" />
+    <Compile Include="ClientLogRelay\ClientLogRelayPaths.cs" />
+    <Compile Include="ClientLogRelay\Transport\ClientLogCollector.cs" />
+    <Compile Include="ClientLogRelay\Transport\ClientLogChunkedTransfer.cs" />
+    <Compile Include="ClientLogRelay\Interactions\ILogRequestHandler.cs" />
+    <Compile Include="ClientLogRelay\Interactions\LogRequestContext.cs" />
+    <Compile Include="ClientLogRelay\Interactions\LogRequestRegistry.cs" />
+    <Compile Include="ClientLogRelay\Interactions\DisconnectLogRegistry.cs" />
+    <Compile Include="Items\ItemDataHelper.cs" />
+    <Compile Include="Npc\NpcPrefabSetup.cs" />
+    <Compile Include="Npc\NpcSaveState.cs" />
+    <Compile Include="Npc\NpcVisEquipment.cs" />
+    <Compile Include="Npc\VisEquipmentCompat.cs" />
+    <Compile Include="Storage\VaultDatabase.cs" />
+    <Compile Include="Storage\BankSlot.cs" />
+    <Compile Include="Storage\LeaderboardEntry.cs" />
+    <Compile Include="Storage\MailUser.cs" />
+    <Compile Include="Storage\ItemCategory.cs" />
+    <Compile Include="Storage\StoredItem.cs" />
+    <Compile Include="Storage\MarketListing.cs" />
+    <Compile Include="Storage\MailEntry.cs" />
+    <Compile Include="Storage\BankRepository.cs" />
+    <Compile Include="Storage\LeaderboardRepository.cs" />
+    <Compile Include="Storage\MailRepository.cs" />
+    <Compile Include="Storage\MarketplaceRepository.cs" />
+    <Compile Include="Storage\PlayerVaultData.cs" />
+    <Compile Include="Storage\VaultDump.cs" />
+    <Compile Include="Compat\Cfg\CfgParser.cs" />
+    <Compile Include="Compat\MarketplacePaths.cs" />
+    <Compile Include="Events\GameEventArgs.cs" />
+    <Compile Include="Events\LifecycleEvents.cs" />
+    <Compile Include="Events\GameEvents.cs" />
+    <Compile Include="Npc\NpcType.cs" />
+    <Compile Include="Npc\SavedNpcData.cs" />
+    <Compile Include="Npc\AI\CompanionAI\CompanionAI.Combat.cs" />
+    <Compile Include="Npc\AI\CompanionAI\CompanionAI.cs" />
+    <Compile Include="Npc\AI\CompanionAI\CompanionAI.Idle.cs" />
+    <Compile Include="Npc\AI\CompanionAI\CompanionAI.Pathfinding.cs" />
+    <Compile Include="Npc\AI\CompanionAI\CompanionAI.Targeting.cs" />
+    <Compile Include="Npc\AI\CompanionDoorHandler.cs" />
+    <Compile Include="Npc\Animation\CompanionAnimationController.cs" />
+    <Compile Include="Npc\Archetypes\AbilityFXManager.cs" />
+    <Compile Include="Npc\Archetypes\AbilityRPCManager.cs" />
+    <Compile Include="Npc\Archetypes\AbilityUnlockSystem.cs" />
+    <Compile Include="Npc\Archetypes\ArchetypeAbilitySystem.cs" />
+    <Compile Include="Npc\Archetypes\ArchetypeChatManager.cs" />
+    <Compile Include="Npc\Archetypes\ArchetypeController.cs" />
+    <Compile Include="Npc\Archetypes\ArchetypeDefinitions.cs" />
+    <Compile Include="Npc\Archetypes\ArchetypeSkillSystem.cs" />
+    <Compile Include="Npc\Archetypes\ArchetypeStatistics.cs" />
+    <Compile Include="Npc\Archetypes\CompanionArchetype.cs" />
+    <Compile Include="Npc\Archetypes\DebugFXEnumerator.cs" />
+    <Compile Include="Npc\Archetypes\GroupRoleManager.cs" />
+    <Compile Include="Npc\Archetypes\GroupSynergyManager.cs" />
+    <Compile Include="Npc\Archetypes\HybridAbilityManager.cs" />
+    <Compile Include="Npc\Archetypes\HybridArchetypeDefinitions.cs" />
+    <Compile Include="Npc\Archetypes\SkillDecisionSystem.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Base\BuffEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Base\DamageOverTimeEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Base\HealingEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Berserker\BerserkRageEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Berserker\WarcryEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Common\InvulnerableEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Common\RootedEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Common\SlowdownEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\CompanionStatusEffectBase.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Expert\ExpertAbilityEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Healer\PurifyEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Healer\PurifyingCircleEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Healer\SanctuaryEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Berserker\BerserkerHybridEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Healer\HealerHybridEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\HybridAbilityEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Mage\MageHybridEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Monk\MonkHybridEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Paladin\PaladinHybridEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Ranger\RangerHybridEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Rogue\RogueHybridEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Tank\CrusaderEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Tank\JuggernautEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Tank\ShadowGuardianEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Hybrid\Tank\TankHybridEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Mage\ArcaneShieldEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Mage\ElementalInfusionEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Master\MasterAbilityEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Monk\ChiStrikeEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Monk\InnerPeaceEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Paladin\DivineProtectionEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Paladin\HolySmiteEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Ranger\EagleEyeEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Ranger\HuntersMarkEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Rogue\CaltropsEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Rogue\PoisonEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Rogue\StealthEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\StatusEffectManager.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Tank\FortifyEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Ultimate\UltimateAbilityEffects.cs" />
+    <Compile Include="Npc\Archetypes\TauntEffect.cs" />
+    <Compile Include="Npc\Combat\BlockingBehavior.cs" />
+    <Compile Include="Npc\Combat\BowBehavior.cs" />
+    <Compile Include="Npc\Combat\CombatContext.cs" />
+    <Compile Include="Npc\Combat\CombatExperience.cs" />
+    <Compile Include="Npc\Combat\CombatMemory.cs" />
+    <Compile Include="Npc\Combat\CombatRoleDirector.cs" />
+    <Compile Include="Npc\Combat\CompanionAttackBridge.cs" />
+    <Compile Include="Npc\Combat\CompanionCombat.cs" />
+    <Compile Include="Npc\Combat\CrossbowBehavior.cs" />
+    <Compile Include="Npc\Combat\DodgeBehavior.cs" />
+    <Compile Include="Npc\Combat\EmergencyEvasion\EmergencyEvasionManager.cs" />
+    <Compile Include="Npc\Combat\EnemyAttackRecognition.cs" />
+    <Compile Include="Npc\Combat\GroupCombatCoordinator.cs" />
+    <Compile Include="Npc\Combat\GroupHealthMonitor.cs" />
+    <Compile Include="Npc\Combat\MeleeBehavior.cs" />
+    <Compile Include="Npc\Combat\SharedThreatTable.cs" />
+    <Compile Include="Npc\Combat\ShieldBearerBehavior.cs" />
+    <Compile Include="Npc\Combat\StaffBehavior.cs" />
+    <Compile Include="Npc\Combat\StaminaManager.cs" />
+    <Compile Include="Npc\Combat\TerrainAwareness.cs" />
+    <Compile Include="Npc\Combat\ThreatAnalyzer.cs" />
+    <Compile Include="Npc\Combat\UnarmedBehavior.cs" />
+    <Compile Include="Npc\Combat\WeaponBehavior.cs" />
+    <Compile Include="Npc\Combat\WeaponSwapManager.cs" />
+    <Compile Include="Npc\Commands\CompanionCommandCoordinator.cs" />
+    <Compile Include="Npc\Commands\CompanionCommandSystem.cs" />
+    <Compile Include="Npc\CompanionAutoPickup.cs" />
+    <Compile Include="Npc\CompanionBehaviorToggles.cs" />
+    <Compile Include="Npc\CompanionChatHelper.cs" />
+    <Compile Include="Npc\CompanionChatHelper.Phrases.cs" />
+    <Compile Include="Npc\CompanionConsumables.cs" />
+    <Compile Include="Npc\CompanionController.cs" />
+    <Compile Include="Npc\CompanionDeathHandler.cs" />
+    <Compile Include="Npc\CompanionEquipmentData.cs" />
+    <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.Chairs.cs" />
+    <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.cs" />
+    <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.Emotes.cs" />
+    <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.HeadLook.cs" />
+    <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.StuckPrevention.cs" />
+    <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.SubBehaviors.cs" />
+    <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.Wandering.cs" />
+    <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.WeaponHolstering.cs" />
+    <Compile Include="Npc\CompanionInventory.cs" />
+    <Compile Include="Npc\CompanionKillTracker.cs" />
+    <Compile Include="Npc\CompanionLuck.cs" />
+    <Compile Include="Npc\CompanionMapMarker.cs" />
+    <Compile Include="Npc\CompanionNetworkHelper.cs" />
+    <Compile Include="Npc\CompanionPatches.cs" />
+    <Compile Include="Npc\CompanionPrefabManager.cs" />
+    <Compile Include="Npc\CompanionProgression.cs" />
+    <Compile Include="Npc\CompanionRandomLoadout.cs" />
+    <Compile Include="Npc\CompanionRespawnManager.cs" />
+    <Compile Include="Npc\CompanionSettings.cs" />
+    <Compile Include="Npc\CompanionSkills.cs" />
+    <Compile Include="Npc\CompanionStatCalculator.cs" />
+    <Compile Include="Npc\CompanionStats.cs" />
+    <Compile Include="Npc\CompanionWeaponScaler.cs" />
+    <Compile Include="Npc\Core\BehaviorCoordinator.cs" />
+    <Compile Include="Npc\Core\BehaviorPhaseManager.cs" />
+    <Compile Include="Npc\Core\ChestInteractionService.cs" />
+    <Compile Include="Npc\Core\CompanionTeleportService.cs" />
+    <Compile Include="Npc\Core\ContainerRegistry.cs" />
+    <Compile Include="Npc\Core\ContainerRegistryPatches.cs" />
+    <Compile Include="Npc\Core\IBehaviorPhase.cs" />
+    <Compile Include="Npc\Core\InteractionPointHelper.cs" />
+    <Compile Include="Npc\Core\InventoryTransferService.cs" />
+    <Compile Include="Npc\Core\ResourceAccessService.cs" />
+    <Compile Include="Npc\Core\UnifiedMovementAuthority.cs" />
+    <Compile Include="Npc\Core\WorkSessionManager.cs" />
+    <Compile Include="Npc\Events\CompanionEvents.cs" />
+    <Compile Include="Npc\Formation\CompanionFormationController.cs" />
+    <Compile Include="Npc\Formation\FormationSlot.cs" />
+    <Compile Include="Npc\Formation\GroupFormationManager.cs" />
+    <Compile Include="Npc\IdleBehaviors\BowTrainingBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\BuildingRepairBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\ChestDepositBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\ChestDepositBehaviorV2.cs" />
+    <Compile Include="Npc\IdleBehaviors\ChestHelper.cs" />
+    <Compile Include="Npc\IdleBehaviors\CompanionCookingBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\CraftingUpgradeBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\CraftingUpgradeBehaviorV2.cs" />
+    <Compile Include="Npc\IdleBehaviors\FarmingBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\FarmingBehavior.Phases.cs" />
+    <Compile Include="Npc\IdleBehaviors\FarmingDataHelper.cs" />
+    <Compile Include="Npc\IdleBehaviors\FireTendingBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\FireTendingBehaviorV2.cs" />
+    <Compile Include="Npc\IdleBehaviors\FishingBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\IdleSubBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\InteractableOccupancyManager.cs" />
+    <Compile Include="Npc\IdleBehaviors\LootPickupBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\LootPickupBehaviorV2.cs" />
+    <Compile Include="Npc\IdleBehaviors\PieceDataHelper.cs" />
+    <Compile Include="Npc\IdleBehaviors\ResourceDataHelper.cs" />
+    <Compile Include="Npc\IdleBehaviors\ResourceGathering\ResourceGatheringBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\ResourceGathering\ResourceGatheringBehavior.ItemCollection.cs" />
+    <Compile Include="Npc\IdleBehaviors\ResourceGathering\ResourceGatheringBehavior.Lifecycle.cs" />
+    <Compile Include="Npc\IdleBehaviors\ResourceGathering\ResourceGatheringBehavior.MiningOre.cs" />
+    <Compile Include="Npc\IdleBehaviors\ResourceGathering\ResourceGatheringBehavior.Tools.cs" />
+    <Compile Include="Npc\IdleBehaviors\ResourceGathering\ResourceGatheringBehavior.TreeGathering.cs" />
+    <Compile Include="Npc\IdleBehaviors\SmartStorageOrganizer.cs" />
+    <Compile Include="Npc\IdleBehaviors\SmelterOperator\SmelterOperatorBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\SmelterOperator\SmelterOperatorBehavior.Helpers.cs" />
+    <Compile Include="Npc\IdleBehaviors\SmelterOperator\SmelterOperatorBehavior.KilnWorkflow.cs" />
+    <Compile Include="Npc\IdleBehaviors\SmelterOperator\SmelterOperatorBehavior.Lifecycle.cs" />
+    <Compile Include="Npc\IdleBehaviors\SmelterOperator\SmelterOperatorBehavior.OutputPhases.cs" />
+    <Compile Include="Npc\IdleBehaviors\SmelterOperator\SmelterOperatorBehavior.StationPhases.cs" />
+    <Compile Include="Npc\IdleBehaviors\WoodGatheringBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\WorkBehaviorBase.cs" />
+    <Compile Include="Npc\IdleBehaviors\WorkstationInteractionBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\WorkstationInteractionBehaviorV2.cs" />
+    <Compile Include="Npc\Interactions\CompanionInteractionBehavior.cs" />
+    <Compile Include="Npc\Movement\CombatMovementHandler.cs" />
+    <Compile Include="Npc\Movement\CombatTacticsController.cs" />
+    <Compile Include="Npc\Movement\CommandMovementHandler.cs" />
+    <Compile Include="Npc\Movement\CompanionCombatMovement\CompanionCombatMovement.Combat.cs" />
+    <Compile Include="Npc\Movement\CompanionCombatMovement\CompanionCombatMovement.Commands.cs" />
+    <Compile Include="Npc\Movement\CompanionCombatMovement\CompanionCombatMovement.cs" />
+    <Compile Include="Npc\Movement\CompanionCombatMovement\CompanionCombatMovement.Following.cs" />
+    <Compile Include="Npc\Movement\CompanionCombatMovement\CompanionCombatMovement.Jump.cs" />
+    <Compile Include="Npc\Movement\CompanionCombatMovement\CompanionCombatMovement.Movement.cs" />
+    <Compile Include="Npc\Movement\CompanionPersonalSpaceEnforcer.cs" />
+    <Compile Include="Npc\Movement\CompanionStateController.cs" />
+    <Compile Include="Npc\Movement\FleeMovementHandler.cs" />
+    <Compile Include="Npc\Movement\FollowBehavior.cs" />
+    <Compile Include="Npc\Movement\FollowIntentController.cs" />
+    <Compile Include="Npc\Movement\MovementModeController.cs" />
+    <Compile Include="Npc\Movement\MovementStateHandlers.cs" />
+    <Compile Include="Npc\Movement\MovementStateMachine.cs" />
+    <Compile Include="Npc\Movement\PlayerIdleHandler.cs" />
+    <Compile Include="Npc\Movement\RangedMovementHandler.cs" />
+    <Compile Include="Npc\Movement\StateTransitionHandler.cs" />
+    <Compile Include="Npc\Movement\StuckDetectionHandler.cs" />
+    <Compile Include="Npc\NpcMode\CompanionNpcModule.cs" />
+    <Compile Include="Npc\NpcMode\StaticNpcPlacePieceFinalizer.cs" />
+    <Compile Include="Npc\PlayerFollowingRegistry.cs" />
+    <Compile Include="Npc\TamedCompanionZoneLoader.cs" />
+    <Compile Include="Npc\Utilities\CharacterVisibilityController.cs" />
+    <Compile Include="Npc\VANpcShaderPrewarm.cs" />
+    <Compile Include="Npc\Vault\CompanionRestoreService.cs" />
+    <Compile Include="Npc\Vault\CompanionRosterWriter.cs" />
+    <Compile Include="Npc\Vault\CompanionSavedDataResolver.cs" />
+    <Compile Include="Npc\Vault\CompanionVault.cs" />
+    <Compile Include="Npc\Vault\CompanionZdoSnapshot.cs" />
+    <Compile Include="Npc\Vault\PlayerCompanionMigrator.cs" />
+    <Compile Include="Npc\Vault\PlayerCompanionRoster.cs" />
+    <Compile Include="Npc\Vault\PlayerCompanionStorage.cs" />
+    <Compile Include="Npc\WildSpawn\CompanionFaction.cs" />
+    <Compile Include="Npc\WildSpawn\CompanionGearTables.cs" />
+    <Compile Include="Npc\WildSpawn\CompanionNamePool.cs" />
+    <Compile Include="Npc\WildSpawn\WildCompanionDresser.cs" />
+    <Compile Include="Npc\WildSpawn\WildCompanionLootOnDeath.cs" />
+    <Compile Include="Npc\WildSpawn\WildCompanionPrefabs.cs" />
+    <Compile Include="Npc\WildSpawn\WildCompanionSeed.cs" />
+    <Compile Include="Npc\WildSpawn\WildCompanionSpawnInjector.cs" />
+    <Compile Include="Npc\WildSpawn\WildCompanionSquad.cs" />
+    <Compile Include="Help\HelpTheme.cs" />
+    <Compile Include="Help\HelpContentWriter.cs" />
+    <Compile Include="Help\HelpRegistry.cs" />
+    <Compile Include="Help\HelpPanel.cs" />
+    <Compile Include="Help\CompendiumEntry.cs" />
+    <Compile Include="Help\Compendium.cs" />
+    <Compile Include="UI\UIBuilderHost.cs" />
+    <Compile Include="UI\FiresConfigUI.cs" />
+    <Compile Include="UI\UIBuilder\BundledLayoutExtractor.cs" />
+    <Compile Include="UI\UIBuilder\UIBuilderAssetCache.cs" />
+    <Compile Include="UI\UIBuilder\UIBuilderAutoDiscovery.cs" />
+    <Compile Include="UI\UIBuilder\UIBuilderElementTag.cs" />
+    <Compile Include="UI\UIBuilder\UIBuilderHelper.cs" />
+    <Compile Include="UI\UIBuilder\UIBuilderPresets.cs" />
+    <Compile Include="UI\UIBuilder\UIBuilderTemplates.cs" />
+    <Compile Include="UI\UIBuilder\UIBundleManifestManager.cs" />
+    <Compile Include="UI\UIBuilder\UICanvasRenderer.cs" />
+    <Compile Include="UI\UIBuilder\UIFontConfig.cs" />
+    <Compile Include="UI\UIBuilder\UIHarmonyPatchAuditor.cs" />
+    <Compile Include="UI\UIBuilder\UILayoutCodex.cs" />
+    <Compile Include="UI\UIBuilder\UILayoutDefinition.cs" />
+    <Compile Include="UI\UIBuilder\UILayoutParser.cs" />
+    <Compile Include="UI\UIBuilder\UILayoutSerializer.cs" />
+    <Compile Include="UI\UIBuilder\UILayoutSyncRPC.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideAzuEPICompat.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideBarUpdater.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideContainerWiring.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideCraftingWiring.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideDiffEngine.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideDragGhostManager.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideDropZoneHandler.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideElementTags.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideEquipmentPanel.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideHotbarManager.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideHotbarSlotMirror.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideInventoryPatches.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideInventoryWiring.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideMapWiring.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideMinimapWirer.cs" />
+    <Compile Include="UI\UIBuilder\UIOverridePackagingHelper.cs" />
+    <Compile Include="UI\UIBuilder\UIOverridePlayerPreview.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideSkillsWiring.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideSlotInteraction.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideSlotMirror.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideSlotSystem.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideSlotTooltipHandler.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideStatusEffectSync.cs" />
+    <Compile Include="UI\UIBuilder\UIOverrideTextUpdater.cs" />
+    <Compile Include="UI\UIBuilder\UIVanillaOverrideManager.cs" />
+    <Compile Include="UI\UIBuilder\UIVanillaOverrideUpdater.cs" />
+    <Compile Include="UI\UIBuilder\VAMiscAssetManager.cs" />
+    <Compile Include="Async\AsyncShutdownManager.cs" />
+    <Compile Include="Async\BackgroundWorker.cs" />
+    <Compile Include="Async\FrameBudgetScheduler.cs" />
+    <Compile Include="Async\MainThreadDispatcher.cs" />
+    <Compile Include="Async\PrewarmCoroutine.cs" />
+    <Compile Include="Config\ConfigManager.cs" />
+    <Compile Include="Diagnostics\FrameTimer.cs" />
+    <Compile Include="Input\KeyBinding.cs" />
+    <Compile Include="Input\WheelBinding.cs" />
+    <Compile Include="Lifecycle\AdminCheck.cs" />
+    <Compile Include="Lifecycle\FiresMod.cs" />
+    <Compile Include="Lifecycle\PlayerSpawnGate.cs" />
+    <Compile Include="Logging\Banner.cs" />
+    <Compile Include="Logging\BepInExLogSuppressionPatch.cs" />
+    <Compile Include="Logging\FiresLog.cs" />
+    <Compile Include="Logging\FiresLogColorPatch.cs" />
+    <Compile Include="Logging\FiresLogger.cs" />
+    <Compile Include="Logging\LoadSummary.cs" />
+    <Compile Include="Logging\RateLimitedLogHandler.cs" />
+    <Compile Include="Logging\UnityLogSuppressionPatch.cs" />
+    <Compile Include="Materials\TerrainMaterialCache.cs" />
+    <Compile Include="Net\NetworkObjectHelper.cs" />
+    <Compile Include="Net\SafeRoutedRpc.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Services\BundleLoader.cs" />
+    <Compile Include="Services\BundleLoadInterceptor.cs" />
+    <Compile Include="Services\DistantRenderer.cs" />
+    <Compile Include="Services\MaterialSwapper.cs" />
+    <Compile Include="Services\ShaderSwapper.cs" />
+    <Compile Include="Services\VanillaAssetResolver.cs" />
+    <Compile Include="Services\WaterShaderBridge.cs" />
+    <Compile Include="Services\MoonPhase.cs" />
+    <Compile Include="Sync\AdminSyncing.cs" />
+    <Compile Include="Sync\ConfigSync.cs" />
+    <Compile Include="Sync\ManifestDiffSync.cs" />
+    <Compile Include="Utilities\BrushFalloffCurves.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- Post-build deploy to the active r2modman 'BlueHills' test profile. Gated on
+       Exists so a missing/renamed profile (other machines, CI) just skips and never
+       fails the build. Copies only the built DLL + PDB into the existing r2modman-
+       managed mod folder; other files there (LiteDB, etc.) are left untouched. -->
+  <PropertyGroup>
+    <BlueHillsPluginDir>C:\Users\travi\AppData\Roaming\r2modmanPlus-local\Valheim\profiles\BlueHills\BepInEx\plugins\FiresUnifiedCore\</BlueHillsPluginDir>
+  </PropertyGroup>
+  <Target Name="DeployToBlueHills" AfterTargets="Build" Condition="Exists('$(BlueHillsPluginDir)')">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BlueHillsPluginDir)" OverwriteReadOnlyFiles="true" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(BlueHillsPluginDir)" OverwriteReadOnlyFiles="true" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
+    <Message Importance="high" Text="Deployed $(TargetFileName) (+pdb) -> $(BlueHillsPluginDir)" />
+  </Target>
+</Project>
