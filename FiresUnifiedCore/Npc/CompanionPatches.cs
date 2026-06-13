@@ -114,7 +114,7 @@ namespace FiresCore.Npc
             try
             {
                 if (__instance != Player.m_localPlayer) return;
-                SuppressCompanionTeleportsUntil = Time.unscaledTime + 30f;
+                SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_DEATH;
             }
             catch (Exception ex)
             {
@@ -162,7 +162,7 @@ namespace FiresCore.Npc
                 // is still mid-transition. The reconcile coroutine below
                 // is the authoritative path for moving companions to the
                 // player's new position.
-                SuppressCompanionTeleportsUntil = Time.unscaledTime + 35f;
+                SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_RESPAWN;
 
                 __instance.StartCoroutine(ReconcileFollowersAfterArrival(__instance));
 
@@ -208,7 +208,7 @@ namespace FiresCore.Npc
                    && player.IsTeleporting()
                    && (Time.realtimeSinceStartup - waitStart) < TIMEOUT)
             {
-                SuppressCompanionTeleportsUntil = Time.unscaledTime + 2f;
+                SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_LOADING_REARM;
                 yield return null;
             }
 
@@ -3137,6 +3137,43 @@ namespace FiresCore.Npc
         public static float SuppressCompanionTeleportsUntil = 0f;
         public const float SUPPRESS_DURATION_LONG_JUMP = 6f; // seconds ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â covers loading screen + zone settle
 
+        // ── Suppression durations (named, co-located, doc-commented) ──
+        // Every place in this file that writes SuppressCompanionTeleportsUntil uses one of
+        // these constants. Previously the values were scattered as magic numbers (30/35/6/15/
+        // 5/2) at the write sites; consolidated here so future tuning has one place to look
+        // and any "why is suppression still on?" investigation can see all six durations
+        // side-by-side instead of having to grep them out. SUPPRESS_DURATION_LONG_JUMP above
+        // is the historical first const; the rest were added at the same time as this block.
+
+        /// <summary>Death window: covers fade-out + loading screen + wakeup-settle. Generous —
+        /// observed loading screens up to ~25s on heavy saves; <see cref="Player.OnSpawned"/>
+        /// re-arms with <see cref="SUPPRESS_DURATION_RESPAWN"/> as soon as the new Player object
+        /// exists, so this only has to outlive the gap where the OLD player is dead and the
+        /// NEW player hasn't constructed yet.</summary>
+        public const float SUPPRESS_DURATION_DEATH         = 30f;
+
+        /// <summary>Login / post-death-respawn wakeup window. Starts at OnSpawned and runs
+        /// long enough for the reconcile-on-arrival coroutine to confirm IsTeleporting=false +
+        /// CanMove=true and dispatch the reconcile RPC.</summary>
+        public const float SUPPRESS_DURATION_RESPAWN       = 35f;
+
+        /// <summary>Set after <see cref="CompanionController.CheckFollowTeleport"/>'s stranded
+        /// branch fires the reconcile RPC; keeps the other companion controllers from also
+        /// firing competing teleports during the same in-flight arrival window.</summary>
+        public const float SUPPRESS_DURATION_STRANDED_SETTLE = 15f;
+
+        /// <summary>Re-armed inside <see cref="AreCompanionTeleportsSuppressed"/> when the
+        /// local player is null while Game.instance is alive — the auto-respawn coroutine has
+        /// destroyed the OLD Player but not yet constructed the NEW one. Short and continuously
+        /// re-armed every poll until the new Player exists.</summary>
+        public const float SUPPRESS_DURATION_LP_NULL_REARM = 5f;
+
+        /// <summary>Re-armed inside <see cref="AreCompanionTeleportsSuppressed"/> when the
+        /// player exists but <c>IsTeleporting</c> or <c>!CanMove</c>. Very short because it's
+        /// re-armed every frame the condition holds; the value just has to outlive one tick of
+        /// CheckFollowTeleport so the gate doesn't briefly open mid-loading-screen.</summary>
+        public const float SUPPRESS_DURATION_LOADING_REARM = 2f;
+
         public static bool AreCompanionTeleportsSuppressed()
         {
             // Hard window from the long-jump trigger.
@@ -3161,7 +3198,7 @@ namespace FiresCore.Npc
                 {
                     if (Game.instance != null)
                     {
-                        SuppressCompanionTeleportsUntil = Time.unscaledTime + 5f;
+                        SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_LP_NULL_REARM;
                         return true;
                     }
                     // No Game.instance ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â main menu / character select ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â let things proceed.
@@ -3171,7 +3208,7 @@ namespace FiresCore.Npc
                 // Loading screen still active.
                 if (lp.IsTeleporting())
                 {
-                    SuppressCompanionTeleportsUntil = Time.unscaledTime + 2f;
+                    SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_LOADING_REARM;
                     return true;
                 }
 
@@ -3180,7 +3217,7 @@ namespace FiresCore.Npc
                 // Keep suppressing so CheckFollowTeleport can't fire early.
                 if (!lp.CanMove())
                 {
-                    SuppressCompanionTeleportsUntil = Time.unscaledTime + 2f;
+                    SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_LOADING_REARM;
                     return true;
                 }
             }
