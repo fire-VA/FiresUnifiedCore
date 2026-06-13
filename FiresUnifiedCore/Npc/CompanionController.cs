@@ -174,13 +174,36 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
         private float _lastDeferredFollowCheck = 0f;
         private const float DEFERRED_FOLLOW_CHECK_INTERVAL = 0.5f; // seconds between owner-presence polls
 
-        // STRANDED DETECTION
-        // Time when the companion first exceeded maxFollowDistance and stayed there.
-        // Used to bypass the owner-still gate when the companion is genuinely stranded
-        // (e.g. locked in combat while the player keeps running).
-        private float _strandedSinceTime = -1f;
-        private const float STRANDED_GRACE         = 2f;   // seconds beyond maxFollowDistance before forced teleport
-        private const float HARD_STRAND_MULTIPLIER = 2.5f; // distance > maxFollowDistance * this = immediate teleport
+        // CATCH-UP DETECTION (was: STRANDED DETECTION)
+        //
+        // Behavioural intent:
+        //   When a following companion drifts past <see cref="maxFollowDistance"/>, the OLD code
+        //   teleported them after only 2 s (STRANDED_GRACE). On a fresh world that produced the
+        //   "companion snaps to me every time I take a few steps" UX the user reported — they
+        //   could have just turned around and walked back, no teleport needed.
+        //
+        //   The refined model is a two-phase catch-up:
+        //     1. CATCH-UP — the moment distance exceeds the follow radius, snap the AI out of any
+        //        idle wander/work behaviour via <see cref="AI.CompanionAI.SetFollowTarget"/> (FSM
+        //        Idle→Following) and let the companion path back on foot. Track the closest
+        //        distance achieved this session (<see cref="_catchupBestDistance"/>) as a
+        //        progress signal.
+        //     2. TELEPORT (last resort) — only when one of the following is true:
+        //        • <see cref="HARD_STRAND_MULTIPLIER"/> hit (player did a portal / long jump),
+        //        • CATCHUP_WINDOW elapsed AND closing-the-gap progress was below
+        //          <see cref="CATCHUP_PROGRESS_REQUIRED"/> (companion is stuck / blocked terrain),
+        //        • CATCHUP_WINDOW elapsed AND current distance > start distance (companion is
+        //          actively losing ground — owner is moving faster than they can path).
+        //
+        //   When the companion gets back inside the follow radius on foot, all catch-up state
+        //   resets and the next drift starts a fresh attempt.
+        private float _strandedSinceTime         = -1f;  // time catchup began (-1 = not in catchup)
+        private float _catchupStartDistance      = 0f;   // distance to owner at catchup entry
+        private float _catchupBestDistance       = 0f;   // closest we've gotten during this catchup session
+        private bool  _catchupInterruptIssued    = false;// SetFollowTarget already called this session?
+        private const float CATCHUP_WINDOW            = 15f;  // seconds to attempt walking back before considering teleport
+        private const float CATCHUP_PROGRESS_REQUIRED = 5f;   // metres of net inward progress that counts as "they're making it"
+        private const float HARD_STRAND_MULTIPLIER    = 2.5f; // distance > maxFollowDistance * this = bypass catchup, teleport now
 
         // GLITCH PREVENTION - Teleport loop detection
         private int _consecutiveTeleports = 0;
@@ -690,6 +713,21 @@ if (isTamed && ownerPlayerId == 0)
   }
       }
 
+        /// <summary>
+        /// Clear all catch-up bookkeeping. Called in every early-exit of
+        /// <see cref="CheckFollowTeleport"/> (respawn guards, suppression gate, owner not
+        /// ready, in-radius), and after a teleport fires. Leaves the next catch-up session
+        /// to re-stamp <see cref="_strandedSinceTime"/> + <see cref="_catchupStartDistance"/>
+        /// fresh when distance crosses <see cref="maxFollowDistance"/> again.
+        /// </summary>
+        private void ResetCatchupState()
+        {
+            _strandedSinceTime      = -1f;
+            _catchupStartDistance   = 0f;
+            _catchupBestDistance    = 0f;
+            _catchupInterruptIssued = false;
+        }
+
         private void CheckFollowTeleport()
         {
             if (!isTamed || ownerPlayerId == 0) return;
@@ -705,7 +743,7 @@ if (isTamed && ownerPlayerId == 0)
             if (IsInRespawnOrLoadingState())
             {
                 _consecutiveTeleports = 0;
-                _strandedSinceTime = -1f;
+                ResetCatchupState();
                 return;
             }
 
@@ -713,7 +751,7 @@ if (isTamed && ownerPlayerId == 0)
             if (CompanionPatches.AreCompanionTeleportsSuppressed())
             {
                 _consecutiveTeleports = 0;
-                _strandedSinceTime = -1f;
+                ResetCatchupState();
                 return;
             }
 
@@ -760,7 +798,7 @@ if (isTamed && ownerPlayerId == 0)
             if (!IsOwnerRespawnReady(owner))
             {
                 _consecutiveTeleports = 0;
-                _strandedSinceTime = -1f;
+                ResetCatchupState();
                 return;
             }
 
@@ -768,15 +806,17 @@ if (isTamed && ownerPlayerId == 0)
             Vector3 ownerPos = owner.transform.position;
             float distance = Vector3.Distance(transform.position, ownerPos);
 
+            // Inside the follow radius → reset all catch-up state. Pathing continues to keep the
+            // companion close via the AI's normal Following state; we don't intervene.
             if (distance <= maxFollowDistance)
             {
-                _strandedSinceTime = -1f;
+                ResetCatchupState();
                 return;
             }
 
             float timeSinceTeleport = Time.time - _lastTeleportTime;
 
-            // Owner velocity
+            // Owner velocity sample (used to skip teleports while the owner is portal-jumping).
             float ownerSpeed = 0f;
             if (_lastOwnerPositionTime > 0f)
             {
@@ -790,12 +830,54 @@ if (isTamed && ownerPlayerId == 0)
                 _lastOwnerPositionTime = Time.time;
             }
 
-            // Stranded logic
+            // === CATCH-UP PHASE ENTRY ===
+            // First tick past maxFollowDistance: stamp the entry time + start/best distance.
             if (_strandedSinceTime < 0f)
-                _strandedSinceTime = Time.time;
-            bool hardStrand = distance > maxFollowDistance * HARD_STRAND_MULTIPLIER;
-            bool grace = (Time.time - _strandedSinceTime) >= STRANDED_GRACE;
-            bool isStranded = hardStrand || grace;
+            {
+                _strandedSinceTime    = Time.time;
+                _catchupStartDistance = distance;
+                _catchupBestDistance  = distance;
+                _catchupInterruptIssued = false;
+            }
+            // Track closest approach so we can tell if walking-back is working.
+            if (distance < _catchupBestDistance)
+                _catchupBestDistance = distance;
+
+            // Interrupt-and-pursue: ONE-SHOT per catchup session, the moment we entered the phase.
+            // SetFollowTarget snaps the AI FSM Idle→Following (drops wandering / resource-gather /
+            // smelter-operator etc) so the companion starts pathing toward the owner immediately
+            // instead of waiting for the next idle-behaviour cycle. Combat / Returning states are
+            // intentionally NOT clobbered — the companion finishes its fight, then catches up.
+            if (!_catchupInterruptIssued && _companionAI != null)
+            {
+                try { _companionAI.SetFollowTarget(owner.gameObject); }
+                catch { }
+                _catchupInterruptIssued = true;
+            }
+
+            // === TELEPORT DECISION ===
+            // The "should we give up and teleport?" predicate:
+            //   • hardStrand: owner ran > 2.5× the follow radius away → almost certainly a portal /
+            //     dungeon entry / admin-fly. Teleport now; walking would never close it.
+            //   • catchupWindowElapsed + notMakingProgress: we gave them 15 s to walk back and
+            //     they haven't closed at least CATCHUP_PROGRESS_REQUIRED metres of ground. They're
+            //     blocked (terrain, snag, lost path) → teleport.
+            //   • catchupWindowElapsed + losingGround: distance is GROWING despite catchup. Owner
+            //     is outpacing them → teleport.
+            // Otherwise: return, keep letting them walk.
+            bool hardStrand          = distance > maxFollowDistance * HARD_STRAND_MULTIPLIER;
+            float catchupElapsed     = Time.time - _strandedSinceTime;
+            bool catchupWindowElapsed = catchupElapsed >= CATCHUP_WINDOW;
+            float progressMade        = _catchupStartDistance - _catchupBestDistance; // positive = closing
+            bool notMakingProgress    = progressMade < CATCHUP_PROGRESS_REQUIRED;
+            bool losingGround         = distance > _catchupStartDistance;
+
+            bool isStranded = hardStrand
+                           || (catchupWindowElapsed && notMakingProgress)
+                           || (catchupWindowElapsed && losingGround);
+
+            if (!isStranded)
+                return;  // still attempting catchup on foot — no teleport this tick
 
             if (ownerSpeed > OWNER_TELEPORT_MAX_SPEED && !_portalTeleportPending)
             {
@@ -845,7 +927,7 @@ if (isTamed && ownerPlayerId == 0)
             _lastTeleportDistance = distance;
             _lastTeleportTime = Time.time;
             _ownerPosAtLastTeleport = ownerPos;
-            _strandedSinceTime = -1f;
+            ResetCatchupState();
 
             ReleaseAllMovementLocks();
 
@@ -870,7 +952,7 @@ if (isTamed && ownerPlayerId == 0)
                     Time.unscaledTime + 15f;
 
                 _consecutiveTeleports = 0;
-                _strandedSinceTime = -1f;
+                ResetCatchupState();
                 _lastTeleportTime = Time.time;
                 _ownerPosAtLastTeleport = ownerPos;
                 _companionAI?.ResetPathfindingState();
