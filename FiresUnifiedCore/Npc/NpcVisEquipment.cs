@@ -1608,14 +1608,13 @@ namespace FiresCore.Npc
                     _eyeMaterialInstance = null;
                 }
                 
-                // Create a new material using Custom/Player shader for proper eye rendering
-                // The Custom/Player shader has _SkinColor which we can use for eye tinting
-                // Fallback to Standard shader if Custom/Player isn't available
-                var playerShader = Shader.Find("Custom/Player");
-                if (playerShader == null)
-                {
-                    playerShader = Shader.Find("Standard");
-                }
+                // Create a new material using the player shader for proper eye rendering.
+                // The player shader has _SkinColor which we use for eye tinting.
+                // Try Custom/Player first; fall back to Custom/FiresPlayer (FiresTossinShade swap);
+                // then to Standard as a last resort.
+                var playerShader = Shader.Find("Custom/Player")
+                    ?? Shader.Find("Custom/FiresPlayer")
+                    ?? Shader.Find("Standard");
                 
                 if (playerShader == null)
                 {
@@ -2054,9 +2053,18 @@ namespace FiresCore.Npc
                     }
                 }
 
-                if (playerBodyMaterial == null || playerBodyMaterial.shader?.name != "Custom/Player")
+                // Accept either Custom/Player OR Custom/FiresPlayer as the source. FiresTossinShade
+                // swaps the live Player.body material to Custom/FiresPlayer at runtime — without
+                // accepting it here, TryFixBodyShader sees "shader != Custom/Player" on every fix
+                // attempt, returns, and leaves StaticNpc (and any other prefab whose body lands on
+                // Standard) stuck with the wrong shader → VisEquipment kept disabled → NPC stays
+                // nude. Both shaders expose the same _SkinBumpMap / _ChestTex / _LegsTex / _SkinColor
+                // properties VisEquipment needs.
+                if (playerBodyMaterial == null
+                    || playerBodyMaterial.shader == null
+                    || !IsPlayerCompatibleShader(playerBodyMaterial.shader.name))
                 {
-                    Debug.LogWarning($"[NpcVisEquipment] Could not find Player body material with Custom/Player shader");
+                    Debug.LogWarning($"[NpcVisEquipment] Could not find Player body material with a player-compatible shader (looked for Custom/Player or Custom/FiresPlayer; got '{playerBodyMaterial?.shader?.name ?? "<null>"}')");
                     return;
                 }
 

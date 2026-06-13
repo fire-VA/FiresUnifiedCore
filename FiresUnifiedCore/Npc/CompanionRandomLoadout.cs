@@ -1325,16 +1325,29 @@ namespace FiresCore.Npc
             return eyeColors[UnityEngine.Random.Range(0, eyeColors.Length)];
         }
         
-        // Hardcoded hair/beard style lists - these match what's in DressingRoomScreenController.Fashion.cs
-        // Hair/beard prefabs are NOT in ZNetScene, they're stored in the player model prefab
+        // Player customization prefab names — the SAME pool the vanilla character-creation
+        // menu shows. Mirrored by DefaultHairItems / DefaultBeardItems in
+        // DressingRoomScreenController.Fashion.cs (RPGMaker frontend); keep the two in sync.
+        //
+        // Validated 2026-06-13 against the Unity project at
+        // <c>NewProject2026/Fires2026Project/Assets/GameElements/Items/customizations/{hairs,beards}/</c>:
+        //   - 37 hair prefabs exist (Hair1.prefab .. Hair37.prefab) + HairNone
+        //   - 26 beard prefabs exist (Beard1.prefab .. Beard26.prefab) + BeardNone
+        // Older list was Hair3..Hair34 only — dropped Hair1/2 (legacy) and never picked up
+        // Hair35/36/37 (Mistlands+). Restoring full coverage so wild companions can roll any
+        // vanilla-shipped hair, matching the DressingRoom dropdown.
+        //
+        // NOT included: variant prefabs (Hair3_2, Hair3_3) and raw FBX clip prefabs
+        // (hair_11, hair_12, beard_hair/*) — those are internal-rig assets the engine swaps
+        // by model gender / LOD, not user-selectable styles.
         public static readonly string[] KnownHairStyles = {
             "HairNone",
-            "Hair3","Hair4","Hair5","Hair6","Hair7","Hair8","Hair9","Hair10",
+            "Hair1","Hair2","Hair3","Hair4","Hair5","Hair6","Hair7","Hair8","Hair9","Hair10",
             "Hair11","Hair12","Hair13","Hair14","Hair15","Hair16","Hair17","Hair18","Hair19","Hair20",
             "Hair21","Hair22","Hair23","Hair24","Hair25","Hair26","Hair27","Hair28","Hair29","Hair30",
-            "Hair31","Hair32","Hair33","Hair34"
+            "Hair31","Hair32","Hair33","Hair34","Hair35","Hair36","Hair37"
         };
-        
+
         public static readonly string[] KnownBeardStyles = {
             "BeardNone","Beard1","Beard2","Beard3","Beard4","Beard5","Beard6","Beard7","Beard8",
             "Beard9","Beard10","Beard11","Beard12","Beard13","Beard14","Beard15","Beard16",
