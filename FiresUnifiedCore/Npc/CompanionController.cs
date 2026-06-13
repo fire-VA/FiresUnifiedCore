@@ -738,8 +738,14 @@ if (isTamed && ownerPlayerId == 0)
 
             if (_companionAI == null || !_companionAI.ShouldBeFollowing) return;
 
-            // === LAYER 1: ULTRA-EARLY RESPAWN / LOADING GUARD ===
-            // This runs before ANY owner lookup or heavy logic
+            // === LAYER 1: SPAWN GATE + ULTRA-EARLY RESPAWN / LOADING GUARD ===
+            // Covers in one place: lp==null, lp.IsDead, lp.InBed, lp.IsSleeping, AND
+            // PlayerSpawnGate.IsReadyForCustomDataWrite (the authoritative "is the player
+            // safe to mutate?" predicate shared with VaultPatches and every other ZDO writer).
+            // If any of these is true we are NOT allowed to touch follow state — bail without
+            // incrementing _consecutiveTeleports (so glitch-recovery cannot fire during a
+            // legitimate respawn window) and reset catch-up so a long death/login fade-out
+            // doesn't leave a stale 15-second catchup timer running underneath the gate.
             if (IsInRespawnOrLoadingState())
             {
                 _consecutiveTeleports = 0;
@@ -747,7 +753,9 @@ if (isTamed && ownerPlayerId == 0)
                 return;
             }
 
-            // === LAYER 2: Global patch suppression (should also be true during respawn)
+            // === LAYER 2: Global patch suppression
+            // Closed by Player.OnDeath / OnSpawned / long-jump TeleportTo postfixes, and
+            // self-re-armed inside AreCompanionTeleportsSuppressed while IsTeleporting / !CanMove.
             if (CompanionPatches.AreCompanionTeleportsSuppressed())
             {
                 _consecutiveTeleports = 0;
@@ -755,10 +763,14 @@ if (isTamed && ownerPlayerId == 0)
                 return;
             }
 
-            // Animation block
+            // Animation block — sitting in a chair, mid-attack swing, frozen by effect, etc.
+            // Resetting catch-up here matters: a companion that sits while stranded would
+            // otherwise wake up with a long-expired CATCHUP_WINDOW behind it and immediately
+            // teleport instead of starting a fresh walk-back attempt.
             if (IsInAnimationThatBlocksTeleport())
             {
                 _consecutiveTeleports = 0;
+                ResetCatchupState();
                 return;
             }
 
@@ -766,17 +778,16 @@ if (isTamed && ownerPlayerId == 0)
             var owner = GetOwner();
             if (owner == null)
             {
-                // BELT-AND-BRACES: if the local player is in any sort of unsettled
-                // state (login warmup, mid-respawn, brand-new spawn before the
-                // gate has fully opened), do NOT increment the counter. This used
-                // to dismiss every companion at once on a death-respawn because
-                // owner==null briefly — Layer 1's tighter gate should already
-                // catch this, but if it ever falls through we refuse to mutate
-                // runtime follow state during the spawn window.
+                // BELT-AND-BRACES re-check the spawn gate — Layer 1 should have caught any
+                // not-ready state, but if we got here with owner==null AND the gate just
+                // flipped, refuse to mutate follow state. Reset catch-up too: the brief
+                // owner-lookup gap during a death/respawn should not poison the next
+                // CATCHUP_WINDOW after the player comes back.
                 if (Player.m_localPlayer == null ||
                     !PlayerSpawnGate.IsReadyForCustomDataWrite(Player.m_localPlayer))
                 {
                     _consecutiveTeleports = 0;
+                    ResetCatchupState();
                     return;
                 }
 
@@ -879,11 +890,24 @@ if (isTamed && ownerPlayerId == 0)
             if (!isStranded)
                 return;  // still attempting catchup on foot — no teleport this tick
 
-            if (ownerSpeed > OWNER_TELEPORT_MAX_SPEED && !_portalTeleportPending)
+            // Owner-velocity gate: skip teleport while the owner appears to be portal-jumping
+            // (above human-running speed), UNLESS we ourselves just fired a portal teleport
+            // on the previous tick — _portalTeleportPending is a single-use bypass marker set
+            // by TeleportToPositionInternal(isPortal=true).
+            //
+            // FIX (prev. bug): the flag used to be cleared unconditionally on EVERY pass through
+            // this point, including ticks where the speed gate wasn't triggered (owner moving
+            // normally). That silently consumed the bypass before the tick that actually needed
+            // it could see it. Now we only consume the flag on the tick that ACTUALLY uses it
+            // to bypass the speed gate. On any tick where owner is moving normally, the flag
+            // is left intact so it can still rescue a future "owner instantly accelerated"
+            // portal-jump sample.
+            if (ownerSpeed > OWNER_TELEPORT_MAX_SPEED)
             {
-                return;
+                if (!_portalTeleportPending)
+                    return;          // owner is flying / portal-jumping, no bypass available — wait
+                _portalTeleportPending = false;  // consume the bypass exactly here, where it was needed
             }
-            _portalTeleportPending = false;
 
             // HARD THROTTLE — one teleport, then a 5-second cooldown before
             // we'll fire another, regardless of distance. The previous
@@ -949,7 +973,7 @@ if (isTamed && ownerPlayerId == 0)
                 Core.CompanionTeleportService.RequestReconcileFollowers(owner);
 
                 CompanionPatches.SuppressCompanionTeleportsUntil =
-                    Time.unscaledTime + 15f;
+                    Time.unscaledTime + CompanionPatches.SUPPRESS_DURATION_STRANDED_SETTLE;
 
                 _consecutiveTeleports = 0;
                 ResetCatchupState();
