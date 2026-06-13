@@ -2457,9 +2457,15 @@ if (isTamed)
         }
 
         /// <summary>
-        /// Updates the Character.m_name field which is used by EnemyHud for health bar display.
+        /// Updates the <c>Character.m_name</c> field which drives EnemyHud's floating health-bar
+        /// label, plus the matching <c>Humanoid.m_name</c> (some lookups read that one instead).
+        ///
+        /// <para>Made public so frontends outside Core (e.g. RPGMaker's StaticNpcInitializer)
+        /// can keep the floating label in sync with the assigned display name without taking the
+        /// full <see cref="SetDisplayName"/> path (which also persists CompanionController state
+        /// — undesirable for static NPCs whose persistence is owned by NpcController).</para>
         /// </summary>
-    internal void UpdateCharacterName(string name)
+        public void UpdateCharacterName(string name)
         {
             if (_character == null || string.IsNullOrEmpty(name)) return;
   
