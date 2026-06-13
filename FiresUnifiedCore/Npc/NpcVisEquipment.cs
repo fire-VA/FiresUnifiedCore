@@ -539,10 +539,10 @@ namespace FiresCore.Npc
                 // _LegsTex) that UpdateColors() tries to set, causing errors every frame.
                 bool bodyModelValid = _visEquipment.m_bodyModel != null 
                     && _visEquipment.m_bodyModel.sharedMesh != null;
-                bool shaderCompatible = bodyModelValid 
+                bool shaderCompatible = bodyModelValid
                     && _visEquipment.m_bodyModel.sharedMaterial != null
                     && _visEquipment.m_bodyModel.sharedMaterial.shader != null
-                    && _visEquipment.m_bodyModel.sharedMaterial.shader.name == "Custom/Player";
+                    && IsPlayerCompatibleShader(_visEquipment.m_bodyModel.sharedMaterial.shader.name);
                 _visEquipment.enabled = bodyModelValid && shaderCompatible;
 
                 _initialized = true;
@@ -692,18 +692,18 @@ namespace FiresCore.Npc
             if (_visEquipment.m_bodyModel != null)
             {
                 string currentShader = _visEquipment.m_bodyModel.sharedMaterial?.shader?.name ?? "null";
-                if (currentShader != "Custom/Player")
+                if (!IsPlayerCompatibleShader(currentShader))
                 {
                     TryFixBodyShader(_visEquipment.m_bodyModel);
                     // Re-check after fix attempt
                     currentShader = _visEquipment.m_bodyModel.sharedMaterial?.shader?.name ?? "null";
-                    if (currentShader != "Custom/Player")
+                    if (!IsPlayerCompatibleShader(currentShader))
                     {
-                        Debug.LogWarning($"[NpcVisEquipment] Body shader fix failed for {gameObject.name}. Current: {currentShader}");
+                        Debug.LogWarning($"[NpcVisEquipment] Body shader fix failed for {gameObject.name}. Current: {currentShader} (need Custom/Player or Custom/FiresPlayer)");
                     }
                     else
                     {
-                        Debug.Log($"[NpcVisEquipment] Fixed body shader to Custom/Player for {gameObject.name}");
+                        Debug.Log($"[NpcVisEquipment] Fixed body shader to {currentShader} for {gameObject.name}");
                     }
                 }
                 else if (VerboseLogging)
@@ -849,6 +849,29 @@ namespace FiresCore.Npc
         /// </summary>
         // Verbose logging flag - set to true for debugging equipment issues
         public static bool VerboseLogging = false;
+
+        /// <summary>
+        /// Returns true when the given shader name is one the player-vis-equipment pipeline can
+        /// drive — i.e. it exposes the texture properties (<c>_SkinBumpMap</c>, <c>_ChestTex</c>,
+        /// <c>_LegsTex</c>, <c>_SkinColor</c>) that <see cref="VisEquipment.UpdateColors"/> writes.
+        ///
+        /// <para>Vanilla ships exactly one such shader (<c>Custom/Player</c>). FiresTossinShade
+        /// runtime-swaps it to <c>Custom/FiresPlayer</c> (a superset that adds eye-color control)
+        /// when its <c>configFiresPlayerEnabled</c> toggle is on (default true). Before this gate
+        /// accepted FiresPlayer, every NPC body that the swap touched had its VisEquipment kept
+        /// disabled here — items hashed correctly inside VisEquipment but UpdateEquipmentVisuals
+        /// never ran (MonoUpdater skips disabled components), so companions appeared nude even
+        /// with full inventories.</para>
+        ///
+        /// <para>Centralized here so any future Custom/...Player variant is a one-line add and
+        /// every gate stays in sync.</para>
+        /// </summary>
+        internal static bool IsPlayerCompatibleShader(string shaderName)
+        {
+            if (string.IsNullOrEmpty(shaderName)) return false;
+            return shaderName == "Custom/Player"
+                || shaderName == "Custom/FiresPlayer";
+        }
         
         // Retry tracking to prevent infinite retry loops
         private int _retryCount = 0;

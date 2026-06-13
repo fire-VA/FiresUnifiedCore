@@ -2942,7 +2942,7 @@ namespace FiresCore.Npc
                 return false;
 
             var mat = ve.m_bodyModel.sharedMaterial;
-            if (mat == null || mat.shader == null || mat.shader.name != "Custom/Player")
+            if (mat == null || mat.shader == null || !NpcVisEquipment.IsPlayerCompatibleShader(mat.shader.name))
                 return false;
 
             var nview = ve.m_nview;
