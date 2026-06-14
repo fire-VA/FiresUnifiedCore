@@ -101,11 +101,13 @@ namespace FiresCore.Npc
             // Only run on server/host
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
 
-            // Stand down when a dormant store is registered: CompanionRestoreService's
-            // dormancy-pass is THE login-restore path (one engine, per the persistence redesign).
-            // This legacy login loop only runs in the no-dormant-store fallback case.
-            if (FiresCore.Bridge.NpcDormancyBridge.IsAvailable) return;
-            
+            // NOTE: this loop is the LOCAL-player login trigger and must keep running even when a
+            // dormant store is present — the player-announced hook (RPC_CharacterID) that drives
+            // CompanionRestoreService does NOT fire for the listen-host's own player, so without
+            // this loop the kennel restore never runs in single-player. When the dormant store is
+            // available, RestoreCompanionsForPlayer routes to the Core dormancy restore instead of
+            // the legacy m_customData path (see there).
+
    var players = Player.GetAllPlayers();
           if (players == null) return;
 
@@ -177,6 +179,18 @@ namespace FiresCore.Npc
        
             long playerId = player.GetPlayerID();
             if (playerId == 0) yield break;
+
+            // Kennel path: the Core dormant store owns restore. Now that the spawn gate is open,
+            // run the unified adopt + dormancy pass for this local player and we're done — skip the
+            // legacy m_customData restore below. This is the LOCAL-player trigger for the dormancy
+            // restore (the RPC_CharacterID player-announced hook covers remote peers on a dedicated
+            // server but never fires for the listen-host's own player). RestoreForPlayerServerSide
+            // resolves the local player's position via its m_localPlayer fallback.
+            if (FiresCore.Bridge.NpcDormancyBridge.IsAvailable)
+            {
+                CompanionRestoreService.RestoreForPlayerServerSide(playerId);
+                yield break;
+            }
 
             if (VerboseLogging)
         {
