@@ -44,6 +44,10 @@ namespace FiresCore.Bridge
         /// <c>CompanionController.CaptureState/ApplyState</c>.</summary>
         public NpcSaveState Snapshot;
 
+        /// <summary>Last write timestamp (DateTime.UtcNow.Ticks). Diagnostic / freshness signal;
+        /// stamped by the store on every upsert.</summary>
+        public long LastUpdatedUtcTicks;
+
         /// <summary>True when this entry is eligible to auto-spawn now: not Dismissed and its
         /// deadline (if any) has elapsed.</summary>
         public bool IsRecallReady(long nowUtcTicks)

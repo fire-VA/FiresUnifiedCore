@@ -4,6 +4,7 @@ using System.Linq;
 using HarmonyLib;
 using UnityEngine;
 using FiresCore.Lifecycle;
+using FiresCore.Bridge;
 
 namespace FiresCore.Npc.Vault
 {
@@ -239,16 +240,32 @@ namespace FiresCore.Npc.Vault
             // dismissed-recall / expired-respawn cases.
             int adoptedCount = AdoptOwnedCompanionZdos(playerId, ownerPos);
 
-            try
+            // ── Dormancy-pass: THE single login-restore path for despawned companions ──
+            // Spawns recall-ready dormant companions from the dormant-store seam (kennel in
+            // standalone / vault in integrated, once it registers a provider). When a dormant
+            // store is present it OWNS restore and the legacy vault/roster-spawn pass is skipped,
+            // so the two can never double-spawn. When NO dormant store is registered we fall back
+            // to the legacy pass unchanged — which is the current dual-mod profile (kennel disabled
+            // by the vault), so this whole branch is a no-op there: zero behaviour change until the
+            // kennel becomes the active store.
+            int dormantSpawned = 0;
+            if (NpcDormancyBridge.IsAvailable)
             {
-                CompanionPatches.RestoreCompanionsFromVault(player: null, playerId: playerId, ownerPos: ownerPos);
+                dormantSpawned = RestoreDormantViaSeam(playerId, ownerPos);
             }
-            catch (Exception ex)
+            else
             {
-                Debug.LogWarning($"{LogPrefix} RestoreCompanionsFromVault threw for {playerId}: {ex.Message}\n{ex.StackTrace}");
+                try
+                {
+                    CompanionPatches.RestoreCompanionsFromVault(player: null, playerId: playerId, ownerPos: ownerPos);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"{LogPrefix} RestoreCompanionsFromVault threw for {playerId}: {ex.Message}\n{ex.StackTrace}");
+                }
             }
 
-            Debug.Log($"{LogPrefix} Restore complete for player {playerId}: adopted {adoptedCount} world ZDO(s) (vault-spawn additions logged above)");
+            Debug.Log($"{LogPrefix} Restore complete for player {playerId}: adopted {adoptedCount} world ZDO(s), dormant-spawned {dormantSpawned}");
         }
 
         /// <summary>
@@ -317,6 +334,187 @@ namespace FiresCore.Npc.Vault
             if (adopted > 0)
                 Debug.Log($"{LogPrefix} Adopted {adopted} existing companion ZDO(s) for player {playerId} (followers teleported to ownerPos: {followersTeleported})");
             return adopted;
+        }
+
+        // ──────────────────────────────────────────────────────────────────────────
+        // Dormancy-pass — spawn recall-ready dormant companions from the seam
+        // ──────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Spawns this player's recall-ready dormant companions from <see cref="NpcDormancyBridge"/>
+        /// (kennel standalone / vault integrated). Dismissed entries wait for an explicit Recall;
+        /// pending-respawn entries whose deadline hasn't elapsed stay dormant. Bulletproofing:
+        /// <list type="bullet">
+        ///   <item><description>I1 (single live instance): an NpcId already live in the world is
+        ///     skipped — the adopt-pass + the live scene own it; the stale dormant copy is cleared.</description></item>
+        ///   <item><description>I3 (no silent loss): a spawn failure leaves the dormant entry in
+        ///     place to retry on the next announce, rather than dropping it.</description></item>
+        ///   <item><description>I6 (owner-offline): entries simply remain dormant until a login that
+        ///     resolves the owner position — no infinite in-memory reschedule.</description></item>
+        /// </list>
+        /// </summary>
+        private static int RestoreDormantViaSeam(long playerId, Vector3 ownerPos)
+        {
+            var entries = NpcDormancyBridge.List(playerId);
+            if (entries == null || entries.Count == 0) return 0;
+
+            long nowTicks = DateTime.UtcNow.Ticks;
+            int spawned = 0;
+
+            foreach (var entry in entries)
+            {
+                if (entry == null || entry.Snapshot == null) continue;
+                if (entry.Kind == DormancyKind.Dismissed) continue;       // explicit Recall only
+                if (!entry.IsRecallReady(nowTicks)) continue;             // deadline not elapsed yet
+
+                // I1: never spawn a second instance of a companion that's already live.
+                if (IsCompanionLiveInWorld(entry.NpcId))
+                {
+                    NpcDormancyBridge.Remove(playerId, entry.NpcId);
+                    continue;
+                }
+
+                if (TrySpawnDormant(entry, ownerPos, out _))
+                {
+                    NpcDormancyBridge.Remove(playerId, entry.NpcId);
+                    spawned++;
+                }
+                // else: leave the entry for a retry on the next announce (I3).
+            }
+
+            return spawned;
+        }
+
+        /// <summary>I1 guard: is a companion with this id currently instantiated in the world?</summary>
+        private static bool IsCompanionLiveInWorld(string npcId)
+        {
+            if (string.IsNullOrEmpty(npcId)) return false;
+            var all = CompanionController.AllCompanions;
+            if (all == null) return false;
+            foreach (var c in all)
+            {
+                if (c != null && string.Equals(c.companionId, npcId, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Instantiate the snapshot's prefab at <paramref name="ownerPos"/> and apply the dormant
+        /// state. Returns true on success (entry may be consumed). Failure is non-fatal — the caller
+        /// keeps the dormant entry for a retry.
+        /// </summary>
+        private static bool TrySpawnDormant(DormantNpcEntry entry, Vector3 ownerPos, out CompanionController controller)
+        {
+            controller = null;
+            try
+            {
+                var snap = entry.Snapshot;
+                if (string.IsNullOrEmpty(snap.PrefabName)) return false;
+
+                var prefab = ZNetScene.instance?.GetPrefab(snap.PrefabName);
+                if (prefab == null)
+                {
+                    Debug.LogWarning($"{LogPrefix} Dormant prefab '{snap.PrefabName}' not registered yet for {entry.NpcId} — retry next announce");
+                    return false;
+                }
+
+                var go = UnityEngine.Object.Instantiate(prefab, ownerPos, Quaternion.identity);
+                if (go == null) return false;
+
+                controller = go.GetComponent<CompanionController>();
+                if (controller == null)
+                {
+                    Debug.LogWarning($"{LogPrefix} Dormant prefab '{snap.PrefabName}' has no CompanionController — entry consumed");
+                    return true;
+                }
+
+                controller.ApplyState(snap);
+                Debug.Log($"{LogPrefix} Dormancy-spawned {snap.DisplayName ?? snap.NpcId} ({entry.Kind}) at {ownerPos}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"{LogPrefix} TrySpawnDormant({entry?.NpcId}) failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Player-initiated Recall of one dormant companion (the roster screen's Recall button).
+        /// Spawns the dormant snapshot near the owner, forces it back to Following, and clears the
+        /// dormant entry. <b>Server-only</b> (single-player / listen-host); a dedicated client would
+        /// need a server RPC — refused off-server rather than orphaning a ZDO. Returns false when
+        /// there's no dormant entry or the spawn fails. Replaces the old FiresCompanions
+        /// <c>KennelRestore.RecallNow</c> now that the store lives in Core.
+        /// </summary>
+        public static bool RecallDormant(long playerId, string npcId, Vector3 spawnPos, Player owner)
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer())
+            {
+                Debug.LogWarning($"{LogPrefix} RecallDormant needs server authority (single-player / listen-host); dedicated-client recall needs a server RPC — not wired.");
+                return false;
+            }
+            if (playerId == 0L || string.IsNullOrEmpty(npcId)) return false;
+
+            // I1: if it's somehow already live, just clear the stale dormant copy.
+            if (IsCompanionLiveInWorld(npcId))
+            {
+                NpcDormancyBridge.Remove(playerId, npcId);
+                return true;
+            }
+
+            var entry = NpcDormancyBridge.Get(playerId, npcId);
+            if (entry == null)
+            {
+                Debug.LogWarning($"{LogPrefix} RecallDormant: no dormant entry for {playerId}/{npcId}");
+                return false;
+            }
+
+            if (!TrySpawnDormant(entry, spawnPos, out var controller))
+                return false;
+
+            // Recall always means "come back and follow me" — override the dormant snapshot's
+            // follow intent (a dismissed companion may have been Stay / not-following).
+            try
+            {
+                if (controller != null && owner != null)
+                    controller.CommandFollow(owner);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"{LogPrefix} RecallDormant CommandFollow failed for {npcId}: {ex.Message}");
+            }
+
+            NpcDormancyBridge.Remove(playerId, npcId);
+            return true;
+        }
+
+        /// <summary>
+        /// Spawn ONE dormant companion by id, restoring its snapshot state AS-IS (follow / stay /
+        /// stationed preserved — NOT forced to follow, unlike <see cref="RecallDormant"/>). The
+        /// kennel-backed path for the intra-session death-respawn timer: used when the legacy
+        /// m_customData snapshot is absent (post-redesign, or a kennel-only death). Server-only.
+        /// Returns true if spawned (or already live). Honors I1 (won't double a live instance).
+        /// </summary>
+        public static bool TrySpawnDormantById(long playerId, string npcId, Vector3 spawnPos)
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return false;
+            if (playerId == 0L || string.IsNullOrEmpty(npcId)) return false;
+
+            if (IsCompanionLiveInWorld(npcId))
+            {
+                NpcDormancyBridge.Remove(playerId, npcId);
+                return true;
+            }
+
+            var entry = NpcDormancyBridge.Get(playerId, npcId);
+            if (entry == null) return false;
+
+            if (!TrySpawnDormant(entry, spawnPos, out _)) return false;
+
+            NpcDormancyBridge.Remove(playerId, npcId);
+            return true;
         }
 
         // Companion prefab names this service scans. Mirrors the list

@@ -411,6 +411,8 @@
     <Compile Include="Npc\VANpcShaderPrewarm.cs" />
     <Compile Include="Npc\Vault\CompanionRestoreService.cs" />
     <Compile Include="Npc\Vault\CompanionRosterWriter.cs" />
+    <Compile Include="Npc\Persistence\CompanionKennel.cs" />
+    <Compile Include="Npc\Persistence\CompanionKennelSerializer.cs" />
     <Compile Include="Npc\Vault\CompanionSavedDataResolver.cs" />
     <Compile Include="Npc\Vault\CompanionVault.cs" />
     <Compile Include="Npc\Vault\CompanionZdoSnapshot.cs" />
