@@ -100,6 +100,11 @@ namespace FiresCore.Npc
     {
             // Only run on server/host
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+
+            // Stand down when a dormant store is registered: CompanionRestoreService's
+            // dormancy-pass is THE login-restore path (one engine, per the persistence redesign).
+            // This legacy login loop only runs in the no-dormant-store fallback case.
+            if (FiresCore.Bridge.NpcDormancyBridge.IsAvailable) return;
             
    var players = Player.GetAllPlayers();
           if (players == null) return;
@@ -808,9 +813,43 @@ if (prefab == null)
  // and bail out without spawning anything yet.
  if (savedData == null)
  {
+     // Kennel-backed fallback: the legacy m_customData snapshot is absent (post-redesign, or a
+     // kennel-only death). Spawn directly from the Core dormant store if it holds this entry,
+     // restoring the snapshot's own follow/stay/stationed state. Following companions reach the
+     // owner via the normal follow-teleport pipeline after ApplyState. Additive: in the current
+     // dual-mod state savedData is non-null (m_customData still written), so this never fires.
+     if (FiresCore.Bridge.NpcDormancyBridge.IsAvailable)
+     {
+         Vector3 kennelPos = Vector3.zero;
+         foreach (var p in Player.GetAllPlayers())
+         {
+             if (p != null && p.GetPlayerID() == data.OwnerPlayerId) { kennelPos = p.transform.position; break; }
+         }
+         if (CompanionRestoreService.TrySpawnDormantById(data.OwnerPlayerId, data.CompanionId, kennelPos))
+         {
+             _pendingRespawns.Remove(data.CompanionId);
+             yield break;
+         }
+     }
+
      Debug.LogWarning($"[CompanionRespawnManager] Vault data not found for {data.CompanionId} (owner {data.OwnerPlayerId}) ï¿½ deferring respawn 15s to allow vault sync");
      data.RespawnTime = Time.time + 15f;
      _pendingRespawns[data.CompanionId] = data;
+     yield break;
+ }
+
+ // I1 (single live instance): if this companion is already alive in the world, do NOT
+ // spawn a second one. Guards the diagnosed duplicate-spawn race where the death timer,
+ // login restore, and recall can all fire for the same id. A dead/defeated existing
+ // instance is the corpse we're replacing — it doesn't count as "already live".
+ foreach (var existing in CompanionController.AllCompanions)
+ {
+     if (existing == null) continue;
+     if (!string.Equals(existing.companionId, data.CompanionId, StringComparison.Ordinal)) continue;
+     bool deadCorpse = existing.isDefeated || (existing.GetCharacter()?.IsDead() ?? false);
+     if (deadCorpse) continue;
+     Debug.Log($"[CompanionRespawnManager] {data.CompanionId} is already live in the world — skipping duplicate respawn (I1 single-instance guard).");
+     _pendingRespawns.Remove(data.CompanionId);
      yield break;
  }
 
