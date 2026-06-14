@@ -569,6 +569,15 @@ namespace FiresCore.Npc.Vault
                         return charZdo.GetPosition();
                     }
                 }
+
+                // Listen-host / single-player: the local host player is NOT in GetPeers() (those are
+                // remote peers), so the scan above misses them. Fall back to the live local Player —
+                // without this, the local player's restore resolves position 0 and followers spawn at
+                // world origin instead of next to the player.
+                var lp = Player.m_localPlayer;
+                if (lp != null && lp.GetPlayerID() == playerId)
+                    return lp.transform.position;
+
                 return Vector3.zero;
             }
             catch (Exception ex)
