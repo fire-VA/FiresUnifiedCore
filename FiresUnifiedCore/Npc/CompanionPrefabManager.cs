@@ -716,7 +716,9 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             // Basic humanoid stats for a companion
             humanoid.m_name = "Companion";
             humanoid.m_group = "player";
-            humanoid.m_faction = Character.Faction.Players;
+            // Dverger, not Players: companions (and prefab-shared static NPCs) must be attackable with
+            // no engine PvP gate. Owner/ally immunity is enforced in CompanionController.ShouldAllowDamage.
+            humanoid.m_faction = Character.Faction.Dverger;
             humanoid.m_health = 200f;
             humanoid.m_walkSpeed = 2f;
             humanoid.m_speed = 4f;

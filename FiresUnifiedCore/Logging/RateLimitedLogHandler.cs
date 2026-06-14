@@ -4,7 +4,7 @@ using UnityEngine;
 namespace FiresCore.Logging
 {
     // Wraps Unity's default ILogHandler to throttle / suppress known noisy
-    // messages. Verbose mode is a pass-through — when the FiresLogger
+    // messages. Verbose mode is a pass-through - when the FiresLogger
     // verbose toggle is on, nothing is filtered.
     //
     // Suppressed categories (non-verbose only):
@@ -13,11 +13,11 @@ namespace FiresCore.Logging
     //     replacement handles the missing-on-export shaders)
     //   - "Referenced script is missing" warnings (bundle prefabs whose
     //     C# refs point at SpaceCraft / DungeonGenerator / other content
-    //     mods not in the user's profile — cosmetic, no functional impact)
+    //     mods not in the user's profile - cosmetic, no functional impact)
     //   - Kinematic-rigidbody velocity warnings (Valheim sets velocity on
     //     attached Characters and the warning is benign)
     //   - Known Valheim NRE stacks that we have no fix for (ShieldGenerator,
-    //     ArcheryTarget) — summary line emitted every NreSummaryEmitInterval
+    //     ArcheryTarget) - summary line emitted every NreSummaryEmitInterval
     //     suppressions so the user knows the suppression is alive.
     //
     // Summaries (one line per N suppressed) provide ongoing visibility
@@ -71,7 +71,84 @@ namespace FiresCore.Logging
                 EmitNreSummaryIfDue();
                 return;
             }
-            _inner.LogException(exception, context);
+            RelayException(exception, context);
+        }
+
+        // Relay a logged exception WITHOUT stamping our log-handler chain across its stack trace. Reads as
+        // "[FiresUnifiedCore] relayed exception from '<mod>': <type>: <msg>\n<original throw stack>" so a reader
+        // immediately sees which mod actually threw and that FiresUnifiedCore is only the relay - not the source.
+        //
+        // We emit the exception's OWN captured stack as text and suppress Unity's live call-stack append for this one
+        // write. That append is what was plastering every chained handler frame (FiresCore.Logging.RateLimitedLogHandler,
+        // the per-mod RateLimitedLogHandler/LogFilter forks, …) onto unrelated mods' errors. This handler is the
+        // innermost link in the chain, so suppressing the append here clears the whole chain's frames in one place.
+        private void RelayException(Exception exception, UnityEngine.Object context)
+        {
+            if (exception == null) return;
+
+            string origin = ResolveOriginAssembly(exception);
+            string body = $"{LogPrefix} relayed exception from '{origin}' (FiresUnifiedCore is only relaying this - the error is in that mod):\n"
+                        + $"{exception.GetType().FullName}: {exception.Message}\n{exception.StackTrace}";
+
+            StackTraceLogType previous = Application.GetStackTraceLogType(LogType.Error);
+            bool toggled = previous != StackTraceLogType.None;
+            if (toggled) Application.SetStackTraceLogType(LogType.Error, StackTraceLogType.None);
+            try
+            {
+                _inner.LogFormat(LogType.Error, context, "{0}", body);
+            }
+            finally
+            {
+                if (toggled) Application.SetStackTraceLogType(LogType.Error, previous);
+            }
+        }
+
+        // The assembly of the deepest (throw-site) frame = the mod that actually threw. assembly_valheim/utils map to
+        // "Valheim"; Unity/BCL frames to "Unity/runtime". Falls back to parsing the textual stack, then "unknown".
+        private static string ResolveOriginAssembly(Exception exception)
+        {
+            try
+            {
+                var trace = new System.Diagnostics.StackTrace(exception, false);
+                for (int i = 0; i < trace.FrameCount; i++)
+                {
+                    string asm = trace.GetFrame(i)?.GetMethod()?.DeclaringType?.Assembly?.GetName()?.Name;
+                    if (!string.IsNullOrEmpty(asm))
+                        return Friendly(asm);
+                }
+            }
+            catch { }
+            return ParseTopTypeFromStackString(exception.StackTrace) ?? "unknown";
+        }
+
+        private static string Friendly(string assemblyName)
+        {
+            if (assemblyName == "assembly_valheim" || assemblyName == "assembly_utils" || assemblyName == "assembly_guiutils")
+                return "Valheim";
+            if (assemblyName.StartsWith("UnityEngine", StringComparison.Ordinal) || assemblyName == "mscorlib" || assemblyName.StartsWith("System", StringComparison.Ordinal))
+                return "Unity/runtime";
+            return assemblyName;
+        }
+
+        // Fallback when the exception carries no reconstructable frames: pull the root namespace from the first
+        // "  at Namespace.Type.Method (...)" line of the textual stack.
+        private static string ParseTopTypeFromStackString(string stack)
+        {
+            if (string.IsNullOrEmpty(stack)) return null;
+            foreach (string raw in stack.Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0) continue;
+                if (line.StartsWith("at ", StringComparison.Ordinal)) line = line.Substring(3);
+                int paren = line.IndexOf('(');
+                if (paren > 0) line = line.Substring(0, paren).Trim();
+                int lastDot = line.LastIndexOf('.');
+                if (lastDot <= 0) return line;
+                string typeFull = line.Substring(0, lastDot);
+                int rootDot = typeFull.IndexOf('.');
+                return rootDot > 0 ? typeFull.Substring(0, rootDot) : typeFull;
+            }
+            return null;
         }
 
         // Verbose mode short-circuits all suppression. The flag lives on
@@ -152,7 +229,7 @@ namespace FiresCore.Logging
         {
             if (_suppressedValheimNreBugs != 1 && _suppressedValheimNreBugs % NreSummaryEmitInterval != 0) return;
             _inner.LogFormat(LogType.Log, null,
-                $"{LogPrefix} Suppressed {{0}} known Valheim NRE bugs (ShieldGenerator, ArcheryTarget, etc.) — set verbose to surface.",
+                $"{LogPrefix} Suppressed {{0}} known Valheim NRE bugs (ShieldGenerator, ArcheryTarget, etc.) - set verbose to surface.",
                 _suppressedValheimNreBugs);
         }
 
@@ -160,7 +237,7 @@ namespace FiresCore.Logging
         {
             if (_suppressedShaderWarnings != 1 && _suppressedShaderWarnings % ShaderWarningSummaryInterval != 0) return;
             _inner.LogFormat(LogType.Log, null,
-                $"{LogPrefix} Suppressed {{0}} shader binary-data warnings — VanillaAssetResolver handles the missing-on-export shaders. Set verbose to surface.",
+                $"{LogPrefix} Suppressed {{0}} shader binary-data warnings - VanillaAssetResolver handles the missing-on-export shaders. Set verbose to surface.",
                 _suppressedShaderWarnings);
         }
 
@@ -168,7 +245,7 @@ namespace FiresCore.Logging
         {
             if (_suppressedMissingScriptWarnings != 1 && _suppressedMissingScriptWarnings % MissingScriptSummaryInterval != 0) return;
             _inner.LogFormat(LogType.Log, null,
-                $"{LogPrefix} Suppressed {{0}} 'referenced script missing' warnings (bundle prefabs reference content-mod scripts not in this profile — cosmetic). Set verbose to surface.",
+                $"{LogPrefix} Suppressed {{0}} 'referenced script missing' warnings (bundle prefabs reference content-mod scripts not in this profile - cosmetic). Set verbose to surface.",
                 _suppressedMissingScriptWarnings);
         }
 
@@ -176,7 +253,7 @@ namespace FiresCore.Logging
         {
             if (_suppressedKinematicWarnings != 1 && _suppressedKinematicWarnings % KinematicSummaryInterval != 0) return;
             _inner.LogFormat(LogType.Log, null,
-                $"{LogPrefix} Suppressed {{0}} kinematic-rigidbody velocity warnings (Valheim sets velocity on attached Characters — benign). Set verbose to surface.",
+                $"{LogPrefix} Suppressed {{0}} kinematic-rigidbody velocity warnings (Valheim sets velocity on attached Characters - benign). Set verbose to surface.",
                 _suppressedKinematicWarnings);
         }
     }

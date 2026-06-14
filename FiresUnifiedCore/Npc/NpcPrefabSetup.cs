@@ -62,7 +62,8 @@ namespace FiresCore.Npc
 
             humanoid.m_name = "NPC";
             humanoid.m_group = "player";
-            humanoid.m_faction = Character.Faction.Players;
+            // Dverger (attackable); owner/ally immunity is enforced in code, not by faction.
+            humanoid.m_faction = Character.Faction.Dverger;
             humanoid.m_health = 200f;
             humanoid.m_walkSpeed = 2f;
             humanoid.m_speed = 4f;

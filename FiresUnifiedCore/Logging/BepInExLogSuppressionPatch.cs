@@ -14,8 +14,8 @@ namespace FiresCore.Logging
     // Why this site and not UnityLogSuppressionPatch:
     //   UnityLogSuppressionPatch handles messages originating from Unity
     //   (Application.logMessageReceived → UnityLogSource). Messages
-    //   coming from BepInEx-internal log sources — HarmonyX, ManualLogSources,
-    //   ConfigSync, the chainloader itself — don't pass through Unity at
+    //   coming from BepInEx-internal log sources - HarmonyX, ManualLogSources,
+    //   ConfigSync, the chainloader itself - don't pass through Unity at
     //   all. They get sent straight to Logger.InternalLogEvent from their
     //   LogSource. Filtering here catches every path.
     //
@@ -26,11 +26,11 @@ namespace FiresCore.Logging
     //   }
     //
     // Suppressed at this layer (non-verbose only):
-    //   - HarmonyX "AccessTools.Method: Could not find method" — fires
+    //   - HarmonyX "AccessTools.Method: Could not find method" - fires
     //     when mods probe for next-PTB method signatures that don't
     //     exist on the current build. Expected noise once mods are wired
     //     for an upcoming Valheim build.
-    //   - HarmonyX "AccessTools.TypeByName: Could not find type" — same
+    //   - HarmonyX "AccessTools.TypeByName: Could not find type" - same
     //     shape, type-level probe.
     //
     // Anything else passes through unchanged.
@@ -57,12 +57,12 @@ namespace FiresCore.Logging
             if (method != null && !_diagnosticEmitted)
             {
                 _diagnosticEmitted = true;
-                Debug.Log($"{SummaryPrefix} BepInExLogSuppressionPatch wired to {LoggerTypeName}.{InternalMethodName} — HarmonyX noise will be filtered.");
+                Debug.Log($"{SummaryPrefix} BepInExLogSuppressionPatch wired to {LoggerTypeName}.{InternalMethodName} - HarmonyX noise will be filtered.");
             }
             else if (method == null && !_diagnosticEmitted)
             {
                 _diagnosticEmitted = true;
-                Debug.LogWarning($"{SummaryPrefix} BepInExLogSuppressionPatch could NOT locate {LoggerTypeName}.{InternalMethodName} — HarmonyX suppression disabled.");
+                Debug.LogWarning($"{SummaryPrefix} BepInExLogSuppressionPatch could NOT locate {LoggerTypeName}.{InternalMethodName} - HarmonyX suppression disabled.");
             }
             return method != null;
         }
