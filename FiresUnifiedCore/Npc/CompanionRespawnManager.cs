@@ -922,6 +922,19 @@ if (prefab == null)
     spawnPos = GetSpawnPositionNearPlayer(owner);
  }
 
+ // KENNEL-PRIMARY death-respawn: now that the spawn position is resolved, try the Core dormant
+ // store first (snapshot restored via ApplyState). The legacy RestoreCompanionFromVault path
+ // below is now an automatic FALLBACK — if the kennel doesn't hold this id or the spawn fails we
+ // fall through and the old path catches it, so a respawn can NEVER be lost. This is what makes
+ // the kennel death path actually execute (it was being masked by the legacy path winning).
+ // Once "Dormancy-spawned" is confirmed in the log, the legacy path is dead code (Phase 5).
+ if (FiresCore.Bridge.NpcDormancyBridge.IsAvailable &&
+     CompanionRestoreService.TrySpawnDormantById(data.OwnerPlayerId, data.CompanionId, spawnPos))
+ {
+     _pendingRespawns.Remove(data.CompanionId);
+     yield break;
+ }
+
          // Get the prefab
      GameObject prefab = ZNetScene.instance?.GetPrefab(data.PrefabName);
             if (prefab == null)
