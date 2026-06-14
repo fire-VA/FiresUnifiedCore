@@ -635,11 +635,22 @@ namespace FiresCore.Npc.Interactions
                     }
                 }
 
-                // Check for other Interactable objects that might be seats
-                var interactable = col.GetComponent<Interactable>();
-                if (interactable != null && chair == null)
+                // Non-Chair attach targets: ONLY real Beds.
+                //
+                // This branch previously accepted ANY Interactable that happened to expose a
+                // child transform named "attach"/"seat" (via FindAttachPointInObject). That
+                // heuristic false-matched prop interactables whose item-attach points look like
+                // seat anchors — most visibly the boss-trophy ItemStand hooks at the starting
+                // temple, which a companion would "sit" on as if it were a stool. CookingStation,
+                // CraftingStation and Fireplace are all Interactables with attach-like children
+                // too and were equally vulnerable.
+                //
+                // Vanilla has exactly two things a Character physically attaches to: Chair (sit,
+                // handled above) and Bed (lie down). Gating this branch on an explicit Bed
+                // component preserves the lie-on-bed behaviour while excluding every prop
+                // interactable — ItemStand included — by construction.
+                if (chair == null && col.GetComponentInParent<Bed>() != null)
                 {
-                    // Look for attach points in common seat structures
                     var attachPoint = FindAttachPointInObject(col.gameObject);
                     if (attachPoint != null && !IsAttachPointOccupied(attachPoint))
                     {
@@ -650,8 +661,7 @@ namespace FiresCore.Npc.Interactions
                         if (dist < nearestDist)
                         {
                             nearestDist = dist;
-                            string anim = DetermineAttachAnimation(col.gameObject);
-                            nearest = (attachPoint, anim, Vector3.zero, AttachType.Stool, col.gameObject);
+                            nearest = (attachPoint, "attach_bed", Vector3.zero, AttachType.Bed, col.gameObject);
                         }
                     }
                 }
@@ -699,18 +709,6 @@ namespace FiresCore.Npc.Interactions
                 return AttachType.Bed;
 
             return AttachType.Chair;
-        }
-
-        private string DetermineAttachAnimation(GameObject obj)
-        {
-            string name = obj.name.ToLowerInvariant();
-            
-            if (name.Contains("stool")) return "attach_stool";
-            if (name.Contains("bench")) return "attach_stool";
-            if (name.Contains("bed")) return "attach_bed";
-            if (name.Contains("mast")) return "attach_mast";
-            
-            return "attach_chair";
         }
 
         #endregion
