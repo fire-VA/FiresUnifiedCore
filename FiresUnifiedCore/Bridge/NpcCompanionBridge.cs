@@ -52,5 +52,19 @@ namespace FiresCore.Bridge
         {
             try { ApplyIdleWanderBehavior?.Invoke(npc, on); } catch { }
         }
+
+        /// <summary>
+        /// True when two companion owners are on the same side and should be immune to each other's
+        /// companion damage. Same owner is always allied; a party/guild system can assign
+        /// <see cref="OwnersAllied"/> to extend this to teammates. Null/absent ⇒ only same-owner.
+        /// </summary>
+        public static Func<long, long, bool> OwnersAllied;
+
+        public static bool AreOwnersAllied(long ownerA, long ownerB)
+        {
+            if (ownerA == 0L || ownerB == 0L) return false;
+            if (ownerA == ownerB) return true;
+            try { return OwnersAllied?.Invoke(ownerA, ownerB) ?? false; } catch { return false; }
+        }
     }
 }

@@ -130,7 +130,10 @@ namespace FiresCore.Npc.AI
                 // companion Hunting toggle. Stay mode uses the much smaller
                 // STAY_MODE_AGGRO_RANGE bubble and skips this gate so a
                 // staying companion still defends its post.
-                if (!isStaying && !IsPassiveCreature(character))
+                // Hostile PvP targets (another player's PvP-enabled companion/player) bypass the
+                // owner-defense gate so companions actively engage enemy squads instead of only
+                // defending the owner's bubble.
+                if (!isStaying && !IsPassiveCreature(character) && !IsHostilePvpTarget(character))
                 {
                     if (!IsThreatToOwnerOrSelf(character, ownerPos, ownerCharacter))
                         continue;
@@ -343,6 +346,13 @@ namespace FiresCore.Npc.AI
                 return false;
             if (target == m_character)
                 return false;
+
+            // PvP companion battles: a non-allied owner's companion or player — both sides PvP-enabled —
+            // is a valid target, bypassing the never-attack-player / never-attack-tamed / same-faction
+            // (Dverger) gates below. Opt-in: nothing fires unless both owners enabled PvP.
+            if (IsHostilePvpTarget(target))
+                return true;
+
             if (target.IsPlayer())
             {
                 // Tamed companions never attack players.
@@ -399,6 +409,41 @@ namespace FiresCore.Npc.AI
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// True when <paramref name="target"/> belongs to a DIFFERENT, non-allied owner and BOTH sides
+        /// have PvP enabled — a legitimate player-vs-player companion-battle target. This is the only
+        /// path by which a tamed companion engages another player's companion (or that player directly),
+        /// since they share the Dverger faction and are flagged tamed. Opt-in by design: nothing fires
+        /// unless both owners have toggled PvP on, and allied owners (party/guild hook) never qualify.
+        /// </summary>
+        private bool IsHostilePvpTarget(Character target)
+        {
+            if (target == null) return false;
+            if (_companion == null || !_companion.isTamed || _companion.ownerPlayerId == 0L) return false;
+
+            var myOwner = Player.GetPlayer(_companion.ownerPlayerId);
+            if (myOwner == null || !myOwner.IsPVPEnabled()) return false; // our side isn't in PvP → never
+
+            long targetOwnerId;
+            if (target.IsPlayer())
+            {
+                var tp = target as Player;
+                if (tp == null || !tp.IsPVPEnabled()) return false;
+                targetOwnerId = tp.GetPlayerID();
+            }
+            else
+            {
+                var targetComp = target.GetComponent<CompanionController>();
+                if (targetComp == null || !targetComp.isTamed || targetComp.ownerPlayerId == 0L) return false;
+                targetOwnerId = targetComp.ownerPlayerId;
+                var targetOwner = Player.GetPlayer(targetOwnerId);
+                if (targetOwner == null || !targetOwner.IsPVPEnabled()) return false;
+            }
+
+            // Same owner or allied side → not a target.
+            return !FiresCore.Bridge.NpcCompanionBridge.AreOwnersAllied(_companion.ownerPlayerId, targetOwnerId);
         }
 
         /// <summary>

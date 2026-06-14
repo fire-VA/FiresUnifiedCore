@@ -1685,11 +1685,10 @@ companionId = GenerateUniqueCompanionId();
        {
            _character.SetTamed(true);
 
-                // Flip faction/group to player team on tame so vanilla friendly-fire
-                // gates protect them from player attacks. Wild companions ship with
-                // m_faction=Dverger / m_group="" so they're hittable in the wild;
-                // once tamed they should behave like every other player-team unit.
-                _character.m_faction = Character.Faction.Players;
+                // Stay Dverger (attackable) even when tamed — making them Players would gate the owner
+                // (and everyone) out of PvP companion battles. Owner + allied-side friendly-fire
+                // protection is enforced in code (ShouldAllowDamage), not by faction.
+                _character.m_faction = Character.Faction.Dverger;
                 var tamedHumanoid = _character as Humanoid;
                 if (tamedHumanoid != null) tamedHumanoid.m_group = "player";
           }
@@ -2476,11 +2475,9 @@ private void RPC_TameCompanion(long sender)
                      {
                          _character.SetTamed(true);
 
-                        // Re-apply player faction/group on load. The wild prefab
-                        // baseline is Dverger / m_group="" so a saved tamed
-                        // companion that re-spawns from CompanionNpc_Wild would
-                        // otherwise reset to non-player team and take friendly fire.
-                        _character.m_faction = Character.Faction.Players;
+                        // Tamed companions stay Dverger (attackable) on load; owner/ally immunity is
+                        // enforced in code (ShouldAllowDamage), not via Faction.Players.
+                        _character.m_faction = Character.Faction.Dverger;
                         var loadedHumanoid = _character as Humanoid;
                         if (loadedHumanoid != null) loadedHumanoid.m_group = "player";
             }
@@ -3116,22 +3113,32 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         public CompanionFormationController GetFormationController() => _formationController;
 
         public bool ShouldAllowDamage(HitData hit)
-  {
-       if (!isTamed) return true;
-      if (allowNonOwnerDamage) return true;
+        {
+            if (!isTamed) return true;                              // wild / untamed → always damageable
+            if (hit == null || hit.m_attacker.IsNone()) return true; // environmental → allow
 
-  if (hit.m_attacker.IsNone()) return true;
+            var attacker = ZNetScene.instance?.FindInstance(hit.m_attacker)?.GetComponent<Character>();
+            if (attacker == null) return true;
 
-     var attacker = ZNetScene.instance?.FindInstance(hit.m_attacker)?.GetComponent<Character>();
-         if (attacker == null) return true;
+            // Immune ONLY to our own owner's side: the owner, the owner's other companions, and
+            // (when a party/guild supplies the hook) allied players + their companions. Every other
+            // attacker — monsters AND other players' companions — can hit us, which is what makes
+            // player-vs-player companion battles possible. allowNonOwnerDamage is a per-companion
+            // master toggle (default true) for callers that want a fully invulnerable companion.
+            long attackerOwnerId = ResolveOwnerSide(attacker);
+            if (FiresCore.Bridge.NpcCompanionBridge.AreOwnersAllied(attackerOwnerId, ownerPlayerId))
+                return false;
 
-            var attackerPlayer = attacker as Player;
-            if (attackerPlayer != null && attackerPlayer.GetPlayerID() == ownerPlayerId)
-            {
-           return false;
- }
+            return allowNonOwnerDamage;
+        }
 
-            return true;
+        // A player's "owner side" is themselves; a companion's is its owner; anything else is unowned (0).
+        private static long ResolveOwnerSide(Character attacker)
+        {
+            if (attacker == null) return 0L;
+            if (attacker is Player p) return p.GetPlayerID();
+            var comp = attacker.GetComponent<CompanionController>();
+            return comp != null ? comp.ownerPlayerId : 0L;
         }
 
         public void OpenInventory(Player player)

@@ -13,14 +13,14 @@ namespace FiresCore.Logging
     // installed on Debug.unityLogger, then routes the message through
     // BepInEx's LogSource → LogListener fan-out (console + disk).
     //
-    // Swapping Debug.unityLogger.logHandler — what the old
-    // RateLimitedLogHandler did — only intercepts Unity's own native
+    // Swapping Debug.unityLogger.logHandler - what the old
+    // RateLimitedLogHandler did - only intercepts Unity's own native
     // console writer, never BepInEx's. That's why 248 shader binary
     // warnings still landed in LogOutput.log despite the handler being
     // installed: the suppression path is unreachable.
     //
     // Real fix: HarmonyPrefix on UnityLogSource.OnUnityLogMessageReceived.
-    // Returning false skips BepInEx's original handler entirely — no
+    // Returning false skips BepInEx's original handler entirely - no
     // LogEvent is constructed, no listener (UnityLogSource → ConsoleLogListener
     // → DiskLogListener) ever sees the suppressed message. Verbose mode
     // is a top-level pass-through so the user can opt back into seeing
@@ -43,10 +43,17 @@ namespace FiresCore.Logging
         private const string KinematicLinearFragment     = "Setting linear velocity of a kinematic body is not supported";
         private const string KinematicAngularFragment    = "Setting angular velocity of a kinematic body is not supported";
         private const string LimitExceededFragment       = "Failed to send data k_EResultLimitExceeded";
+        // Non-readable (R/W-off) mesh warnings - generic Unity/PhysX/navmesh spam from Ashlands/Mistlands + modded
+        // content. Moved to Core so suppression doesn't depend on FiresAdminPrefabs being loaded (it kept its own
+        // copy of these). Mod-specific fragments (e.g. FAP's "FAPBlueprintBake_") stay in that mod's own patch.
+        private const string CombineMeshFragment         = "Cannot combine mesh that does not allow access";
+        private const string NavMeshReadFragment         = "RuntimeNavMeshBuilder: Source mesh";
+        private const string NavMeshReadAccessFragment   = "does not allow read access";
 
         private const int ShaderSummaryInterval         = 100;
         private const int MissingScriptSummaryInterval  = 100;
         private const int KinematicSummaryInterval      = 200;
+        private const int NonReadableMeshSummaryInterval = 100;
         private const double LimitExceededThrottleSeconds = 30.0;
 
         private const string SummaryPrefix = "[FiresUnifiedCore]";
@@ -57,9 +64,10 @@ namespace FiresCore.Logging
         private static int _suppressedShaderWarnings;
         private static int _suppressedMissingScriptWarnings;
         private static int _suppressedKinematicWarnings;
+        private static int _suppressedNonReadableMeshWarnings;
         private static DateTime _lastLimitExceeded = DateTime.MinValue;
 
-        // Diagnostic — surfaces in BepInEx logs once at startup so we
+        // Diagnostic - surfaces in BepInEx logs once at startup so we
         // can confirm the patch wired in. If this isn't present in the
         // log on next boot, BepInEx has renamed the type and the patch
         // skipped cleanly via Prepare returning false.
@@ -71,12 +79,12 @@ namespace FiresCore.Logging
             if (method != null && !_diagnosticEmitted)
             {
                 _diagnosticEmitted = true;
-                Debug.Log($"{SummaryPrefix} UnityLogSuppressionPatch wired to {UnityLogSourceTypeName}.{CallbackMethodName} — Unity log noise will be filtered.");
+                Debug.Log($"{SummaryPrefix} UnityLogSuppressionPatch wired to {UnityLogSourceTypeName}.{CallbackMethodName} - Unity log noise will be filtered.");
             }
             else if (method == null && !_diagnosticEmitted)
             {
                 _diagnosticEmitted = true;
-                Debug.LogWarning($"{SummaryPrefix} UnityLogSuppressionPatch could NOT locate {UnityLogSourceTypeName}.{CallbackMethodName} — BepInEx version may have renamed it. Suppression disabled.");
+                Debug.LogWarning($"{SummaryPrefix} UnityLogSuppressionPatch could NOT locate {UnityLogSourceTypeName}.{CallbackMethodName} - BepInEx version may have renamed it. Suppression disabled.");
             }
             return method != null;
         }
@@ -149,6 +157,14 @@ namespace FiresCore.Logging
                 EmitKinematicSummaryIfDue();
                 return true;
             }
+            if ((type == LogType.Warning || type == LogType.Error)
+                && (Contains(message, CombineMeshFragment)
+                    || (Contains(message, NavMeshReadFragment) && Contains(message, NavMeshReadAccessFragment))))
+            {
+                _suppressedNonReadableMeshWarnings++;
+                EmitNonReadableMeshSummaryIfDue();
+                return true;
+            }
             if (Contains(message, LimitExceededFragment))
             {
                 var now = DateTime.UtcNow;
@@ -191,6 +207,13 @@ namespace FiresCore.Logging
             if (_suppressedKinematicWarnings != 1
                 && _suppressedKinematicWarnings % KinematicSummaryInterval != 0) return;
             Debug.Log($"{SummaryPrefix} Suppressed {_suppressedKinematicWarnings} kinematic-rigidbody velocity warnings. Set verbose to surface.");
+        }
+
+        private static void EmitNonReadableMeshSummaryIfDue()
+        {
+            if (_suppressedNonReadableMeshWarnings != 1
+                && _suppressedNonReadableMeshWarnings % NonReadableMeshSummaryInterval != 0) return;
+            Debug.Log($"{SummaryPrefix} Suppressed {_suppressedNonReadableMeshWarnings} non-readable-mesh warnings (CombineMeshes / RuntimeNavMeshBuilder read access - R/W-off meshes on Ashlands + modded content). Set verbose to surface.");
         }
     }
 }
