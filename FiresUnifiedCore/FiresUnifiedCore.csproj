@@ -160,6 +160,7 @@
     <Compile Include="Bridge\DiscordSink.cs" />
     <Compile Include="Bridge\NpcModeBridge.cs" />
     <Compile Include="Bridge\CompanionEventBridge.cs" />
+    <Compile Include="Bridge\NpcDormancyBridge.cs" />
     <Compile Include="Bridge\NpcInteractionBridge.cs" />
     <Compile Include="Bridge\CompanionVaultBridge.cs" />
     <Compile Include="Bridge\NpcUiBridge.cs" />
