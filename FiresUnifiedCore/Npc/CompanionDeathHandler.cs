@@ -255,7 +255,48 @@ namespace FiresCore.Npc
 
         private void SaveDeathState()
         {
-            if (!FiresCore.Bridge.CompanionVaultBridge.IsVaultAvailable() || _companion.ownerPlayerId == 0) return;
+            if (_companion == null || _companion.ownerPlayerId == 0) return;
+
+            // ── Dormant store (kennel standalone / vault integrated) — the authoritative write ──
+            // Capture the Core NpcSaveState, apply the same drop-to-tombstone mutations as the
+            // legacy path below, and store a DeadPendingRespawn entry with an ABSOLUTE wall-clock
+            // deadline (crash-resumable). This is ungated by the legacy vault on purpose: the old
+            // `!IsVaultAvailable() => return` at the top meant STANDALONE death persisted NOTHING —
+            // dead companions were silently lost (the kennel's OnDeath hook never fires because the
+            // death flow uses OnDeathWithSnapshot). The dormancy seam is what the reworked restore
+            // engine reads, so this is now the source of truth for the death snapshot.
+            try
+            {
+                long deadlineTicks = DateTime.UtcNow.AddSeconds(Mathf.Max(0f, respawnDelay)).Ticks;
+                var deathSnap = _companion.CaptureState();
+                if (deathSnap != null && FiresCore.Bridge.NpcDormancyBridge.IsAvailable)
+                {
+                    if (dropEquipmentOnDeath)
+                    {
+                        deathSnap.EquipmentPrefabs?.Clear();
+                        deathSnap.EquipmentQualities?.Clear();
+                    }
+                    if (dropInventoryOnDeath)
+                        deathSnap.StorageInventoryData = null;
+
+                    FiresCore.Bridge.NpcDormancyBridge.Store(_companion.ownerPlayerId, new FiresCore.Bridge.DormantNpcEntry
+                    {
+                        NpcId                  = deathSnap.NpcId,
+                        Kind                   = FiresCore.Bridge.DormancyKind.DeadPendingRespawn,
+                        RecallDeadlineUtcTicks = deadlineTicks,
+                        Snapshot               = deathSnap,
+                    });
+                    if (VerboseLogging)
+                        Debug.Log($"[CompanionDeathHandler] Stored dormant death entry for {_companion.companionName} (respawn in {respawnDelay:F0}s)");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionDeathHandler] Dormant-store death write failed (non-fatal): {ex.Message}");
+            }
+
+            // ── Legacy vault / m_customData roster mirror (integrated mode only; deleted in Phase 5) ──
+            if (!FiresCore.Bridge.CompanionVaultBridge.IsVaultAvailable()) return;
 
             try
             {
