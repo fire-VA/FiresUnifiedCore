@@ -87,6 +87,7 @@ namespace FiresCore.Npc
             {
                 _nview.Register("RPC_CompanionDeath", RPC_CompanionDeath);
                 _nview.Register<string>("RPC_SetTombstone", RPC_SetTombstone);
+                _nview.Register<long, string, string, float>("RPC_CompanionDeathNotice", RPC_CompanionDeathNotice);
             }
 
             // Check if we should seek a tombstone (just respawned)
@@ -792,11 +793,23 @@ namespace FiresCore.Npc
 
         private void NotifyOwnerOfDeath()
         {
-            var owner = _companion.GetOwner();
-            if (owner != null && owner == Player.m_localPlayer)
+            if (_nview == null || _companion.ownerPlayerId == 0) return;
+            // RPC broadcasts during the local-player respawn/loading window deadlock the zone stream.
+            if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
+
+            // Broadcast so the OWNING player gets the message whether they're the listen-host or a
+            // remote client on a dedicated server — HandleDeath runs on the ZDO owner (the server),
+            // which has no local Player. Each client filters by owner id and localizes the killer
+            // name itself, so it reads correctly per-language even when the server is headless.
+            string killerRaw = _lastAttacker != null ? (_lastAttacker.m_name ?? "") : "";
+            try
             {
-                MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center,
-                    $"{_companion.GetDisplayName()} has fallen! Respawning in {respawnDelay:F0} seconds...");
+                _nview.InvokeRPC(ZNetView.Everybody, "RPC_CompanionDeathNotice",
+                    _companion.ownerPlayerId, _companion.GetDisplayName(), killerRaw, respawnDelay);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionDeathHandler] death notice RPC failed: {ex.Message}");
             }
         }
 
@@ -808,6 +821,27 @@ namespace FiresCore.Npc
         {
             if (_nview != null && _nview.IsOwner()) return;
             PlayDeathEffects();
+        }
+
+        // Shown on every client; only the owning player actually displays it. Killer name is localized
+        // here (client-side) so it respects each player's language even when the server is headless.
+        private void RPC_CompanionDeathNotice(long sender, long ownerPlayerId, string companionName, string killerRaw, float delay)
+        {
+            var lp = Player.m_localPlayer;
+            if (lp == null || lp.GetPlayerID() != ownerPlayerId) return;
+
+            string killer = null;
+            if (!string.IsNullOrEmpty(killerRaw))
+            {
+                try { killer = Localization.instance.Localize(killerRaw); }
+                catch { killer = killerRaw; }
+            }
+
+            string msg = string.IsNullOrEmpty(killer)
+                ? $"{companionName} died! Respawning in {delay:F0}s..."
+                : $"{companionName} died to {killer}! Respawning in {delay:F0}s...";
+
+            MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center, msg);
         }
 
         private void RPC_SetTombstone(long sender, string zdoidStr)

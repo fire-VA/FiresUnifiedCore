@@ -1771,16 +1771,6 @@ Debug.Log($"[CompanionController] {companionName} (ID: {companionId}) successful
 
         #region Death/Respawn System
 
-public void OnDefeated()
-  {
-   if (!isTamed) return;
-        
-            Debug.Log($"[CompanionController] {companionName} has been defeated!");
-
-            // Trigger death handler - this will manage destruction and respawn
-          _deathHandler.HandleDeath();
-     }
-
  public void Respawn()
       {
     if (_isRespawning) return;

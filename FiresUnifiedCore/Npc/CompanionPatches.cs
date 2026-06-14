@@ -2190,49 +2190,12 @@ namespace FiresCore.Npc
             Debug.Log($"[CompanionPatches] {companion.GetDisplayName()} retaliated against owner");
         }
 
-        /// <summary>
-        /// Patch Character.SetHealth to detect companion "death" and trigger respawn instead
-        /// </summary>
-        [HarmonyPatch(typeof(Character), nameof(Character.SetHealth))]
-        [HarmonyPrefix]
-        public static bool Character_SetHealth_Prefix(Character __instance, ref float health)
-        {
-            try
-            {
-                var companion = __instance.GetComponent<CompanionController>();
-                if (companion == null) return true; // Not our companion
-
-                // If companion is already defeated, prevent further death triggers
-                if (companion.isDefeated)
-                {
-                    // Keep health at max while defeated to prevent spam
-                    health = __instance.GetMaxHealth();
-                    return true;
-                }
-
-                // If health would go to 0 or below, trigger respawn instead of death
-                if (health <= 0f && companion.isTamed)
-                {
-                    if (CompanionCombat.VerboseLogging)
-                        Debug.Log($"[CompanionPatches] Companion {companion.GetDisplayName()} would die - triggering respawn instead");
-
-                    // Set health to max to prevent death and further triggers
-                    health = __instance.GetMaxHealth();
-
-                    // Trigger the respawn/teleport logic
-                    companion.OnDefeated();
-
-                    return true; // Continue with health = max
-                }
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[CompanionPatches] Character_SetHealth error: {ex.Message}");
-                return true;
-            }
-        }
+        // Companions die for real: vanilla death → ragdoll + CompanionDeathHandler.OnCharacterDeath
+        // (capture → respawn via the lossless CompanionVault.RestoreCompanion). The former
+        // Character.SetHealth keep-alive prefix that pinned health to max and called OnDefeated() was
+        // removed — it caused a multi-hit death loop and left the companion alive at max HP long enough
+        // for a raw ZDO reload to bypass the restore (the "bare CompanionNpc" bug). Death now flows
+        // solely through the _isDying-guarded OnCharacterDeath path.
 
         #endregion
 
