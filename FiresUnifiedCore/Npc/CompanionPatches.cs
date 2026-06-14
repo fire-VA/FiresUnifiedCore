@@ -1560,6 +1560,13 @@ namespace FiresCore.Npc
                         Debug.LogWarning($"[CompanionPatches] Roster refresh on logout failed (non-fatal): {ex.Message}");
                     }
 
+                    // CORE DORMANT STORE (replaces the former KennelLifecycle logout prefix): capture
+                    // FOLLOWING companions to the dormant store before release/destroy. In persistent
+                    // mode the live ZDO also survives and the login adopt-pass wins (then clears this
+                    // entry); in legacy mode this is the sole restore source. Null-safe, harmless either way.
+                    if (companion.ShouldBeFollowing)
+                        companion.StoreDormant(playerId, FiresCore.Bridge.DormancyKind.LoggedOutFollower, 0L);
+
                     var nview = companion.GetComponent<ZNetView>();
 
                     if (persistent)

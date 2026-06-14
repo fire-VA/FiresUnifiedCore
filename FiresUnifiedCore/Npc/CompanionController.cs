@@ -1236,7 +1236,13 @@ if (isTamed && ownerPlayerId == 0)
             try
             {
                 var ownerForRoster = GetOwner();
-                if (ownerForRoster != null) CompanionRosterWriter.OnDismissed(ownerForRoster, this);
+                if (ownerForRoster != null)
+                {
+                    CompanionRosterWriter.OnDismissed(ownerForRoster, this);
+                    // CORE DORMANT STORE (replaces KennelLifecycle.OnDismissed): retain the snapshot so
+                    // the player can recall later. Seam is null-safe when no dormant provider exists.
+                    StoreDormant(ownerForRoster.GetPlayerID(), FiresCore.Bridge.DormancyKind.Dismissed, 0L);
+                }
             }
             catch (Exception ex)
             {
@@ -1253,6 +1259,35 @@ if (isTamed && ownerPlayerId == 0)
 
             // Destroy the companion
             CompanionNetworkHelper.Destroy(gameObject);
+        }
+
+        /// <summary>
+        /// Capture this companion's current state and write it to the Core dormant store via the
+        /// provider-agnostic <see cref="FiresCore.Bridge.NpcDormancyBridge"/> seam. No-op when no
+        /// dormant provider is registered. Single Core entry point for going dormant on dismiss and
+        /// logout; death keeps its own inline capture because it also honours drop-on-death clearing.
+        /// </summary>
+        public bool StoreDormant(long playerId, FiresCore.Bridge.DormancyKind kind, long recallDeadlineUtcTicks)
+        {
+            if (playerId == 0L || !FiresCore.Bridge.NpcDormancyBridge.IsAvailable) return false;
+            try
+            {
+                var snap = CaptureState();
+                if (snap == null) return false;
+                FiresCore.Bridge.NpcDormancyBridge.Store(playerId, new FiresCore.Bridge.DormantNpcEntry
+                {
+                    NpcId                  = snap.NpcId,
+                    Kind                   = kind,
+                    RecallDeadlineUtcTicks = recallDeadlineUtcTicks,
+                    Snapshot               = snap,
+                });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionController] StoreDormant failed ({kind}) for {companionName}: {ex.Message}");
+                return false;
+            }
         }
 
      #endregion
@@ -1292,7 +1327,13 @@ if (isTamed && ownerPlayerId == 0)
             // ROSTER MIRROR (Phase 3): persistent intent = Following.
             try
             {
-                if (player != null) CompanionRosterWriter.OnFollowCommand(player, this);
+                if (player != null)
+                {
+                    CompanionRosterWriter.OnFollowCommand(player, this);
+                    // CORE DORMANT STORE (replaces KennelLifecycle.OnFollowCommand): the companion is
+                    // live again, so clear any stale dormant copy. Idempotent + null-safe.
+                    FiresCore.Bridge.NpcDormancyBridge.Remove(player.GetPlayerID(), companionId);
+                }
             }
             catch (Exception ex)
             {
