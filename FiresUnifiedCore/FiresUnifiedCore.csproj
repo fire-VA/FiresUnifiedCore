@@ -507,6 +507,7 @@
     <Compile Include="Services\BundleLoadInterceptor.cs" />
     <Compile Include="Services\DistantRenderer.cs" />
     <Compile Include="Services\MaterialSwapper.cs" />
+    <Compile Include="Services\VanillaMaterialCache.cs" />
     <Compile Include="Services\ShaderSwapper.cs" />
     <Compile Include="Services\VanillaAssetResolver.cs" />
     <Compile Include="Services\WaterShaderBridge.cs" />
