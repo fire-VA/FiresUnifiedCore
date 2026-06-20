@@ -2081,6 +2081,16 @@ namespace FiresCore.Npc
                     return false; // Block damage
                 }
 
+                // Tamed companions carry a 0.5kg rigidbody mass (so the OWNER can physically shove
+                // them while moving — see CompanionPersonalSpaceEnforcer). The downside: enemy
+                // weapons' HitData.m_pushForce, applied as an impulse, launches them across the map.
+                // Zero the knockback here so they still take damage + stagger from monster hits but
+                // stay rooted in place. ShouldAllowDamage already filtered out owner-side attackers
+                // (blocked above), so anything reaching this point is a non-allied attacker. Wild
+                // companions keep vanilla feedback so combat feel is unchanged for them.
+                if (hit != null && companion.isTamed && hit.m_pushForce > 0f)
+                    hit.m_pushForce = 0f;
+
                 return true; // Allow normal damage processing
             }
             catch (Exception ex)
