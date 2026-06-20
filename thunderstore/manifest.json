@@ -1,6 +1,6 @@
 {
     "name":  "FiresUnifiedCore",
-    "version_number":  "1.0.0",
+    "version_number":  "0.1.0",
     "website_url":  "https://github.com/fire-VA/FiresUnifiedCore",
     "description":  "Part of the Fires mod family for Valheim.",
     "dependencies":  [
