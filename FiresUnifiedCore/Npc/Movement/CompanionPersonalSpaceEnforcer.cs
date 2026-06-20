@@ -4,24 +4,17 @@ using FiresCore.Npc.Formation;
 namespace FiresCore.Npc.Movement
 {
     /// <summary>
-    /// Runtime physics component that (a) keeps a tamed companion out of
-    /// personal-space bubbles around the local player and sibling companions,
-    /// and (b) makes tamed companions lightweight so the player can shove them
-    /// but they cannot meaningfully shove back.
+    /// Runtime physics component that keeps a tamed companion out of personal-space bubbles around
+    /// the local player and sibling companions, so the player can move through their squad without
+    /// the companions hard-blocking them.
     ///
-    /// SOFT PUSH (FixedUpdate):
-    ///   Applies a soft acceleration away from any nearby player or peer
-    ///   companion before a collision impulse can accumulate, so companions
-    ///   don't stack or crowd the player during combat.
-    ///
-    /// ONE-WAY PUSH (mass):
-    ///   Tamed companions are given a very low rigidbody mass (TAMED_COMPANION_MASS).
-    ///   The local player character has ~60ï¿½ more mass, so:
-    ///     - Player walks into companion ? companion gets knocked aside (player "pushes" it).
-    ///     - Companion walks into player ? player barely moves.
-    ///   Untamed (wild) companions are NOT affected ï¿½ they keep their default
-    ///   prefab mass so combat feel (knockback, stance) is unchanged and they
-    ///   can still physically interact with the player during a fight.
+    /// Implemented as a soft acceleration field in FixedUpdate using <see cref="ForceMode.Acceleration"/>,
+    /// which is mass-independent — the companion is pushed away from the player regardless of how heavy
+    /// it is. We deliberately do NOT mutate the rigidbody mass: previous revisions forced it to 0.5 kg
+    /// to make the player "win" collisions, but the side effect was that any monster hit
+    /// (<c>HitData.m_pushForce</c>) launched the companion across the map. Keeping mass at the prefab
+    /// baseline (~50 kg, set by <c>CompanionPrefabManager</c> / scale-multiplied at spawn) lets enemy
+    /// knockback and stagger feel right; this field is what handles the player-yields-aside behaviour.
     ///
     [RequireComponent(typeof(Rigidbody))]
     public class CompanionPersonalSpaceEnforcer : MonoBehaviour
@@ -32,14 +25,6 @@ namespace FiresCore.Npc.Movement
         private const float COMPANION_RADIUS     = 1.4f;   // personal space between sibling companions
         private const float COMPANION_PUSH_STRENGTH = 18f;
         private const float MAX_ACCEL            = 40f;    // safety clamp so we never launch a companion
-
-        // Tamed companions are given a very low rigidbody mass so the local
-        // player (~60 kg default in Valheim) massively dominates any contact.
-        // Result: player can walk into a companion and physically push it;
-        // a companion walking into the player barely nudges them.
-        // Untamed (wild) companions keep their default prefab mass so combat
-        // feel is unaffected.
-        private const float TAMED_COMPANION_MASS = 0.5f;
 
         private CompanionController _companion;
         private Rigidbody _rigidbody;
@@ -52,41 +37,11 @@ namespace FiresCore.Npc.Movement
             _character = GetComponent<Character>();
         }
 
-        private void OnEnable()
-        {
-            // Apply low mass as soon as this companion is enabled so the
-            // player always dominates in any physical contact.
-            ApplyTamedMassIfNeeded();
-        }
-
-        /// <summary>
-        /// Lowers the companion's rigidbody mass if it is tamed, so the
-        /// local player can physically push it but it cannot meaningfully
-        /// shove the player back. Called on enable and whenever taming state
-        /// changes.
-        /// </summary>
-        public void ApplyTamedMassIfNeeded()
-        {
-            if (_companion == null || _rigidbody == null) return;
-            if (_companion.isTamed)
-                _rigidbody.mass = TAMED_COMPANION_MASS;
-        }
-
         private void FixedUpdate()
         {
             if (_rigidbody == null || _rigidbody.isKinematic) return;
             if (_companion == null || !_companion.isTamed) return;
             if (_character == null || _character.IsDead()) return;
-
-            // Self-healing mass cap. Several other systems (CompanionPrefabManager
-            // setup, CompanionRandomLoadout, vault restore, respawn manager) write
-            // to rigidbody.mass AFTER our OnEnable runs, leaving the companion at
-            // 50+ kg instead of TAMED_COMPANION_MASS. At parity-with-player the
-            // companion can shove the player around â€” the bug the user reports.
-            // Re-asserting the cap every FixedUpdate is cheap and lets all the
-            // other writers do whatever they want; we simply override.
-            if (_rigidbody.mass > TAMED_COMPANION_MASS)
-                _rigidbody.mass = TAMED_COMPANION_MASS;
 
             Vector3 myPos = transform.position;
             Vector3 push = Vector3.zero;

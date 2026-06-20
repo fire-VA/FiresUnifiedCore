@@ -1677,10 +1677,6 @@ companionId = GenerateUniqueCompanionId();
            ownerPlayerId = owner.GetPlayerID();
        isDefeated = false;
 
-            // Apply low mass now that the companion is tamed so the player
-            // can physically push it without the companion shoving back.
-            GetComponent<CompanionPersonalSpaceEnforcer>()?.ApplyTamedMassIfNeeded();
-
            if (_character != null)
        {
            _character.SetTamed(true);
