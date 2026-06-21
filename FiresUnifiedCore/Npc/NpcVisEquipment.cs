@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Reflection;
+using HarmonyLib;
 using UnityEngine;
 
 namespace FiresCore.Npc
@@ -31,6 +33,33 @@ namespace FiresCore.Npc
 
         // Cache equipment state to detect changes
         private Dictionary<CompanionInventory.EquipmentSlot, string> _lastEquipment = new();
+
+        // Every NpcVisEquipment registers its underlying VisEquipment here so the
+        // VisEquipmentBackWeaponRefreshPatch (below) can recognize our NPCs and drive their
+        // back-weapon attach every frame. See that patch for why this is necessary.
+        private static readonly Dictionary<VisEquipment, NpcVisEquipment> _managedVisEquipments
+            = new Dictionary<VisEquipment, NpcVisEquipment>();
+
+        internal static bool TryGetManaged(VisEquipment vis, out NpcVisEquipment npc)
+            => _managedVisEquipments.TryGetValue(vis, out npc);
+
+        /// <summary>
+        /// Reads the desired back-weapon hashes from this NPC's synced ZDO (the same source
+        /// vanilla UpdateEquipmentVisuals reads at the player-gated path). Returns false when
+        /// there is no ZDO yet (hammer ghosts / pre-init), in which case no back refresh is done.
+        /// </summary>
+        internal bool TryGetDesiredBackHashes(out int leftBack, out int rightBack, out int leftBackVariant)
+        {
+            leftBack = 0;
+            rightBack = 0;
+            leftBackVariant = 0;
+            var zdo = _nview != null ? _nview.GetZDO() : null;
+            if (zdo == null) return false;
+            leftBack = zdo.GetInt(ZDOVars.s_leftBackItem);
+            rightBack = zdo.GetInt(ZDOVars.s_rightBackItem);
+            leftBackVariant = zdo.GetInt(ZDOVars.s_leftBackItemVariant);
+            return true;
+        }
 
         /// <summary>
         /// Gets the underlying VisEquipment component.
@@ -546,6 +575,8 @@ namespace FiresCore.Npc
                 _visEquipment.enabled = bodyModelValid && shaderCompatible;
 
                 _initialized = true;
+                if (_visEquipment != null)
+                    _managedVisEquipments[_visEquipment] = this;
                 if (VerboseLogging)
                     Debug.Log($"[NpcVisEquipment] Initialized VisEquipment for {gameObject.name}, m_isPlayer={_visEquipment.m_isPlayer}, bodyValid={bodyModelValid}, shaderOK={shaderCompatible}");
                 if (!bodyModelValid)
@@ -1864,6 +1895,9 @@ namespace FiresCore.Npc
         /// </summary>
         private void OnDestroy()
         {
+            if (_visEquipment != null)
+                _managedVisEquipments.Remove(_visEquipment);
+
             // Cancel any pending invokes
             CancelInvoke();
             
@@ -2127,6 +2161,73 @@ namespace FiresCore.Npc
                 if (found != null) return found;
             }
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Refreshes BACK-weapon visuals for Fires NPCs/companions every frame.
+    ///
+    /// Vanilla VisEquipment.UpdateEquipmentVisuals only attaches/detaches back weapons inside
+    /// `if (m_isPlayer)` (it calls the private SetBackEquipped only there). NpcVisEquipment keeps
+    /// m_isPlayer == false on companions so that UpdateBaseModel/UpdateColors never clobber the
+    /// armor body material. The side effect: the per-frame loop refreshes HAND weapons but NEVER
+    /// touches the back slots — so a weapon drawn from the back stays stuck on the back, and a
+    /// weapon holstered to the back never appears there.
+    ///
+    /// This postfix runs after the vanilla per-frame update on EVERY client and, for our NPCs only,
+    /// drives vanilla's own SetBackEquipped using the back hashes from the synced ZDO. SetBackEquipped
+    /// cache-compares m_current*BackItemHash, so it is a cheap no-op when nothing changed and a correct
+    /// destroy+reattach on a real swap. It touches only the back slots (never hair/beard/armor/body),
+    /// so the armor-underlay fix (m_isPlayer == false) is fully preserved, and because it reads the
+    /// replicated ZDO it corrects both the owning machine and remote observers.
+    /// </summary>
+    [HarmonyPatch(typeof(VisEquipment), "UpdateEquipmentVisuals")]
+    internal static class VisEquipmentBackWeaponRefreshPatch
+    {
+        private static Func<VisEquipment, int, int, int, bool> _setBackEquipped;
+        private static Action<VisEquipment> _updateLodgroup;
+        private static bool _resolved;
+        private static bool _usable;
+
+        private static void Resolve()
+        {
+            _resolved = true;
+            try
+            {
+                const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance;
+                var setBack = typeof(VisEquipment).GetMethod("SetBackEquipped", flags,
+                    null, new[] { typeof(int), typeof(int), typeof(int) }, null);
+                if (setBack == null) return;
+                _setBackEquipped = (Func<VisEquipment, int, int, int, bool>)Delegate.CreateDelegate(
+                    typeof(Func<VisEquipment, int, int, int, bool>), setBack);
+
+                var lod = typeof(VisEquipment).GetMethod("UpdateLodgroup", flags,
+                    null, Type.EmptyTypes, null);
+                if (lod != null)
+                    _updateLodgroup = (Action<VisEquipment>)Delegate.CreateDelegate(
+                        typeof(Action<VisEquipment>), lod);
+
+                _usable = true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[NpcVisEquipment] Back-weapon refresh patch could not bind VisEquipment internals: {ex.Message}");
+            }
+        }
+
+        private static void Postfix(VisEquipment __instance)
+        {
+            if (__instance == null) return;
+            if (!NpcVisEquipment.TryGetManaged(__instance, out var npc) || npc == null) return;
+            if (!npc.TryGetDesiredBackHashes(out int leftBack, out int rightBack, out int leftBackVariant))
+                return;
+
+            if (!_resolved) Resolve();
+            if (!_usable) return;
+
+            bool changed = _setBackEquipped(__instance, leftBack, rightBack, leftBackVariant);
+            if (changed)
+                _updateLodgroup?.Invoke(__instance);
         }
     }
 }
