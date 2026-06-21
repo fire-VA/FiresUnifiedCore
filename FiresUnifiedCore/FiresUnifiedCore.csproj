@@ -148,6 +148,9 @@
     <Reference Include="UnityEngine.UnityWebRequestModule">
       <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.UnityWebRequestModule.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestAudioModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.UnityWebRequestAudioModule.dll</HintPath>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="FiresUnifiedCore.cs" />
@@ -183,6 +186,11 @@
     <Compile Include="ClientLogRelay\Interactions\DisconnectLogRegistry.cs" />
     <Compile Include="Items\ItemDataHelper.cs" />
     <Compile Include="Npc\NpcPrefabSetup.cs" />
+    <Compile Include="Audio\FiresCustomAudioStore.cs" />
+    <Compile Include="Npc\Patrol\PatrolRoute.cs" />
+    <Compile Include="Npc\Patrol\PatrolRouteManager.cs" />
+    <Compile Include="Npc\Patrol\PatrolAssignment.cs" />
+    <Compile Include="Npc\IdleBehaviors\PatrolBehavior.cs" />
     <Compile Include="Npc\NpcSaveState.cs" />
     <Compile Include="Npc\NpcVisEquipment.cs" />
     <Compile Include="Npc\VisEquipmentCompat.cs" />

@@ -109,6 +109,12 @@ namespace FiresCore.Npc
             fishing.Initialize(_companion, this);
             _subBehaviors.Add(fishing);
 
+            // Patrol - walk an assigned route. Force-started by route assignment (see
+            // TryStartPatrolIfAssigned), NOT part of the random idle rotation.
+            var patrol = new PatrolBehavior();
+            patrol.Initialize(_companion, this);
+            _subBehaviors.Add(patrol);
+
             if (VerboseLogging)
                 Debug.Log($"[CompanionIdleBehavior] Initialized {_subBehaviors.Count} sub-behaviors");
         }
@@ -284,6 +290,23 @@ namespace FiresCore.Npc
                     count++;
             }
             return count;
+        }
+
+        // True if this NPC carries a PatrolAssignment that resolves to a real (>=2 point) saved route.
+        private bool HasPatrolRoute()
+        {
+            var a = GetComponent<FiresCore.Npc.Patrol.PatrolAssignment>();
+            return a != null && a.HasRoute;
+        }
+
+        // Force-starts PatrolBehavior (as a command, so it owns AI authority) whenever the NPC has a
+        // route and isn't already busy. Called every Update tick so patrol resumes after combat/commands.
+        private void TryStartPatrolIfAssigned()
+        {
+            if (_activeSubBehavior != null) return;
+            if (!HasPatrolRoute()) return;
+            if (_stateController != null && _stateController.IsPlayerCommandActive) return;
+            TryStartSubBehavior<PatrolBehavior>();
         }
 
         private void CancelActiveSubBehavior()

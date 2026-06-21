@@ -128,6 +128,108 @@ UIFontConfig.ApplyStyle(buttonText, UIFontConfig.ButtonText);
         return button;
         }
 
+        /// <summary>
+        /// Creates a button styled to match the baked parchment "book" UI (warm-brown face, cream ink,
+        /// dark outline) instead of the dark default theme. Use this for any runtime widget that sits
+        /// alongside the NPC book / dressing room. When the control lives over an open InventoryGui the
+        /// onClick will be swallowed — pass onClick=null and drive it via a manual RectangleContainsScreenPoint
+        /// hit-test; otherwise pass onClick normally.
+        /// </summary>
+        public static Button CreateParchmentButton(Transform parent, string text, Vector2 anchorMin, Vector2 anchorMax,
+            UnityEngine.Events.UnityAction onClick = null)
+        {
+            var button = CreateButton(parent, text, anchorMin, anchorMax,
+                UIFontConfig.Colors.ParchmentButton, UIFontConfig.Colors.ParchmentButtonHover,
+                UIFontConfig.Colors.ParchmentButtonPressed, onClick);
+
+            var outline = button.gameObject.AddComponent<Outline>();
+            outline.effectColor = UIFontConfig.Colors.ParchmentEdge;
+            outline.effectDistance = new Vector2(1.5f, -1.5f);
+
+            var label = button.GetComponentInChildren<TextMeshProUGUI>();
+            if (label != null)
+            {
+                label.color = UIFontConfig.Colors.ParchmentButtonInk;
+                label.enableAutoSizing = true;
+                label.fontSizeMin = 9f;
+                label.fontSizeMax = 13f;
+            }
+
+            return button;
+        }
+
+        /// <summary>
+        /// Creates a single-line TMP_InputField with the parchment field styling. Builds the
+        /// Viewport/Text/Placeholder hierarchy TMP_InputField requires. Caller focuses it (ActivateInputField).
+        /// </summary>
+        public static TMP_InputField CreateInputField(Transform parent, string name, string placeholderText,
+            Vector2 anchorMin, Vector2 anchorMax, int fontSize = 13)
+        {
+            var inputGO = new GameObject(name);
+            inputGO.transform.SetParent(parent, false);
+            var inputRect = inputGO.AddComponent<RectTransform>();
+            inputRect.anchorMin = anchorMin;
+            inputRect.anchorMax = anchorMax;
+            inputRect.offsetMin = Vector2.zero;
+            inputRect.offsetMax = Vector2.zero;
+            var img = inputGO.AddComponent<Image>();
+            img.color = UIFontConfig.Colors.ParchmentField;
+            img.raycastTarget = true;
+
+            var viewportGO = new GameObject("Viewport");
+            viewportGO.transform.SetParent(inputGO.transform, false);
+            var viewportRect = viewportGO.AddComponent<RectTransform>();
+            viewportRect.anchorMin = Vector2.zero;
+            viewportRect.anchorMax = Vector2.one;
+            viewportRect.offsetMin = new Vector2(8, 2);
+            viewportRect.offsetMax = new Vector2(-8, -2);
+            viewportGO.AddComponent<RectMask2D>();
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(viewportGO.transform, false);
+            var textRect = textGO.AddComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = Vector2.zero;
+            textRect.offsetMax = Vector2.zero;
+            var text = textGO.AddComponent<TextMeshProUGUI>();
+            text.fontSize = fontSize;
+            text.color = UIFontConfig.Colors.ParchmentInk;
+            text.alignment = TextAlignmentOptions.Left;
+            text.raycastTarget = false;
+            ApplyValheimFont(text);
+
+            var placeholderGO = new GameObject("Placeholder");
+            placeholderGO.transform.SetParent(viewportGO.transform, false);
+            var placeholderRect = placeholderGO.AddComponent<RectTransform>();
+            placeholderRect.anchorMin = Vector2.zero;
+            placeholderRect.anchorMax = Vector2.one;
+            placeholderRect.offsetMin = Vector2.zero;
+            placeholderRect.offsetMax = Vector2.zero;
+            var placeholder = placeholderGO.AddComponent<TextMeshProUGUI>();
+            placeholder.text = placeholderText ?? "";
+            placeholder.fontSize = fontSize;
+            placeholder.color = new Color(UIFontConfig.Colors.ParchmentLabel.r, UIFontConfig.Colors.ParchmentLabel.g, UIFontConfig.Colors.ParchmentLabel.b, 0.6f);
+            placeholder.alignment = TextAlignmentOptions.Left;
+            placeholder.fontStyle = FontStyles.Italic;
+            placeholder.raycastTarget = false;
+            ApplyValheimFont(placeholder);
+
+            var input = inputGO.AddComponent<TMP_InputField>();
+            input.textViewport = viewportRect;
+            input.textComponent = text;
+            input.placeholder = placeholder;
+            input.fontAsset = text.font;
+            input.pointSize = fontSize;
+            input.lineType = TMP_InputField.LineType.SingleLine;
+            input.contentType = TMP_InputField.ContentType.Standard;
+            input.caretColor = UIFontConfig.Colors.ParchmentInk;
+            input.selectionColor = UIFontConfig.Colors.ParchmentItemSelected;
+            input.interactable = true;
+
+            return input;
+        }
+
         #endregion
 
         #region Scrollable Area Creation
