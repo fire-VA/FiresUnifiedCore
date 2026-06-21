@@ -389,7 +389,7 @@ namespace FiresCore.Npc
                 // Static placement with CompanionController ÃƒÂ¯Ã‚Â¿Ã‚Â½ only run if wandering is enabled
                 if (_npcModule == null)
                     _npcModule = GetComponent<CompanionNpcModule>();
-                if (_npcModule == null || !_npcModule.allowIdleWandering)
+                if (_npcModule == null || (!_npcModule.allowIdleWandering && !HasPatrolRoute()))
                     return;
             }
             else if (!_companion.isTamed)
@@ -512,6 +512,9 @@ namespace FiresCore.Npc
 
             // Check for stuck states periodically
             CheckForStuckState();
+
+            // Patrol: keep an assigned route running (force-started, not part of the random rotation).
+            TryStartPatrolIfAssigned();
 
             // Update active sub-behavior
             UpdateActiveSubBehavior();

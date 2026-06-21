@@ -276,6 +276,22 @@ public static readonly UITextStyle TabText = new UITextStyle
          public static readonly Color ButtonPressed = new Color(0.6f, 0.4f, 0.2f, 1f);
          public static readonly Color ButtonDisabled = new Color(0.1f, 0.1f, 0.1f, 0.5f);
 
+         // Parchment "book" theme — matches the baked NPC book + BookOptionPopup so runtime-built
+         // widgets sit alongside the book without looking out of place. Use the Parchment* helpers
+         // on UIBuilderHelper rather than the dark-default CreateButton when building over the book.
+         public static readonly Color ParchmentPanel = new Color(0.81f, 0.73f, 0.55f, 0.98f);
+         public static readonly Color ParchmentHeader = new Color(0.55f, 0.42f, 0.22f, 0.95f);
+         public static readonly Color ParchmentButton = new Color(0.50f, 0.34f, 0.12f, 0.92f);
+         public static readonly Color ParchmentButtonHover = new Color(0.62f, 0.45f, 0.16f, 0.92f);
+         public static readonly Color ParchmentButtonPressed = new Color(0.40f, 0.27f, 0.10f, 0.95f);
+         public static readonly Color ParchmentButtonInk = new Color(0.97f, 0.92f, 0.78f);
+         public static readonly Color ParchmentEdge = new Color(0.21f, 0.13f, 0.05f, 0.70f);
+         public static readonly Color ParchmentOutline = new Color(0.30f, 0.20f, 0.09f, 0.85f);
+         public static readonly Color ParchmentInk = new Color(0.20f, 0.13f, 0.05f);
+         public static readonly Color ParchmentLabel = new Color(0.36f, 0.26f, 0.12f);
+         public static readonly Color ParchmentField = new Color(0.30f, 0.20f, 0.09f, 0.22f);
+         public static readonly Color ParchmentItemSelected = new Color(0.62f, 0.45f, 0.16f, 0.55f);
+
          // Scrollbar colors
          public static readonly Color ScrollbarHandle = new Color(0.6f, 0.45f, 0.25f, 0.9f);
          public static readonly Color ScrollbarHandleHover = new Color(0.7f, 0.55f, 0.35f, 1f);
