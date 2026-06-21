@@ -1957,8 +1957,14 @@ namespace FiresCore.Npc
                 var model = _visEquipment.m_models[Mathf.Clamp(modelIndex, 0, _visEquipment.m_models.Length - 1)];
                 if (model != null && model.m_mesh != null && _visEquipment.m_bodyModel != null)
                     _visEquipment.m_bodyModel.sharedMesh = model.m_mesh;
+                // Switching the body model resets m_bodyModel.material from the model's base material, which wipes
+                // the armor body-underlay textures vanilla wrote onto it (_ChestTex/_LegsTex — the chest/legs
+                // "skin" the user saw missing on static NPCs). Clear vanilla's APPLIED hashes (not the desired
+                // m_xxxItemHash) so the next UpdateEquipmentVisuals re-writes chest/legs/etc. onto the fresh
+                // material in the same pass that reset it.
+                ClearVisEquipmentCurrentHashes();
                 if (VerboseLogging)
-                    Debug.Log($"[NpcVisEquipment] SetAppearance - Model: {modelIndex}");
+                    Debug.Log($"[NpcVisEquipment] SetAppearance - Model: {modelIndex} (cleared current hashes to re-apply armor underlay)");
             }
 
             // Set hair if requested ï¿½ UpdateEquipmentVisuals() will spawn it without m_isPlayer=true
