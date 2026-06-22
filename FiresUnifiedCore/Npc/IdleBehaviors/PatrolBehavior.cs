@@ -86,6 +86,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private void OnArrived()
         {
+            WriteCheckpoint();
             RerollDeviation();
             int last = _route.Points.Count - 1;
 
@@ -132,6 +133,15 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var c = Random.insideUnitCircle * DeviationRadius;
             _deviation = new Vector3(c.x, 0f, c.y);
+        }
+
+        // Persists the last reached waypoint (base point, not the deviated target) to the NPC's ZDO so a
+        // death-while-patrolling can respawn it here. Owner-only — the server owns these NPCs.
+        private void WriteCheckpoint()
+        {
+            var nview = Companion != null ? Companion.GetComponent<ZNetView>() : null;
+            if (nview == null || !nview.IsValid() || !nview.IsOwner()) return;
+            nview.GetZDO()?.Set("npc_patrol_checkpoint", _route.Points[_index]);
         }
 
         public override string GetStatusDescription()
