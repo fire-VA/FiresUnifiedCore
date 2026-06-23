@@ -24,6 +24,10 @@ namespace FiresCore.Npc.IdleBehaviors
         private float _waitUntil;
         private Vector3 _deviation;
 
+        public const float TeleportTimeout = 60f;  // seconds spent trying to reach a waypoint before snapping to it
+        private int _lastIndex = -1;
+        private float _targetSince;
+
         public override string BehaviorName => "Patrol";
         public override bool AvailableForIdleRotation => false; // force-started by route assignment, not random rotation
 
@@ -52,16 +56,22 @@ namespace FiresCore.Npc.IdleBehaviors
             _direction = 1;
             _waiting = false;
             _index = NearestPointIndex();
+            _lastIndex = _index;
+            _targetSince = Time.time;
             RerollDeviation();
         }
 
         public override bool Update()
         {
-            // Interrupted for combat (IsActive=false): hold position and stay the active behavior so the
-            // framework can resume us afterward — don't move or complete.
-            if (!IsActive) return false;
+            // Interrupted for combat (IsActive=false): hold position, stay the active behavior so the
+            // framework can resume us afterward, and keep the join timer fresh so combat time doesn't count
+            // toward a teleport.
+            if (!IsActive) { _targetSince = Time.time; return false; }
 
             if (_route == null || _route.Points.Count < 2) return true; // route lost → end (re-evaluated next tick)
+
+            // Restart the per-waypoint join timer whenever the target waypoint changes.
+            if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; }
 
             if (_waiting)
             {
@@ -74,7 +84,15 @@ namespace FiresCore.Npc.IdleBehaviors
 
             Vector3 target = _route.Points[_index] + _deviation;
             if (!IsReachable(target)) target = _route.Points[_index];   // deviation pushed off-mesh → use base point
-            if (!IsReachable(target)) { AdvanceIndex(); return false; } // base point unreachable → skip waypoint
+
+            // Couldn't reach this waypoint within the timeout (unreachable, stuck, or just assigned the route
+            // from far away / mid-air) → snap onto it. This is how an NPC that isn't on its route gets there.
+            if (Time.time - _targetSince > TeleportTimeout)
+            {
+                TeleportTo(_route.Points[_index]);
+                OnArrived();
+                return false;
+            }
 
             TryMoveToPosition(target, walk: true);
 
@@ -82,6 +100,16 @@ namespace FiresCore.Npc.IdleBehaviors
                 OnArrived();
 
             return false;   // never completes on its own
+        }
+
+        // Snaps the NPC onto a route point (owner-side; syncs to others via ZSyncTransform). Used as the
+        // fallback when walking can't get it onto the route.
+        private void TeleportTo(Vector3 point)
+        {
+            if (Transform == null) return;
+            Transform.position = point;
+            var rb = Companion != null ? Companion.GetComponent<Rigidbody>() : null;
+            if (rb != null) { rb.position = point; rb.linearVelocity = Vector3.zero; }
         }
 
         private void OnArrived()
