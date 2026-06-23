@@ -699,7 +699,11 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
       if (valheimTamed != isTamed)
 {
        isTamed = valheimTamed;
-if (isTamed && ownerPlayerId == 0)
+// Static NPCs are tamed (Dverger faction) but must stay OWNERLESS — auto-adopting the nearest player as
+// owner made them immune to that player's hits (the owner-damage block), so they could never be killed or
+// respawn. Skip the auto-owner assignment for static placements.
+if (isTamed && ownerPlayerId == 0 &&
+    GetComponent<FiresCore.Npc.NpcMode.CompanionNpcModule>()?.isStaticPlacement != true)
      {
           var nearestPlayer = Player.GetClosestPlayer(transform.position, 10f);
        if (nearestPlayer != null)
@@ -2619,7 +2623,7 @@ if (isTamed)
             {
      try
          {
-       var nameField = typeof(Humanoid).GetField("m_name", 
+       var nameField = typeof(Humanoid).GetField("m_name",
   System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
                 if (nameField != null)
             {
@@ -2628,6 +2632,13 @@ if (isTamed)
              }
            catch { }
      }
+
+            // CRITICAL: the floating EnemyHud label for a TAMED NPC reads Tameable.GetHoverName() →
+            // ZDOVars.s_tamedName, NOT m_name. So renaming only updated the hover prompt, never the billboard.
+            // Push the name onto s_tamedName (owner-side) so the floating name above the head actually changes.
+            var nview = _character.m_nview;
+            if (nview != null && nview.IsValid() && nview.IsOwner())
+                nview.GetZDO()?.Set(ZDOVars.s_tamedName, name);
      }
 
       /// <summary>

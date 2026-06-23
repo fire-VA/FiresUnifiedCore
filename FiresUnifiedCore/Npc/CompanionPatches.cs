@@ -2062,15 +2062,17 @@ namespace FiresCore.Npc
                 {
                     npcModule.OnDirectlyAttacked();
 
-                    // Check if hit was from owner - they should react but not take damage
-                    if (hit.GetAttacker() is Player attackerPlayer)
+                    // Owner-hit reaction (stumble instead of taking damage) is ONLY for player-owned
+                    // companion-style stationed NPCs. Static NPCs are ownerless and MUST stay killable so they
+                    // can die → respawn. Never run the owner-block for them (this also covers static NPCs that
+                    // already persisted a stale owner id from the old auto-owner misfire).
+                    if (!npcModule.isStaticPlacement
+                        && hit.GetAttacker() is Player attackerPlayer
+                        && companion.IsOwner(attackerPlayer))
                     {
-                        if (companion.IsOwner(attackerPlayer))
-                        {
-                            // React to being hit by owner - stumble and retaliate once
-                            ReactToOwnerHit(companion, __instance, attackerPlayer, hit);
-                            return false; // Block damage but we handled the reaction
-                        }
+                        // React to being hit by owner - stumble and retaliate once
+                        ReactToOwnerHit(companion, __instance, attackerPlayer, hit);
+                        return false; // Block damage but we handled the reaction
                     }
                 }
 
