@@ -268,8 +268,9 @@ namespace FiresCore.Npc.NpcMode
         {
             if (!isStationedAsNpc || !_hasStationedPosition || _isInPlacementMode) return;
 
-            // Position enforcement (non-wandering only)
-            if (!allowIdleWandering)
+            // Position enforcement (non-wandering only) — but NOT while a patrol route is assigned, or it would
+            // yank the NPC back to its stationed spot every frame and fight gravity + the patrol mover.
+            if (!allowIdleWandering && !HasPatrolRoute())
             {
                 float dist = Vector3.Distance(transform.position, _stationedPosition);
                 if (dist > 0.1f)
