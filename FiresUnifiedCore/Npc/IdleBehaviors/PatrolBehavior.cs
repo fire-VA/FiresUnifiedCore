@@ -18,7 +18,8 @@ namespace FiresCore.Npc.IdleBehaviors
         // NPC must path through them to reach the NEXT waypoint), and the deviation adds organic offset.
         public const float ReachDistance = 3.5f;
         public const float WaitSeconds = 4.0f;
-        public const float DeviationRadius = 1.5f;
+        public const float DeviationRadius = 1.2f;
+        public const float ChatPauseRange = 3.5f;  // stop and let a player interact when this close
 
         private PatrolRoute _route;
         private int _index;
@@ -73,8 +74,15 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (_route == null || _route.Points.Count < 2) return true; // route lost → end (re-evaluated next tick)
 
-            // Restart the per-waypoint join timer whenever the target waypoint changes.
-            if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; }
+            // Stop and let a nearby player interact/chat instead of pushing past them — and don't walk off
+            // while the player is engaging the NPC (they stay within this range while its UI is open, since
+            // the inventory pins them in place). Resumes from the same waypoint once they leave.
+            if (Player.GetClosestPlayer(Transform.position, ChatPauseRange) != null)
+            {
+                StopMovement();
+                _targetSince = Time.time;
+                return false;
+            }
 
             if (_waiting)
             {
@@ -85,11 +93,27 @@ namespace FiresCore.Npc.IdleBehaviors
                 RerollDeviation();
             }
 
+            // Look-ahead: advance the cursor through every waypoint we're already within reach of BEFORE
+            // issuing the move, so the move target is always far enough that vanilla MoveTo never hits its
+            // stop-at-arrival branch (it stops ~2m out; the cursor advances at 3.5m). The NPC therefore flows
+            // through nodes continuously instead of stopping at each one — and this is also the "route is a
+            // guide" smoothing (near nodes get skipped). An open route's endpoint sets _waiting and breaks out.
+            int guard = 0;
+            while (!_waiting && guard++ < _route.Points.Count
+                   && Utils.DistanceXZ(Transform.position, _route.Points[_index]) <= ReachDistance)
+            {
+                OnArrived();
+            }
+            if (_waiting) { StopMovement(); return false; }
+
+            // Restart the per-waypoint join timer whenever the target waypoint changes (incl. after a skip).
+            if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; }
+
             Vector3 target = _route.Points[_index] + _deviation;
             if (!IsReachable(target)) target = _route.Points[_index];   // deviation pushed off-mesh → use base point
 
             // Couldn't reach this waypoint within the timeout (unreachable, stuck, or just assigned the route
-            // from far away / mid-air) → snap onto it. This is how an NPC that isn't on its route gets there.
+            // from far away) → snap onto it. This is how an NPC that isn't on its route gets there.
             if (Time.time - _targetSince > TeleportTimeout)
             {
                 TeleportTo(_route.Points[_index]);
@@ -102,9 +126,6 @@ namespace FiresCore.Npc.IdleBehaviors
             // selects m_walkSpeed; other behaviors (combat/follow) re-assert their own mode so this won't stick.
             Companion?.GetComponent<Character>()?.SetWalk(true);
             TryMoveToPosition(target, walk: true);
-
-            if (Utils.DistanceXZ(Transform.position, target) <= ReachDistance)
-                OnArrived();
 
             return false;   // never completes on its own
         }
