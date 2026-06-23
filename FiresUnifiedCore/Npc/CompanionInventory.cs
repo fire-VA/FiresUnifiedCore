@@ -1448,6 +1448,14 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
     /// </summary>
         public void ApplyVisualEquipment()
         {
+            // Static NPCs don't use the companion inventory — their gear lives directly in the VisEquipment
+            // ZDO, set from the dressing room's equip fields via NpcVisEquipment. Their CompanionInventory is
+            // empty, so applying it here would strip the gear (this is what made a patrolling static NPC walk
+            // off naked once it ran companion behaviors like weapon-holstering). The static path owns visuals.
+            var staticModule = GetComponent<FiresCore.Npc.NpcMode.CompanionNpcModule>();
+            if (staticModule != null && staticModule.isStaticPlacement)
+                return;
+
             // CRITICAL: Validate weapon combinations before applying visuals
             // This catches any invalid states that might have slipped through
             ValidateAndFixWeaponCombinations();
