@@ -395,6 +395,20 @@ namespace FiresCore.Npc.NpcMode
         {
             if (!_hasStationedPosition) return;
 
+            // A patrol route overrides stationing: release the freeze (gravity + free movement) and let
+            // PatrolBehavior drive. Do NOT snap the NPC back to its (possibly mid-air) stationed spot.
+            if (HasPatrolRoute())
+            {
+                EnsurePatrolPhysicsReleased();
+                _wasPatrolling = true;
+                return;
+            }
+            if (_wasPatrolling)
+            {
+                _wasPatrolling = false;
+                RefreezeStationedHere();
+            }
+
             // If idle wandering is allowed, DON'T lock movement - let the companion wander
             if (allowIdleWandering)
             {
@@ -445,6 +459,44 @@ namespace FiresCore.Npc.NpcMode
                 // Position was corrected ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ need to re-zero movement next frame
                 _stationaryEnforced = false;
             }
+        }
+
+        private bool _wasPatrolling;
+
+        private bool HasPatrolRoute()
+        {
+            var pa = GetComponent<FiresCore.Npc.Patrol.PatrolAssignment>();
+            return pa != null && pa.HasRoute;
+        }
+
+        // Releases the stationed freeze so a patrolling NPC obeys gravity (drops out of the air) and can walk.
+        // Idempotent + re-checked each frame so a late re-freeze (e.g. the initializer) can't strand it floating.
+        private void EnsurePatrolPhysicsReleased()
+        {
+            var body = _rigidbody != null ? _rigidbody : GetComponent<Rigidbody>();
+            if (body != null && (body.constraints != RigidbodyConstraints.None || body.isKinematic || !body.useGravity))
+            {
+                body.constraints = RigidbodyConstraints.None;
+                body.isKinematic = false;
+                body.useGravity = true;
+            }
+            if (_combatMovement != null && _combatMovement.IsMovementLocked)
+                _combatMovement.UnlockMovement();
+            var mai = GetComponent<MonsterAI>();
+            if (mai != null && !mai.enabled) mai.enabled = true;
+            var syncTransform = GetComponent<ZSyncTransform>();
+            if (syncTransform != null && !syncTransform.m_syncRotation) syncTransform.m_syncRotation = true;
+            _stationaryEnforced = false;
+        }
+
+        // Re-applies the stationary freeze at the NPC's current spot when its patrol route is removed.
+        private void RefreezeStationedHere()
+        {
+            _stationedPosition = transform.position;
+            var body = _rigidbody != null ? _rigidbody : GetComponent<Rigidbody>();
+            if (body != null) { body.constraints = RigidbodyConstraints.FreezeAll; body.useGravity = false; }
+            if (_combatMovement != null) _combatMovement.LockMovement("StationedNpc", 999999f);
+            _stationaryEnforced = false;
         }
 
         /// <summary>
