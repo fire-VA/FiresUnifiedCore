@@ -13,9 +13,12 @@ namespace FiresCore.Npc.IdleBehaviors
     /// </summary>
     public class PatrolBehavior : IdleSubBehavior
     {
-        public const float ReachDistance = 2.0f;
+        // The route is a GUIDE, not a rail: a generous reach distance lets the NPC cut corners / pass near
+        // waypoints instead of pivoting onto each exact point (chokepoints are still traversed because the
+        // NPC must path through them to reach the NEXT waypoint), and the deviation adds organic offset.
+        public const float ReachDistance = 3.5f;
         public const float WaitSeconds = 4.0f;
-        public const float DeviationRadius = 1.2f;
+        public const float DeviationRadius = 1.5f;
 
         private PatrolRoute _route;
         private int _index;
@@ -94,6 +97,10 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
+            // Force vanilla WALK speed. The pathfinding chain only ever calls SetRun(false), leaving m_walk
+            // false → the NPC would use the jog tier (m_speed=10, ~2× walk). Setting m_walk every patrol frame
+            // selects m_walkSpeed; other behaviors (combat/follow) re-assert their own mode so this won't stick.
+            Companion?.GetComponent<Character>()?.SetWalk(true);
             TryMoveToPosition(target, walk: true);
 
             if (Utils.DistanceXZ(Transform.position, target) <= ReachDistance)

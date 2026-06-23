@@ -67,10 +67,10 @@ namespace FiresCore.Npc.NpcMode
         public string traderProfile = "";
 
         [Header("Animations")]
-        [Tooltip("Animation to play when player approaches")]
-        public string greetAnimation = "emote_wave";
-        [Tooltip("Animation to play when player leaves")]
-        public string byeAnimation = "emote_wave";
+        [Tooltip("Animation to play when player approaches (empty = none; set deliberately)")]
+        public string greetAnimation = "";
+        [Tooltip("Animation to play when player leaves (empty = none; set deliberately)")]
+        public string byeAnimation = "";
 
         #endregion
 
@@ -530,59 +530,19 @@ namespace FiresCore.Npc.NpcMode
         private void PlayGreetAnimation()
         {
             if (_animator == null) return;
-
-            // First try the configured greet animation
-            if (!string.IsNullOrEmpty(greetAnimation) && HasAnimatorParameter(greetAnimation))
-            {
+            // Greet plays ONLY when an animation was deliberately configured — no default-wave fallback.
+            if (string.IsNullOrEmpty(greetAnimation) || greetAnimation == "(none)") return;
+            if (HasAnimatorParameter(greetAnimation))
                 _animator.SetTrigger(greetAnimation);
-                if (VerboseLogging)
-                    Debug.Log($"[CompanionNpcModule] {DisplayName} playing configured greet animation: {greetAnimation}");
-                return;
-            }
-
-            // Fallback to common greet animations
-            string[] greetAnims = { "emote_wave", "emote_bow", "emote_thumbsup", "wave", "greet" };
-            foreach (var anim in greetAnims)
-            {
-                if (HasAnimatorParameter(anim))
-                {
-                    _animator.SetTrigger(anim);
-                    // Update the configured animation to what we found
-                    greetAnimation = anim;
-                    if (VerboseLogging)
-                        Debug.Log($"[CompanionNpcModule] {DisplayName} playing fallback greet animation: {anim}");
-                    return;
-                }
-            }
         }
 
         private void PlayByeAnimation()
         {
             if (_animator == null) return;
-
-            // First try the configured bye animation
-            if (!string.IsNullOrEmpty(byeAnimation) && HasAnimatorParameter(byeAnimation))
-            {
+            // Bye plays ONLY when an animation was deliberately configured — no default-wave fallback.
+            if (string.IsNullOrEmpty(byeAnimation) || byeAnimation == "(none)") return;
+            if (HasAnimatorParameter(byeAnimation))
                 _animator.SetTrigger(byeAnimation);
-                if (VerboseLogging)
-                    Debug.Log($"[CompanionNpcModule] {DisplayName} playing configured bye animation: {byeAnimation}");
-                return;
-            }
-
-            // Fallback to common bye animations
-            string[] byeAnims = { "emote_wave", "wave", "bye" };
-            foreach (var anim in byeAnims)
-            {
-                if (HasAnimatorParameter(anim))
-                {
-                    _animator.SetTrigger(anim);
-                    // Update the configured animation to what we found
-                    byeAnimation = anim;
-                    if (VerboseLogging)
-                        Debug.Log($"[CompanionNpcModule] {DisplayName} playing fallback bye animation: {anim}");
-                    return;
-                }
-            }
         }
 
         private bool HasAnimatorParameter(string paramName)
@@ -1197,8 +1157,12 @@ namespace FiresCore.Npc.NpcMode
                 Debug.Log($"[CompanionNpcModule] Migrated {DisplayName ?? gameObject.name} wander radius from 5m to 20m");
             }
             useTerritoryBounds = zdo.GetBool("npc_use_territory_bounds", true);
-            greetAnimation = zdo.GetString("npc_greet_animation", "emote_wave");
-            byeAnimation = zdo.GetString("npc_bye_animation", "emote_wave");
+            greetAnimation = zdo.GetString("npc_greet_animation", "");
+            byeAnimation = zdo.GetString("npc_bye_animation", "");
+            // Migrate the old hard-coded "emote_wave" default (never a deliberate choice) to none, so NPCs
+            // placed before this change also stop auto-waving on approach.
+            if (greetAnimation == "emote_wave") greetAnimation = "";
+            if (byeAnimation == "emote_wave") byeAnimation = "";
 
             _hasStationedPosition = zdo.GetBool("npc_has_stationed_pos", false);
             if (_hasStationedPosition)
@@ -1233,8 +1197,8 @@ namespace FiresCore.Npc.NpcMode
             zdo.Set("npc_idle_wander_radius", idleWanderRadius);
             zdo.Set("npc_wander_buffer_zone", wanderBufferZone);
             zdo.Set("npc_use_territory_bounds", useTerritoryBounds);
-            zdo.Set("npc_greet_animation", greetAnimation ?? "emote_wave");
-            zdo.Set("npc_bye_animation", byeAnimation ?? "emote_wave");
+            zdo.Set("npc_greet_animation", greetAnimation ?? "");
+            zdo.Set("npc_bye_animation", byeAnimation ?? "");
 
             zdo.Set("npc_has_stationed_pos", _hasStationedPosition);
             if (_hasStationedPosition)
