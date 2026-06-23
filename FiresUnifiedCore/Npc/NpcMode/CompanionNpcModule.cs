@@ -268,15 +268,6 @@ namespace FiresCore.Npc.NpcMode
         {
             if (!isStationedAsNpc || !_hasStationedPosition || _isInPlacementMode) return;
 
-            // Position enforcement (non-wandering only) — but NOT while a patrol route is assigned, or it would
-            // yank the NPC back to its stationed spot every frame and fight gravity + the patrol mover.
-            if (!allowIdleWandering && !HasPatrolRoute())
-            {
-                float dist = Vector3.Distance(transform.position, _stationedPosition);
-                if (dist > 0.1f)
-                    transform.position = _stationedPosition;
-            }
-
             // Face nearest player ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ works WITH Valheim's Character rotation system
             // instead of fighting it. We just set m_lookDir and let Character.UpdateBodyRotation
             // do the smooth turning.
@@ -348,40 +339,13 @@ namespace FiresCore.Npc.NpcMode
                     syncTransform.m_syncRotation = false;
             }
 
-            // Lock movement in combat movement system
-            if (_combatMovement != null)
-            {
-                _combatMovement.LockMovement("StationedNpc", 999999f);
-            }
-
-            // Set home position for idle behavior (if wandering allowed)
-            if (_combatMovement != null && _hasStationedPosition)
-            {
-                _combatMovement.SetHomePosition(_stationedPosition);
-            }
-
-            // Disable CompanionAI following
+            // Hold position via the AI Stay state + home position — NOT by locking movement or freezing the
+            // body. The NPC keeps normal companion physics (gravity on); EnforceWanderBounds walks it back to
+            // its mark if it is knocked off. This is exactly a companion told to Stay.
             if (_companionAI != null)
-            {
                 _companionAI.SetStayPosition(_stationedPosition);
-            }
-
-            // Stop character movement - but ONLY if rigidbody is NOT kinematic
-            // Unity 6 throws warnings when setting velocity on kinematic bodies,
-            // and Character.SetMoveDir() internally sets velocity
-            if (_character != null && (_rigidbody == null || !_rigidbody.isKinematic))
-            {
-                _character.SetMoveDir(Vector3.zero);
-                _character.SetWalk(false);
-                _character.SetRun(false);
-            }
-
-            // Stop rigidbody - only if NOT kinematic (Unity 6 doesn't allow setting velocity on kinematic bodies)
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                _rigidbody.linearVelocity = Vector3.zero;
-                _rigidbody.angularVelocity = Vector3.zero;
-            }
+            if (_combatMovement != null && _hasStationedPosition)
+                _combatMovement.SetHomePosition(_stationedPosition);
 
             if (VerboseLogging)
                 Debug.Log($"[CompanionNpcModule] Applied stationed state for {DisplayName}");
@@ -396,108 +360,23 @@ namespace FiresCore.Npc.NpcMode
         {
             if (!_hasStationedPosition) return;
 
-            // A patrol route overrides stationing: release the freeze (gravity + free movement) and let
-            // PatrolBehavior drive. Do NOT snap the NPC back to its (possibly mid-air) stationed spot.
-            if (HasPatrolRoute())
-            {
-                EnsurePatrolPhysicsReleased();
-                _wasPatrolling = true;
-                return;
-            }
-            if (_wasPatrolling)
-            {
-                _wasPatrolling = false;
-                RefreezeStationedHere();
-            }
+            // Never lock movement — a stationed NPC must stay free to walk back to its mark or patrol. The
+            // body keeps normal companion physics; position is held by the AI (EnforceWanderBounds), not a snap.
+            if (_combatMovement != null && _combatMovement.IsMovementLocked)
+                _combatMovement.UnlockMovement();
 
-            // If idle wandering is allowed, DON'T lock movement - let the companion wander
-            if (allowIdleWandering)
-            {
-                // Make sure movement is NOT locked so idle behaviors work
-                if (_combatMovement != null && _combatMovement.IsMovementLocked)
-                {
-                    // Only unlock if locked by us (StationedNpc)
-                    _combatMovement.UnlockMovement();
-                }
+            // Patrol drives movement itself — don't also pull the NPC home.
+            if (HasPatrolRoute()) return;
 
-                // Enforce territory or radius bounds
-                EnforceWanderBounds();
-                return;
-            }
-
-            // Stationary mode - keep locked in place
-            if (_combatMovement != null && !_combatMovement.IsMovementLocked)
-            {
-                _combatMovement.LockMovement("StationedNpc", 999999f);
-            }
-
-            // PERF: Only zero velocity/moveDir once ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ not every frame.
-            // Each SetMoveDir call goes through a Harmony prefix patch that does
-            // component lookups on every Character, so avoiding redundant calls
-            // saves significant CPU per stationed NPC per frame.
-            if (!_stationaryEnforced)
-            {
-                if (_rigidbody != null && !_rigidbody.isKinematic)
-                {
-                    _rigidbody.linearVelocity = Vector3.zero;
-                    _rigidbody.angularVelocity = Vector3.zero;
-                }
-
-                if (_character != null && (_rigidbody == null || !_rigidbody.isKinematic))
-                {
-                    _character.SetMoveDir(Vector3.zero);
-                    _character.SetWalk(false);
-                    _character.SetRun(false);
-                }
-                _stationaryEnforced = true;
-            }
-
-            // Snap back to position if drifted
-            float distance = Vector3.Distance(transform.position, _stationedPosition);
-            if (distance > 0.1f)
-            {
-                transform.position = _stationedPosition;
-                // Position was corrected ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ need to re-zero movement next frame
-                _stationaryEnforced = false;
-            }
+            // Stationary or wandering: the AI walks the NPC home if it drifts past the return radius (replaces
+            // the old per-frame position snap — same as a companion told to Stay that gets knocked away).
+            EnforceWanderBounds();
         }
-
-        private bool _wasPatrolling;
 
         private bool HasPatrolRoute()
         {
             var pa = GetComponent<FiresCore.Npc.Patrol.PatrolAssignment>();
             return pa != null && pa.HasRoute;
-        }
-
-        // Releases the stationed freeze so a patrolling NPC obeys gravity (drops out of the air) and can walk.
-        // Idempotent + re-checked each frame so a late re-freeze (e.g. the initializer) can't strand it floating.
-        private void EnsurePatrolPhysicsReleased()
-        {
-            var body = _rigidbody != null ? _rigidbody : GetComponent<Rigidbody>();
-            if (body != null && (body.constraints != RigidbodyConstraints.None || body.isKinematic || !body.useGravity))
-            {
-                body.constraints = RigidbodyConstraints.None;
-                body.isKinematic = false;
-                body.useGravity = true;
-            }
-            if (_combatMovement != null && _combatMovement.IsMovementLocked)
-                _combatMovement.UnlockMovement();
-            var mai = GetComponent<MonsterAI>();
-            if (mai != null && !mai.enabled) mai.enabled = true;
-            var syncTransform = GetComponent<ZSyncTransform>();
-            if (syncTransform != null && !syncTransform.m_syncRotation) syncTransform.m_syncRotation = true;
-            _stationaryEnforced = false;
-        }
-
-        // Re-applies the stationary freeze at the NPC's current spot when its patrol route is removed.
-        private void RefreezeStationedHere()
-        {
-            _stationedPosition = transform.position;
-            var body = _rigidbody != null ? _rigidbody : GetComponent<Rigidbody>();
-            if (body != null) { body.constraints = RigidbodyConstraints.FreezeAll; body.useGravity = false; }
-            if (_combatMovement != null) _combatMovement.LockMovement("StationedNpc", 999999f);
-            _stationaryEnforced = false;
         }
 
         /// <summary>
@@ -932,36 +811,24 @@ namespace FiresCore.Npc.NpcMode
             }
             else
             {
-                // Lock down completely - NPC stays in place
-                ApplyStationedState();
-
-                // Disable AI and physics ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ NPC should not move or rotate on its own
-                var monsterAI = GetComponent<MonsterAI>();
-                if (monsterAI != null) monsterAI.enabled = false;
-
+                // Stay in place — held by the AI Stay state with NORMAL companion physics (gravity on, no
+                // freeze). The idle-wander generator is gated off by allowIdleWandering=false, so the NPC
+                // stands on its mark; EnforceWanderBounds walks it back if it gets knocked away.
                 var body = GetComponent<Rigidbody>();
                 if (body != null)
                 {
-                    // FreezeAll instead of isKinematic=true: vanilla Character.UpdateMotion
-                    // writes m_body.linearVelocity every FixedUpdate, which spams Unity 6
-                    // "kinematic body" warnings if we make the body kinematic. Constraints
-                    // anchor the body without forbidding velocity writes.
-                    body.constraints = RigidbodyConstraints.FreezeAll;
-                    body.useGravity = false;
+                    body.constraints = RigidbodyConstraints.FreezeRotation;
+                    body.isKinematic = false;
+                    body.useGravity = true;
                 }
 
-                // Clear force return state
                 _isForceReturningHome = false;
-
-                // Snap back to original position
-                transform.position = _stationedPosition;
-                transform.rotation = _stationedRotation;
-                
-                // Clear territory
                 _currentTerritoryRadius = null;
                 _currentTerritoryName = null;
 
-                Debug.Log($"[CompanionNpcModule] Disabled wandering, snapped to {_stationedPosition}");
+                ApplyStationedState();   // sets Stay position + home + per-client facing
+
+                Debug.Log($"[CompanionNpcModule] {DisplayName} set to stay in place (AI-held, normal physics)");
                 MessageHud.instance?.ShowMessage(MessageHud.MessageType.TopLeft,
                     $"{DisplayName} will now stay in place");
             }
