@@ -32,6 +32,17 @@ namespace FiresCore.Npc.IdleBehaviors
         private int _lastIndex = -1;
         private float _targetSince;
 
+        // Stuck recovery: ground NPCs get no vanilla un-stick and the patrol move path has none of its own, so
+        // when the NPC stops getting closer to its waypoint we escalate a recovery step (fresh path → lateral
+        // nudge → skip the node) long before the teleport backstop kicks in.
+        public const float NoProgressEpsilon = 0.5f;    // XZ gain toward the waypoint that counts as progress
+        public const float NoProgressTimeout = 4f;      // no progress for this long → take the next recovery step
+        public const float RecoveryStepCooldown = 6f;   // min seconds between recovery steps so each one can act
+        private float _bestDistToTarget = float.MaxValue;
+        private float _lastProgressTime;
+        private float _lastRecoveryTime;
+        private int _stuckEscalation;
+
         public override string BehaviorName => "Patrol";
         public override bool AvailableForIdleRotation => false; // force-started by route assignment, not random rotation
 
@@ -62,6 +73,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _index = NearestPointIndex();
             _lastIndex = _index;
             _targetSince = Time.time;
+            ResetProgress();
             RerollDeviation();
         }
 
@@ -70,7 +82,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Interrupted for combat (IsActive=false): hold position, stay the active behavior so the
             // framework can resume us afterward, and keep the join timer fresh so combat time doesn't count
             // toward a teleport.
-            if (!IsActive) { _targetSince = Time.time; return false; }
+            if (!IsActive) { _targetSince = Time.time; ResetProgress(); return false; }
 
             if (_route == null || _route.Points.Count < 2) return true; // route lost → end (re-evaluated next tick)
 
@@ -81,6 +93,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 StopMovement();
                 _targetSince = Time.time;
+                ResetProgress();
                 return false;
             }
 
@@ -106,8 +119,23 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             if (_waiting) { StopMovement(); return false; }
 
-            // Restart the per-waypoint join timer whenever the target waypoint changes (incl. after a skip).
-            if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; }
+            // Restart the per-waypoint join timer + stuck tracker whenever the target waypoint changes.
+            if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; ResetProgress(); }
+
+            // Stuck recovery: if we stop getting closer to this waypoint, escalate a recovery step well before
+            // the 60s teleport backstop. Any real progress re-baselines the clock, so a long straight leg or an
+            // NPC still walking onto its route never trips it. Runs before the move so the step takes effect now.
+            float distToWaypoint = Utils.DistanceXZ(Transform.position, _route.Points[_index]);
+            if (distToWaypoint < _bestDistToTarget - NoProgressEpsilon)
+            {
+                _bestDistToTarget = distToWaypoint;
+                _lastProgressTime = Time.time;
+            }
+            else if (Time.time - _lastProgressTime > NoProgressTimeout
+                     && Time.time - _lastRecoveryTime > RecoveryStepCooldown)
+            {
+                StepStuckRecovery();
+            }
 
             Vector3 target = _route.Points[_index] + _deviation;
             if (!IsReachable(target)) target = _route.Points[_index];   // deviation pushed off-mesh → use base point
@@ -170,6 +198,38 @@ namespace FiresCore.Npc.IdleBehaviors
             if ((_direction == 1 && _index >= last) || (_direction == -1 && _index <= 0))
                 _direction = -_direction;
             _index = Mathf.Clamp(_index + _direction, 0, last);
+        }
+
+        // Re-baselines the no-progress clock. Called wherever the per-waypoint timer resets (start, combat hold,
+        // player pause, waypoint change) so paused/interrupted time and fresh legs never read as "stuck".
+        private void ResetProgress()
+        {
+            _bestDistToTarget = float.MaxValue;
+            _lastProgressTime = Time.time;
+            _lastRecoveryTime = Time.time;
+            _stuckEscalation = 0;
+        }
+
+        // One rung of the stuck-recovery ladder, re-baselining the clock so the next rung waits a full cooldown.
+        // If even skipping the node doesn't help, the existing 60s TeleportTimeout snap is the final backstop.
+        private void StepStuckRecovery()
+        {
+            _lastRecoveryTime = Time.time;
+            _lastProgressTime = Time.time;
+            _bestDistToTarget = float.MaxValue;
+            switch (_stuckEscalation++)
+            {
+                case 0:
+                    CompanionAI?.RequestPathRecalculation();   // fresh navmesh path (defeats the vanilla path cache)
+                    break;
+                case 1:
+                    RerollDeviation();                          // nudge laterally off whatever we're wedged against
+                    break;
+                default:
+                    AdvanceIndex();                             // give up on this node; move on (no checkpoint write)
+                    _stuckEscalation = 0;
+                    break;
+            }
         }
 
         private int NearestPointIndex()
