@@ -43,6 +43,10 @@ namespace FiresCore.Npc.IdleBehaviors
         private float _lastRecoveryTime;
         private int _stuckEscalation;
 
+        // TEMP diagnostic state — remove once patrol-on-relog is confirmed.
+        private float _lastDiagTime;
+        private Vector3 _lastDiagPos;
+
         public override string BehaviorName => "Patrol";
         public override bool AvailableForIdleRotation => false; // force-started by route assignment, not random rotation
 
@@ -82,7 +86,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Interrupted for combat (IsActive=false): hold position, stay the active behavior so the
             // framework can resume us afterward, and keep the join timer fresh so combat time doesn't count
             // toward a teleport.
-            if (!IsActive) { _targetSince = Time.time; ResetProgress(); return false; }
+            if (!IsActive) { _targetSince = Time.time; ResetProgress(); PatrolDiag("COMBAT-HOLD", 0f); return false; }
 
             if (_route == null || _route.Points.Count < 2) return true; // route lost → end (re-evaluated next tick)
 
@@ -94,12 +98,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 StopMovement();
                 _targetSince = Time.time;
                 ResetProgress();
+                PatrolDiag("PROXIMITY-PAUSE", Utils.DistanceXZ(Transform.position, _route.Points[_index]));
                 return false;
             }
 
             if (_waiting)
             {
                 StopMovement();
+                PatrolDiag("WAITING", 0f);
                 if (Time.time < _waitUntil) return false;
                 _waiting = false;
                 _index = Mathf.Clamp(_index + _direction, 0, _route.Points.Count - 1);
@@ -144,10 +150,13 @@ namespace FiresCore.Npc.IdleBehaviors
             // from far away) → snap onto it. This is how an NPC that isn't on its route gets there.
             if (Time.time - _targetSince > TeleportTimeout)
             {
+                Debug.Log($"[PatrolDiag] {DiagId} TELEPORT-BACKSTOP idx={_index} to={_route.Points[_index]}");
                 TeleportTo(_route.Points[_index]);
                 OnArrived();
                 return false;
             }
+
+            PatrolDiag("MOVING", distToWaypoint);
 
             // Force vanilla WALK speed. The pathfinding chain only ever calls SetRun(false), leaving m_walk
             // false → the NPC would use the jog tier (m_speed=10, ~2× walk). Setting m_walk every patrol frame
@@ -214,6 +223,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // If even skipping the node doesn't help, the existing 60s TeleportTimeout snap is the final backstop.
         private void StepStuckRecovery()
         {
+            Debug.Log($"[PatrolDiag] {DiagId} STUCK-RECOVERY step={_stuckEscalation} idx={_index} pos={Transform.position}");
             _lastRecoveryTime = Time.time;
             _lastProgressTime = Time.time;
             _bestDistToTarget = float.MaxValue;
@@ -243,6 +253,21 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (d < bestSq) { bestSq = d; best = i; }
             }
             return best;
+        }
+
+        // TEMP diagnostic — throttled per-NPC patrol state so we can see which branch a "standing" NPC is in
+        // (proximity-paused vs physically stuck vs recovering). Remove once patrol-on-relog is confirmed.
+        private string DiagId => $"{(Companion != null ? Companion.name : "?")}#{(Companion != null ? Companion.GetInstanceID() : 0)}";
+
+        private void PatrolDiag(string branch, float distToWaypoint)
+        {
+            if (Time.time - _lastDiagTime < 2f) return;
+            float moved2s = (Transform.position - _lastDiagPos).magnitude;
+            _lastDiagPos = Transform.position;
+            _lastDiagTime = Time.time;
+            Debug.Log($"[PatrolDiag] {DiagId} {branch} idx={_index}/{(_route != null ? _route.Points.Count : 0)} " +
+                      $"distWp={distToWaypoint:F1} best={_bestDistToTarget:F1} noProg={(Time.time - _lastProgressTime):F1}s " +
+                      $"esc={_stuckEscalation} moved2s={moved2s:F2} pos={Transform.position}");
         }
 
         private void RerollDeviation()
