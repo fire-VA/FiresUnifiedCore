@@ -35,6 +35,17 @@ namespace FiresCore.Npc.IdleBehaviors
             _combatMovement != null ? _combatMovement
             : (_combatMovement = Companion != null ? Companion.GetComponent<CompanionCombatMovement>() : null);
 
+        private FiresCore.Npc.AI.CompanionAI _ai;
+        private FiresCore.Npc.AI.CompanionAI Ai =>
+            _ai != null ? _ai
+            : (_ai = Companion != null ? Companion.GetComponent<FiresCore.Npc.AI.CompanionAI>() : null);
+
+        // True while the NPC is fighting (or in the post-combat hold buffer). CompanionAI's own combat STATE is
+        // the authoritative signal — the stationed self-defense pass sets AIState.Combat and holds it through the
+        // buffer — and CombatMovement.IsInCombat covers any other combat path.
+        private bool InCombatNow =>
+            (Ai != null && Ai.IsInCombat) || (CombatMovement != null && CombatMovement.IsInCombat);
+
         public override string BehaviorName => "Patrol";
         public override bool AvailableForIdleRotation => false; // force-started by route assignment, not random rotation
 
@@ -70,12 +81,14 @@ namespace FiresCore.Npc.IdleBehaviors
 
         public override bool Update()
         {
-            // Fully pause while fighting/defending: CombatMovement is the single mover during combat, so patrol
-            // must not also issue moves (two SetMoveDir writers fight). This holds for the whole combat duration
-            // and backstops the IsActive interrupt, whose OnCombatStarted is rate-limited and can miss a quick
-            // re-aggro. We stay the active behavior and keep the join timer fresh so we resume cleanly afterward.
-            if (!IsActive || (CombatMovement != null && CombatMovement.IsInCombat))
+            // DROP patrol entirely while in combat. Combat (the stationed self-defense / CompanionAI path) is the
+            // single mover; patrol must issue NO moves AND release its movement-authority lease so the combat
+            // mover can take it — otherwise the two fight every frame and the NPC just glitches in place. We key
+            // off CompanionAI's combat STATE, which stays true through the post-combat hold buffer, so patrol
+            // only resumes once combat (and that buffer) is fully over.
+            if (!IsActive || InCombatNow)
             {
+                StopMovement();   // release the 'Patrol' authority lease so combat owns movement; issue nothing
                 _targetSince = Time.time;
                 return false;
             }
