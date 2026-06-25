@@ -8,8 +8,7 @@ namespace FiresCore.Npc.IdleBehaviors
     /// (to the end, wait, reverse, wait, repeat); a LOOP (first≈last point) is walked continuously in one
     /// direction. Uses the framework's vanilla pathfinding (TryMoveToPosition) and validates each waypoint
     /// with IsReachable so an unreachable point doesn't trigger BaseAI's false "arrived" and skip the route.
-    /// A small per-NPC deviation (re-rolled on arrival) keeps multiple NPCs on one route from stacking;
-    /// the physics personal-space enforcer handles the rest.
+    /// A small per-NPC deviation (re-rolled on arrival) keeps multiple NPCs on one route from stacking.
     /// </summary>
     public class PatrolBehavior : IdleSubBehavior
     {
@@ -20,6 +19,7 @@ namespace FiresCore.Npc.IdleBehaviors
         public const float WaitSeconds = 4.0f;
         public const float DeviationRadius = 1.2f;
         public const float ChatPauseRange = 3.5f;  // stop and let a player interact when this close
+        public const float TeleportTimeout = 60f;  // seconds spent trying to reach a waypoint before snapping to it
 
         private PatrolRoute _route;
         private int _index;
@@ -27,26 +27,8 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool _waiting;
         private float _waitUntil;
         private Vector3 _deviation;
-
-        public const float TeleportTimeout = 60f;  // seconds spent trying to reach a waypoint before snapping to it
         private int _lastIndex = -1;
         private float _targetSince;
-
-        // Stuck recovery: ground NPCs get no vanilla un-stick and the patrol move path has none of its own, so
-        // when the NPC stops getting closer to its waypoint we escalate a recovery step (fresh path → lateral
-        // nudge → skip the node) long before the teleport backstop kicks in.
-        public const float NoProgressEpsilon = 0.5f;    // XZ gain toward the waypoint that counts as progress
-        public const float NoProgressTimeout = 4f;      // no progress for this long → take the next recovery step
-        public const float RecoveryStepCooldown = 6f;   // min seconds between recovery steps so each one can act
-        private float _bestDistToTarget = float.MaxValue;
-        private float _lastProgressTime;
-        private float _lastRecoveryTime;
-        private int _stuckEscalation;
-
-        // TEMP diagnostic state — remove once patrol-on-relog is confirmed.
-        private float _lastDiagTime;
-        private Vector3 _lastDiagPos;
-        private float _lastMovableCheck;
 
         public override string BehaviorName => "Patrol";
         public override bool AvailableForIdleRotation => false; // force-started by route assignment, not random rotation
@@ -78,7 +60,6 @@ namespace FiresCore.Npc.IdleBehaviors
             _index = NearestPointIndex();
             _lastIndex = _index;
             _targetSince = Time.time;
-            ResetProgress();
             RerollDeviation();
         }
 
@@ -87,11 +68,9 @@ namespace FiresCore.Npc.IdleBehaviors
             // Interrupted for combat (IsActive=false): hold position, stay the active behavior so the
             // framework can resume us afterward, and keep the join timer fresh so combat time doesn't count
             // toward a teleport.
-            if (!IsActive) { _targetSince = Time.time; ResetProgress(); PatrolDiag("COMBAT-HOLD", 0f); return false; }
+            if (!IsActive) { _targetSince = Time.time; return false; }
 
             if (_route == null || _route.Points.Count < 2) return true; // route lost → end (re-evaluated next tick)
-
-            EnsureMovable();   // a patrolling NPC must have a movable body; static NPCs can load kinematic/frozen
 
             // Stop and let a nearby player interact/chat instead of pushing past them — and don't walk off
             // while the player is engaging the NPC (they stay within this range while its UI is open, since
@@ -100,15 +79,12 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 StopMovement();
                 _targetSince = Time.time;
-                ResetProgress();
-                PatrolDiag("PROXIMITY-PAUSE", Utils.DistanceXZ(Transform.position, _route.Points[_index]));
                 return false;
             }
 
             if (_waiting)
             {
                 StopMovement();
-                PatrolDiag("WAITING", 0f);
                 if (Time.time < _waitUntil) return false;
                 _waiting = false;
                 _index = Mathf.Clamp(_index + _direction, 0, _route.Points.Count - 1);
@@ -128,32 +104,17 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             if (_waiting) { StopMovement(); return false; }
 
-            // Restart the per-waypoint join timer + stuck tracker whenever the target waypoint changes.
-            if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; ResetProgress(); }
-
-            // Stuck recovery: if we stop getting closer to this waypoint, escalate a recovery step well before
-            // the 60s teleport backstop. Any real progress re-baselines the clock, so a long straight leg or an
-            // NPC still walking onto its route never trips it. Runs before the move so the step takes effect now.
-            float distToWaypoint = Utils.DistanceXZ(Transform.position, _route.Points[_index]);
-            if (distToWaypoint < _bestDistToTarget - NoProgressEpsilon)
-            {
-                _bestDistToTarget = distToWaypoint;
-                _lastProgressTime = Time.time;
-            }
-            else if (Time.time - _lastProgressTime > NoProgressTimeout
-                     && Time.time - _lastRecoveryTime > RecoveryStepCooldown)
-            {
-                StepStuckRecovery();
-            }
+            // Restart the per-waypoint join timer whenever the target waypoint changes (incl. after a skip).
+            if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; }
 
             Vector3 target = _route.Points[_index] + _deviation;
             if (!IsReachable(target)) target = _route.Points[_index];   // deviation pushed off-mesh → use base point
 
-            // Couldn't reach this waypoint within the timeout (unreachable, stuck, or just assigned the route
-            // from far away) → snap onto it. This is how an NPC that isn't on its route gets there.
+            // Couldn't reach this waypoint within the timeout (unreachable, or just assigned the route from far
+            // away) → snap onto it. This is how an NPC that isn't on its route gets there. Vanilla MoveTo
+            // (FindPath/m_path) handles ordinary obstacle avoidance, so this is only the last-resort backstop.
             if (Time.time - _targetSince > TeleportTimeout)
             {
-                Debug.Log($"[PatrolDiag] {DiagId} TELEPORT-BACKSTOP idx={_index} to={_route.Points[_index]}");
                 TeleportTo(_route.Points[_index]);
                 OnArrived();
                 return false;
@@ -163,8 +124,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // false → the NPC would use the jog tier (m_speed=10, ~2× walk). Setting m_walk every patrol frame
             // selects m_walkSpeed; other behaviors (combat/follow) re-assert their own mode so this won't stick.
             Companion?.GetComponent<Character>()?.SetWalk(true);
-            TryMoveToPosition(target, walk: true);
-            PatrolDiag("MOVING", distToWaypoint);   // AFTER the move so moveDir reflects what patrol set this frame
+            TryMoveToPosition(target, walk: true);   // pathfinding lives in vanilla MoveTo here — keep it, do not swap for straight-line
 
             return false;   // never completes on its own
         }
@@ -202,48 +162,6 @@ namespace FiresCore.Npc.IdleBehaviors
             _index = Mathf.Clamp(_index + _direction, 0, last);
         }
 
-        private void AdvanceIndex()
-        {
-            int last = _route.Points.Count - 1;
-            if (_route.IsLoop) { _index = (_index + 1) % _route.Points.Count; return; }
-            if ((_direction == 1 && _index >= last) || (_direction == -1 && _index <= 0))
-                _direction = -_direction;
-            _index = Mathf.Clamp(_index + _direction, 0, last);
-        }
-
-        // Re-baselines the no-progress clock. Called wherever the per-waypoint timer resets (start, combat hold,
-        // player pause, waypoint change) so paused/interrupted time and fresh legs never read as "stuck".
-        private void ResetProgress()
-        {
-            _bestDistToTarget = float.MaxValue;
-            _lastProgressTime = Time.time;
-            _lastRecoveryTime = Time.time;
-            _stuckEscalation = 0;
-        }
-
-        // One rung of the stuck-recovery ladder, re-baselining the clock so the next rung waits a full cooldown.
-        // If even skipping the node doesn't help, the existing 60s TeleportTimeout snap is the final backstop.
-        private void StepStuckRecovery()
-        {
-            Debug.Log($"[PatrolDiag] {DiagId} STUCK-RECOVERY step={_stuckEscalation} idx={_index} pos={Transform.position}");
-            _lastRecoveryTime = Time.time;
-            _lastProgressTime = Time.time;
-            _bestDistToTarget = float.MaxValue;
-            switch (_stuckEscalation++)
-            {
-                case 0:
-                    CompanionAI?.RequestPathRecalculation();   // fresh navmesh path (defeats the vanilla path cache)
-                    break;
-                case 1:
-                    RerollDeviation();                          // nudge laterally off whatever we're wedged against
-                    break;
-                default:
-                    AdvanceIndex();                             // give up on this node; move on (no checkpoint write)
-                    _stuckEscalation = 0;
-                    break;
-            }
-        }
-
         private int NearestPointIndex()
         {
             if (_route == null || Transform == null) return 0;
@@ -255,49 +173,6 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (d < bestSq) { bestSq = d; best = i; }
             }
             return best;
-        }
-
-        // TEMP diagnostic — throttled per-NPC patrol state so we can see which branch a "standing" NPC is in
-        // (proximity-paused vs physically stuck vs recovering). Remove once patrol-on-relog is confirmed.
-        private string DiagId => $"{(Companion != null ? Companion.name : "?")}#{(Companion != null ? Companion.GetInstanceID() : 0)}";
-
-        private void PatrolDiag(string branch, float distToWaypoint)
-        {
-            if (Time.time - _lastDiagTime < 2f) return;
-            float moved2s = (Transform.position - _lastDiagPos).magnitude;
-            _lastDiagPos = Transform.position;
-            _lastDiagTime = Time.time;
-            var ch = Companion != null ? Companion.GetComponent<Character>() : null;
-            var auth = Companion != null ? Companion.GetMovementAuthority() : null;
-            string chs = ch != null
-                ? $"canMove={ch.CanMove()} moveDir={ch.m_moveDir.magnitude:F2} vel={ch.GetVelocity().magnitude:F2}"
-                : "ch=null";
-            string au = auth != null
-                ? $"authFrozen={auth.IsMovementFrozen} authOwner='{auth.CurrentAuthorityOwner}'"
-                : "auth=null";
-            Debug.Log($"[PatrolDiag] {DiagId} {branch} idx={_index}/{(_route != null ? _route.Points.Count : 0)} " +
-                      $"distWp={distToWaypoint:F1} moved2s={moved2s:F2} {chs} {au} pos={Transform.position}");
-        }
-
-        // A patrolling NPC must be able to translate. A static NPC can load with a held body (Awake leaves it at
-        // the prefab default, which can be kinematic, and the non-kinematic flip only ran for idle-wander NPCs),
-        // which leaves it commanded-to-move-but-frozen. Assert a movable body. Idempotent: writes only when frozen.
-        private void EnsureMovable()
-        {
-            if (Time.time - _lastMovableCheck < 1f) return;
-            _lastMovableCheck = Time.time;
-            var rb = Companion != null ? Companion.GetComponent<Rigidbody>() : null;
-            if (rb == null) return;
-            bool changed = false;
-            if (rb.isKinematic) { rb.isKinematic = false; changed = true; }
-            if (!rb.useGravity) { rb.useGravity = true; changed = true; }
-            if ((rb.constraints & RigidbodyConstraints.FreezePosition) != 0)
-            {
-                rb.constraints = RigidbodyConstraints.FreezeRotation;
-                changed = true;
-            }
-            if (changed)
-                Debug.Log($"[PatrolDiag] {DiagId} EnsureMovable un-froze body (kin/con/grav now ok)");
         }
 
         private void RerollDeviation()

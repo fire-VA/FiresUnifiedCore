@@ -17,6 +17,14 @@ namespace FiresCore.Npc
             
             if (_currentIntent == MovementIntent.Idle && _idleBehavior != null)
             {
+                // A movement sub-behavior (patrol, farming, smelter, chest, ...) is already driving the body
+                // through CompanionAI's vanilla pathfinding. Park here exactly like ExecuteFollowingState parks
+                // for follow — otherwise StopMovementGradually() below becomes a SECOND per-frame SetMoveDir
+                // writer fighting the sub-behavior, zeroing the move it just set (body reads commanded-but-frozen).
+                // The sub-behavior owns its own walk/run while it's active.
+                if (_idleBehavior.IsInSubBehavior)
+                    return;
+
                 // Let idle behavior handle movement - it uses CompanionAI.RequestPathfindingMovement()
                 // which properly integrates with the authority system
                 bool idleHandlingMovement = _idleBehavior.UpdateIdleBehavior();
