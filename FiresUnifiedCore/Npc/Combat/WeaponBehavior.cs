@@ -444,6 +444,8 @@ ConfigureAI();
         /// Starts a native attack using Valheim's Attack system.
         /// Properly passes previousAttack for combo chain support.
         /// </summary>
+        private static float _dmgDiagTime;   // TEMP throttle for the weapon-damage diagnostic
+
         protected bool TryStartNativeAttack(Character target, bool secondaryAttack = false)
         {
             if (CompanionCombat.VerboseLogging)
@@ -465,6 +467,17 @@ ConfigureAI();
                 if (CompanionCombat.VerboseLogging)
                     Debug.Log($"[{GetType().Name}] FAILED: Weapon has no SharedData");
                 return false;
+            }
+
+            // TEMP diagnostic — why is a static NPC dealing unarmed-level damage with a real weapon? Logs the
+            // resolved weapon, its rolled damage, and quality (throttled). Remove once damage is confirmed.
+            if (Time.time - _dmgDiagTime > 2f)
+            {
+                _dmgDiagTime = Time.time;
+                var d = Context.CurrentWeapon.GetDamage();
+                Debug.Log($"[WeaponDmgDiag] {Context.Humanoid?.m_name} weapon='{shared.m_name}' q={Context.CurrentWeapon.m_quality} " +
+                          $"type={shared.m_itemType}/{shared.m_skillType} total={d.GetTotalDamage():F1} " +
+                          $"(slash={d.m_slash:F0} blunt={d.m_blunt:F0} pierce={d.m_pierce:F0} fire={d.m_fire:F0} lightning={d.m_lightning:F0})");
             }
 
             Attack attackTemplate = secondaryAttack ? shared.m_secondaryAttack : shared.m_attack;
