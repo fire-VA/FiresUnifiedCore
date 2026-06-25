@@ -46,6 +46,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // TEMP diagnostic state — remove once patrol-on-relog is confirmed.
         private float _lastDiagTime;
         private Vector3 _lastDiagPos;
+        private float _lastMovableCheck;
 
         public override string BehaviorName => "Patrol";
         public override bool AvailableForIdleRotation => false; // force-started by route assignment, not random rotation
@@ -89,6 +90,8 @@ namespace FiresCore.Npc.IdleBehaviors
             if (!IsActive) { _targetSince = Time.time; ResetProgress(); PatrolDiag("COMBAT-HOLD", 0f); return false; }
 
             if (_route == null || _route.Points.Count < 2) return true; // route lost → end (re-evaluated next tick)
+
+            EnsureMovable();   // a patrolling NPC must have a movable body; static NPCs can load kinematic/frozen
 
             // Stop and let a nearby player interact/chat instead of pushing past them — and don't walk off
             // while the player is engaging the NPC (they stay within this range while its UI is open, since
@@ -265,9 +268,35 @@ namespace FiresCore.Npc.IdleBehaviors
             float moved2s = (Transform.position - _lastDiagPos).magnitude;
             _lastDiagPos = Transform.position;
             _lastDiagTime = Time.time;
+            var rb = Companion != null ? Companion.GetComponent<Rigidbody>() : null;
+            var ch = Companion != null ? Companion.GetComponent<Character>() : null;
+            var nv = Companion != null ? Companion.GetComponent<ZNetView>() : null;
+            string phys = rb != null ? $"kin={rb.isKinematic} con={rb.constraints} grav={rb.useGravity}" : "rb=null";
+            string chs = ch != null ? $"chEn={ch.enabled} vel={ch.GetVelocity().magnitude:F2}" : "ch=null";
+            string own = nv != null && nv.IsValid() ? $"owner={nv.IsOwner()}" : "nv?";
             Debug.Log($"[PatrolDiag] {DiagId} {branch} idx={_index}/{(_route != null ? _route.Points.Count : 0)} " +
-                      $"distWp={distToWaypoint:F1} best={_bestDistToTarget:F1} noProg={(Time.time - _lastProgressTime):F1}s " +
-                      $"esc={_stuckEscalation} moved2s={moved2s:F2} pos={Transform.position}");
+                      $"distWp={distToWaypoint:F1} moved2s={moved2s:F2} esc={_stuckEscalation} {phys} {chs} {own} pos={Transform.position}");
+        }
+
+        // A patrolling NPC must be able to translate. A static NPC can load with a held body (Awake leaves it at
+        // the prefab default, which can be kinematic, and the non-kinematic flip only ran for idle-wander NPCs),
+        // which leaves it commanded-to-move-but-frozen. Assert a movable body. Idempotent: writes only when frozen.
+        private void EnsureMovable()
+        {
+            if (Time.time - _lastMovableCheck < 1f) return;
+            _lastMovableCheck = Time.time;
+            var rb = Companion != null ? Companion.GetComponent<Rigidbody>() : null;
+            if (rb == null) return;
+            bool changed = false;
+            if (rb.isKinematic) { rb.isKinematic = false; changed = true; }
+            if (!rb.useGravity) { rb.useGravity = true; changed = true; }
+            if ((rb.constraints & RigidbodyConstraints.FreezePosition) != 0)
+            {
+                rb.constraints = RigidbodyConstraints.FreezeRotation;
+                changed = true;
+            }
+            if (changed)
+                Debug.Log($"[PatrolDiag] {DiagId} EnsureMovable un-froze body (kin/con/grav now ok)");
         }
 
         private void RerollDeviation()
