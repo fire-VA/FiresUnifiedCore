@@ -1104,6 +1104,34 @@ case ItemDrop.ItemData.ItemType.Utility:
         }
 
         /// <summary>
+        /// Loads a weapon into a hand slot as real combat ItemData WITHOUT touching the visual equipment path
+        /// (no ApplyVisualEquipment, no double-paint). Static-NPC gear is otherwise visual-only via
+        /// NpcVisEquipment, which leaves CompanionEquipmentData.WeaponItem null — so the combat system can't
+        /// attack or weapon-swap. This populates the slot the combat code reads, leaving visuals untouched.
+        /// </summary>
+        public bool LoadCombatWeaponSilent(EquipmentSlot slot, string prefabName, int quality = 1)
+        {
+            if (string.IsNullOrEmpty(prefabName)) return false;
+            if (IsGhostPreview()) return false;
+            try
+            {
+                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
+                var itemDrop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
+                if (itemDrop?.m_itemData == null) return false;
+                var itemData = itemDrop.m_itemData.Clone();
+                itemData.m_quality = Mathf.Max(1, quality);
+                itemData.m_durability = itemData.GetMaxDurability();
+                itemData.m_dropPrefab = prefab;
+                return EquipItemSilent(slot, itemData);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionInventory] LoadCombatWeaponSilent {prefabName} failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Restores equipment from vault data.
         /// Sets the prefab name and recreates the ItemData.
         /// </summary>

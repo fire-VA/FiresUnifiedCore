@@ -304,18 +304,17 @@ namespace FiresCore.Npc.AI
             // For stationed non-wandering NPCs, skip the base AI entirely.
             if (_npcModule == null)
                 _npcModule = GetComponent<CompanionNpcModule>();
-            if (_npcModule != null && _npcModule.IsStationedAsNpc && !_npcModule.AllowsIdleBehaviors)
+
+            // SPAWN-WINDOW GUARD ONLY. Until StaticNpcInitializer finishes setting up a placed NPC (stationed
+            // position + facing applied ~1s after spawn), skip the AI so base.UpdateAI can't bake a north-facing
+            // into the ZDO. After setup, a stationed NPC runs the SAME state machine as a companion: its idle is
+            // delegated to its patrol/idle sub-behavior (single movement writer preserved) and its combat runs
+            // the full path (see the stationed self-defense dispatch below). Wandering stationed NPCs
+            // (AllowsIdleBehaviors=true) already ran the FSM and are unaffected.
+            if (_companion != null && _companion.isStaticPlacement
+                && (_npcModule == null || !_npcModule.IsStationedWithPosition))
             {
                 return true;
-            }
-
-            // Static placed NPCs: skip base AI until CompanionNpcModule is set up by
-            // StaticNpcInitializer (1s delay). Without this, base.UpdateAI resets m_lookDir
-            // to Vector3.forward during that first second, baking north-facing into the ZDO.
-            if (_companion != null && _companion.isStaticPlacement)
-            {
-                if (_npcModule == null || !_npcModule.AllowsIdleBehaviors)
-                    return true;
             }
 
             // Skip base.UpdateAI entirely when the companion is physically attached (chair sit,
@@ -355,6 +354,18 @@ namespace FiresCore.Npc.AI
             if (_idleBehavior != null && _idleBehavior.IsEmoteFrozen)
             {
                 return true;
+            }
+
+            // STATIONED SELF-DEFENSE. A stationed NPC (patrol/decorative) holds its sub-behavior alive via
+            // command priority, which makes the normal target-scan + combat path bail. Run a dedicated,
+            // post-bounded combat pass here so it defends its post, pursues threats, and only hands back to the
+            // sub-behavior once the area is clear (+ a buffer). Gated on stationed → companions are untouched.
+            if (_npcModule != null && _npcModule.IsStationedWithPosition && !_npcModule.AllowsIdleBehaviors)
+            {
+                UpdateStationedCombat(dt);
+                if (_currentState == AIState.Combat)
+                    return true;   // combat owns movement this frame; PatrolBehavior self-holds while IsInCombat
+                // not engaged → fall through: the sub-behavior (patrol) drives, or a decorative NPC holds in idle
             }
 
             // CRITICAL FIX (Bug #12): Skip AI movement when a sub-behavior is active
