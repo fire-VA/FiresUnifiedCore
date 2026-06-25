@@ -30,6 +30,11 @@ namespace FiresCore.Npc.IdleBehaviors
         private int _lastIndex = -1;
         private float _targetSince;
 
+        private CompanionCombatMovement _combatMovement;
+        private CompanionCombatMovement CombatMovement =>
+            _combatMovement != null ? _combatMovement
+            : (_combatMovement = Companion != null ? Companion.GetComponent<CompanionCombatMovement>() : null);
+
         public override string BehaviorName => "Patrol";
         public override bool AvailableForIdleRotation => false; // force-started by route assignment, not random rotation
 
@@ -65,10 +70,15 @@ namespace FiresCore.Npc.IdleBehaviors
 
         public override bool Update()
         {
-            // Interrupted for combat (IsActive=false): hold position, stay the active behavior so the
-            // framework can resume us afterward, and keep the join timer fresh so combat time doesn't count
-            // toward a teleport.
-            if (!IsActive) { _targetSince = Time.time; return false; }
+            // Fully pause while fighting/defending: CombatMovement is the single mover during combat, so patrol
+            // must not also issue moves (two SetMoveDir writers fight). This holds for the whole combat duration
+            // and backstops the IsActive interrupt, whose OnCombatStarted is rate-limited and can miss a quick
+            // re-aggro. We stay the active behavior and keep the join timer fresh so we resume cleanly afterward.
+            if (!IsActive || (CombatMovement != null && CombatMovement.IsInCombat))
+            {
+                _targetSince = Time.time;
+                return false;
+            }
 
             if (_route == null || _route.Points.Count < 2) return true; // route lost → end (re-evaluated next tick)
 

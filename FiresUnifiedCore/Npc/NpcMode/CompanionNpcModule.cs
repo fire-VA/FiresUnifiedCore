@@ -273,6 +273,13 @@ namespace FiresCore.Npc.NpcMode
             // do the smooth turning.
             if (_character == null) return;
 
+            // Only turn to face a nearby player while STOPPED. Vanilla Character.UpdateRotation turns the body
+            // toward m_lookDir only when m_moveDir is zero (otherwise it faces the move heading), so writing
+            // look while walking does nothing useful and risks fighting the patrol's heading. Gating on stopped
+            // makes the NPC turn to greet a player the moment it halts (the patrol chat-pause, an endpoint wait,
+            // or a stationary decorative NPC) without ever disturbing it mid-stride.
+            if (_character.m_moveDir.sqrMagnitude > 0.01f) return;
+
             _facePlayerTimer += Time.deltaTime;
             if (_facePlayerTimer < FacePlayerInterval) return;
             _facePlayerTimer = 0f;
