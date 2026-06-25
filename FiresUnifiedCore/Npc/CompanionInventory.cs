@@ -1122,7 +1122,14 @@ case ItemDrop.ItemData.ItemType.Utility:
                 itemData.m_quality = Mathf.Max(1, quality);
                 itemData.m_durability = itemData.GetMaxDurability();
                 itemData.m_dropPrefab = prefab;
-                return EquipItemSilent(slot, itemData);
+                if (!EquipItemSilent(slot, itemData)) return false;
+
+                // EquipItemSilent stores the item but SKIPS the combat-data refresh — without this the combat
+                // system keeps WeaponAnimationState=Unarmed and swings with fists for fist damage. Refreshing
+                // resolves WeaponItem/WeaponShared/WeaponAnimationState and fires OnEquipmentChanged, so
+                // CompanionCombat switches to the armed weapon behavior and uses the weapon's damage.
+                _equipmentData?.RefreshAllEquipmentData();
+                return true;
             }
             catch (Exception ex)
             {
