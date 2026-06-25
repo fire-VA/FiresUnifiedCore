@@ -159,13 +159,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            PatrolDiag("MOVING", distToWaypoint);
-
             // Force vanilla WALK speed. The pathfinding chain only ever calls SetRun(false), leaving m_walk
             // false → the NPC would use the jog tier (m_speed=10, ~2× walk). Setting m_walk every patrol frame
             // selects m_walkSpeed; other behaviors (combat/follow) re-assert their own mode so this won't stick.
             Companion?.GetComponent<Character>()?.SetWalk(true);
             TryMoveToPosition(target, walk: true);
+            PatrolDiag("MOVING", distToWaypoint);   // AFTER the move so moveDir reflects what patrol set this frame
 
             return false;   // never completes on its own
         }
@@ -268,14 +267,16 @@ namespace FiresCore.Npc.IdleBehaviors
             float moved2s = (Transform.position - _lastDiagPos).magnitude;
             _lastDiagPos = Transform.position;
             _lastDiagTime = Time.time;
-            var rb = Companion != null ? Companion.GetComponent<Rigidbody>() : null;
             var ch = Companion != null ? Companion.GetComponent<Character>() : null;
-            var nv = Companion != null ? Companion.GetComponent<ZNetView>() : null;
-            string phys = rb != null ? $"kin={rb.isKinematic} con={rb.constraints} grav={rb.useGravity}" : "rb=null";
-            string chs = ch != null ? $"chEn={ch.enabled} vel={ch.GetVelocity().magnitude:F2}" : "ch=null";
-            string own = nv != null && nv.IsValid() ? $"owner={nv.IsOwner()}" : "nv?";
+            var auth = Companion != null ? Companion.GetMovementAuthority() : null;
+            string chs = ch != null
+                ? $"canMove={ch.CanMove()} moveDir={ch.m_moveDir.magnitude:F2} vel={ch.GetVelocity().magnitude:F2}"
+                : "ch=null";
+            string au = auth != null
+                ? $"authFrozen={auth.IsMovementFrozen} authOwner='{auth.CurrentAuthorityOwner}'"
+                : "auth=null";
             Debug.Log($"[PatrolDiag] {DiagId} {branch} idx={_index}/{(_route != null ? _route.Points.Count : 0)} " +
-                      $"distWp={distToWaypoint:F1} moved2s={moved2s:F2} esc={_stuckEscalation} {phys} {chs} {own} pos={Transform.position}");
+                      $"distWp={distToWaypoint:F1} moved2s={moved2s:F2} {chs} {au} pos={Transform.position}");
         }
 
         // A patrolling NPC must be able to translate. A static NPC can load with a held body (Awake leaves it at
