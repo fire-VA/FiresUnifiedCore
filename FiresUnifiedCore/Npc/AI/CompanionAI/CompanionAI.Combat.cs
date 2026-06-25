@@ -47,6 +47,70 @@ namespace FiresCore.Npc.AI
         // Avoids iterating Character.GetAllCharacters() multiple times per frame
         private static readonly System.Collections.Generic.List<Vector3> _nearbyEnemyPositions = new System.Collections.Generic.List<Vector3>();
 
+        // ── Stationed self-defense (defend-the-post combat for static/patrol NPCs) ────────────────────────
+        public const float STATIONED_DEFEND_RANGE = 14f;   // aggro bubble around the post
+        public const float STATIONED_LEASH_RANGE = 24f;    // give up pursuit past this from the post
+        public const float STATIONED_COMBAT_HOLD = 10f;    // stay engaged/alert this long after the last threat clears
+        private const float STATIONED_THREAT_SCAN_INTERVAL = 0.3f;
+        private float _stationedThreatLastSeen = -100f;
+        private float _stationedLastScan = -100f;
+
+        /// <summary>
+        /// Combat for a stationed NPC: keep/acquire a threat in the defend bubble, pursue it, and let the
+        /// CompanionCombat component fire the actual swing. Holds the line (never enters flee). Stays engaged
+        /// through a buffer after the last threat clears so it doesn't snap straight back to patrol, then
+        /// returns to Idle so the patrol/idle sub-behavior resumes.
+        /// </summary>
+        private void UpdateStationedCombat(float dt)
+        {
+            Vector3 post = _npcModule.StationedPosition;
+
+            bool haveThreat = _targetCreature != null && !_targetCreature.IsDead()
+                              && Vector3.Distance(_targetCreature.transform.position, post) <= STATIONED_LEASH_RANGE;
+
+            if (!haveThreat && Time.time - _stationedLastScan >= STATIONED_THREAT_SCAN_INTERVAL)
+            {
+                _stationedLastScan = Time.time;
+                var found = FindStationedThreat(post, STATIONED_DEFEND_RANGE);
+                if (found != null) ForceTarget(found);   // validates enemy + sets _targetCreature + Combat state
+                haveThreat = _targetCreature != null && !_targetCreature.IsDead();
+            }
+
+            if (haveThreat)
+                _stationedThreatLastSeen = Time.time;
+
+            if (Time.time - _stationedThreatLastSeen < STATIONED_COMBAT_HOLD)
+            {
+                if (_currentState != AIState.Combat) SetState(AIState.Combat);
+                UpdateCombatMovement(dt);   // pursue/position when a target is live; no-op otherwise. No flee.
+            }
+            else if (_currentState == AIState.Combat)
+            {
+                ClearForceTarget();
+                SetState(AIState.Idle);
+            }
+        }
+
+        /// <summary>Nearest live hostile within <paramref name="range"/> of the post that is a genuine threat,
+        /// using the companion threat test anchored at the post with this NPC as the defender.</summary>
+        private Character FindStationedThreat(Vector3 post, float range)
+        {
+            Character best = null;
+            float bestSq = range * range;
+            var all = Character.GetAllCharacters();
+            for (int i = 0; i < all.Count; i++)
+            {
+                var c = all[i];
+                if (c == null || c == m_character || c.IsDead()) continue;
+                float dSq = (c.transform.position - post).sqrMagnitude;
+                if (dSq > bestSq) continue;
+                if (!IsThreatToOwnerOrSelf(c, post, m_character)) continue;
+                bestSq = dSq;
+                best = c;
+            }
+            return best;
+        }
+
         private void UpdateCombatState(float dt)
         {
             if (_stateController != null && _stateController.HasAbsolutePriorityCommand)

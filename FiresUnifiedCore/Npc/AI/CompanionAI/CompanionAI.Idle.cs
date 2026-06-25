@@ -29,6 +29,16 @@ namespace FiresCore.Npc.AI
                 return;
             }
 
+            // Decorative stationed NPC (no route, no wander): now that the FSM runs for stationed NPCs, hold
+            // post here instead of falling through to random wander. A patrol NPC returned above via its active
+            // sub-behavior; a WANDERING stationed NPC has AllowsIdleBehaviors=true and is unaffected.
+            if (_npcModule != null && _npcModule.IsStationedAsNpc && !_npcModule.AllowsIdleBehaviors
+                && (_targetCreature == null || _targetCreature.IsDead()))
+            {
+                StopMovementThroughAuthority();
+                return;
+            }
+
             if (_shouldFollow && _followTarget != null)
             {
                 // AFK-IDLE BRANCH: We landed in Idle from a Followingâ†’Idle transition

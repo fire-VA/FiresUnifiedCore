@@ -286,7 +286,12 @@ namespace FiresCore.Npc.NpcMode
 
             var lookDir = GetDirectionToNearestPlayer();
             if (lookDir.sqrMagnitude > 0.001f)
+            {
+                // Set BOTH: Character.UpdateRotation turns the body toward m_lookYaw (Character.cs:835/1178),
+                // NOT m_lookDir — writing only m_lookDir (as before) changed the look but never turned the body.
                 _character.m_lookDir = lookDir;
+                _character.m_lookYaw = Quaternion.LookRotation(lookDir);
+            }
         }
 
         /// <summary>
