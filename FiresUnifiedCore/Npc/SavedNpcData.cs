@@ -30,6 +30,12 @@ namespace FiresCore.Npc
         public string EquipLeftHand { get; set; }
         public string EquipRightBack { get; set; }
         public string EquipLeftBack { get; set; }
+
+        // Full serialized ItemData (base64) for the hand weapons — preserves real quality/upgrades/customData
+        // through save + respawn so a respawned static NPC fights with the same weapon, not a quality-1 clone.
+        public string EquipRightHandData { get; set; }
+        public string EquipLeftHandData { get; set; }
+
         public string FashionJson { get; set; }
     }
 }

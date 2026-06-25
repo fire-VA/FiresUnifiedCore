@@ -1139,6 +1139,59 @@ case ItemDrop.ItemData.ItemType.Utility:
         }
 
         /// <summary>
+        /// Loads a fully-specified ItemData (real quality, durability, crafter, customData, worldLevel, variant)
+        /// into a slot as combat data WITHOUT the visual path. Used so a static NPC fights with the EXACT
+        /// weapon the player equipped — see SerializeItemData/DeserializeItemData for the persisted blob.
+        /// </summary>
+        public bool LoadCombatItemSilent(EquipmentSlot slot, ItemDrop.ItemData item)
+        {
+            if (item == null) return false;
+            if (IsGhostPreview()) return false;
+            if (!EquipItemSilent(slot, item)) return false;
+            _equipmentData?.RefreshAllEquipmentData();   // resolve WeaponItem/anim-state so combat uses the real stats
+            return true;
+        }
+
+        /// <summary>Serializes a single ItemData to a base64 blob via Valheim's own Inventory format (version- and
+        /// mod-field-safe). Returns "" on failure. Pair with <see cref="DeserializeItemData"/>.</summary>
+        public static string SerializeItemData(ItemDrop.ItemData item)
+        {
+            if (item == null || item.m_dropPrefab == null) return "";
+            try
+            {
+                var tmp = new Inventory("t", null, 1, 1);
+                tmp.AddItem(item.Clone());
+                var pkg = new ZPackage();
+                tmp.Save(pkg);
+                return pkg.GetBase64();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionInventory] SerializeItemData failed: {ex.Message}");
+                return "";
+            }
+        }
+
+        /// <summary>Reconstructs an ItemData from a <see cref="SerializeItemData"/> blob (m_shared resolved from
+        /// ObjectDB). Returns null on failure.</summary>
+        public static ItemDrop.ItemData DeserializeItemData(string base64)
+        {
+            if (string.IsNullOrEmpty(base64)) return null;
+            try
+            {
+                var tmp = new Inventory("t", null, 1, 1);
+                tmp.Load(new ZPackage(base64));
+                var items = tmp.GetAllItems();
+                return (items != null && items.Count > 0) ? items[0] : null;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionInventory] DeserializeItemData failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Restores equipment from vault data.
         /// Sets the prefab name and recreates the ItemData.
         /// </summary>
