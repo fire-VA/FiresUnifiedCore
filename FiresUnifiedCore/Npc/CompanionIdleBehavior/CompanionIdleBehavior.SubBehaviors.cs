@@ -122,7 +122,19 @@ namespace FiresCore.Npc
         private void UpdateActiveSubBehavior()
         {
             if (_activeSubBehavior == null) return;
-            
+
+            // COMBAT OWNS MOVEMENT. Cancel a stationed NPC's sub-behavior (patrol) the moment it enters combat:
+            // this stops it ticking AND releases its movement-authority lease, so it never fights the combat
+            // mover (which made the NPC slide instead of attacking). It auto-restarts once combat ends, since
+            // TryStartPatrolIfAssigned runs every tick. Gated to stationed NPCs so companion work behaviors,
+            // which use the interrupt/resume path, are untouched.
+            if (_companionAI != null && _companionAI.IsInCombat
+                && _npcModule != null && _npcModule.IsStationedAsNpc)
+            {
+                CancelActiveSubBehavior();
+                return;
+            }
+
             // Check for absolute priority player commands (Move/Attack)
             // These MUST cancel any active sub-behavior immediately
             if (_stateController != null && _stateController.HasAbsolutePriorityCommand)
@@ -305,6 +317,7 @@ namespace FiresCore.Npc
         {
             if (_activeSubBehavior != null) return;
             if (!HasPatrolRoute()) return;
+            if (_companionAI != null && _companionAI.IsInCombat) return;   // don't resume patrol mid-combat (incl. buffer)
             if (_stateController != null && _stateController.IsPlayerCommandActive) return;
             TryStartSubBehavior<PatrolBehavior>();
         }

@@ -101,7 +101,10 @@ namespace FiresCore.Npc.IdleBehaviors
             if (!IsActive || InCombatNow)
             {
                 CombatDiag("HELD");
-                StopMovement();   // release the 'Patrol' authority lease so combat owns movement; issue nothing
+                // Do NOT StopMovement here — it calls SetMoveDir(zero) every frame and fights the combat mover
+                // (that was the "slides instead of fighting" bug). During combat the sub-behavior is cancelled
+                // upstream in CompanionIdleBehavior (stops ticking + releases its lease once), so this branch is
+                // only a defensive no-op hold for any stray tick on the transition frame.
                 _targetSince = Time.time;
                 return false;
             }
