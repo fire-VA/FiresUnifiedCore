@@ -48,13 +48,12 @@ namespace FiresCore.Npc.AI
         private static readonly System.Collections.Generic.List<Vector3> _nearbyEnemyPositions = new System.Collections.Generic.List<Vector3>();
 
         // ── Stationed self-defense (defend-the-post combat for static/patrol NPCs) ────────────────────────
-        public const float STATIONED_DEFEND_RANGE = 14f;   // aggro bubble around the post
-        public const float STATIONED_LEASH_RANGE = 24f;    // give up pursuit past this from the post
-        public const float STATIONED_COMBAT_HOLD = 10f;    // stay engaged/alert this long after the last threat clears
+        // Defend range (aggro bubble), leash range (give-up distance), and combat-hold (alert buffer after the
+        // last threat clears) are live-tunable via the BepInEx .cfg — see CompanionSettings.Stationed* for the
+        // keys, defaults, and clamps. Read fresh each tick so config edits apply without a relog.
         private const float STATIONED_THREAT_SCAN_INTERVAL = 0.3f;
         private float _stationedThreatLastSeen = -100f;
         private float _stationedLastScan = -100f;
-        private float _stationedDiagTime;   // TEMP diagnostic throttle
 
         /// <summary>
         /// Combat for a stationed NPC: keep/acquire a threat in the defend bubble, pursue it, and let the
@@ -67,12 +66,12 @@ namespace FiresCore.Npc.AI
             Vector3 post = _npcModule.StationedPosition;
 
             bool haveThreat = _targetCreature != null && !_targetCreature.IsDead()
-                              && Vector3.Distance(_targetCreature.transform.position, post) <= STATIONED_LEASH_RANGE;
+                              && Vector3.Distance(_targetCreature.transform.position, post) <= CompanionSettings.StationedLeashRange;
 
             if (!haveThreat && Time.time - _stationedLastScan >= STATIONED_THREAT_SCAN_INTERVAL)
             {
                 _stationedLastScan = Time.time;
-                var found = FindStationedThreat(post, STATIONED_DEFEND_RANGE);
+                var found = FindStationedThreat(post, CompanionSettings.StationedDefendRange);
                 if (found != null) ForceTarget(found);   // validates enemy + sets _targetCreature + Combat state
                 haveThreat = _targetCreature != null && !_targetCreature.IsDead();
             }
@@ -80,7 +79,7 @@ namespace FiresCore.Npc.AI
             if (haveThreat)
                 _stationedThreatLastSeen = Time.time;
 
-            if (Time.time - _stationedThreatLastSeen < STATIONED_COMBAT_HOLD)
+            if (Time.time - _stationedThreatLastSeen < CompanionSettings.StationedCombatHold)
             {
                 if (_currentState != AIState.Combat) SetState(AIState.Combat);
                 UpdateCombatMovement(dt);   // pursue/position when a target is live; no-op otherwise. No flee.
@@ -90,18 +89,13 @@ namespace FiresCore.Npc.AI
                 ClearForceTarget();
                 SetState(AIState.Idle);
             }
-
-            if (Time.time - _stationedDiagTime > 1f)
-            {
-                _stationedDiagTime = Time.time;
-                Debug.Log($"[StationedCombatDiag] {m_character?.m_name} state={_currentState} " +
-                          $"target={(_targetCreature != null ? _targetCreature.m_name : "none")} " +
-                          $"sinceThreat={(Time.time - _stationedThreatLastSeen):F1}s");
-            }
         }
 
-        /// <summary>Nearest live hostile within <paramref name="range"/> of the post that is a genuine threat,
-        /// using the companion threat test anchored at the post with this NPC as the defender.</summary>
+        /// <summary>Nearest live HOSTILE within <paramref name="range"/> of the post that is a genuine threat,
+        /// using the companion threat test anchored at the post with this NPC as the defender. Non-enemies
+        /// (passive wildlife, players, tamed/allied NPCs) are skipped outright: previously the scan picked the
+        /// nearest IsThreatToOwnerOrSelf and relied on ForceTarget's IsEnemy gate to reject it, so a passive
+        /// standing closer than a real threat would shadow it and drop the whole scan.</summary>
         private Character FindStationedThreat(Vector3 post, float range)
         {
             Character best = null;
@@ -111,6 +105,8 @@ namespace FiresCore.Npc.AI
             {
                 var c = all[i];
                 if (c == null || c == m_character || c.IsDead()) continue;
+                if (c.IsTamed() || c.IsPlayer()) continue;   // never aggro players or allied tames
+                if (!IsEnemy(c)) continue;                    // hostiles only — passives must not shadow a real threat
                 float dSq = (c.transform.position - post).sqrMagnitude;
                 if (dSq > bestSq) continue;
                 if (!IsThreatToOwnerOrSelf(c, post, m_character)) continue;
