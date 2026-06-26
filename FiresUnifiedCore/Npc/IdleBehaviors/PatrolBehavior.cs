@@ -46,6 +46,18 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool InCombatNow =>
             (Ai != null && Ai.IsInCombat) || (CombatMovement != null && CombatMovement.IsInCombat);
 
+        // TEMP diagnostic — why patrol still moves during combat. Remove once confirmed.
+        private float _lastCombatDiag;
+        private void CombatDiag(string branch)
+        {
+            if (Time.time - _lastCombatDiag < 1f) return;
+            _lastCombatDiag = Time.time;
+            var t = Ai != null ? Ai.GetTargetCreature() : null;
+            Debug.Log($"[PatrolCombatDiag] {(Companion != null ? Companion.name : "?")} {branch} inCombat={InCombatNow} " +
+                      $"aiState={(Ai != null ? Ai.IsInCombat : false)} cm={(CombatMovement != null && CombatMovement.IsInCombat)} " +
+                      $"target={(t != null ? t.m_name : "none")}");
+        }
+
         public override string BehaviorName => "Patrol";
         public override bool AvailableForIdleRotation => false; // force-started by route assignment, not random rotation
 
@@ -88,6 +100,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // only resumes once combat (and that buffer) is fully over.
             if (!IsActive || InCombatNow)
             {
+                CombatDiag("HELD");
                 StopMovement();   // release the 'Patrol' authority lease so combat owns movement; issue nothing
                 _targetSince = Time.time;
                 return false;
@@ -146,6 +159,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Force vanilla WALK speed. The pathfinding chain only ever calls SetRun(false), leaving m_walk
             // false → the NPC would use the jog tier (m_speed=10, ~2× walk). Setting m_walk every patrol frame
             // selects m_walkSpeed; other behaviors (combat/follow) re-assert their own mode so this won't stick.
+            CombatDiag("MOVING");
             Companion?.GetComponent<Character>()?.SetWalk(true);
             TryMoveToPosition(target, walk: true);   // pathfinding lives in vanilla MoveTo here — keep it, do not swap for straight-line
 

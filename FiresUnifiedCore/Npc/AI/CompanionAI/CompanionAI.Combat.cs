@@ -54,6 +54,7 @@ namespace FiresCore.Npc.AI
         private const float STATIONED_THREAT_SCAN_INTERVAL = 0.3f;
         private float _stationedThreatLastSeen = -100f;
         private float _stationedLastScan = -100f;
+        private float _stationedDiagTime;   // TEMP diagnostic throttle
 
         /// <summary>
         /// Combat for a stationed NPC: keep/acquire a threat in the defend bubble, pursue it, and let the
@@ -88,6 +89,14 @@ namespace FiresCore.Npc.AI
             {
                 ClearForceTarget();
                 SetState(AIState.Idle);
+            }
+
+            if (Time.time - _stationedDiagTime > 1f)
+            {
+                _stationedDiagTime = Time.time;
+                Debug.Log($"[StationedCombatDiag] {m_character?.m_name} state={_currentState} " +
+                          $"target={(_targetCreature != null ? _targetCreature.m_name : "none")} " +
+                          $"sinceThreat={(Time.time - _stationedThreatLastSeen):F1}s");
             }
         }
 
