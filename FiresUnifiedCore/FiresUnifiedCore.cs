@@ -102,6 +102,13 @@ namespace FiresCore
             // through Harmony.PatchAll and no-op while Enabled is false.
             FiresCore.Terrain.HeightmapOverrideConfig.Initialize(Config);
             FiresCore.Terrain.HeightmapOverrideConfig.BindToSync(configSync);
+
+            // BalrondCompat: server-locked toggles for our neutralization patches against specific
+            // BalrondAmazingNature behaviors. Patches auto-activate through Harmony.PatchAll and
+            // each one self-gates on its config entry — default-on so a fresh install gets the
+            // fixes (e.g. Mistlands locations stay in Mistlands, not spilling mist into DeepNorth).
+            FiresCore.Compat.Balrond.BalrondCompatConfig.Initialize(Config);
+            FiresCore.Compat.Balrond.BalrondCompatConfig.BindToSync(configSync);
         }
 
         private void TryDisposeConfigManager()
