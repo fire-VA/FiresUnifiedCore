@@ -30,6 +30,15 @@ namespace FiresCore.Npc.IdleBehaviors
         private int _lastIndex = -1;
         private float _targetSince;
 
+        // Stuck recovery — escalates re-path → skip-node before the long TeleportTimeout backstop. Movement
+        // works now, so a stall is almost always a stale path or a waypoint behind geometry, both recoverable
+        // here in seconds instead of waiting out the 60s teleport.
+        private const float StuckRecoverDelay = 3.0f;   // seconds of no closing-progress before each escalation step
+        private const float StuckMinProgress = 0.5f;    // metres of closing distance that counts as progress
+        private float _stuckSampleTime;
+        private float _stuckBestDist = float.MaxValue;
+        private bool _stuckRepathed;
+
         private CompanionCombatMovement _combatMovement;
         private CompanionCombatMovement CombatMovement =>
             _combatMovement != null ? _combatMovement
@@ -45,18 +54,6 @@ namespace FiresCore.Npc.IdleBehaviors
         // buffer — and CombatMovement.IsInCombat covers any other combat path.
         private bool InCombatNow =>
             (Ai != null && Ai.IsInCombat) || (CombatMovement != null && CombatMovement.IsInCombat);
-
-        // TEMP diagnostic — why patrol still moves during combat. Remove once confirmed.
-        private float _lastCombatDiag;
-        private void CombatDiag(string branch)
-        {
-            if (Time.time - _lastCombatDiag < 1f) return;
-            _lastCombatDiag = Time.time;
-            var t = Ai != null ? Ai.GetTargetCreature() : null;
-            Debug.Log($"[PatrolCombatDiag] {(Companion != null ? Companion.name : "?")} {branch} inCombat={InCombatNow} " +
-                      $"aiState={(Ai != null ? Ai.IsInCombat : false)} cm={(CombatMovement != null && CombatMovement.IsInCombat)} " +
-                      $"target={(t != null ? t.m_name : "none")}");
-        }
 
         public override string BehaviorName => "Patrol";
         public override bool AvailableForIdleRotation => false; // force-started by route assignment, not random rotation
@@ -88,6 +85,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _index = NearestPointIndex();
             _lastIndex = _index;
             _targetSince = Time.time;
+            ResetStuckTracking();
             RerollDeviation();
         }
 
@@ -100,12 +98,12 @@ namespace FiresCore.Npc.IdleBehaviors
             // only resumes once combat (and that buffer) is fully over.
             if (!IsActive || InCombatNow)
             {
-                CombatDiag("HELD");
                 // Do NOT StopMovement here — it calls SetMoveDir(zero) every frame and fights the combat mover
                 // (that was the "slides instead of fighting" bug). During combat the sub-behavior is cancelled
                 // upstream in CompanionIdleBehavior (stops ticking + releases its lease once), so this branch is
                 // only a defensive no-op hold for any stray tick on the transition frame.
                 _targetSince = Time.time;
+                ResetStuckTracking();
                 return false;
             }
 
@@ -118,6 +116,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 StopMovement();
                 _targetSince = Time.time;
+                ResetStuckTracking();
                 return false;
             }
 
@@ -143,8 +142,11 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             if (_waiting) { StopMovement(); return false; }
 
-            // Restart the per-waypoint join timer whenever the target waypoint changes (incl. after a skip).
-            if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; }
+            // Restart the per-waypoint join timer (and the stuck baseline) whenever the look-ahead loop advanced
+            // us onto a genuinely new waypoint. A recovery skip claims its own index change (see
+            // SkipCurrentWaypoint) so it does NOT reset the join timer — the TeleportTimeout backstop below must
+            // keep counting across skips so a fully off-route NPC still snaps on.
+            if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; ResetStuckTracking(); }
 
             Vector3 target = _route.Points[_index] + _deviation;
             if (!IsReachable(target)) target = _route.Points[_index];   // deviation pushed off-mesh → use base point
@@ -159,10 +161,13 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
+            // Stuck recovery: if we stop closing on the target waypoint, re-path then skip the node — long before
+            // the 60s teleport. A skip changes the cursor, so re-evaluate next tick.
+            if (RecoverIfStuck(target)) return false;
+
             // Force vanilla WALK speed. The pathfinding chain only ever calls SetRun(false), leaving m_walk
             // false → the NPC would use the jog tier (m_speed=10, ~2× walk). Setting m_walk every patrol frame
             // selects m_walkSpeed; other behaviors (combat/follow) re-assert their own mode so this won't stick.
-            CombatDiag("MOVING");
             Companion?.GetComponent<Character>()?.SetWalk(true);
             TryMoveToPosition(target, walk: true);   // pathfinding lives in vanilla MoveTo here — keep it, do not swap for straight-line
 
@@ -179,9 +184,9 @@ namespace FiresCore.Npc.IdleBehaviors
             if (rb != null) { rb.position = point; rb.linearVelocity = Vector3.zero; }
         }
 
-        private void OnArrived()
+        private void OnArrived(bool writeCheckpoint = true)
         {
-            WriteCheckpoint();
+            if (writeCheckpoint) WriteCheckpoint();
             RerollDeviation();
             int last = _route.Points.Count - 1;
 
@@ -200,6 +205,55 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
             _index = Mathf.Clamp(_index + _direction, 0, last);
+        }
+
+        // Escalating stuck recovery, sampled each frame we issue a move. _stuckBestDist is the closest we've
+        // gotten to the current waypoint; while it keeps improving we're fine. If it stalls for StuckRecoverDelay
+        // we first force a fresh path (a stale m_path is the usual cause now that the motor works); if that still
+        // doesn't help we skip the node entirely (it's unreachable — behind geometry / off-mesh — so we route to
+        // the next one instead of grinding until the 60s TeleportTimeout fires). Returns true only when a node
+        // was skipped, so the caller re-evaluates next tick.
+        private bool RecoverIfStuck(Vector3 target)
+        {
+            float dist = Utils.DistanceXZ(Transform.position, target);
+            if (dist < _stuckBestDist - StuckMinProgress)
+            {
+                _stuckBestDist = dist;
+                _stuckSampleTime = Time.time;
+                _stuckRepathed = false;
+                return false;
+            }
+
+            if (Time.time - _stuckSampleTime < StuckRecoverDelay) return false;
+            _stuckSampleTime = Time.time;
+
+            if (!_stuckRepathed)
+            {
+                _stuckRepathed = true;
+                Ai?.RequestPathRecalculation();   // recompute the path, then fall through and re-issue the move
+                return false;
+            }
+
+            SkipCurrentWaypoint();
+            return true;
+        }
+
+        // Abandon the current (unreachable) waypoint and advance the cursor without requiring arrival. We claim
+        // the index change ourselves (set _lastIndex) so Update's arrival-reset doesn't restart TeleportTimeout —
+        // that backstop must keep counting so a genuinely off-route NPC still snaps onto its route if even
+        // skipping can't recover. No checkpoint is written for a node we never reached.
+        private void SkipCurrentWaypoint()
+        {
+            OnArrived(writeCheckpoint: false);
+            _lastIndex = _index;
+            ResetStuckTracking();
+        }
+
+        private void ResetStuckTracking()
+        {
+            _stuckSampleTime = Time.time;
+            _stuckBestDist = float.MaxValue;
+            _stuckRepathed = false;
         }
 
         private int NearestPointIndex()

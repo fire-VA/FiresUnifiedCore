@@ -210,6 +210,8 @@
     <Compile Include="Storage\VaultDump.cs" />
     <Compile Include="Compat\Balrond\BalrondCompatConfig.cs" />
     <Compile Include="Compat\Balrond\BalrondLocationBiomePatch.cs" />
+    <Compile Include="Compat\Balrond\BalrondMistSicknessPatch.cs" />
+    <Compile Include="Compat\Balrond\BalrondVegetationPatch.cs" />
     <Compile Include="Compat\Cfg\CfgParser.cs" />
     <Compile Include="Compat\MarketplacePaths.cs" />
     <Compile Include="Events\GameEventArgs.cs" />

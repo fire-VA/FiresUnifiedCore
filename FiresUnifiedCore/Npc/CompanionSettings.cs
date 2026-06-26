@@ -45,7 +45,18 @@ namespace FiresCore.Npc
         private const float MAX_SORT_RADIUS = 30f;
         private const float MIN_WORK_RADIUS = 10f;
         private const float MAX_WORK_RADIUS = 100f;
-        
+
+        // Stationed self-defense (defend-the-post combat for static/patrol NPCs)
+        private const float DEFAULT_STATIONED_DEFEND_RANGE = 14f;
+        private const float DEFAULT_STATIONED_LEASH_RANGE = 24f;
+        private const float DEFAULT_STATIONED_COMBAT_HOLD = 10f;
+        private const float MIN_STATIONED_DEFEND = 4f;
+        private const float MAX_STATIONED_DEFEND = 40f;
+        private const float MIN_STATIONED_LEASH = 6f;
+        private const float MAX_STATIONED_LEASH = 60f;
+        private const float MIN_STATIONED_HOLD = 0f;
+        private const float MAX_STATIONED_HOLD = 60f;
+
         #endregion
         
         #region Public Properties
@@ -277,7 +288,50 @@ namespace FiresCore.Npc
         public static float FormationSeparationCheckInterval => 0.2f;
         
         #endregion
-        
+
+        #region Stationed Combat Settings
+
+        /// <summary>
+        /// Aggro radius (meters) around a stationed/patrol NPC's post within which it engages hostile enemies.
+        /// Read by CompanionAI's stationed self-defense pass (UpdateStationedCombat / FindStationedThreat).
+        /// </summary>
+        public static float StationedDefendRange
+        {
+            get
+            {
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStationedDefendRange", DEFAULT_STATIONED_DEFEND_RANGE);
+                return Mathf.Clamp(value, MIN_STATIONED_DEFEND, MAX_STATIONED_DEFEND);
+            }
+        }
+
+        /// <summary>
+        /// Distance (meters) from its post past which a stationed/patrol NPC gives up pursuing a threat.
+        /// Should exceed <see cref="StationedDefendRange"/> to give chase headroom beyond the aggro bubble.
+        /// </summary>
+        public static float StationedLeashRange
+        {
+            get
+            {
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStationedLeashRange", DEFAULT_STATIONED_LEASH_RANGE);
+                return Mathf.Clamp(value, MIN_STATIONED_LEASH, MAX_STATIONED_LEASH);
+            }
+        }
+
+        /// <summary>
+        /// How long (seconds) a stationed/patrol NPC stays engaged/alert after the last threat clears before
+        /// handing back to its patrol/idle sub-behavior.
+        /// </summary>
+        public static float StationedCombatHold
+        {
+            get
+            {
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStationedCombatHold", DEFAULT_STATIONED_COMBAT_HOLD);
+                return Mathf.Clamp(value, MIN_STATIONED_HOLD, MAX_STATIONED_HOLD);
+            }
+        }
+
+        #endregion
+
         #region Combat Coordination Settings
         
         /// <summary>
