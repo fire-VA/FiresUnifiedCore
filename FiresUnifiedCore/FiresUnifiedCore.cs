@@ -109,6 +109,15 @@ namespace FiresCore
             // fixes (e.g. Mistlands locations stay in Mistlands, not spilling mist into DeepNorth).
             FiresCore.Compat.Balrond.BalrondCompatConfig.Initialize(Config);
             FiresCore.Compat.Balrond.BalrondCompatConfig.BindToSync(configSync);
+
+            // GroupHud: the shared below-minimap member panel. Client-only HUD, but the bindings
+            // here are harmless on a dedicated server (the panel is created from a Hud.Awake postfix,
+            // which never runs headless). Bind its per-client layout config, gate visibility behind
+            // any open Fires panel (ModUiRegistry), and register the companion row provider so the
+            // player's following companions populate the HUD wherever Core is loaded.
+            FiresCore.UI.GroupHud.GroupHudConfig.Initialize(Config);
+            FiresCore.Bridge.GroupHudBridge.IsBlockingUiOpen = FiresCore.Bridge.ModUiRegistry.IsAnyOpen;
+            FiresCore.Npc.CompanionGroupHudProvider.Register();
         }
 
         private void TryDisposeConfigManager()

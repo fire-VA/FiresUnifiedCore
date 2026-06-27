@@ -373,6 +373,31 @@ public static readonly UITextStyle TabText = new UITextStyle
         }
 
         /// <summary>
+        /// Applies the configured game font to a single TMP_Text — the public, config-aware
+        /// one-liner any mod or Core UI should use instead of hard-picking a font asset. Defaults
+        /// to the Primary category, whose default is Averia Sans (Valheim-AveriaSansLibre). Honors
+        /// the user's font config (via UIBuilderHost.ConfiguredFontProvider) and always assigns
+        /// *some* loaded font so TMP never emits a "Font Asset was not found" warning.
+        /// </summary>
+        public static void ApplyGameFont(TMP_Text text) => ApplyGameFont(text, FontCategory.Primary);
+
+        /// <summary>Applies the configured font for a specific category to a single TMP_Text.</summary>
+        public static void ApplyGameFont(TMP_Text text, FontCategory category)
+        {
+            if (text == null) return;
+            var font = GetFontForCategory(category) ?? GetAnyAvailableFont();
+            if (font != null) text.font = font;
+        }
+
+        /// <summary>Applies the configured game font to every TMP_Text under <paramref name="root"/>.</summary>
+        public static void ApplyGameFontToAll(Transform root, FontCategory category = FontCategory.Primary)
+        {
+            if (root == null) return;
+            foreach (var text in root.GetComponentsInChildren<TMP_Text>(true))
+                ApplyGameFont(text, category);
+        }
+
+        /// <summary>
         /// Gets the TMP_FontAsset for a given font style.
         /// </summary>
         public static TMP_FontAsset GetFont(FontStyle style)
