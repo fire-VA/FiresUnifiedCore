@@ -988,19 +988,26 @@ namespace FiresCore.Npc.Core
         private void FaceTarget(Vector3 targetPos)
         {
             if (_companion == null) return;
-            
-            Vector3 dir = (targetPos - _companion.transform.position).normalized;
+
+            Vector3 dir = targetPos - _companion.transform.position;
             dir.y = 0;
-            
-            if (dir.sqrMagnitude > 0.01f)
+            if (dir.sqrMagnitude < 0.0001f) return;
+
+            // Single facing-writer: face the chest through the FacingAuthority (SubBehavior); park if a
+            // higher facer holds facing. Direct write fallback only when there's no authority component.
+            var facing = _companion.GetFacingAuthority();
+            if (facing != null)
             {
-                Quaternion targetRot = Quaternion.LookRotation(dir);
-                _companion.transform.rotation = Quaternion.Slerp(
-                    _companion.transform.rotation, 
-                    targetRot, 
-                    Time.deltaTime * 5f
-                );
+                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.SubBehavior, "ChestInteraction", 0.4f))
+                    facing.SetLookDirection("ChestInteraction", dir);
+                return;
             }
+
+            dir.Normalize();
+            _companion.transform.rotation = Quaternion.Slerp(
+                _companion.transform.rotation,
+                Quaternion.LookRotation(dir),
+                Time.deltaTime * 5f);
         }
         
         private void PlayInteractAnimation()

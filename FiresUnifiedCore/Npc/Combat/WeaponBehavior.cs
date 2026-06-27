@@ -432,12 +432,28 @@ ConfigureAI();
 
      protected void FaceTarget(Character target)
         {
-   Vector3 dirToTarget = (target.transform.position - Context.Transform.position).normalized;
-        dirToTarget.y = 0;
-  if (dirToTarget != Vector3.zero)
-   {
-      Context.Transform.rotation = Quaternion.LookRotation(dirToTarget);
-          }
+            if (target == null) return;
+            FaceDirectionThroughAuthority(target.transform.position - Context.Transform.position, "CompanionWeapon");
+        }
+
+        /// <summary>
+        /// Faces a direction through the FacingAuthority at Animation priority — precise aim during an
+        /// attack wins over AI's general enemy-facing (Combat) and releases back to it between attacks.
+        /// Direct rotation write only as a no-authority fallback. Shared by the bow/crossbow overrides.
+        /// </summary>
+        protected void FaceDirectionThroughAuthority(Vector3 dir, string owner)
+        {
+            dir.y = 0f;
+            if (dir.sqrMagnitude < 0.0001f) return;
+            var facing = Context?.Companion != null ? Context.Companion.GetFacingAuthority() : null;
+            if (facing != null)
+            {
+                // Park if a same-priority incumbent holds facing; never raw-write against the holder.
+                if (facing.TryAcquireFacing(FiresCore.Npc.Core.UnifiedMovementAuthority.MovementSource.Animation, owner, 0.4f))
+                    facing.SetLookDirection(owner, dir);
+                return;
+            }
+            Context.Transform.rotation = Quaternion.LookRotation(dir.normalized);
         }
 
         /// <summary>

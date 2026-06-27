@@ -624,9 +624,12 @@ namespace FiresCore.Npc.AI
         private void FaceThroughAuthority(Vector3 worldPos)
         {
             var facing = _companion != null ? _companion.GetFacingAuthority() : null;
-            if (facing != null && facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.Combat, "CompanionAI", 1f))
+            if (facing != null)
             {
-                facing.SetLookTarget("CompanionAI", worldPos);
+                // Owner-gated: if a higher facer (e.g. weapon aim at Animation) holds facing, the acquire
+                // is denied and we PARK — never fall back to a raw LookAt that would fight the holder.
+                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.Combat, "CompanionAI", 0.4f))
+                    facing.SetLookTarget("CompanionAI", worldPos);
                 return;
             }
             LookAt(worldPos);

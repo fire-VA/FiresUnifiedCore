@@ -137,12 +137,43 @@ DONE (builds clean + deployed):
   routes at **Combat (70)** (owner `CompanionAI`, via new `FaceThroughAuthority`); `CompanionCombatMovement.
   FaceMovementDirection` at **Following (50)** (owner `CompanionCombatMovement`). So you face your enemy in a
   fight, but still face the move direction when nothing higher wants facing (flee / approach with no target).
-- **Bow** `FaceTargetAndLock` → SubBehavior (60) snap-lock; combat (70) still preempts (matches fix C).
+- **Bow training** `FaceTargetAndLock` → SubBehavior (60) snap-lock; combat (70) still preempts (matches fix C).
+- **Weapon aim** — `WeaponBehavior.FaceTarget` + the Bow/Crossbow overrides → Animation (80) via shared
+  `FaceDirectionThroughAuthority` (precise aim wins during an attack, releases back to AI enemy-facing between).
+- **Dodge** `FaceTarget` → Animation (80) (face the threat while dodging/strafing).
+- **Work behaviors** — `WorkBehaviorBase.FaceTarget` covers all live V2 work behaviors (Workstation/Loot/
+  FireTending/Crafting/ChestDeposit) via inheritance; the 4 live old-style ones (Resource/Wood/Farming/Smelter)
+  routed individually. All at SubBehavior (60). The idle look-around + head-look were already gated off during
+  sub-behaviors (fixes A/B).
 
-REMAINING (structural polish — these don't currently contend because their behaviors are mutually exclusive
-with combat, so no live bug; route for full "can't rot" soundness later): per-behavior `FaceTarget` in the work
-behaviors (Workstation/ChestDeposit/FireTending/…) and `DodgeBehavior.FaceTarget`. The idle look-around +
-head-look facing are already gated off during sub-behaviors (fixes A/B).
+Facing priority map: weapon-aim/dodge (Animation 80) > AI enemy-facing (Combat 70) > bow-train/work (SubBehavior 60)
+> combat move-facing (Following 50). Every live behavior facing writer now requests through the FacingAuthority;
+only `ChestInteractionService.FaceTarget` (a one-shot Core service) and dead V1 behaviors remain unrouted (no
+contention).
+
+## Adversarial review (movement-facing-review workflow) — findings fixed
+
+A review pass over all conversions found one class of issue: **leases acquired but never released on behavior-end**
+(0.4–1s self-healing stalls) + a **fallback-race** in the facing routes. Fixed:
+- **Facing park-on-deny** — every facing route now PARKS when its acquire is denied (a higher facer holds it)
+  instead of falling back to a raw rotation write that fought the holder. Raw write only when there is no
+  FacingAuthority component at all.
+- **Facing leases shortened 1s → 0.4s** — facers re-acquire every frame while active, so the short lease is
+  continuously refreshed; when a behavior ends, facing hands back to the next facer within 0.4s instead of 1s
+  (covers weapon-attack-end, work-end, dodge-end without touching every end-path).
+- **Dodge movement-lease leak** — `DodgeBehavior.StopMovement` now releases whenever a movement was committed
+  (was gated on a non-zero vector, so a zero-vector commit leaked the slot and denied CombatMovement).
+- **Freeze clobber** — `UnfreezeMovement(reason)` overload only clears the freeze if the reason matches, so
+  InnerPeace's unfreeze can't release a teleport/knockback freeze that overwrote the single freeze slot.
+
+Review confirmed correct (do not re-touch): the UMA + FacingAuthority priority ladders + incumbency guards,
+the FacingAuthority owner-guard/NaN/zero handling, the InnerPeace one-time freeze, the dodge acquire wiring,
+and all facing priority ASSIGNMENTS. Correctly discarded: SuspendBelow/Resume findings (not wired) and the
+collect-coroutine lease (re-acquired each tick).
+
+Deferred (narrow, low-value): `CommandMovementHandler.ClearMoveDestination` uses `ForceReleaseAllAuthority`
+(broad) — only matters if a dodge/combat re-acquires during a stuck `ManualDepositToChest` wait; a surgical
+release needs the command's owner string + a stuck-guard on the deposit loop.
 
 ## Open questions (need a decision before / during)
 

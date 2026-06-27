@@ -352,26 +352,26 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         protected void FaceTarget(Vector3 targetPos)
         {
-            Vector3 dir = (targetPos - Transform.position).normalized;
+            Vector3 dir = targetPos - Transform.position;
             dir.y = 0;
-            
-            // CRITICAL: Check magnitude BEFORE normalizing to avoid zero vector issues
-            float magnitude = dir.magnitude;
-            if (magnitude < 0.01f)
+            if (dir.sqrMagnitude < 0.0001f) return; // Too close to target, don't rotate
+
+            // Single facing-writer: face the station/target through the FacingAuthority at SubBehavior
+            // priority. Combat (70) still preempts if a fight interrupts the work. Direct write fallback.
+            var facing = Companion != null ? Companion.GetFacingAuthority() : null;
+            if (facing != null)
             {
-                return; // Too close to target, don't rotate
+                if (facing.TryAcquireFacing(FiresCore.Npc.Core.UnifiedMovementAuthority.MovementSource.SubBehavior, BehaviorName, 0.4f))
+                    facing.SetLookDirection(BehaviorName, dir);
+                return;
             }
-            
-            dir = dir / magnitude; // Manual normalize
-            
+
+            dir.Normalize();
             Quaternion targetRot = Quaternion.LookRotation(dir);
-            
-            // Validate quaternion before applying
             if (float.IsNaN(targetRot.x) || float.IsNaN(targetRot.y) || float.IsNaN(targetRot.z) || float.IsNaN(targetRot.w))
             {
                 return;
             }
-            
             Transform.rotation = Quaternion.Slerp(Transform.rotation, targetRot, Time.deltaTime * 5f);
         }
         
