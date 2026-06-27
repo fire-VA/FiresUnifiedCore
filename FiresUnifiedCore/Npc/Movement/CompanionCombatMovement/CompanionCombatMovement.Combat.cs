@@ -1128,14 +1128,20 @@ namespace FiresCore.Npc
                 Vector3 moveDir = _fleeHandler.ExecuteFleeMovement();
                 _currentMoveDirection = moveDir;
                 _targetMoveDirection = moveDir;
+                // Flee runs (CombatRetreat → Run mode). Drive through UMA, not a raw write: the handler
+                // now only computes the direction; we own Combat authority and route it via SetMoveDirSafe.
+                _currentIntent = MovementIntent.CombatRetreat;
                 FaceMovementDirection(moveDir);
+                SetMoveDirSafe(moveDir);
             }
             else
             {
                 Vector3 moveDir = _fleeHandler?.ExecuteFallbackFleeMovement() ?? Vector3.zero;
                 _currentMoveDirection = moveDir;
                 _targetMoveDirection = moveDir;
+                _currentIntent = MovementIntent.CombatRetreat;
                 FaceMovementDirection(moveDir);
+                SetMoveDirSafe(moveDir);
             }
         }
         

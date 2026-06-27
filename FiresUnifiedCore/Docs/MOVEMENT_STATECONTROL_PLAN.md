@@ -77,6 +77,37 @@ Each step has an in-game test gate (see the workflow output / each step's `testG
 after a full regression (follow/combat/patrol/all sub-behaviors/commands/sit/emotes/teleport/root/stuck/
 bow + combat-interrupt-resume for each) passes with the gate ON.
 
+## Conversion progress (live)
+
+Classification (movement-hack-classification workflow) proved most of the ~50 raw `SetMoveDir` hits are
+ALREADY safe (kinematic-guarded during chair/emote, one-shot transitions, enemy/player-targeted roots) or
+DEAD CODE (WorkstationInteractionBehavior **V1** is unregistered — V2 replaced it). The genuine fix-list is
+~12–15 sites, not 50 — so we do NOT churn out-of-scope code.
+
+DONE (builds clean + deployed, gate still OFF):
+- Step 1 foundation: `Hold` / `CanWrite` / `SuspendBelow` / `Resume` + auto-resume-on-release + `GetCachedAuthority`.
+- **FleeMovementHandler + CompanionCombatMovement.ExecuteFleeState** — flee NEVER went through UMA (handler
+  raw-wrote `SetMoveDir`, coordinator never called `SetMoveDirSafe`). Now: handler computes/returns only,
+  coordinator drives via the authority-routed `SetMoveDirSafe` (owner `CompanionCombatMovement`, intent
+  `CombatRetreat` → Run). Real bypass fixed.
+- **InnerPeaceEffect** (monk meditation) — per-frame `SetMoveDir(0)` → one-time `FreezeMovement(dur)` +
+  `UnfreezeMovement` on end; companion-only (non-UMA fallback kept).
+- **WorkstationInteractionBehaviorV2.UpdateWorking** — per-frame raw zero-hold → acquire-if-needed + `Hold` + park.
+
+REMAINING genuine converts (next batches):
+- DodgeBehavior 301/428/563 — needs the flee pattern (expose direction, coordinator drives); inline raw drive
+  under a fresh same-priority owner would be denied by the incumbency guard. Careful combat pass.
+- CompanionCommandSystem 1378/1751 (collect-item per-frame drives), 1411/1788/2080/1121 (stops) — command
+  system, owner-string care (a Release from a non-owner no-ops).
+- CommandMovementHandler:160 — Release (verify owner contract first).
+- Work-behavior `MoveToPosition` fallbacks (ChestDeposit 1128 / Crafting 583 / Loot 596 / FireTending 1020)
+  + Pathfinding:72 + CombatMovement.Movement:230 — near-dead `_combatMovement==null` / `authority==null`
+  fallbacks; fold into Step 7 (only matter once the gate turns on).
+- CompanionAnimationController:472 — UNSURE (Release vs Unfreeze depends on caller context).
+
+EDIT ONLY the FiresUnifiedCore copy — stale copies exist under FiresVAngarde_PRESTRIP_BACKUP and
+WORKINGUIREFPREREFACTOR; never touch those.
+
 ## Open questions (need a decision before / during)
 
 1. **Facing axis (HOLE 1):** `transform.rotation`/`SetLookDir` is still ungoverned and overlaps many of

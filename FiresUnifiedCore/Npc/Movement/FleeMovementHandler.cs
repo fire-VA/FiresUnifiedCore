@@ -122,19 +122,17 @@ namespace FiresCore.Npc.Movement
             
             if (moveDir.sqrMagnitude > 0.01f)
             {
-                // DIRECT movement control - bypasses pathfinding for reliability
-                _character.SetMoveDir(moveDir);
-                _character.SetWalk(false);
-                _character.SetRun(true);
-                
+                // Single-writer: compute the flee direction only. The owning coordinator
+                // (CompanionCombatMovement, which holds Combat authority) drives it through UMA via
+                // SetMoveDirSafe — a raw SetMoveDir here would race UMA's ApplyMovement and slide.
                 if (VerboseLogging)
                 {
-                    Debug.Log($"[FleeMovementHandler] FLEE executing: dir={moveDir}, target={_fleeTargetPosition}");
+                    Debug.Log($"[FleeMovementHandler] FLEE direction computed: dir={moveDir}, target={_fleeTargetPosition}");
                 }
-                
+
                 return moveDir;
             }
-            
+
             return Vector3.zero;
         }
         
@@ -173,16 +171,13 @@ namespace FiresCore.Npc.Movement
             
             if (moveDir.sqrMagnitude > 0.01f)
             {
-                _character.SetMoveDir(moveDir);
-                _character.SetWalk(false);
-                _character.SetRun(true);
-                
+                // Single-writer: compute only; the coordinator drives through UMA (see ExecuteFleeMovement).
                 return moveDir;
             }
-            
+
             return Vector3.zero;
         }
-        
+
         /// <summary>
         /// Calculates escape direction away from the nearest enemy.
         /// </summary>
