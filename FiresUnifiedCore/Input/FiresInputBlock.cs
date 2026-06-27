@@ -58,14 +58,13 @@ namespace FiresCore.Input
             try
             {
                 var patched = new HashSet<MethodBase>(Harmony.GetAllPatchedMethods());
+                bool playerCtl = Contains(patched, AccessTools.Method(typeof(PlayerController), "TakeInput", new[] { typeof(bool) }));
                 bool takeInput = Contains(patched, AccessTools.Method(typeof(Player), "TakeInput"));
                 bool btnDown   = Contains(patched, AccessTools.Method(typeof(ZInput), "GetButtonDown", new[] { typeof(string) }));
-                bool keyDown   = Contains(patched, AccessTools.Method(typeof(ZInput), "GetKeyDown", new[] { typeof(UnityEngine.KeyCode), typeof(bool) }));
-                bool mBtnDown  = Contains(patched, AccessTools.Method(typeof(ZInput), "GetMouseButtonDown", new[] { typeof(int) }));
                 FiresCore.Logging.FiresLogger.LogInfo(
-                    $"[{LogTag}] INPUT-BLOCK PATCH STATUS — Player.TakeInput={takeInput} (FAP also patches) | " +
-                    $"ZInput.GetButtonDown={btnDown} ZInput.GetKeyDown={keyDown} ZInput.GetMouseButtonDown={mBtnDown} " +
-                    $"(the ZInput flags are OURS alone — False = our gate did NOT attach)");
+                    $"[{LogTag}] INPUT-BLOCK PATCH STATUS — PlayerController.TakeInput(move/jump)={playerCtl} " +
+                    $"Player.TakeInput(build/use)={takeInput} ZInput.GetButtonDown={btnDown} " +
+                    $"(PlayerController.TakeInput False = movement/jump NOT blocked)");
             }
             catch (Exception ex)
             {
@@ -128,11 +127,18 @@ namespace FiresCore.Input
         }
     }
 
-    // ZInput is CLIENT-ONLY. This container's full name is listed in
+    // CLIENT-ONLY input gates. This container's full name is listed in
     // FiresUnifiedCore.DedicatedServerSkipPatchTypes (the skip walks declaring-type
     // parents, so listing the container skips every nested gate) so a headless
-    // PatchAll never imports ZInput and native-crashes Mono's IL rewriter.
-    public static class FiresInputBlockZInputGates
+    // PatchAll never imports ZInput / PlayerController's UI refs and native-crashes
+    // Mono's IL rewriter.
+    //
+    // PlayerController.TakeInput is THE gate that zeroes MOVEMENT + JUMP
+    // (PlayerController.FixedUpdate: `if (!TakeInput()) SetControls(zero,...)`). It
+    // is a DIFFERENT method from Player.TakeInput (which only gates build/use/
+    // hotbar) — patching Player.TakeInput alone is exactly why the character still
+    // jumped while typing in a Fires field.
+    public static class FiresInputBlockClientGates
     {
         private static bool Gate(ref bool __result)
         {
@@ -140,6 +146,18 @@ namespace FiresCore.Input
             FiresInputBlock.LogZInputSuppressOnce();
             __result = false;
             return false;
+        }
+
+        // The movement/jump/look gate.
+        [HarmonyPatch(typeof(PlayerController), "TakeInput", new Type[] { typeof(bool) })]
+        private static class PlayerControllerTakeInputGate
+        {
+            private static bool Prefix(ref bool __result)
+            {
+                if (!FiresInputBlock.IsCapturing) return true;
+                __result = false;
+                return false;
+            }
         }
 
         [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetButtonDown))]
