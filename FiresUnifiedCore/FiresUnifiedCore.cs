@@ -129,6 +129,12 @@ namespace FiresCore
             // that companions ignore unless Hunt is toggled on or the creature attacks first.
             FiresCore.Npc.HuntListConfig.Initialize(Config);
             FiresCore.Npc.HuntListConfig.BindToSync(configSync);
+
+            // MovementGate: opt-in HARD enforcement of the movement single-writer rule (default OFF).
+            // The SetMoveDir prefix only enforces when this is true; flip it on in-game after verifying
+            // pathfinding still moves, flip off to revert instantly.
+            FiresCore.Npc.Core.MovementGateConfig.Initialize(Config);
+            FiresCore.Npc.Core.MovementGateConfig.BindToSync(configSync);
         }
 
         private void TryDisposeConfigManager()

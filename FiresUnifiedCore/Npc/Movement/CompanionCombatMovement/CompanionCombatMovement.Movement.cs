@@ -217,24 +217,12 @@ namespace FiresCore.Npc
                 return;
             }
             
-            // Fallback: No authority system available - use direct control
-            // This allows the Harmony patch (which allows Vector3.zero) to still work
-            // Only log once per second to avoid spam
+            // No authority component (only on a malformed prefab). PARK — do not raw-write SetMoveDir;
+            // the single-writer rule must hold. Keep the throttled warning so it's visible if it happens.
             if (Time.frameCount % 60 == 0)
             {
-                Debug.LogWarning($"[CompanionCombatMovement] {_companion?.companionName} SetMoveDirSafe - no movement authority, using fallback");
+                Debug.LogWarning($"[CompanionCombatMovement] {_companion?.companionName} SetMoveDirSafe - no movement authority; parking (single-writer)");
             }
-            
-            // Direct fallback - the Harmony patch will allow this through if it's Vector3.zero
-            // or if it decides the companion needs to move
-            _character.SetMoveDir(moveDir);
-            
-            MovementMode fallbackMode = GetMovementModeForIntent();
-            _character.SetWalk(fallbackMode == MovementMode.Walk);
-            _character.SetRun(fallbackMode == MovementMode.Run);
-            
-            _lastSetMoveDir = moveDir;
-            _moveDirSet = true;
         }
 
         private CompanionFacingAuthority _facingAuthority;

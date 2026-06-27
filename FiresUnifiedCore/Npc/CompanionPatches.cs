@@ -2786,6 +2786,24 @@ namespace FiresCore.Npc
                     return false; // True frozen state blocks all movement
                 }
 
+                // SINGLE-WRITER GATE (opt-in, default OFF — MovementGateConfig.Enabled). When enabled, drop
+                // any companion SetMoveDir that is NOT one of: (a) the authority's own apply
+                // (IsCurrentlyApplying), or (b) inside the vanilla-pathfinding escape hatch
+                // (DisableExternalBlocking → ShouldBlockExternalMovement temporarily false). The
+                // CurrentAuthority==None allow is freeze-safety — never block when nothing owns movement
+                // (e.g. the early-Update-before-Start window). Config check first so it's free when off.
+                if (Core.MovementGateConfig.Enabled)
+                {
+                    var authority = GetCachedAuthority(__instance);
+                    if (authority != null
+                        && authority.ShouldBlockExternalMovement
+                        && !authority.IsCurrentlyApplying
+                        && authority.CurrentAuthority != Core.UnifiedMovementAuthority.MovementSource.None)
+                    {
+                        return false; // external write while an owner holds movement — drop it
+                    }
+                }
+
                 return true;
             }
             catch

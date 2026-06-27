@@ -68,10 +68,9 @@ namespace FiresCore.Npc.AI
                 return;
             }
             
-            // Fallback: No authority system
-            m_character.SetMoveDir(direction);
-            m_character.SetWalk(!run);
-            m_character.SetRun(run);
+            // No authority component (only on a malformed prefab). PARK — do not raw-write SetMoveDir;
+            // the single-writer rule must hold and a real companion always has the authority. Waiting a
+            // frame for it to resolve is correct; racing the authority with a raw write is not.
         }
         
         /// <summary>
@@ -106,8 +105,19 @@ namespace FiresCore.Npc.AI
             
             // USE VANILLA PATHFINDING - this is the key!
             // BaseAI.MoveTo() uses FindPath() to calculate a path around obstacles
-            // and follows waypoints in m_path, not a direct line to target
-            return MoveTo(Time.deltaTime, destination, reachDistance, run);
+            // and follows waypoints in m_path, not a direct line to target.
+            // Escape hatch: vanilla MoveTo calls SetMoveDir directly (not via the authority's apply), so
+            // open the gate around it — the single-writer prefix (when enabled) lets this legitimate
+            // pathfinding write through. try/finally guarantees the gate re-closes even if FindPath throws.
+            try
+            {
+                authority?.DisableExternalBlocking();
+                return MoveTo(Time.deltaTime, destination, reachDistance, run);
+            }
+            finally
+            {
+                authority?.EnableExternalBlocking();
+            }
         }
         
         #endregion

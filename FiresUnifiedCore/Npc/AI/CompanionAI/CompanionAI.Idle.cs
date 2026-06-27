@@ -252,8 +252,18 @@ namespace FiresCore.Npc.AI
             }
             
             // Step 2: Use VANILLA PATHFINDING
-            // BaseAI.MoveTo() uses FindPath() and m_path waypoints for obstacle avoidance
-            return MoveTo(Time.deltaTime, target, reachDistance, run);
+            // BaseAI.MoveTo() uses FindPath() and m_path waypoints for obstacle avoidance.
+            // Escape hatch (see MoveToThroughAuthority): open the single-writer gate around the vanilla
+            // MoveTo so its direct SetMoveDir is allowed through; try/finally always re-closes it.
+            try
+            {
+                authority?.DisableExternalBlocking();
+                return MoveTo(Time.deltaTime, target, reachDistance, run);
+            }
+            finally
+            {
+                authority?.EnableExternalBlocking();
+            }
         }
         
         /// <summary>
