@@ -1,9 +1,57 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
 namespace FiresCore.UI
 {
+    /// <summary>
+    /// Valheim's crosshair "HoverName" text is a raycastTarget parked at screen-center; it sits on top of a
+    /// custom ScreenSpaceOverlay UI in that band and eats clicks (center buttons/inputs/scroll go dead while
+    /// edge controls work). A center-covering UI calls <see cref="Suppress"/> on open, <see cref="Reassert"/>
+    /// each frame while open (the Hud re-enables it), and <see cref="Restore"/> on close. The caller owns the
+    /// store list. See Tools/UI_CROSSHAIR_RAYCAST_BLOCKER.md.
+    /// </summary>
+    public static class CrosshairRaycast
+    {
+        public static void Suppress(List<Graphic> store)
+        {
+            if (store == null) return;
+            store.Clear();
+            var hud = Hud.instance;
+            var cross = hud != null ? FindByName(hud.transform, "crosshair") : null;
+            if (cross == null) return;
+            foreach (var g in cross.GetComponentsInChildren<Graphic>(true))
+                if (g != null && g.raycastTarget) { g.raycastTarget = false; store.Add(g); }
+        }
+
+        public static void Reassert(List<Graphic> store)
+        {
+            if (store == null) return;
+            for (int i = 0; i < store.Count; i++)
+                if (store[i] != null) store[i].raycastTarget = false;
+        }
+
+        public static void Restore(List<Graphic> store)
+        {
+            if (store == null) return;
+            foreach (var g in store) if (g != null) g.raycastTarget = true;
+            store.Clear();
+        }
+
+        private static Transform FindByName(Transform root, string name)
+        {
+            if (root == null) return null;
+            if (root.name == name) return root;
+            for (int i = 0; i < root.childCount; i++)
+            {
+                var r = FindByName(root.GetChild(i), name);
+                if (r != null) return r;
+            }
+            return null;
+        }
+    }
+
     /// <summary>
   /// Centralized UI element builder helper for creating common Unity UI components.
     /// This reduces code duplication across screen controllers and ensures consistent styling.
