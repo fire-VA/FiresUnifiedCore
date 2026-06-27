@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using HarmonyLib;
 
 namespace FiresCore.Input
@@ -41,6 +42,46 @@ namespace FiresCore.Input
 
         public static event Action<bool> CapturingChanged;
 
+        // ── Diagnostics ───────────────────────────────────────────────────
+        private static bool _diagLogged;
+        private static bool _loggedTakeInput;
+        private static bool _loggedZInput;
+
+        // Logs (once) whether the Harmony patches actually ATTACHED. ZInput.* is
+        // patched ONLY by this module, so its presence in the patched-method set
+        // is a clean yes/no on whether our gate installed (Player.TakeInput is
+        // ambiguous — FAP's config UIs patch it too).
+        private static void LogPatchStatus()
+        {
+            if (_diagLogged) return;
+            _diagLogged = true;
+            try
+            {
+                var patched = new HashSet<MethodBase>(Harmony.GetAllPatchedMethods());
+                bool takeInput = Contains(patched, AccessTools.Method(typeof(Player), "TakeInput"));
+                bool btnDown   = Contains(patched, AccessTools.Method(typeof(ZInput), "GetButtonDown", new[] { typeof(string) }));
+                bool keyDown   = Contains(patched, AccessTools.Method(typeof(ZInput), "GetKeyDown", new[] { typeof(UnityEngine.KeyCode), typeof(bool) }));
+                bool mBtnDown  = Contains(patched, AccessTools.Method(typeof(ZInput), "GetMouseButtonDown", new[] { typeof(int) }));
+                FiresCore.Logging.FiresLogger.LogInfo(
+                    $"[{LogTag}] INPUT-BLOCK PATCH STATUS — Player.TakeInput={takeInput} (FAP also patches) | " +
+                    $"ZInput.GetButtonDown={btnDown} ZInput.GetKeyDown={keyDown} ZInput.GetMouseButtonDown={mBtnDown} " +
+                    $"(the ZInput flags are OURS alone — False = our gate did NOT attach)");
+            }
+            catch (Exception ex)
+            {
+                FiresCore.Logging.FiresLogger.LogWarning($"[{LogTag}] input-block patch-status check failed: {ex.Message}");
+            }
+        }
+
+        private static bool Contains(HashSet<MethodBase> set, MethodBase m) => m != null && set.Contains(m);
+
+        internal static void LogZInputSuppressOnce()
+        {
+            if (_loggedZInput) return;
+            _loggedZInput = true;
+            try { FiresCore.Logging.FiresLogger.LogInfo($"[{LogTag}] ZInput hotkey read SUPPRESSED while capturing (gate working)"); } catch { }
+        }
+
         public static void Acquire(object token)
         {
             if (token == null || !_tokens.Add(token)) return;
@@ -65,6 +106,7 @@ namespace FiresCore.Input
             bool now = _tokens.Count > 0;
             if (now == IsCapturing) return;
             IsCapturing = now;
+            if (now) { _loggedTakeInput = false; _loggedZInput = false; LogPatchStatus(); }
             try { FiresCore.Logging.FiresLogger.LogInfo($"[{LogTag}] text-capture input gate {(now ? "ON" : "OFF")} (tokens={_tokens.Count})"); }
             catch { }
             try { CapturingChanged?.Invoke(now); }
@@ -79,6 +121,7 @@ namespace FiresCore.Input
             private static bool Prefix(ref bool __result)
             {
                 if (!IsCapturing) return true;
+                if (!_loggedTakeInput) { _loggedTakeInput = true; try { FiresCore.Logging.FiresLogger.LogInfo($"[{LogTag}] Player.TakeInput SUPPRESSED while capturing (gate working)"); } catch { } }
                 __result = false;
                 return false;
             }
@@ -94,6 +137,7 @@ namespace FiresCore.Input
         private static bool Gate(ref bool __result)
         {
             if (!FiresInputBlock.IsCapturing) return true;
+            FiresInputBlock.LogZInputSuppressOnce();
             __result = false;
             return false;
         }
