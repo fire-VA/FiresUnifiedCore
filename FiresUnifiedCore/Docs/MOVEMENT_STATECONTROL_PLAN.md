@@ -93,10 +93,14 @@ DONE (builds clean + deployed, gate still OFF):
 - **InnerPeaceEffect** (monk meditation) — per-frame `SetMoveDir(0)` → one-time `FreezeMovement(dur)` +
   `UnfreezeMovement` on end; companion-only (non-UMA fallback kept).
 - **WorkstationInteractionBehaviorV2.UpdateWorking** — per-frame raw zero-hold → acquire-if-needed + `Hold` + park.
+- **DodgeBehavior** (CommitMovement 301 / StopMovement 428 / StopStrafing 563) — drives **both** dodge rolls and
+  strafing. It's owned by CompanionCombat, a SEPARATE system from CompanionCombatMovement (which holds Combat
+  authority and keeps its 2s lease even while yielding to a dodge), so a same-priority acquire would be denied.
+  Now drives through UMA at **Animation priority (80)** under owner `CompanionDodge` (preempts CombatMovement's
+  Combat-70 positioning for the committed window; below Command-90/Forced-100 so a command/teleport still wins),
+  releasing on stop so CombatMovement resumes. No-UMA kinematic-guarded fallback kept.
 
 REMAINING genuine converts (next batches):
-- DodgeBehavior 301/428/563 — needs the flee pattern (expose direction, coordinator drives); inline raw drive
-  under a fresh same-priority owner would be denied by the incumbency guard. Careful combat pass.
 - CompanionCommandSystem 1378/1751 (collect-item per-frame drives), 1411/1788/2080/1121 (stops) — command
   system, owner-string care (a Release from a non-owner no-ops).
 - CommandMovementHandler:160 — Release (verify owner contract first).
