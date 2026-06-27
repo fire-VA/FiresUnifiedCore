@@ -31,14 +31,21 @@ namespace FiresCore.Npc
 
         private void InitializeSubBehaviors()
         {
-            // Static placed NPCs have no CompanionController ï¿½ sub-behaviors
-            // require one for GetComponent calls, so skip them entirely.
-            // Static NPCs only need basic wandering / emotes / sitting which
-            // are handled directly by CompanionIdleBehavior, not sub-behaviors.
+            // Patrol is the one sub-behavior that ALSO applies to static placed NPCs (no
+            // CompanionController): it's force-started by an explicit route assignment and resolves its
+            // dependencies off the NPC's own GameObject, so create it FIRST — before the static-NPC early
+            // return below. (Patrol is independent of AllowIdleWander, which only governs homesteading chores.)
+            var patrol = new PatrolBehavior();
+            patrol.Initialize(_companion, this);
+            _subBehaviors.Add(patrol);
+
+            // The remaining sub-behaviors are homesteading chores that require a CompanionController for their
+            // GetComponent calls, so static NPCs (which otherwise only do basic wandering / emotes / sitting,
+            // handled directly by CompanionIdleBehavior) skip them.
             if (_companion == null)
             {
                 if (VerboseLogging)
-                    Debug.Log($"[CompanionIdleBehavior] Skipping sub-behavior init (no CompanionController ï¿½ static NPC)");
+                    Debug.Log($"[CompanionIdleBehavior] Static NPC: only Patrol sub-behavior initialized (no CompanionController)");
                 return;
             }
 
@@ -108,12 +115,6 @@ namespace FiresCore.Npc
             var fishing = new FishingBehavior();
             fishing.Initialize(_companion, this);
             _subBehaviors.Add(fishing);
-
-            // Patrol - walk an assigned route. Force-started by route assignment (see
-            // TryStartPatrolIfAssigned), NOT part of the random idle rotation.
-            var patrol = new PatrolBehavior();
-            patrol.Initialize(_companion, this);
-            _subBehaviors.Add(patrol);
 
             if (VerboseLogging)
                 Debug.Log($"[CompanionIdleBehavior] Initialized {_subBehaviors.Count} sub-behaviors");

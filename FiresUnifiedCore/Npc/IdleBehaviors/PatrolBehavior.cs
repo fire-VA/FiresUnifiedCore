@@ -42,12 +42,12 @@ namespace FiresCore.Npc.IdleBehaviors
         private CompanionCombatMovement _combatMovement;
         private CompanionCombatMovement CombatMovement =>
             _combatMovement != null ? _combatMovement
-            : (_combatMovement = Companion != null ? Companion.GetComponent<CompanionCombatMovement>() : null);
+            : (_combatMovement = HostGameObject != null ? HostGameObject.GetComponent<CompanionCombatMovement>() : null);
 
         private FiresCore.Npc.AI.CompanionAI _ai;
         private FiresCore.Npc.AI.CompanionAI Ai =>
             _ai != null ? _ai
-            : (_ai = Companion != null ? Companion.GetComponent<FiresCore.Npc.AI.CompanionAI>() : null);
+            : (_ai = HostGameObject != null ? HostGameObject.GetComponent<FiresCore.Npc.AI.CompanionAI>() : null);
 
         // True while the NPC is fighting (or in the post-combat hold buffer). CompanionAI's own combat STATE is
         // the authoritative signal — the stationed self-defense pass sets AIState.Combat and holds it through the
@@ -65,7 +65,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // where it left off — no SaveState/RestoreState needed.
         public override bool SupportsResumption => true;
 
-        private PatrolAssignment Assignment => Companion != null ? Companion.GetComponent<PatrolAssignment>() : null;
+        private PatrolAssignment Assignment => HostGameObject != null ? HostGameObject.GetComponent<PatrolAssignment>() : null;
 
         public override bool CanStart()
         {
@@ -80,6 +80,7 @@ namespace FiresCore.Npc.IdleBehaviors
             base.Start();
             MaxDuration = float.MaxValue;   // patrol runs continuously until cancelled
             _route = PatrolRouteManager.GetRoute(Assignment?.RouteName);
+            Debug.Log($"[PatrolBehavior] started for {HostGameObject?.name} — route '{Assignment?.RouteName}' ({_route?.Points.Count ?? 0} pts)");
             _direction = 1;
             _waiting = false;
             _index = NearestPointIndex();
@@ -168,7 +169,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Force vanilla WALK speed. The pathfinding chain only ever calls SetRun(false), leaving m_walk
             // false → the NPC would use the jog tier (m_speed=10, ~2× walk). Setting m_walk every patrol frame
             // selects m_walkSpeed; other behaviors (combat/follow) re-assert their own mode so this won't stick.
-            Companion?.GetComponent<Character>()?.SetWalk(true);
+            HostGameObject?.GetComponent<Character>()?.SetWalk(true);
             TryMoveToPosition(target, walk: true);   // pathfinding lives in vanilla MoveTo here — keep it, do not swap for straight-line
 
             return false;   // never completes on its own
@@ -180,7 +181,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (Transform == null) return;
             Transform.position = point;
-            var rb = Companion != null ? Companion.GetComponent<Rigidbody>() : null;
+            var rb = HostGameObject != null ? HostGameObject.GetComponent<Rigidbody>() : null;
             if (rb != null) { rb.position = point; rb.linearVelocity = Vector3.zero; }
         }
 
@@ -279,7 +280,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // death-while-patrolling can respawn it here. Owner-only — the server owns these NPCs.
         private void WriteCheckpoint()
         {
-            var nview = Companion != null ? Companion.GetComponent<ZNetView>() : null;
+            var nview = HostGameObject != null ? HostGameObject.GetComponent<ZNetView>() : null;
             if (nview == null || !nview.IsValid() || !nview.IsOwner()) return;
             nview.GetZDO()?.Set("npc_patrol_checkpoint", _route.Points[_index]);
         }

@@ -39,6 +39,11 @@ namespace FiresCore
                 "FiresCore.Npc.CompanionPatches+CompanionClientPatches_FejdStartup",
                 "FiresCore.Npc.CompanionPatches+CompanionClientPatches_EnemyHud",
                 "FiresCore.Npc.CompanionPatches+ArcheryTarget_OnProjectileHit_Patch",
+                // Shared input-block: Minimap/InventoryGui Update gates are client-only.
+                "FiresCore.UI.InputBlockClientGates",
+                // Text-capture gate: the ZInput hotkey suppressors are client-only
+                // (patching ZInput on a headless build native-crashes the IL rewriter).
+                "FiresCore.Input.FiresInputBlockZInputGates",
             };
 
         protected override void Setup()
