@@ -29,6 +29,7 @@ namespace FiresCore.Npc
         private static readonly Dictionary<int, CompanionController> _companionLookupCache = new Dictionary<int, CompanionController>();
         private static readonly Dictionary<int, Rigidbody> _rigidbodyCache = new Dictionary<int, Rigidbody>();
         private static readonly Dictionary<int, CompanionStateController> _stateControllerCache = new Dictionary<int, CompanionStateController>();
+        private static readonly Dictionary<int, Core.UnifiedMovementAuthority> _movementAuthorityCache = new Dictionary<int, Core.UnifiedMovementAuthority>();
 
         // PERF CACHE: Reusable list for EnemyHud key iteration (avoids per-frame allocation).
         private static readonly List<object> _tempHudKeys = new List<object>();
@@ -71,6 +72,23 @@ namespace FiresCore.Npc
         }
 
         /// <summary>
+        /// Cached UnifiedMovementAuthority lookup. Used (once enforcement is enabled in the final
+        /// migration step) by the SetMoveDir prefix to drop any companion write that did not originate
+        /// from the authority's own ApplyMoveDirectionInternal (IsCurrentlyApplying). Added now so the
+        /// plumbing is in place; the prefix gate itself stays off until every raw writer is routed.
+        /// </summary>
+        private static Core.UnifiedMovementAuthority GetCachedAuthority(Character instance)
+        {
+            int id = instance.GetInstanceID();
+            if (!_movementAuthorityCache.TryGetValue(id, out var cached))
+            {
+                cached = instance.GetComponent<Core.UnifiedMovementAuthority>();
+                _movementAuthorityCache[id] = cached;
+            }
+            return cached;
+        }
+
+        /// <summary>
         /// Clears cache entries for a destroyed Character.
         /// Called from Character.OnDestroy patch or when ZNetScene resets.
         /// </summary>
@@ -79,6 +97,7 @@ namespace FiresCore.Npc
             _companionLookupCache.Remove(instanceId);
             _rigidbodyCache.Remove(instanceId);
             _stateControllerCache.Remove(instanceId);
+            _movementAuthorityCache.Remove(instanceId);
         }
 
         // NOTE: Companion login restoration is now handled server-side by
@@ -279,6 +298,7 @@ namespace FiresCore.Npc
                 _companionLookupCache.Clear();
                 _rigidbodyCache.Clear();
                 _stateControllerCache.Clear();
+                _movementAuthorityCache.Clear();
 
                 // CRITICAL: Re-register companion prefabs with the new ZNetScene instance
                 // This mirrors what ZNetScenePatches does for piecePrefabs/itemPrefabs

@@ -191,6 +191,20 @@ namespace FiresCore.Npc.Core
         private bool _isMovementFrozen;
         private string _freezeReason;
         private float _freezeEndTime;
+
+        // Suspend/resume (generalized "park"): a higher-priority interrupter saves the preempted
+        // owner's authority SLOT and reserves the ladder band at/below _suspendFloor so nothing
+        // lower can grab the body during the interrupt. Resume() restores the saved slot, so an
+        // interrupted behavior comes back exactly where it left off instead of re-racing from scratch.
+        // The save is a slot (not a boolean), so nested interrupts compose: the save-stack IS the
+        // priority ladder. NOTE: nothing calls SuspendBelow until the suspend/resume wiring step, so
+        // _suspendActive is false and every guard below is inert until then (purely additive for now).
+        private bool _suspendActive;
+        private MovementSource _suspendFloor;
+        private string _suspendResumer = "";
+        private MovementSource _suspendedSource;
+        private string _suspendedOwner = "";
+        private float _suspendedRemaining;
         
         // Animation blocking
         private bool _isAnimationBlocking;
@@ -317,7 +331,24 @@ namespace FiresCore.Npc.Core
                 }
                 return false;
             }
-            
+
+            // SUSPEND FLOOR: while a higher source has suspended a band of the ladder, deny any
+            // source at/below the floor that is not the resumer — so a lower behavior can't steal
+            // the body during an interrupt, and the suspended owner resumes cleanly. (Inert until
+            // the suspend/resume wiring step; _suspendActive is false before then.)
+            if (_suspendActive && source != MovementSource.Forced &&
+                owner != _suspendResumer && (int)source <= (int)_suspendFloor)
+            {
+                if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DENIED_LOG_INTERVAL)
+                {
+                    Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - band suspended below {_suspendFloor} by {_suspendResumer}");
+                    _lastDeniedSource = source;
+                    _lastDeniedOwner = owner;
+                    _lastDeniedLogTime = Time.time;
+                }
+                return false;
+            }
+
             // Check priority
             if ((int)source < (int)CurrentAuthority)
             {
@@ -418,7 +449,17 @@ namespace FiresCore.Npc.Core
             {
                 return; // Not the owner
             }
-            
+
+            // If this owner had suspended a lower behavior, releasing (or timing out, which calls
+            // this) must RESUME that behavior rather than dropping authority to None — otherwise the
+            // suspended behavior is orphaned and stays parked forever (frozen). This is the single
+            // most important freeze-safety of the suspend mechanism.
+            if (_suspendActive && _suspendResumer == owner)
+            {
+                Resume(owner);
+                return;
+            }
+
             if (CurrentAuthority == MovementSource.None)
             {
                 return; // Already released
@@ -481,6 +522,98 @@ namespace FiresCore.Npc.Core
         public bool HasAuthority(string owner)
         {
             return CurrentAuthorityOwner == owner && CurrentAuthority != MovementSource.None;
+        }
+
+        /// <summary>
+        /// The universal "may I drive the body this frame?" query. A movement loop calls this at the
+        /// TOP of its per-frame method and PARKS (returns, writes nothing) when it returns false —
+        /// instead of writing a fallback zero to hold position. This is the generalized form of the
+        /// proven `if (_idleBehavior.IsInSubBehavior) return;` park. Denial == do nothing.
+        /// </summary>
+        public bool CanWrite(string owner)
+        {
+            if (CurrentAuthority == MovementSource.None) return false;
+            if (CurrentAuthorityOwner != owner) return false;   // someone else owns it (incl. a suspender)
+            if (_isMovementFrozen) return false;                // a frozen state owns the standstill
+            return true;
+        }
+
+        /// <summary>
+        /// Interrupt that preempts the current (lower-priority) owner AND remembers its slot so it can
+        /// be restored later by Resume. Use this instead of a per-frame stop on the incumbent: the
+        /// interrupter takes the body, the incumbent's loop parks (CanWrite goes false for it), and the
+        /// band at/below <paramref name="floor"/> is reserved so nothing lower steals the slot meanwhile.
+        /// Only takes effect if newSource strictly outranks the current owner (mirrors normal priority).
+        /// </summary>
+        public void SuspendBelow(MovementSource newSource, string newOwner, MovementSource floor, float duration = 0f)
+        {
+            // Save the slot we're suspending — but only if a strictly-lower source currently holds it.
+            if (CurrentAuthority != MovementSource.None && (int)CurrentAuthority < (int)newSource)
+            {
+                _suspendedSource = CurrentAuthority;
+                _suspendedOwner = CurrentAuthorityOwner;
+                _suspendedRemaining = AuthorityDuration > 0 ? Mathf.Max(0f, _authorityTimeoutTime - Time.time) : 0f;
+            }
+            else
+            {
+                _suspendedSource = MovementSource.None;
+                _suspendedOwner = "";
+                _suspendedRemaining = 0f;
+            }
+
+            _suspendActive = true;
+            _suspendFloor = floor;
+            _suspendResumer = newOwner;
+
+            // Clean stop on handoff, then take authority for the interrupter.
+            if (CurrentAuthority != MovementSource.None && CurrentAuthority != newSource)
+                StopMovementImmediate();
+
+            var previousSource = CurrentAuthority;
+            CurrentAuthority = newSource;
+            CurrentAuthorityOwner = newOwner;
+            AuthorityAcquiredTime = Time.time;
+            AuthorityDuration = duration;
+            _authorityTimeoutTime = duration > 0 ? Time.time + duration : float.MaxValue;
+
+            if (VerboseLogging)
+                Debug.Log($"[MovementAuthority] {_companion?.companionName} {newOwner} ({newSource}) SUSPENDED below {floor}" +
+                    (_suspendedOwner != "" ? $", saved slot {_suspendedSource}/{_suspendedOwner}" : ", nothing to save"));
+
+            OnAuthorityChanged?.Invoke(previousSource, newSource);
+        }
+
+        /// <summary>
+        /// Ends a SuspendBelow and restores the saved slot to its original owner (or releases to None
+        /// if nothing was saved). Only the suspender may resume. Called explicitly by the interrupter
+        /// when done, and automatically from ReleaseAuthority if the suspender's authority times out.
+        /// </summary>
+        public void Resume(string owner)
+        {
+            if (!_suspendActive || _suspendResumer != owner) return;
+
+            _suspendActive = false;
+            _suspendFloor = MovementSource.None;
+            _suspendResumer = "";
+
+            StopMovementImmediate();
+
+            var previousSource = CurrentAuthority;
+            CurrentAuthority = _suspendedSource;
+            CurrentAuthorityOwner = _suspendedOwner;
+            AuthorityDuration = _suspendedRemaining;
+            _authorityTimeoutTime = _suspendedRemaining > 0 ? Time.time + _suspendedRemaining : float.MaxValue;
+            HasDestination = false;
+            CurrentMoveDirection = Vector3.zero;
+
+            if (VerboseLogging)
+                Debug.Log($"[MovementAuthority] {_companion?.companionName} RESUMED slot {CurrentAuthority}/{CurrentAuthorityOwner} (from {previousSource}/{owner})");
+
+            _suspendedSource = MovementSource.None;
+            _suspendedOwner = "";
+            _suspendedRemaining = 0f;
+
+            OnAuthorityChanged?.Invoke(previousSource, CurrentAuthority);
         }
         
         /// <summary>
@@ -589,11 +722,33 @@ namespace FiresCore.Npc.Core
         public void ClearDestination(string owner)
         {
             if (CurrentAuthorityOwner != owner) return;
-            
+
             HasDestination = false;
             CurrentDestination = Vector3.zero;
             _targetMoveDirection = Vector3.zero;
             CurrentMoveDirection = Vector3.zero;
+        }
+
+        /// <summary>
+        /// OWNED STANDSTILL — the correct replacement for a behavior's per-frame SetMoveDir(0) hold.
+        /// The owner commands stillness THROUGH the single writer and keeps its slot warm, so nothing
+        /// lower can grab the body while it holds. Higher-priority sources (Combat/Command/Forced) can
+        /// still preempt — unlike FreezeMovement, which blocks everything but Forced. Use Hold for
+        /// behavior standstills (workstation, gather/loot finish, bow aim); use FreezeMovement for true
+        /// frozen states (emote/chair/UI/root). A non-owner calling this is a no-op (it must park).
+        /// </summary>
+        public void Hold(string owner, string reason = "Hold")
+        {
+            if (CurrentAuthorityOwner != owner) return;
+
+            HasDestination = false;
+            _targetMoveDirection = Vector3.zero;
+            CurrentMoveDirection = Vector3.zero;
+
+            // Keep the authority warm so a finite duration doesn't time out mid-hold and drop the
+            // body to a lower source.
+            if (AuthorityDuration > 0)
+                _authorityTimeoutTime = Time.time + AuthorityDuration;
         }
         
         /// <summary>
