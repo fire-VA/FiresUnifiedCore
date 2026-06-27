@@ -7,6 +7,7 @@ using FiresCore.Npc.Interactions;
 using FiresCore.Npc.IdleBehaviors;
 using FiresCore.Npc.NpcMode;
 using FiresCore.Npc.Movement;
+using FiresCore.Npc.Core;
 using FiresCore.Npc.Vault;
 
 namespace FiresCore.Npc.Commands
@@ -1118,7 +1119,9 @@ namespace FiresCore.Npc.Commands
                 if (character != null)
                 {
                     IdleBehaviors.InteractableOccupancyManager.ReleaseAllForOccupant(character);
-                    character.SetMoveDir(Vector3.zero);
+                    // Single-writer: clean-slate stop through UMA before the command drives, instead of a
+                    // raw zero. ForceReleaseAllAuthority does a StopMovementImmediate through the single writer.
+                    companion.GetMovementAuthority()?.ForceReleaseAllAuthority();
                 }
                 
                 // 4. Clear any current AI targets and alert state
@@ -1375,8 +1378,19 @@ namespace FiresCore.Npc.Commands
                         {
                             Vector3 dir = (itemDrop.transform.position - companion.transform.position).normalized;
                             dir.y = 0;
-                            character.SetMoveDir(dir);
-                            character.SetWalk(true);
+                            // Single-writer: drive the collect approach through UMA (PlayerCommand) so it
+                            // can't race ApplyMovement; released when the collect loop ends.
+                            var uma = companion.GetMovementAuthority();
+                            if (uma != null)
+                            {
+                                if (uma.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.PlayerCommand, "CommandCollect", 5f))
+                                    uma.SetMoveDirection("CommandCollect", dir, walk: true, run: false);
+                            }
+                            else
+                            {
+                                character.SetMoveDir(dir);
+                                character.SetWalk(true);
+                            }
                         }
                         yield return new WaitForSeconds(0.2f);
                         continue;
@@ -1404,14 +1418,22 @@ namespace FiresCore.Npc.Commands
                 yield return new WaitForSeconds(0.3f);
             }
             
-            // Stop movement
-            var charStop = companion.GetCharacter();
-            if (charStop != null)
+            // Stop movement — release the collect authority (clean stop through the single writer).
+            var umaStop = companion.GetMovementAuthority();
+            if (umaStop != null)
             {
-                charStop.SetMoveDir(Vector3.zero);
-                charStop.SetWalk(false);
+                umaStop.ReleaseAuthority("CommandCollect");
             }
-            
+            else
+            {
+                var charStop = companion.GetCharacter();
+                if (charStop != null)
+                {
+                    charStop.SetMoveDir(Vector3.zero);
+                    charStop.SetWalk(false);
+                }
+            }
+
             if (itemsCollected > 0)
             {
                 ShowMessage($"{companion.companionName} collected {itemsCollected} item{(itemsCollected > 1 ? "s" : "")}");
@@ -1748,8 +1770,18 @@ namespace FiresCore.Npc.Commands
                         {
                             Vector3 dir = (itemDrop.transform.position - companion.transform.position).normalized;
                             dir.y = 0;
-                            character.SetMoveDir(dir);
-                            character.SetWalk(true);
+                            // Single-writer: drive the collect approach through UMA (PlayerCommand).
+                            var uma = companion.GetMovementAuthority();
+                            if (uma != null)
+                            {
+                                if (uma.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.PlayerCommand, "CommandCollect", 5f))
+                                    uma.SetMoveDirection("CommandCollect", dir, walk: true, run: false);
+                            }
+                            else
+                            {
+                                character.SetMoveDir(dir);
+                                character.SetWalk(true);
+                            }
                         }
                     }
                     else
@@ -1781,14 +1813,22 @@ namespace FiresCore.Npc.Commands
                 yield return new WaitForSeconds(0.3f);
             }
             
-            // Stop movement
-            var charStop = companion.GetCharacter();
-            if (charStop != null)
+            // Stop movement — release the collect authority (clean stop through the single writer).
+            var umaStop = companion.GetMovementAuthority();
+            if (umaStop != null)
             {
-                charStop.SetMoveDir(Vector3.zero);
-                charStop.SetWalk(false);
+                umaStop.ReleaseAuthority("CommandCollect");
             }
-            
+            else
+            {
+                var charStop = companion.GetCharacter();
+                if (charStop != null)
+                {
+                    charStop.SetMoveDir(Vector3.zero);
+                    charStop.SetWalk(false);
+                }
+            }
+
             if (itemsCollected > 0)
             {
                 ShowMessage($"{companion.companionName} collected {itemsCollected} items");
@@ -2074,11 +2114,10 @@ namespace FiresCore.Npc.Commands
                 yield return new WaitForSeconds(0.3f);
             }
             
-            // Stop movement
+            // Stop movement — CombatMovement.ClearMoveDestination releases its UMA authority (clean stop
+            // through the single writer); no raw SetMoveDir needed.
             combatMovement?.ClearMoveDestination();
-            var character = companion.GetCharacter();
-            character?.SetMoveDir(Vector3.zero);
-            
+
             // Face the chest
             Vector3 dir = (command.TargetPosition - companion.transform.position).normalized;
             dir.y = 0;

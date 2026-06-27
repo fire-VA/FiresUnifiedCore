@@ -612,10 +612,26 @@ namespace FiresCore.Npc.AI
             
             if (closestEnemy != null && !closestEnemy.IsDead())
             {
-                LookAt(closestEnemy.transform.position);
+                FaceThroughAuthority(closestEnemy.transform.position);
             }
         }
-        
+
+        /// <summary>
+        /// Faces a world position through the FacingAuthority at Combat priority (owner "CompanionAI"), so
+        /// enemy-facing wins over CombatMovement's move-direction facing (Following) — you face your target
+        /// in a fight, even while standing still to attack. Falls back to vanilla LookAt with no authority.
+        /// </summary>
+        private void FaceThroughAuthority(Vector3 worldPos)
+        {
+            var facing = _companion != null ? _companion.GetFacingAuthority() : null;
+            if (facing != null && facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.Combat, "CompanionAI", 1f))
+            {
+                facing.SetLookTarget("CompanionAI", worldPos);
+                return;
+            }
+            LookAt(worldPos);
+        }
+
         private Character FindNearestEnemy()
         {
             Character nearest = null;
@@ -697,7 +713,7 @@ namespace FiresCore.Npc.AI
 
             if (_isRangedWeapon)
             {
-                LookAt(targetPos);
+                FaceThroughAuthority(targetPos);
                 
                 if (m_character.InAttack())
                 {
@@ -733,7 +749,7 @@ namespace FiresCore.Npc.AI
                 // again, and never satisfy ShouldAttack's angle gate.
                 StopMovementThroughAuthority();
 
-                LookAt(targetPos);
+                FaceThroughAuthority(targetPos);
 
                 if (m_character.InAttack())
                 {

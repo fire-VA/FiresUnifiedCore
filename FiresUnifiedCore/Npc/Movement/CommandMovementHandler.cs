@@ -152,13 +152,11 @@ namespace FiresCore.Npc.Movement
             _commandDestination = Vector3.zero;
             _useWalkForCommand = false;
             
-            // CRITICAL: Stop movement animations to prevent sliding
-            if (_character != null)
-            {
-                _character.SetWalk(false);
-                _character.SetRun(false);
-                _character.SetMoveDir(Vector3.zero);
-            }
+            // Single-writer: stop through UMA, not a raw SetMoveDir. The actual mover (CompanionAI /
+            // CompanionCombatMovement) owns movement while heading to a command point; releasing cleanly
+            // runs a StopMovementImmediate through the single writer. The AI is also told to clear its
+            // command destination just below, after which it won't re-drive.
+            _companion?.GetMovementAuthority()?.ForceReleaseAllAuthority();
             
             // If we were in command priority mode just for movement, clear it
             if (!HasPriorityTarget)

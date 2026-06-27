@@ -159,6 +159,7 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
         private ArchetypeController _archetypeController;
         private BehaviorCoordinator _behaviorCoordinator;
         private UnifiedMovementAuthority _movementAuthority;
+        private CompanionFacingAuthority _facingAuthority;
         private CompanionFormationController _formationController;
 
         // State
@@ -531,6 +532,15 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
             if (_movementAuthority == null)
             {
                 _movementAuthority = gameObject.AddComponent<UnifiedMovementAuthority>();
+            }
+
+            // Facing authority - SINGLE SOURCE OF TRUTH for body rotation (the rotational sibling of
+            // UnifiedMovementAuthority). Facing writers (combat/bow/work/AI) request a look direction
+            // through this instead of slamming transform.rotation directly; only one owns facing at a time.
+            _facingAuthority = GetComponent<CompanionFacingAuthority>();
+            if (_facingAuthority == null)
+            {
+                _facingAuthority = gameObject.AddComponent<CompanionFacingAuthority>();
             }
             
             // Add formation controller for group following and personal space
@@ -3117,6 +3127,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         public ArchetypeController GetArchetypeController() => _archetypeController;
         public BehaviorCoordinator GetBehaviorCoordinator() => _behaviorCoordinator;
         public UnifiedMovementAuthority GetMovementAuthority() => _movementAuthority;
+        public CompanionFacingAuthority GetFacingAuthority() => _facingAuthority;
         public CompanionFormationController GetFormationController() => _formationController;
 
         public bool ShouldAllowDamage(HitData hit)

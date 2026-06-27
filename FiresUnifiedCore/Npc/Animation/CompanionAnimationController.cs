@@ -458,20 +458,15 @@ namespace FiresCore.Npc.Animation
             ForceEndEmote();
             PlayWorkAnimation(false);
             
-            // Zero velocity
+            // Zero velocity (rigidbody only — drift safety). Movement itself is NOT touched here: the
+            // animation controller does not own movement. The sole caller (WorkBehaviorBase.Cancel →
+            // base.Cancel) releases the behavior's UMA authority immediately after, which stops the body
+            // cleanly through the single writer. A raw SetMoveDir here would be a non-owner write.
             if (_rigidbody != null && !_rigidbody.isKinematic)
             {
                 Vector3 vel = _rigidbody.linearVelocity;
                 _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
                 _rigidbody.angularVelocity = Vector3.zero;
-            }
-            
-            // Zero movement on character
-            if (_character != null)
-            {
-                _character.SetMoveDir(Vector3.zero);
-                _character.SetWalk(false);
-                _character.SetRun(false);
             }
         }
         

@@ -237,10 +237,31 @@ namespace FiresCore.Npc
             _moveDirSet = true;
         }
 
+        private CompanionFacingAuthority _facingAuthority;
+        private CompanionFacingAuthority GetFacingAuthority()
+        {
+            if (_facingAuthority == null && _companion != null)
+                _facingAuthority = _companion.GetFacingAuthority();
+            return _facingAuthority;
+        }
+
         private void FaceMovementDirection(Vector3 dir)
         {
             dir.y = 0f;
             if (dir.sqrMagnitude < 0.0001f) return;
+
+            // Single facing-writer: request facing through the FacingAuthority at Following priority so it
+            // YIELDS to AI's enemy-facing (Combat) — in a fight you face the enemy, not your strafe
+            // direction — yet still drives facing when nothing higher wants it (flee / approach with no
+            // target). Direct write only as a no-authority fallback.
+            var facing = GetFacingAuthority();
+            if (facing != null)
+            {
+                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.Following, AUTHORITY_OWNER, 0.5f))
+                    facing.SetLookDirection(AUTHORITY_OWNER, dir);
+                return;
+            }
+
             dir.Normalize();
             Quaternion rot = Quaternion.LookRotation(dir);
             if (float.IsNaN(rot.x) || float.IsNaN(rot.y) || float.IsNaN(rot.z) || float.IsNaN(rot.w)) return;
