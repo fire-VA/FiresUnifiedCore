@@ -157,6 +157,7 @@
     <Compile Include="Terrain\HeightmapOverrideConfig.cs" />
     <Compile Include="Terrain\HeightmapOverridePatches.cs" />
     <Compile Include="Terrain\VASnapToGroundSpreadPatch.cs" />
+    <Compile Include="Bridge\GroupHudBridge.cs" />
     <Compile Include="Bridge\ModUiRegistry.cs" />
     <Compile Include="Bridge\NpcCompanionBridge.cs" />
     <Compile Include="Bridge\CompanionBridge.cs" />
@@ -316,6 +317,7 @@
     <Compile Include="Npc\CompanionConsumables.cs" />
     <Compile Include="Npc\CompanionController.cs" />
     <Compile Include="Npc\CompanionDeathHandler.cs" />
+    <Compile Include="Npc\CompanionGroupHudProvider.cs" />
     <Compile Include="Npc\CompanionEquipmentData.cs" />
     <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.Chairs.cs" />
     <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.cs" />
@@ -457,6 +459,11 @@
     <Compile Include="UI\UIBuilder\UIBuilderTemplates.cs" />
     <Compile Include="UI\UIBuilder\UIBundleManifestManager.cs" />
     <Compile Include="UI\UIBuilder\UICanvasRenderer.cs" />
+    <Compile Include="UI\GroupHud\GroupHudConfig.cs" />
+    <Compile Include="UI\GroupHud\GroupHudController.cs" />
+    <Compile Include="UI\GroupHud\GroupHudInit.cs" />
+    <Compile Include="UI\GroupHud\GroupHudDragHandler.cs" />
+    <Compile Include="UI\GroupHud\GroupHudMember.cs" />
     <Compile Include="UI\UIBuilder\UIFontConfig.cs" />
     <Compile Include="UI\UIBuilder\UIHarmonyPatchAuditor.cs" />
     <Compile Include="UI\UIBuilder\UILayoutCodex.cs" />
@@ -526,6 +533,7 @@
     <Compile Include="Services\MoonPhase.cs" />
     <Compile Include="Sync\AdminSyncing.cs" />
     <Compile Include="Sync\ConfigSync.cs" />
+    <Compile Include="Sync\FiresServerScope.cs" />
     <Compile Include="Sync\ManifestDiffSync.cs" />
     <Compile Include="Utilities\BrushFalloffCurves.cs" />
   </ItemGroup>
