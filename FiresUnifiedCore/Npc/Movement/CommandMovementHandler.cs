@@ -152,11 +152,16 @@ namespace FiresCore.Npc.Movement
             _commandDestination = Vector3.zero;
             _useWalkForCommand = false;
             
-            // Single-writer: stop through UMA, not a raw SetMoveDir. The actual mover (CompanionAI /
-            // CompanionCombatMovement) owns movement while heading to a command point; releasing cleanly
-            // runs a StopMovementImmediate through the single writer. The AI is also told to clear its
-            // command destination just below, after which it won't re-drive.
-            _companion?.GetMovementAuthority()?.ForceReleaseAllAuthority();
+            // Stop the move animation WITHOUT releasing authority — the command is still in control and
+            // must keep its movement slot through the move->work handoff. (Releasing here let Following
+            // re-acquire and the companion oscillated between the player and the command target, never
+            // settling to work. When the SetMoveDir gate ships, route this through Hold(owner) instead.)
+            if (_character != null)
+            {
+                _character.SetWalk(false);
+                _character.SetRun(false);
+                _character.SetMoveDir(Vector3.zero);
+            }
             
             // If we were in command priority mode just for movement, clear it
             if (!HasPriorityTarget)
