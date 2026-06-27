@@ -175,6 +175,38 @@ Deferred (narrow, low-value): `CommandMovementHandler.ClearMoveDestination` uses
 (broad) — only matters if a dodge/combat re-acquires during a stuck `ManualDepositToChest` wait; a surgical
 release needs the command's owner string + a stuck-guard on the deposit loop.
 
+## Step 8 — gate enforcement (DONE, config default OFF)
+
+Shipped config-flagged so it's inert until explicitly enabled, and freeze-safe when enabled:
+- **Config:** `[Companions] EnforceSingleWriterMovement` (bool, default **false**, server-synced) —
+  `FiresCore.Npc.Core.MovementGateConfig`. The `SetMoveDir` prefix checks this FIRST (free when off).
+- **Escape hatch wired:** the 3 vanilla `BaseAI.MoveTo` pathfinding calls (CompanionAI.Pathfinding.cs
+  MoveToThroughAuthority, CompanionAI.Idle.cs MoveToWithAuthority, CompanionAI.cs RequestPathfindingMovement)
+  are wrapped `try { authority?.DisableExternalBlocking(); MoveTo(...); } finally { authority?.EnableExternalBlocking(); }`
+  so their direct `SetMoveDir` is allowed through when the gate is on. Without this, pathfinding would freeze.
+- **Fallbacks parked:** the `authority==null` raw fallbacks in `SetMoveDirThroughAuthority` (Pathfinding) and
+  `SetMoveDirSafe` (CombatMovement) now park (return) instead of raw-writing.
+- **The prefix (CompanionPatches.Character_SetMoveDir_Prefix):** after the kinematic + frozen checks, when
+  `MovementGateConfig.Enabled`, drop the write unless `!ShouldBlockExternalMovement` (hatch open) OR
+  `IsCurrentlyApplying` (authority's own apply) OR `CurrentAuthority == None` (freeze-safety).
+- **Pre-flight grep confirmed:** every primary drive goes through UMA.ApplyMoveDirectionInternal or the wrapped
+  MoveTo. Remaining raw `SetMoveDir`s are redundant zero-stops (behaviors release authority anyway),
+  V1 dead code, `MovementModeController.SetMoveDirSafe` (dead, no callers), or `null`-authority fallbacks that
+  never run on a real companion. RootedEffect targets enemies/players (no UMA).
+
+**To enable (after in-game verification):** set `EnforceSingleWriterMovement = true`. Verify follow + patrol +
+idle-wander + every work sub-behavior still MOVE (proves the escape hatch). Kill-switch: set it back to false,
+or call `UnifiedMovementAuthority.DisableExternalBlocking()`. AUDIT-ONLY follow-up: `CompanionAI.cs:636`
+zero-stop becomes a no-op under the gate (harmless) — convert to UMA.Hold/Release later.
+
+## Suspend/resume wiring (Step 6) — RECOMMEND DEFER (see note)
+
+The primitives are in place and inert. Wiring them (Phase 1: re-express `IdleSubBehavior.InterruptForCombat`/
+`ResumeAfterCombat` on `SuspendBelow(Combat)`/`Resume`) touches the combat-interrupt flow — the exact area of
+the 2026-06-24 patrol-freeze saga — and fixes a latent dual-writer that is NOT currently reported as
+manifesting. Given that + a fresh command regression during testing, recommend doing it as its own focused,
+in-game-tested change rather than bundling it here. Phase 2 (StartCommand) already deferred by the prereq workflow.
+
 ## Open questions (need a decision before / during)
 
 1. **Facing axis (HOLE 1):** `transform.rotation`/`SetLookDir` is still ungoverned and overlaps many of
