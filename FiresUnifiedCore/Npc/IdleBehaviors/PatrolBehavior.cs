@@ -20,6 +20,7 @@ namespace FiresCore.Npc.IdleBehaviors
         public const float DeviationRadius = 1.2f;
         public const float ChatPauseRange = 3.5f;  // stop and let a player interact when this close
         public const float TeleportTimeout = 60f;  // seconds spent trying to reach a waypoint before snapping to it
+        public const float LookAheadDistance = 5.0f; // aim this far ahead ALONG the route so MoveTo never brakes at a marker
 
         private PatrolRoute _route;
         private int _index;
@@ -127,7 +128,6 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (Time.time < _waitUntil) return false;
                 _waiting = false;
                 _index = Mathf.Clamp(_index + _direction, 0, _route.Points.Count - 1);
-                RerollDeviation();
             }
 
             // Look-ahead: advance the cursor through every waypoint we're already within reach of BEFORE
@@ -149,8 +149,12 @@ namespace FiresCore.Npc.IdleBehaviors
             // keep counting across skips so a fully off-route NPC still snaps on.
             if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; ResetStuckTracking(); }
 
-            Vector3 target = _route.Points[_index] + _deviation;
-            if (!IsReachable(target)) target = _route.Points[_index];   // deviation pushed off-mesh → use base point
+            // Aim at a point well AHEAD along the route (not the current marker) so MoveTo never brakes for
+            // arrival and the heading turns gradually — the NPC flows through the whole route as one path
+            // instead of stuttering at each segment. The cursor above still advances as markers are passed.
+            Vector3 carrot = CarrotAhead();
+            Vector3 target = carrot + _deviation;
+            if (!IsReachable(target)) target = carrot;   // deviation pushed off-mesh → use the bare carrot
 
             // Couldn't reach this waypoint within the timeout (unreachable, or just assigned the route from far
             // away) → snap onto it. This is how an NPC that isn't on its route gets there. Vanilla MoveTo
@@ -162,9 +166,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            // Stuck recovery: if we stop closing on the target waypoint, re-path then skip the node — long before
-            // the 60s teleport. A skip changes the cursor, so re-evaluate next tick.
-            if (RecoverIfStuck(target)) return false;
+            // Stuck recovery: if we stop closing on the current MARKER (not the always-ahead carrot, which we
+            // never reach), re-path then skip the node — long before the 60s teleport. A skip changes the cursor.
+            if (RecoverIfStuck(_route.Points[_index])) return false;
 
             // Force vanilla WALK speed. The pathfinding chain only ever calls SetRun(false), leaving m_walk
             // false → the NPC would use the jog tier (m_speed=10, ~2× walk). Setting m_walk every patrol frame
@@ -185,10 +189,35 @@ namespace FiresCore.Npc.IdleBehaviors
             if (rb != null) { rb.position = point; rb.linearVelocity = Vector3.zero; }
         }
 
+        // A point LookAheadDistance ahead of the current cursor ALONG the route polyline (in _direction). A loop
+        // wraps; an open route clamps at the far endpoint. Aiming here instead of at the discrete marker is what
+        // keeps the NPC walking the route as one continuous path rather than braking/turning at every point.
+        private Vector3 CarrotAhead()
+        {
+            var pts = _route.Points;
+            int n = pts.Count;
+            float remain = LookAheadDistance;
+            int cur = _index;
+            Vector3 here = pts[cur];
+            int guard = 0;
+            while (remain > 0f && guard++ < n + 2)
+            {
+                int nxt = _route.IsLoop ? ((cur + _direction) % n + n) % n : cur + _direction;
+                if (!_route.IsLoop && (nxt < 0 || nxt >= n)) return here;   // open-route end → clamp the carrot
+                Vector3 to = pts[nxt];
+                float len = Vector3.Distance(here, to);
+                if (len < 0.001f) { cur = nxt; here = to; continue; }
+                if (len >= remain) return Vector3.Lerp(here, to, remain / len);
+                remain -= len;
+                cur = nxt;
+                here = to;
+            }
+            return here;
+        }
+
         private void OnArrived(bool writeCheckpoint = true)
         {
             if (writeCheckpoint) WriteCheckpoint();
-            RerollDeviation();
             int last = _route.Points.Count - 1;
 
             if (_route.IsLoop)
