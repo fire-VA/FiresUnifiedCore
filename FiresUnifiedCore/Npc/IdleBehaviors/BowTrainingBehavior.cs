@@ -387,7 +387,12 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool UpdateBetweenShots()
         {
             StopAllMovement();
-            FaceTargetAndLock(_targetCenterPosition);
+            // Yield body-facing to combat: if an enemy has engaged us, combat (higher movement
+            // priority) owns the body — don't re-face the practice target this frame and twitch on
+            // the transition before the sub-behavior is interrupted. Otherwise the bow behavior is
+            // the sole facing writer here (the idle rotation + head-look now yield to it).
+            if (_combatMovement == null || !_combatMovement.IsInCombat)
+                FaceTargetAndLock(_targetCenterPosition);
 
             // Wait between shots
             if (Time.time - _lastShotTime >= SHOT_INTERVAL)

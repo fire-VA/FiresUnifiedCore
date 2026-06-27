@@ -118,6 +118,11 @@ namespace FiresCore
             FiresCore.UI.GroupHud.GroupHudConfig.Initialize(Config);
             FiresCore.Bridge.GroupHudBridge.IsBlockingUiOpen = FiresCore.Bridge.ModUiRegistry.IsAnyOpen;
             FiresCore.Npc.CompanionGroupHudProvider.Register();
+
+            // HuntList: server-synced, admin-editable list of passive "hunt-only" prey (deer/boar/…)
+            // that companions ignore unless Hunt is toggled on or the creature attacks first.
+            FiresCore.Npc.HuntListConfig.Initialize(Config);
+            FiresCore.Npc.HuntListConfig.BindToSync(configSync);
         }
 
         private void TryDisposeConfigManager()

@@ -179,7 +179,11 @@ namespace FiresCore.Npc
         {
             if (!enableHeadLookAt || !_headBoneFound || _headBone == null) return;
             if (_isSittingOnChair || _isPlayingEmote) return;
-            
+            // Single-writer (facing): an active sub-behavior (bow training, gathering, station work)
+            // owns the companion's facing. Return the head to its base rotation and stop tracking, so
+            // the head doesn't keep drifting toward a stale look-at target while the task locks the body.
+            if (IsInSubBehavior) { _headBone.localRotation = _headBaseRotation; return; }
+
             // Skip if weight is very low
             if (_headLookWeight < 0.01f)
             {

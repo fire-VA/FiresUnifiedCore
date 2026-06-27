@@ -431,6 +431,79 @@ scrollbar.colors = scrollbarColors;
 
         #endregion
 
+        #region Slider Creation
+
+        /// <summary>
+        /// Creates a horizontal uGUI Slider with the standard Background / Fill / Handle hierarchy,
+        /// themed with the shared scrollbar/button colors. Returns the Slider so callers can read
+        /// <c>value</c> or further tweak it. Pass <paramref name="onValueChanged"/> to react to drags.
+        /// </summary>
+        public static Slider CreateSlider(Transform parent, string name, Vector2 anchorMin, Vector2 anchorMax,
+            float minValue, float maxValue, float value, UnityEngine.Events.UnityAction<float> onValueChanged = null)
+        {
+            var root = new GameObject(name, typeof(RectTransform));
+            root.transform.SetParent(parent, false);
+            var rootRect = root.GetComponent<RectTransform>();
+            rootRect.anchorMin = anchorMin;
+            rootRect.anchorMax = anchorMax;
+            rootRect.offsetMin = Vector2.zero;
+            rootRect.offsetMax = Vector2.zero;
+
+            // Background track
+            var bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
+            bg.transform.SetParent(root.transform, false);
+            var bgRect = bg.GetComponent<RectTransform>();
+            bgRect.anchorMin = new Vector2(0f, 0.3f);
+            bgRect.anchorMax = new Vector2(1f, 0.7f);
+            bgRect.offsetMin = Vector2.zero;
+            bgRect.offsetMax = Vector2.zero;
+            bg.GetComponent<Image>().color = UIFontConfig.Colors.ScrollbarBackground;
+
+            // Fill Area > Fill
+            var fillArea = new GameObject("Fill Area", typeof(RectTransform));
+            fillArea.transform.SetParent(root.transform, false);
+            var fillAreaRect = fillArea.GetComponent<RectTransform>();
+            fillAreaRect.anchorMin = new Vector2(0f, 0.3f);
+            fillAreaRect.anchorMax = new Vector2(1f, 0.7f);
+            fillAreaRect.offsetMin = new Vector2(8f, 0f);
+            fillAreaRect.offsetMax = new Vector2(-8f, 0f);
+            var fill = new GameObject("Fill", typeof(RectTransform), typeof(Image));
+            fill.transform.SetParent(fillArea.transform, false);
+            var fillRect = fill.GetComponent<RectTransform>();
+            fillRect.anchorMin = new Vector2(0f, 0f);
+            fillRect.anchorMax = new Vector2(0f, 1f);
+            fillRect.sizeDelta = new Vector2(10f, 0f);
+            fill.GetComponent<Image>().color = UIFontConfig.Colors.ScrollbarHandle;
+
+            // Handle Slide Area > Handle
+            var handleArea = new GameObject("Handle Slide Area", typeof(RectTransform));
+            handleArea.transform.SetParent(root.transform, false);
+            var handleAreaRect = handleArea.GetComponent<RectTransform>();
+            handleAreaRect.anchorMin = new Vector2(0f, 0f);
+            handleAreaRect.anchorMax = new Vector2(1f, 1f);
+            handleAreaRect.offsetMin = new Vector2(8f, 0f);
+            handleAreaRect.offsetMax = new Vector2(-8f, 0f);
+            var handle = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+            handle.transform.SetParent(handleArea.transform, false);
+            var handleRect = handle.GetComponent<RectTransform>();
+            handleRect.sizeDelta = new Vector2(16f, 0f);
+            handle.GetComponent<Image>().color = UIFontConfig.Colors.ButtonNormal;
+
+            var slider = root.AddComponent<Slider>();
+            slider.fillRect = fillRect;
+            slider.handleRect = handleRect;
+            slider.targetGraphic = handle.GetComponent<Image>();
+            slider.direction = Slider.Direction.LeftToRight;
+            slider.minValue = minValue;
+            slider.maxValue = maxValue;
+            slider.wholeNumbers = false;
+            slider.value = value;
+            if (onValueChanged != null) slider.onValueChanged.AddListener(onValueChanged);
+            return slider;
+        }
+
+        #endregion
+
     #region Text Creation
 
         /// <summary>
