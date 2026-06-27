@@ -449,6 +449,8 @@
     <Compile Include="Help\HelpPanel.cs" />
     <Compile Include="Help\CompendiumEntry.cs" />
     <Compile Include="Help\Compendium.cs" />
+    <Compile Include="UI\InputBlock.cs" />
+    <Compile Include="Input\FiresInputBlock.cs" />
     <Compile Include="UI\UIBuilderHost.cs" />
     <Compile Include="UI\FiresConfigUI.cs" />
     <Compile Include="UI\UIBuilder\BundledLayoutExtractor.cs" />

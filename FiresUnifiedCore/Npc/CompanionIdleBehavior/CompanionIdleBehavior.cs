@@ -381,7 +381,12 @@ namespace FiresCore.Npc
             {
                 if (_npcModule == null)
                     _npcModule = GetComponent<CompanionNpcModule>();
-                if (_npcModule == null || !_npcModule.isStaticPlacement || !_npcModule.allowIdleWandering)
+                // AllowIdleWander governs ONLY the homesteading idle behaviors (chores within the
+                // wander radius). A patrol route is an explicit assignment and must run regardless,
+                // so let a route-carrying static NPC through even with wandering off (mirrors the
+                // with-CompanionController static path below).
+                if (_npcModule == null || !_npcModule.isStaticPlacement
+                    || (!_npcModule.allowIdleWandering && !HasPatrolRoute()))
                     return;
             }
             else if (_companion.isStaticPlacement)

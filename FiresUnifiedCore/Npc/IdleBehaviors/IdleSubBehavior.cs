@@ -48,7 +48,13 @@ namespace FiresCore.Npc.IdleBehaviors
     {
         protected CompanionController Companion { get; private set; }
         protected CompanionIdleBehavior IdleBehavior { get; private set; }
-        protected Transform Transform => Companion?.transform;
+        // Host GameObject = the CompanionController's GO for companions, or the NPC's own GO (where the
+        // CompanionIdleBehavior lives) for a static placed NPC with no CompanionController. Lets patrol
+        // resolve its components (PatrolAssignment / CompanionAI / CompanionCombatMovement) on a static NPC.
+        protected GameObject HostGameObject =>
+            Companion != null ? Companion.gameObject : (IdleBehavior != null ? IdleBehavior.gameObject : null);
+        protected Transform Transform =>
+            Companion != null ? Companion.transform : (IdleBehavior != null ? IdleBehavior.transform : null);
         
         /// <summary>
         /// Cached CompanionInventory reference for inventory checks.
@@ -225,13 +231,20 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             Companion = companion;
             IdleBehavior = idleBehavior;
-            
+
             // Get unified movement authority and inventory
             if (companion != null)
             {
                 MovementAuthority = companion.GetMovementAuthority();
                 CompanionAI = companion.GetComponent<CompanionAI>();
                 CompanionInventory = companion.GetComponent<CompanionInventory>();
+            }
+            else if (idleBehavior != null)
+            {
+                // Static NPC (no CompanionController): CompanionAI lives on the NPC's own GameObject and is
+                // what PatrolBehavior's pathfinding move (TryMoveToPosition) needs. No CompanionController =
+                // no UnifiedMovementAuthority, which TryMoveToPosition already treats as "uncontested".
+                CompanionAI = idleBehavior.GetComponent<CompanionAI>();
             }
         }
         
