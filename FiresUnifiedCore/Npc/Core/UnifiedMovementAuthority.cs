@@ -798,10 +798,22 @@ namespace FiresCore.Npc.Core
         /// <summary>
         /// Unfreezes movement, allowing authority to be acquired again.
         /// </summary>
+        /// <summary>
+        /// Unfreezes only if the active freeze reason matches the caller's — so one system's unfreeze
+        /// can't clobber a DIFFERENT system's freeze that overwrote the single freeze slot in between
+        /// (e.g. a teleport/knockback freeze applied while a monk was meditating).
+        /// </summary>
+        public void UnfreezeMovement(string reason)
+        {
+            if (!_isMovementFrozen) return;
+            if (_freezeReason != reason) return;
+            UnfreezeMovement();
+        }
+
         public void UnfreezeMovement()
         {
             if (!_isMovementFrozen) return;
-            
+
             if (VerboseLogging)
                 Debug.Log($"[MovementAuthority] {_companion?.companionName} movement unfrozen (was: {_freezeReason})");
             

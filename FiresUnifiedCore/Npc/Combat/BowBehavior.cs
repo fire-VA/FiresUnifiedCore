@@ -1067,17 +1067,8 @@ Context.Animator.SetFloat("drawpercent", 0f);
         
   private new void FaceTarget(Character target)
      {
-if (target == null) return;
-            
-Vector3 dirToTarget = GetDirectionToTarget(target);
-      if (dirToTarget != Vector3.zero)
-        {
-       Context.Transform.rotation = Quaternion.Slerp(
-           Context.Transform.rotation,
-          Quaternion.LookRotation(dirToTarget),
-   Time.deltaTime * 10f
-    );
-            }
+            if (target == null) return;
+            FaceDirectionThroughAuthority(GetDirectionToTarget(target), "CompanionWeapon");
         }
      
         #endregion

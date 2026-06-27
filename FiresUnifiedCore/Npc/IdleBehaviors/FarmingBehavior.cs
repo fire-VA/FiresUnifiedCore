@@ -623,10 +623,22 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private void FaceTarget(Vector3 target)
         {
-            Vector3 dir = (target - Transform.position).normalized;
+            Vector3 dir = target - Transform.position;
             dir.y = 0f;
-            if (dir.sqrMagnitude > 0.01f)
-                Transform.rotation = Quaternion.LookRotation(dir);
+            if (dir.sqrMagnitude < 0.0001f) return;
+
+            // Single facing-writer: face the crop through the FacingAuthority (SubBehavior); combat
+            // preempts if a fight interrupts. Direct write fallback only.
+            var facing = Companion != null ? Companion.GetFacingAuthority() : null;
+            if (facing != null)
+            {
+                if (facing.TryAcquireFacing(FiresCore.Npc.Core.UnifiedMovementAuthority.MovementSource.SubBehavior, BehaviorName, 0.4f))
+                    facing.SetLookDirection(BehaviorName, dir);
+                return;
+            }
+
+            dir.Normalize();
+            Transform.rotation = Quaternion.LookRotation(dir);
         }
 
         private void PlayInteractAnimation() => _zanim?.SetTrigger("interact");

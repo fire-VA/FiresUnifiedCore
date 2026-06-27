@@ -1014,9 +1014,10 @@ namespace FiresCore.Npc.IdleBehaviors
             // the target. Combat's enemy-facing (Combat-70) still preempts if a fight starts. Direct
             // write only as a no-authority fallback.
             var facing = Companion != null ? Companion.GetFacingAuthority() : null;
-            if (facing != null && facing.TryAcquireFacing(FiresCore.Npc.Core.UnifiedMovementAuthority.MovementSource.SubBehavior, BehaviorName, 1f))
+            if (facing != null)
             {
-                facing.SetLookDirection(BehaviorName, dir, instant: true);
+                if (facing.TryAcquireFacing(FiresCore.Npc.Core.UnifiedMovementAuthority.MovementSource.SubBehavior, BehaviorName, 0.4f))
+                    facing.SetLookDirection(BehaviorName, dir, instant: true);
                 return;
             }
 

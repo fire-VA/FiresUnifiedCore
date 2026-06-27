@@ -451,10 +451,11 @@ FaceTarget(target);
         {
             _isRepositioning = false;
 
-            if (_isMovementCommitted && _committedMoveDir != Vector3.zero)
+            if (_isMovementCommitted)
             {
-                // Single-writer: release our Animation-priority slot — ReleaseAuthority does a clean
-                // StopMovementImmediate through the single writer, then CompanionCombatMovement resumes.
+                // Single-writer: release our Animation-priority slot whenever a movement is committed
+                // (even one that resolved to a zero vector — otherwise the slot leaks and CombatMovement
+                // is denied for the lease window). ReleaseAuthority does a clean StopMovementImmediate.
                 var uma = GetAuthority();
                 if (uma != null)
                 {
@@ -611,21 +612,28 @@ FaceTarget(target);
 
      private void FaceTarget(Character target)
         {
-       if (target == null) return;
+            if (target == null) return;
 
-     Vector3 dirToTarget = (target.transform.position - _context.Transform.position).normalized;
+            Vector3 dirToTarget = target.transform.position - _context.Transform.position;
             dirToTarget.y = 0;
+            if (dirToTarget.sqrMagnitude < 0.0001f) return;
 
-            if (dirToTarget != Vector3.zero)
-        {
-   Quaternion targetRot = Quaternion.LookRotation(dirToTarget);
-       _context.Transform.rotation = Quaternion.Slerp(
-       _context.Transform.rotation,
-          targetRot,
-     Time.deltaTime * 10f
-      );
-          }
-    }
+            // Single facing-writer: face the threat through the FacingAuthority at Animation priority
+            // (the band the dodge drives at). Short lease so it hands back to AI enemy-facing fast when
+            // the dodge ends. If a same-priority incumbent holds facing, park — never raw-write here.
+            var facing = _context?.Companion != null ? _context.Companion.GetFacingAuthority() : null;
+            if (facing != null)
+            {
+                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.Animation, DODGE_AUTHORITY_OWNER, 0.4f))
+                    facing.SetLookTarget(DODGE_AUTHORITY_OWNER, target.transform.position);
+                return;
+            }
+
+            _context.Transform.rotation = Quaternion.Slerp(
+                _context.Transform.rotation,
+                Quaternion.LookRotation(dirToTarget.normalized),
+                Time.deltaTime * 10f);
+        }
 
         /// <summary>
         /// Execute a melee dodge - always to the SIDE.

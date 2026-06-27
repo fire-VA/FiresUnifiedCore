@@ -1625,14 +1625,22 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private void FaceTarget(Vector3 targetPos)
         {
-            Vector3 dir = (targetPos - Transform.position).normalized;
+            Vector3 dir = targetPos - Transform.position;
             dir.y = 0;
-            
-            if (dir.sqrMagnitude > 0.01f)
+            if (dir.sqrMagnitude < 0.0001f) return;
+
+            // Single facing-writer: face the smelter through the FacingAuthority (SubBehavior); combat
+            // preempts if a fight interrupts. Direct write fallback only.
+            var facing = Companion != null ? Companion.GetFacingAuthority() : null;
+            if (facing != null)
             {
-                Quaternion targetRot = Quaternion.LookRotation(dir);
-                Transform.rotation = Quaternion.Slerp(Transform.rotation, targetRot, Time.deltaTime * 5f);
+                if (facing.TryAcquireFacing(FiresCore.Npc.Core.UnifiedMovementAuthority.MovementSource.SubBehavior, BehaviorName, 0.4f))
+                    facing.SetLookDirection(BehaviorName, dir);
+                return;
             }
+
+            dir.Normalize();
+            Transform.rotation = Quaternion.Slerp(Transform.rotation, Quaternion.LookRotation(dir), Time.deltaTime * 5f);
         }
         
         /// <summary>

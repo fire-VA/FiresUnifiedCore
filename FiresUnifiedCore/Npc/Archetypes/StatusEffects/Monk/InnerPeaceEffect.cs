@@ -158,7 +158,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
             // Release the owned standstill so the monk can move again the instant meditation ends.
             if (_uma != null)
             {
-                _uma.UnfreezeMovement();
+                _uma.UnfreezeMovement("InnerPeace");
                 _uma = null;
             }
 
