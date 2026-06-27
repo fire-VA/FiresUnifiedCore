@@ -1,6 +1,7 @@
 ﻿using UnityEngine;
 using System.Collections;
 using FiresCore.Npc.AI;
+using FiresCore.Npc.Core;
 
 namespace FiresCore.Npc.Combat
 {
@@ -28,6 +29,15 @@ namespace FiresCore.Npc.Combat
         private ThreatAnalyzer _threatAnalyzer;
         private CombatExperience _combatExperience;
         private StaminaManager _staminaManager;
+
+        // Single-writer: dodge/strafe is a brief tactical override that must beat CompanionCombatMovement
+        // (which holds Combat authority and keeps it for its 2s lease even while it yields to a dodge).
+        // We drive through UMA at Animation priority (80 > Combat 70) so dodge/strafe deterministically
+        // preempts positioning for its committed window, then release hands the body back. Below
+        // PlayerCommand (90) and Forced (100), so a command or teleport still overrides a dodge.
+        private UnifiedMovementAuthority _uma;
+        private bool _umaResolved;
+        private const string DODGE_AUTHORITY_OWNER = "CompanionDodge";
 
         // Dodge state
   private float _lastDodgeTime;
@@ -293,13 +303,36 @@ private float _strafeTimer;
             _movementCommitEndTime = Time.time + duration;
             _lastMovementChange = Time.time;
 
-            // Only call SetMoveDir if rigidbody is NOT kinematic
-            // Unity 6 doesn't allow setting velocity on kinematic bodies
+            // Single-writer: drive the committed dodge/strafe through UMA at Animation priority so it
+            // preempts CompanionCombatMovement for the window, instead of a raw SetMoveDir that races it.
+            var uma = GetAuthority();
+            if (uma != null)
+            {
+                if (uma.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.Animation, DODGE_AUTHORITY_OWNER, Mathf.Max(duration, 0.5f)))
+                    uma.SetMoveDirection(DODGE_AUTHORITY_OWNER, moveDir, walk: false, run: true);
+                return;
+            }
+
+            // No-UMA fallback (kinematic-guarded, matches the old behavior).
             var rb = _owner?.GetComponent<Rigidbody>();
             if (_context.Character != null && (rb == null || !rb.isKinematic))
             {
                 _context.Character.SetMoveDir(moveDir);
             }
+        }
+
+        /// <summary>Lazily resolves the companion's movement authority (lives on the same GameObject as
+        /// the owning CompanionCombat / the Character). Cached after first lookup.</summary>
+        private UnifiedMovementAuthority GetAuthority()
+        {
+            if (!_umaResolved)
+            {
+                _umaResolved = true;
+                _uma = _owner != null ? _owner.GetComponent<UnifiedMovementAuthority>() : null;
+                if (_uma == null && _context?.Character != null)
+                    _uma = _context.Character.GetComponent<UnifiedMovementAuthority>();
+            }
+            return _uma;
         }
 
         private void UpdateStateTimers()
@@ -420,12 +453,18 @@ FaceTarget(target);
 
             if (_isMovementCommitted && _committedMoveDir != Vector3.zero)
             {
-                // Only call SetMoveDir if rigidbody is NOT kinematic
-                // Unity 6 doesn't allow setting velocity on kinematic bodies
-                var rb = _owner?.GetComponent<Rigidbody>();
-                if (_context.Character != null && (rb == null || !rb.isKinematic))
+                // Single-writer: release our Animation-priority slot — ReleaseAuthority does a clean
+                // StopMovementImmediate through the single writer, then CompanionCombatMovement resumes.
+                var uma = GetAuthority();
+                if (uma != null)
                 {
-                    _context.Character.SetMoveDir(Vector3.zero);
+                    uma.ReleaseAuthority(DODGE_AUTHORITY_OWNER);
+                }
+                else
+                {
+                    var rb = _owner?.GetComponent<Rigidbody>();
+                    if (_context.Character != null && (rb == null || !rb.isKinematic))
+                        _context.Character.SetMoveDir(Vector3.zero);
                 }
                 _isMovementCommitted = false;
             }
@@ -555,12 +594,17 @@ FaceTarget(target);
             _isStrafing = false;
             _strafeTimer = 0f;
 
-            // Only call SetMoveDir if rigidbody is NOT kinematic
-            // Unity 6 doesn't allow setting velocity on kinematic bodies
-            var rb = _owner?.GetComponent<Rigidbody>();
-            if (_context.Character != null && (rb == null || !rb.isKinematic))
+            // Single-writer: release our Animation-priority slot (clean stop via the single writer).
+            var uma = GetAuthority();
+            if (uma != null)
             {
-                _context.Character.SetMoveDir(Vector3.zero);
+                uma.ReleaseAuthority(DODGE_AUTHORITY_OWNER);
+            }
+            else
+            {
+                var rb = _owner?.GetComponent<Rigidbody>();
+                if (_context.Character != null && (rb == null || !rb.isKinematic))
+                    _context.Character.SetMoveDir(Vector3.zero);
             }
             _isMovementCommitted = false;
         }
