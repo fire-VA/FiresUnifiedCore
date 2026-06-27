@@ -205,19 +205,21 @@ namespace FiresCore.UI.GroupHud
             if (_backgroundImage != null && !_isDragging)
                 _backgroundImage.raycastTarget = _isRepositionMode;
 
+            // Refresh members ALWAYS (even while hidden). Visibility is gated on having members, and
+            // members are only collected here — refreshing only when visible would mean the panel
+            // could never appear in the first place.
+            if (Time.time - _lastUpdate >= UPDATE_INTERVAL)
+            {
+                _lastUpdate = Time.time;
+                RefreshMembers();
+            }
+
             bool show = ShouldShowHud();
             if (_root != null)
             {
                 _root.SetActive(show);
                 if (_backgroundImage != null)
                     _backgroundImage.color = _isDragging ? PanelDraggingColor : PanelBackgroundColor;
-            }
-            if (!show) return;
-
-            if (Time.time - _lastUpdate >= UPDATE_INTERVAL)
-            {
-                _lastUpdate = Time.time;
-                RefreshMembers();
             }
         }
 
@@ -291,7 +293,11 @@ namespace FiresCore.UI.GroupHud
                 }
             }
 
-            if (orderChanged) RebuildLayout();
+            if (orderChanged)
+            {
+                Debug.Log($"[GroupHud] tracking {_orderedIds.Count} member(s).");
+                RebuildLayout();
+            }
         }
 
         private void UpdateRow(GroupHudMember m, MemberUI ui)

@@ -597,32 +597,11 @@ namespace FiresCore.Npc.AI
                 }
             }
             
-            string[] passiveCreatures = new string[]
+            // Configurable hunt list (FiresCore.Npc.HuntListConfig) — server-synced, admin-editable,
+            // defaults to the vanilla prey set (boar/deer/hare/neck/…). Replaces the old hardcoded array.
+            if (HuntListConfig.IsHuntable(creatureName, prefabName))
             {
-                "boar",
-                "deer",
-                "doe",   // modded does (e.g. Balrond "$tag_doe_bal")
-                "stag",  // modded stags
-                "neck",
-                "hare",
-                "crow",
-                "seagull",
-                "fish",
-                "leviathan",
-                "chicken",
-                "hen",
-                "lox",   // adult lox are passive until provoked
-                "sheep",
-                "cow",
-                "rabbit",
-            };
-
-            foreach (var passive in passiveCreatures)
-            {
-                if (creatureName.Contains(passive) || prefabName.Contains(passive))
-                {
-                    return true;
-                }
+                return true;
             }
 
             // Vanilla prey-animal faction catches anything tagged AnimalsVeg even

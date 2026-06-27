@@ -1257,6 +1257,13 @@ namespace FiresCore.Npc
 
         private void UpdateSmoothRotation()
         {
+            // Single-writer (facing): yield the body's rotation to any active sub-behavior (bow
+            // training, gathering, station work) — that behavior owns facing while it runs. Clear the
+            // in-flight flag too, so an idle look-around that began before the sub-behavior started
+            // does not keep fighting the task's facing frame-for-frame. Mirrors the head-look gate at
+            // UpdateHeadLookAt (skipped while _activeSubBehavior != null).
+            if (_activeSubBehavior != null) { _isRotating = false; return; }
+
             if (!_isRotating) return;
 
             float elapsed = Time.time - _rotationStartTime;
