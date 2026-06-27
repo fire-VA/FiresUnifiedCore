@@ -1009,6 +1009,17 @@ namespace FiresCore.Npc.IdleBehaviors
             dir.y = 0;
             if (dir.sqrMagnitude < 0.0001f) return;
             dir.Normalize();
+
+            // Single facing-writer: own facing at SubBehavior priority while training, snap-locked onto
+            // the target. Combat's enemy-facing (Combat-70) still preempts if a fight starts. Direct
+            // write only as a no-authority fallback.
+            var facing = Companion != null ? Companion.GetFacingAuthority() : null;
+            if (facing != null && facing.TryAcquireFacing(FiresCore.Npc.Core.UnifiedMovementAuthority.MovementSource.SubBehavior, BehaviorName, 1f))
+            {
+                facing.SetLookDirection(BehaviorName, dir, instant: true);
+                return;
+            }
+
             Quaternion rot = Quaternion.LookRotation(dir);
             if (float.IsNaN(rot.x) || float.IsNaN(rot.y) || float.IsNaN(rot.z) || float.IsNaN(rot.w)) return;
             Transform.rotation = rot;

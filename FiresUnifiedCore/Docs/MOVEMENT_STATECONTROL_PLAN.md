@@ -100,17 +100,49 @@ DONE (builds clean + deployed, gate still OFF):
   Combat-70 positioning for the committed window; below Command-90/Forced-100 so a command/teleport still wins),
   releasing on stop so CombatMovement resumes. No-UMA kinematic-guarded fallback kept.
 
-REMAINING genuine converts (next batches):
-- CompanionCommandSystem 1378/1751 (collect-item per-frame drives), 1411/1788/2080/1121 (stops) — command
-  system, owner-string care (a Release from a non-owner no-ops).
-- CommandMovementHandler:160 — Release (verify owner contract first).
-- Work-behavior `MoveToPosition` fallbacks (ChestDeposit 1128 / Crafting 583 / Loot 596 / FireTending 1020)
-  + Pathfinding:72 + CombatMovement.Movement:230 — near-dead `_combatMovement==null` / `authority==null`
-  fallbacks; fold into Step 7 (only matter once the gate turns on).
-- CompanionAnimationController:472 — UNSURE (Release vs Unfreeze depends on caller context).
+- **CompanionCommandSystem** — `ForceStopAllBehaviors:1121` → `ForceReleaseAllAuthority` (clean-slate stop);
+  the two collect coroutines (1378/1751 drives → acquire PlayerCommand owner `CommandCollect` + SetMoveDirection,
+  1411/1788 stops → ReleaseAuthority); `ManualDepositToChest:2080` raw zero removed (CombatMovement.ClearMoveDestination
+  already releases its UMA authority).
+- **CommandMovementHandler.ClearMoveDestination:160** — raw zero → `ForceReleaseAllAuthority` (it's a data-holder
+  that doesn't own UMA; the actual mover is released cleanly + the AI is told to clear).
+- **CompanionAnimationController.StopAllAnimations:472** — removed the raw `SetMoveDir(0)` overreach; the sole
+  caller (WorkBehaviorBase.Cancel → base.Cancel) releases the behavior's UMA authority right after. Kept rigidbody
+  drift-safety.
+
+ALL LIVE per-frame / one-shot movement fights are now routed through UMA.
+
+DEFERRED to the pre-enforcement step (Step 7, right before the gate — which stays OFF for now):
+- Work-behavior `MoveToPosition` fallbacks (ChestDeposit 1128 / Crafting 583 / Loot 596 / FireTending 1020) —
+  `else if (_combatMovement == null)` branches; never execute for a real companion (CombatMovement is a core
+  component). Route through `MovementAuthority` then.
+- `CompanionAI.Pathfinding.cs:72` + `CompanionCombatMovement.Movement.cs:230` — `authority == null` fallbacks
+  (early-Update-before-Start). No-op→park is freeze-risky to remove while the gate is off and gives no benefit
+  now; remove them in the same step that hardens the prefix, after verifying authority is reliably non-null.
 
 EDIT ONLY the FiresUnifiedCore copy — stale copies exist under FiresVAngarde_PRESTRIP_BACKUP and
 WORKINGUIREFPREREFACTOR; never touch those.
+
+## Facing authority (the second channel — user asked to govern facing this pass)
+
+`CompanionFacingAuthority` (Npc/Core/) is the rotational sibling of UMA — the single writer for body
+rotation. Same priority ladder + incumbency guard. Key properties: it drives BOTH `transform.rotation`
+AND vanilla `m_lookDir` (so attacks aim where the body faces); it only overrides while a source owns
+facing (otherwise vanilla move-facing applies); owner-guarded (remote clients get facing via ZDO sync);
+applied in LateUpdate so it has the final say. Added to companions next to UMA (CompanionController:533+),
+accessor `GetFacingAuthority()`.
+
+DONE (builds clean + deployed):
+- **Combat split-brain resolved** — the documented "strafe one way, face another". `CompanionAI` enemy-facing
+  routes at **Combat (70)** (owner `CompanionAI`, via new `FaceThroughAuthority`); `CompanionCombatMovement.
+  FaceMovementDirection` at **Following (50)** (owner `CompanionCombatMovement`). So you face your enemy in a
+  fight, but still face the move direction when nothing higher wants facing (flee / approach with no target).
+- **Bow** `FaceTargetAndLock` → SubBehavior (60) snap-lock; combat (70) still preempts (matches fix C).
+
+REMAINING (structural polish — these don't currently contend because their behaviors are mutually exclusive
+with combat, so no live bug; route for full "can't rot" soundness later): per-behavior `FaceTarget` in the work
+behaviors (Workstation/ChestDeposit/FireTending/…) and `DodgeBehavior.FaceTarget`. The idle look-around +
+head-look facing are already gated off during sub-behaviors (fixes A/B).
 
 ## Open questions (need a decision before / during)
 

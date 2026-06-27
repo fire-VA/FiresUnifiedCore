@@ -354,6 +354,7 @@
     <Compile Include="Npc\Core\InventoryTransferService.cs" />
     <Compile Include="Npc\Core\ResourceAccessService.cs" />
     <Compile Include="Npc\Core\UnifiedMovementAuthority.cs" />
+    <Compile Include="Npc\Core\CompanionFacingAuthority.cs" />
     <Compile Include="Npc\Core\WorkSessionManager.cs" />
     <Compile Include="Npc\Events\CompanionEvents.cs" />
     <Compile Include="Npc\Formation\CompanionFormationController.cs" />
