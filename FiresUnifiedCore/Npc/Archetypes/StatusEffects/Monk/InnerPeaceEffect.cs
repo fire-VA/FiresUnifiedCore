@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using FiresCore.Npc.Core;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
 {
@@ -32,6 +33,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
         
         private float _lastAuraTick;
         private Rigidbody _rb;
+        private UnifiedMovementAuthority _uma;
         
         /// <summary>
         /// Description shown in tooltip with actual stat values.
@@ -58,7 +60,15 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
             if (m_character != null)
             {
                 _rb = m_character.GetComponent<Rigidbody>();
-                
+
+                // Single-writer: the monk is immobile during meditation. Own the standstill with a
+                // one-time freeze instead of fighting UMA with a per-frame SetMoveDir(0). The freeze
+                // carries the meditation duration so it auto-expires even if removal is missed; only
+                // Forced (teleport/knockback) can break it.
+                _uma = m_character.GetComponent<UnifiedMovementAuthority>();
+                if (ImmobilizeDuringMeditation && _uma != null)
+                    _uma.FreezeMovement("InnerPeace", Duration);
+
                 m_character.Message(MessageHud.MessageType.TopLeft, "Inner Peace...");
                 
                 // Apply brief immunity at start
@@ -97,8 +107,10 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
             
             if (m_character == null || m_character.IsDead()) return;
             
-            // Immobilize during meditation
-            if (ImmobilizeDuringMeditation && _rb != null && !_rb.isKinematic)
+            // Immobilize during meditation. For a companion (has UMA) the one-time FreezeMovement from
+            // OnEffectApplied owns the standstill and re-enforces zero each LateUpdate — nothing to do
+            // here. Only the non-UMA fallback (should not happen for a real monk companion) hard-zeros.
+            if (ImmobilizeDuringMeditation && _uma == null && _rb != null && !_rb.isKinematic)
             {
                 _rb.linearVelocity = Vector3.zero;
                 m_character.SetMoveDir(Vector3.zero);
@@ -142,7 +154,14 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
         protected override void OnEffectRemoved()
         {
             _rb = null;
-            
+
+            // Release the owned standstill so the monk can move again the instant meditation ends.
+            if (_uma != null)
+            {
+                _uma.UnfreezeMovement();
+                _uma = null;
+            }
+
             if (m_character != null)
             {
                 m_character.Message(MessageHud.MessageType.TopLeft, "Meditation complete.");

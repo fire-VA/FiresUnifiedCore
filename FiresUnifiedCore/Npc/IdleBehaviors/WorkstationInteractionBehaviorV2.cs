@@ -338,15 +338,28 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             FaceTarget(_targetStation.transform.position);
-            
-            // Keep movement stopped
-            if (Character != null)
+
+            // Single-writer: own the standstill at the station instead of a per-frame raw SetMoveDir(0).
+            // Acquire SubBehavior (or PlayerCommand) authority if we don't hold it, then Hold — UMA's
+            // single writer keeps the body at zero. If a higher source (combat/command) preempts us,
+            // Hold no-ops and the sub-behavior's interruption path takes over; we never fight the channel.
+            if (MovementAuthority != null)
             {
+                var src = IsCommandInitiated
+                    ? UnifiedMovementAuthority.MovementSource.PlayerCommand
+                    : UnifiedMovementAuthority.MovementSource.SubBehavior;
+                if (!MovementAuthority.HasAuthority(BehaviorName))
+                    MovementAuthority.TryAcquireAuthority(src, BehaviorName, 5f);
+                MovementAuthority.Hold(BehaviorName);
+            }
+            else if (Character != null)
+            {
+                // No-UMA fallback (should not happen for a real companion): keep the raw hold.
                 Character.SetMoveDir(Vector3.zero);
                 Character.SetWalk(false);
                 Character.SetRun(false);
             }
-            
+
             if (Rigidbody != null && !Rigidbody.isKinematic)
             {
                 Vector3 vel = Rigidbody.linearVelocity;
