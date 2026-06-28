@@ -16,6 +16,8 @@ namespace FiresCore.Storage
         public const string MailUsersCollection = "Users";
         public const string MailEntriesCollection = "Mails";
         public const string LeaderboardCollection = "Leaderboard";
+        public const string GuildCollection = "Guild";
+        public const string PlayerIdentityCollection = "PlayerIdentity";
 
         private static string _databasePath;
         private static bool _mapperConfigured;

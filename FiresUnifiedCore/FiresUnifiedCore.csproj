@@ -163,6 +163,9 @@
     <Compile Include="Bridge\NpcCompanionBridge.cs" />
     <Compile Include="Bridge\CompanionBridge.cs" />
     <Compile Include="Bridge\DiscordSink.cs" />
+    <Compile Include="Bridge\GuildBridge.cs" />
+    <Compile Include="Bridge\GroupBridge.cs" />
+    <Compile Include="Bridge\LeaderboardBridge.cs" />
     <Compile Include="Bridge\NpcModeBridge.cs" />
     <Compile Include="Bridge\CompanionEventBridge.cs" />
     <Compile Include="Bridge\NpcDormancyBridge.cs" />
@@ -211,6 +214,10 @@
     <Compile Include="Storage\MarketplaceRepository.cs" />
     <Compile Include="Storage\PlayerVaultData.cs" />
     <Compile Include="Storage\VaultDump.cs" />
+    <Compile Include="Identity\PlayerIdentityRecord.cs" />
+    <Compile Include="Identity\PlayerIdentityRepository.cs" />
+    <Compile Include="Identity\PlayerIdentity.cs" />
+    <Compile Include="Identity\PlayerIdentityPatches.cs" />
     <Compile Include="Compat\Balrond\BalrondCompatConfig.cs" />
     <Compile Include="Compat\Balrond\BalrondLocationBiomePatch.cs" />
     <Compile Include="Compat\Balrond\BalrondMistSicknessPatch.cs" />
