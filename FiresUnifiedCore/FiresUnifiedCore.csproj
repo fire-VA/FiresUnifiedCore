@@ -455,6 +455,7 @@
     <Compile Include="Input\FiresInputBlock.cs" />
     <Compile Include="UI\UIBuilderHost.cs" />
     <Compile Include="UI\FiresConfigUI.cs" />
+    <Compile Include="UI\CfgDiscovery.cs" />
     <Compile Include="UI\UIBuilder\BundledLayoutExtractor.cs" />
     <Compile Include="UI\UIBuilder\UIBuilderAssetCache.cs" />
     <Compile Include="UI\UIBuilder\UIBuilderAutoDiscovery.cs" />

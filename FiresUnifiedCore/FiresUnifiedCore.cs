@@ -57,6 +57,12 @@ namespace FiresCore
             // Bind the Fires config window's own appearance (font/opacity/accent) into Core's config and
             // register it, so an "Appearance" section shows right in the window and restyles live.
             FiresCore.UI.FiresConfigUI.BindAppearance(Config);
+
+            // Auto-engage the shared text-capture gate whenever a UI text field is focused, so typing into any
+            // Fires field stops leaking keystrokes to vanilla / other-mod hotkeys (e.g. a 'g' firing another
+            // mod's [G] toggle). Client-only — a headless server has no EventSystem or typing UI.
+            if (!Application.isBatchMode)
+                FiresCore.Input.FiresInputBlockDriver.Ensure();
         }
 
         protected override void TitleScene(bool isFirstBoot)
@@ -66,6 +72,10 @@ namespace FiresCore
         protected override void WorldStart()
         {
             Debug.Log($"[{PluginName}] Loaded.");
+
+            // Re-enumerate config now that every mod has bound (some bind after Core.Setup). The window also
+            // rebuilds on open, but this primes the cache so va_config_dump is accurate before first open.
+            FiresCore.UI.CfgDiscovery.Rebuild();
         }
 
         protected override void Shutdown()
