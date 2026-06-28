@@ -66,6 +66,27 @@ namespace FiresCore.Npc.Patrol
             Debug.Log($"[PatrolRoute] saved route '{name}' ({points.Count} points)");
         }
 
+        /// <summary>Deletes a route's cfg from disk and drops it from the cache. Returns true if a file was removed.</summary>
+        public static bool DeleteRoute(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            if (!_initialized) Initialize();
+            try
+            {
+                var path = Path.Combine(RoutesFolder, MakeSafeFileName(name) + ".cfg");
+                bool existed = File.Exists(path);
+                if (existed) File.Delete(path);
+                _routes.Remove(name);
+                if (existed) Debug.Log($"[PatrolRoute] deleted route '{name}'");
+                return existed;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[PatrolRoute] delete '{name}' failed: {ex.Message}");
+                return false;
+            }
+        }
+
         /// <summary>Writes the raw cfg text directly (used by the server RPC handler when a client sends a recording).</summary>
         public static void WriteRawAndReload(string name, string cfgContents)
         {

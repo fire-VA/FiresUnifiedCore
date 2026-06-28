@@ -134,14 +134,16 @@ namespace FiresCore.Npc.IdleBehaviors
                 _index = Mathf.Clamp(_index + _direction, 0, _route.Points.Count - 1);
             }
 
-            // Look-ahead: advance the cursor through every waypoint we're already within reach of BEFORE
-            // issuing the move, so the move target is always far enough that vanilla MoveTo never hits its
-            // stop-at-arrival branch (it stops ~2m out; the cursor advances at 3.5m). The NPC therefore flows
-            // through nodes continuously instead of stopping at each one — and this is also the "route is a
-            // guide" smoothing (near nodes get skipped). An open route's endpoint sets _waiting and breaks out.
+            // Look-ahead: advance the cursor through every waypoint we're already within reach of BEFORE issuing
+            // the move, so the target is always far enough that vanilla MoveTo never hits its stop-at-arrival
+            // branch; the NPC flows through nodes instead of stopping at each. Distance is 3D (NOT XZ): routes
+            // save full XYZ, so a marker up on a balcony/bridge must be reached at its real HEIGHT before we
+            // advance — otherwise an elevated marker directly above the NPC reads as "reached" (XZ≈0) and gets
+            // skipped, and it never climbs the stairs. Respecting Y is what keeps the NPC true to a multi-level
+            // route instead of taking the ground path under it. Open-route endpoint sets _waiting and breaks out.
             int guard = 0;
             while (!_waiting && guard++ < _route.Points.Count
-                   && Utils.DistanceXZ(Transform.position, _route.Points[_index]) <= ReachDistance)
+                   && Vector3.Distance(Transform.position, _route.Points[_index]) <= ReachDistance)
             {
                 OnArrived();
             }
@@ -271,7 +273,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // was skipped, so the caller re-evaluates next tick.
         private bool RecoverIfStuck(Vector3 target)
         {
-            float dist = Utils.DistanceXZ(Transform.position, target);
+            float dist = Vector3.Distance(Transform.position, target);   // 3D: climbing toward an elevated marker counts as progress
             if (dist < _stuckBestDist - StuckMinProgress)
             {
                 _stuckBestDist = dist;
