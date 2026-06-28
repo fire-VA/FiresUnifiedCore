@@ -16,5 +16,6 @@ namespace FiresCore.Npc
         Leaderboard = 8,
         Mail = 9,
         Transmog = 10,
+        Teleporter = 11,
     }
 }

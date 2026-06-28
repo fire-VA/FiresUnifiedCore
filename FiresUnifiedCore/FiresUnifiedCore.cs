@@ -45,6 +45,9 @@ namespace FiresCore
                 // PlayerController.TakeInput movement/jump gate are client-only
                 // (patching them on a headless build native-crashes the IL rewriter).
                 "FiresCore.Input.FiresInputBlockClientGates",
+                // Connection-reject panel patches FejdStartup.ShowConnectError (client-only menu);
+                // same IL-rewriter crash class as the other FejdStartup patches above.
+                "FiresCore.Bridge.FiresConnectReasonPanel",
             };
 
         protected override void Setup()

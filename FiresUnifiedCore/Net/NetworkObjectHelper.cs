@@ -47,6 +47,45 @@ namespace FiresCore.Net
             }
         }
 
+        // ── Safe runtime prefab cloning (create side) ──────────────────────────────────────────────
+        // Cloning a ZNetView-bearing prefab with a bare Object.Instantiate makes a LIVE clone whose
+        // ZNetView.Awake immediately registers a rogue entry in ZNetScene.m_instances (with an
+        // unresolved prefab hash, because the clone's name is not a registered prefab yet) -> the next
+        // ZNetScene.CreateDestroyObjects tick NREs on it every frame. Parenting the clone under a
+        // permanently-inactive holder keeps activeInHierarchy false so Awake never fires; the result is
+        // a clean inactive TEMPLATE, lifecycle-equivalent to a bundle-loaded prefab. At real spawn time
+        // Object.Instantiate(template, pos, rot) (no holder parent) makes an active copy that Awakes fresh.
+        private static GameObject _prefabHolder;
+
+        public static Transform PrefabHolder
+        {
+            get
+            {
+                if (_prefabHolder == null)
+                {
+                    _prefabHolder = new GameObject("Fires_PrefabHolder");
+                    _prefabHolder.SetActive(false);
+                    UnityEngine.Object.DontDestroyOnLoad(_prefabHolder);
+                }
+                return _prefabHolder.transform;
+            }
+        }
+
+        /// <summary>
+        /// Instantiate a prefab clone for use as a runtime-built TEMPLATE, without it registering as a
+        /// live network instance. Use this instead of a bare Object.Instantiate when cloning a prefab
+        /// that carries a ZNetView. The returned clone is inactive (parented under <see cref="PrefabHolder"/>,
+        /// which is DontDestroyOnLoad); register it in ZNetScene and Instantiate copies of it at spawn
+        /// time as usual.
+        /// </summary>
+        public static GameObject InstantiateInactiveClone(GameObject source, string name = null)
+        {
+            if (source == null) return null;
+            GameObject clone = UnityEngine.Object.Instantiate(source, PrefabHolder);
+            if (!string.IsNullOrEmpty(name)) clone.name = name;
+            return clone;
+        }
+
         private static ZNetView TryGetZNetView(GameObject go)
         {
             try { return go.GetComponent<ZNetView>(); }

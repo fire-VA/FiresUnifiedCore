@@ -163,6 +163,8 @@
     <Compile Include="Bridge\NpcCompanionBridge.cs" />
     <Compile Include="Bridge\CompanionBridge.cs" />
     <Compile Include="Bridge\DiscordSink.cs" />
+    <Compile Include="Bridge\FiresConnectReason.cs" />
+    <Compile Include="Bridge\FiresConnectReasonPanel.cs" />
     <Compile Include="Bridge\GuildBridge.cs" />
     <Compile Include="Bridge\GroupBridge.cs" />
     <Compile Include="Bridge\LeaderboardBridge.cs" />
