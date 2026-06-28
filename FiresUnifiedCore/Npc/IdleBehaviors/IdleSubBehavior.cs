@@ -397,7 +397,26 @@ namespace FiresCore.Npc.IdleBehaviors
             // The caller should check distance to know if we've actually arrived
             return true;
         }
-        
+
+        /// <summary>
+        /// Grounded DIRECT move toward <paramref name="position"/> with NO FindPath (CompanionAI.RequestDirectMovement
+        /// → BaseAI.MoveTowards). Use this instead of <see cref="TryMoveToPosition"/> when the target sits on a
+        /// player-built piece (bridge/floor) that the terrain navmesh doesn't include — physics walks the NPC
+        /// across the piece, where FindPath would route under it. Terrain targets should still use TryMoveToPosition.
+        /// </summary>
+        protected bool TryMoveDirectToPosition(Vector3 position, bool run = false)
+        {
+            if (CompanionAI == null && Companion != null)
+                CompanionAI = Companion.GetComponent<CompanionAI>();
+            if (CompanionAI == null) return false;
+
+            var source = IsCommandInitiated
+                ? UnifiedMovementAuthority.MovementSource.PlayerCommand
+                : UnifiedMovementAuthority.MovementSource.SubBehavior;
+            CompanionAI.RequestDirectMovement(position, run, source, BehaviorName);
+            return true;
+        }
+
         /// <summary>
         /// Direct movement without pathfinding (fallback only).
         /// NOTE: This should only be used when CompanionAI is unavailable.

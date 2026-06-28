@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
+using UnityEngine;
 
 namespace FiresCore.Input
 {
@@ -18,14 +19,17 @@ namespace FiresCore.Input
     //   * ZInput Get{Button,Key,MouseButton}{Down,Up} -> false
     //       (other mods' hotkeys routed through Valheim's ZInput layer, plus
     //        vanilla chat/console open which polls ZInput directly)
+    //   * BepInEx KeyboardShortcut IsDown/IsUp/IsPressed -> false
+    //       (the standard ConfigEntry<KeyboardShortcut> mod-hotkey path — these are
+    //        MANAGED wrappers, so they ARE patchable even though raw Input is not)
     //
     // Coverage limit (by design): mods that poll UnityEngine.Input.GetKeyDown
-    // directly — including BepInEx ConfigEntry<KeyboardShortcut> — cannot be
-    // blocked. UnityEngine.Input.* is an extern native call Harmony cannot patch,
-    // and that same raw-Input path is what every Fires UI uses for its own
-    // ESC-to-close, so it must stay live. Held-state reads (GetButton/GetKey/
-    // GetMouseButton) and the analog mouse-delta are intentionally NOT gated so
-    // camera/analog UI don't freeze; only the press/release EDGES are suppressed.
+    // DIRECTLY (not via KeyboardShortcut) cannot be blocked — UnityEngine.Input.* is
+    // an extern native call Harmony can't patch, and that same raw-Input path is what
+    // every Fires UI uses for its own ESC-to-close, so it must stay live. Held-state
+    // reads (GetButton/GetKey/GetMouseButton) and the analog mouse-delta are
+    // intentionally NOT gated so camera/analog UI don't freeze; only the press/release
+    // EDGES (plus the KeyboardShortcut triggers above) are suppressed.
     //
     // Usage (refcounted by an opaque token — a window instance or a stable field
     // key): Acquire(token) when a field gains focus / a modal opens, Release(token)
@@ -177,5 +181,63 @@ namespace FiresCore.Input
 
         [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetMouseButtonUp))]
         private static class GetMouseButtonUpGate { private static bool Prefix(ref bool __result) => Gate(ref __result); }
+
+        // BepInEx KeyboardShortcut hotkeys (the standard `ConfigEntry<KeyboardShortcut>` pattern most mods use,
+        // e.g. another mod's [G] toggle firing while you type a 'g' into a Fires field). IsDown/IsUp/IsPressed
+        // are MANAGED wrappers over UnityEngine.Input, so — unlike raw Input.GetKeyDown (extern, unpatchable) —
+        // they CAN be gated. Suppressing them while a Fires text field is focused stops cross-mod hotkey leaks
+        // without touching raw Input (so each Fires UI's own raw ESC-to-close stays live).
+        private static bool _loggedKs;
+        private static bool KsGate(ref bool __result)
+        {
+            if (!FiresInputBlock.IsCapturing) return true;
+            if (!_loggedKs) { _loggedKs = true; try { FiresCore.Logging.FiresLogger.LogInfo($"[{FiresInputBlock.LogTag}] BepInEx KeyboardShortcut hotkey SUPPRESSED while typing (gate working)"); } catch { } }
+            __result = false;
+            return false;
+        }
+
+        [HarmonyPatch(typeof(BepInEx.Configuration.KeyboardShortcut), nameof(BepInEx.Configuration.KeyboardShortcut.IsDown))]
+        private static class KeyboardShortcutIsDownGate { private static bool Prefix(ref bool __result) => KsGate(ref __result); }
+
+        [HarmonyPatch(typeof(BepInEx.Configuration.KeyboardShortcut), nameof(BepInEx.Configuration.KeyboardShortcut.IsUp))]
+        private static class KeyboardShortcutIsUpGate { private static bool Prefix(ref bool __result) => KsGate(ref __result); }
+
+        [HarmonyPatch(typeof(BepInEx.Configuration.KeyboardShortcut), nameof(BepInEx.Configuration.KeyboardShortcut.IsPressed))]
+        private static class KeyboardShortcutIsPressedGate { private static bool Prefix(ref bool __result) => KsGate(ref __result); }
+    }
+
+    // Client-side driver: engages the text-capture gate whenever a UI text field gains focus and releases it on
+    // blur, so no Fires UI has to wire Acquire/Release per field — focusing ANY TMP_InputField / InputField (in
+    // a Fires panel, the book, a search bar, etc.) automatically suppresses vanilla + mod hotkeys for the keys
+    // you're typing. Spawned client-only from Core (never on a headless server, which has no EventSystem).
+    internal sealed class FiresInputBlockDriver : MonoBehaviour
+    {
+        private static FiresInputBlockDriver _instance;
+        private static readonly object AutoToken = new object();
+
+        public static void Ensure()
+        {
+            if (_instance != null) return;
+            var go = new GameObject("FiresInputBlockDriver") { hideFlags = HideFlags.HideAndDontSave };
+            UnityEngine.Object.DontDestroyOnLoad(go);
+            _instance = go.AddComponent<FiresInputBlockDriver>();
+        }
+
+        private void Update()
+        {
+            if (IsTextFieldFocused()) FiresInputBlock.Acquire(AutoToken);
+            else FiresInputBlock.Release(AutoToken);
+        }
+
+        private static bool IsTextFieldFocused()
+        {
+            var es = UnityEngine.EventSystems.EventSystem.current;
+            var go = es != null ? es.currentSelectedGameObject : null;
+            if (go == null) return false;
+            var tmp = go.GetComponent<TMPro.TMP_InputField>();
+            if (tmp != null) return tmp.isFocused;
+            var leg = go.GetComponent<UnityEngine.UI.InputField>();
+            return leg != null && leg.isFocused;
+        }
     }
 }

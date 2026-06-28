@@ -1029,6 +1029,44 @@ namespace FiresCore.Npc.AI
                 authority?.EnableExternalBlocking();
             }
         }
+
+        /// <summary>
+        /// Grounded DIRECT move toward <paramref name="destination"/> — vanilla BaseAI.MoveTowards (SetLookDir +
+        /// SetMoveDir, NO FindPath). Physics carries the NPC onto whatever collider is underfoot, terrain OR a
+        /// player-built piece, so this is how a patrol crosses a BRIDGE / raised floor that Valheim's terrain
+        /// navmesh doesn't include — RequestPathfindingMovement (FindPath) would snap the target off the piece
+        /// to the nearest baked navmesh point and route the NPC under it. Uses the same single-writer escape
+        /// hatch (DisableExternalBlocking) as the pathfinding move so the direct SetMoveDir lands; for a static
+        /// NPC there is no authority and vanilla's raw SetMoveDir applies (nothing else writes it).
+        /// </summary>
+        public bool RequestDirectMovement(
+            Vector3 destination,
+            bool run,
+            Core.UnifiedMovementAuthority.MovementSource authoritySource = Core.UnifiedMovementAuthority.MovementSource.SubBehavior,
+            string authorityOwner = "Behavior")
+        {
+            if (m_character == null) return true;
+            Vector3 dir = destination - transform.position;
+            dir.y = 0f;
+            if (dir.sqrMagnitude < 0.0001f) return true;
+
+            var authority = _companion?.GetMovementAuthority();
+            if (authority != null && !authority.HasAuthority(authorityOwner))
+            {
+                if (!authority.TryAcquireAuthority(authoritySource, authorityOwner, 5f))
+                    return false;   // another system holds priority
+            }
+            try
+            {
+                authority?.DisableExternalBlocking();
+                MoveTowards(dir, run);
+            }
+            finally
+            {
+                authority?.EnableExternalBlocking();
+            }
+            return false;
+        }
         
         /// <summary>
         /// Releases movement authority held by a specific owner.

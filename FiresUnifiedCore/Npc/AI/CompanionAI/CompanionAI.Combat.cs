@@ -108,7 +108,9 @@ namespace FiresCore.Npc.AI
                 if (c.IsTamed() || c.IsPlayer()) continue;   // never aggro players or allied tames
                 if (!IsEnemy(c)) continue;                    // hostiles only — passives must not shadow a real threat
                 float dSq = (c.transform.position - post).sqrMagnitude;
-                if (dSq > bestSq) continue;
+                if (dSq > bestSq) continue;                   // (cull before the heavier passive probe below)
+                if (IsPassiveCreature(c)) continue;           // honor the admin HuntList — never PROACTIVELY aggro prey
+                                                              // (deer/boar/hunt-list); OnDamaged still retaliates if hit
                 if (!IsThreatToOwnerOrSelf(c, post, m_character)) continue;
                 bestSq = dSq;
                 best = c;

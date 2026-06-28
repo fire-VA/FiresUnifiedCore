@@ -612,25 +612,12 @@ namespace FiresCore.Npc.AI
                 return true;
             }
 
+            // Flee-when-not-alerted monsters (passive until provoked) count as passive prey. m_fleeIfNotAlerted
+            // is public on MonsterAI (publicized assembly) — direct read, no per-call reflection in the 0.3s scan.
             var monsterAI = target.GetComponent<MonsterAI>();
-            if (monsterAI != null)
-            {
-                try
-                {
-                    var fleeField = typeof(MonsterAI).GetField("m_fleeIfNotAlerted",
-                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                    if (fleeField != null)
-                    {
-                        bool fleesWhenNotAlerted = (bool)fleeField.GetValue(monsterAI);
-                        if (fleesWhenNotAlerted)
-                        {
-                            return true;
-                        }
-                    }
-                }
-                catch { }
-            }
-            
+            if (monsterAI != null && monsterAI.m_fleeIfNotAlerted)
+                return true;
+
             return false;
         }
 

@@ -22,6 +22,10 @@ namespace FiresCore.Npc.IdleBehaviors
         public const float TeleportTimeout = 60f;  // seconds spent trying to reach a waypoint before snapping to it
         public const float LookAheadDistance = 5.0f; // aim this far ahead ALONG the route so MoveTo never brakes at a marker
 
+        // Player-built pieces (bridges/floors) live on these layers; a downward probe at the route surface that
+        // hits one carrying a Piece component means it's NOT on the terrain navmesh, so we drive direct there.
+        private static readonly int BuildPieceMask = UnityEngine.LayerMask.GetMask("piece", "static_solid", "Default");
+
         private PatrolRoute _route;
         private int _index;
         private int _direction = 1;        // +1 forward, -1 reversed (open routes)
@@ -153,8 +157,13 @@ namespace FiresCore.Npc.IdleBehaviors
             // arrival and the heading turns gradually — the NPC flows through the whole route as one path
             // instead of stuttering at each segment. The cursor above still advances as markers are passed.
             Vector3 carrot = CarrotAhead();
-            Vector3 target = carrot + _deviation;
-            if (!IsReachable(target)) target = carrot;   // deviation pushed off-mesh → use the bare carrot
+            // Is the route surface here a player-built piece (bridge/floor) the terrain navmesh excludes? Decided
+            // from the BARE carrot — the anti-stacking deviation can sit in mid-air off a narrow bridge edge.
+            bool onPiece = IsOnBuildPiece(carrot);
+            // No deviation on a piece: keep the NPC centered on the authored route so it can't be nudged off a
+            // narrow bridge. On terrain, apply it (anti-stacking) and drop it if it lands off-mesh.
+            Vector3 target = onPiece ? carrot : carrot + _deviation;
+            if (!onPiece && !IsReachable(target)) target = carrot;
 
             // Couldn't reach this waypoint within the timeout (unreachable, or just assigned the route from far
             // away) → snap onto it. This is how an NPC that isn't on its route gets there. Vanilla MoveTo
@@ -174,7 +183,14 @@ namespace FiresCore.Npc.IdleBehaviors
             // false → the NPC would use the jog tier (m_speed=10, ~2× walk). Setting m_walk every patrol frame
             // selects m_walkSpeed; other behaviors (combat/follow) re-assert their own mode so this won't stick.
             HostGameObject?.GetComponent<Character>()?.SetWalk(true);
-            TryMoveToPosition(target, walk: true);   // pathfinding lives in vanilla MoveTo here — keep it, do not swap for straight-line
+            // If the route surface here is a player-built PIECE (bridge/floor) that the terrain navmesh doesn't
+            // include, drive movement DIRECTLY — physics walks the NPC across the piece. FindPath would snap the
+            // target off the piece and route the NPC under it (the classic "creatures path under bridges" bug).
+            // Terrain still uses vanilla FindPath for full obstacle avoidance.
+            if (onPiece)
+                TryMoveDirectToPosition(target, run: false);
+            else
+                TryMoveToPosition(target, walk: true);
 
             return false;   // never completes on its own
         }
@@ -213,6 +229,16 @@ namespace FiresCore.Npc.IdleBehaviors
                 here = to;
             }
             return here;
+        }
+
+        // True when the route surface under <paramref name="point"/> is a player-built Piece (bridge, floor,
+        // dock) rather than terrain — i.e. it isn't in Valheim's terrain navmesh, so the patrol must walk it
+        // directly instead of via FindPath. A short downward probe + a Piece-component check is definitive.
+        private static bool IsOnBuildPiece(Vector3 point)
+        {
+            if (Physics.Raycast(point + Vector3.up * 2f, Vector3.down, out var hit, 6f, BuildPieceMask, QueryTriggerInteraction.Ignore))
+                return hit.collider != null && hit.collider.GetComponentInParent<Piece>() != null;
+            return false;
         }
 
         private void OnArrived(bool writeCheckpoint = true)
@@ -262,6 +288,18 @@ namespace FiresCore.Npc.IdleBehaviors
                 _stuckRepathed = true;
                 Ai?.RequestPathRecalculation();   // recompute the path, then fall through and re-issue the move
                 return false;
+            }
+
+            // Re-path didn't free us. If the waypoint is genuinely OFF the navmesh — e.g. a marker on a
+            // player-built BRIDGE (Valheim bakes its terrain navmesh WITHOUT runtime pieces, so pathing tries
+            // to route UNDER the bridge and never reaches it) — snap across it now instead of grinding the full
+            // 60s TeleportTimeout. (Walking the bridge proper needs navmesh links; this keeps a bridged route
+            // moving in seconds.) A reachable-but-stuck marker is just skipped, as before.
+            if (!IsReachable(target))
+            {
+                TeleportTo(target);
+                OnArrived();
+                return true;
             }
 
             SkipCurrentWaypoint();
