@@ -5,20 +5,24 @@ using BepInEx.Configuration;
 using FiresCore.Help;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace FiresCore.UI
 {
     // The Fires config window: a uGUI Canvas overlay laid out like shudnal's ConfigurationManager — a plugin
-    // list on the left, and the selected plugin's categories on the right, each as a full-width header bar
-    // with dense label / control / reset rows, in the Fires palette. Mouse handling matches the help panel:
-    // it registers with ModUiRegistry (so the game's input patches free the cursor + suppress player input)
-    // AND forces the cursor unlocked every frame in OnGUI (shudnal's trick), plus InputBlock + HUD-hide.
+    // list on the left, the selected plugin's categories on the right as full-width header bars with dense
+    // rows. Interactive controls are built through the tested UIBuilderHelper (sliders + input fields) and
+    // cycle-buttons (bool / enum) so they actually function. Resizable + movable. Mouse handling matches the
+    // help panel: registers with ModUiRegistry (so the game's input patches free the cursor + suppress input)
+    // and forces the cursor unlocked every frame (Update + OnGUI), plus InputBlock + HUD-hide.
     public class ConfigPanel : MonoBehaviour
     {
         private const int OverlaySortingOrder = 350;
-        private const float SidebarWidth = 290f;
+        private const float SidebarWidth = 280f;
         private const float TitleBarH = 46f;
+        private static readonly Vector2 DefaultSize = new Vector2(1240f, 760f);
+        private static readonly Vector2 MinSize = new Vector2(760f, 420f);
 
         private const float FsTitle = 19f;
         private const float FsSection = 16f;
@@ -44,7 +48,7 @@ namespace FiresCore.UI
             _instance = go.AddComponent<ConfigPanel>();
             // Register with the shared modal registry so the game's input patches (GUIManager.IsCustomPanelOpen
             // -> ModUiRegistry.IsAnyOpen) free the cursor + suppress player input while we're open — the SAME
-            // path the help panel relies on. InputBlock alone wasn't enough; this is what makes the mouse work.
+            // path the help panel relies on.
             FiresCore.Bridge.ModUiRegistry.Register("FiresConfigPanel", () => IsOpen, () => _instance?.Hide(), () => _instance?._root);
         }
 
@@ -54,6 +58,7 @@ namespace FiresCore.UI
 
         // ----- instance -----
         private GameObject _root;
+        private RectTransform _dialog;
         private RectTransform _sideContent;
         private RectTransform _content;
         private ScrollRect _contentScroll;
@@ -77,7 +82,6 @@ namespace FiresCore.UI
         private void Update()
         {
             if (!_cmdRegistered) { try { RegisterCommands(); _cmdRegistered = true; } catch { } }
-
             if (_capturing) { PollKeyCapture(); return; }
 
             bool toggle = FiresConfigUI.CfgHotkey != null
@@ -89,8 +93,8 @@ namespace FiresCore.UI
             if (IsOpen) { Cursor.lockState = CursorLockMode.None; Cursor.visible = true; }
         }
 
-        // shudnal-style per-frame cursor enforcement: OnGUI runs AFTER Update/LateUpdate (and several times
-        // per frame), so forcing the cursor here wins the race against the game/GameCamera re-locking it.
+        // shudnal-style per-frame cursor enforcement: OnGUI runs AFTER Update/LateUpdate, so forcing here wins
+        // the race against the game re-locking the cursor.
         private void OnGUI()
         {
             if (!IsOpen) return;
@@ -170,17 +174,20 @@ namespace FiresCore.UI
             var bc = backBtn.colors; bc.normalColor = bc.highlightedColor = bc.pressedColor = bc.selectedColor = HelpTheme.Backdrop; backBtn.colors = bc;
             backBtn.onClick.AddListener(Hide);
 
-            var dialog = NewRect("Dialog", _root.transform);
-            dialog.anchorMin = new Vector2(0.04f, 0.05f);
-            dialog.anchorMax = new Vector2(0.96f, 0.95f);
-            dialog.offsetMin = dialog.offsetMax = Vector2.zero;
-            var dialogImg = dialog.gameObject.AddComponent<Image>();
+            // Fixed-size, top-left-anchored dialog so it can be moved + resized (drag the title / the corner grip).
+            _dialog = NewRect("Dialog", _root.transform);
+            _dialog.anchorMin = _dialog.anchorMax = new Vector2(0, 1);
+            _dialog.pivot = new Vector2(0, 1);
+            _dialog.sizeDelta = DefaultSize;
+            _dialog.anchoredPosition = new Vector2(90, -50);
+            var dialogImg = _dialog.gameObject.AddComponent<Image>();
             dialogImg.color = HelpTheme.PanelBg;
-            dialog.gameObject.AddComponent<Button>().targetGraphic = dialogImg;
+            _dialog.gameObject.AddComponent<Button>().targetGraphic = dialogImg;
 
-            BuildTitleBar(dialog);
-            BuildSidebar(dialog);
-            BuildContent(dialog);
+            BuildTitleBar(_dialog);
+            BuildSidebar(_dialog);
+            BuildContent(_dialog);
+            BuildResizeGrip(_dialog);
         }
 
         private void BuildTitleBar(RectTransform dialog)
@@ -188,7 +195,8 @@ namespace FiresCore.UI
             var bar = NewRect("TitleBar", dialog);
             bar.anchorMin = new Vector2(0, 1); bar.anchorMax = new Vector2(1, 1); bar.pivot = new Vector2(0.5f, 1);
             bar.sizeDelta = new Vector2(0, TitleBarH);
-            bar.gameObject.AddComponent<Image>().color = HelpTheme.SidebarBg;
+            var barImg = bar.gameObject.AddComponent<Image>(); barImg.color = HelpTheme.SidebarBg;
+            bar.gameObject.AddComponent<DragMove>().Target = dialog;   // drag the title bar to move the window
 
             var title = Label(bar, "Fires Configuration", FsTitle, HelpTheme.HeaderColor, TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
             title.anchorMin = new Vector2(0, 0); title.anchorMax = new Vector2(0, 1); title.pivot = new Vector2(0, 0.5f);
@@ -197,21 +205,14 @@ namespace FiresCore.UI
             var search = NewRect("Search", bar);
             search.anchorMin = new Vector2(0, 0); search.anchorMax = new Vector2(0, 1); search.pivot = new Vector2(0, 0.5f);
             search.anchoredPosition = new Vector2(330, 0); search.sizeDelta = new Vector2(400, -12);
-            search.gameObject.AddComponent<Image>().color = FieldBg;
-            var sText = Label(search, "", FsValue, HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft); Stretch(sText, 10, 4, 10, 4);
-            var placeholder = Label(search, "search settings...", FsValue, HelpTheme.TextMuted, TextAlignmentOptions.MidlineLeft); Stretch(placeholder, 10, 4, 10, 4);
-            _searchField = search.gameObject.AddComponent<TMP_InputField>();
-            _searchField.textComponent = sText.GetComponent<TextMeshProUGUI>();
-            _searchField.placeholder = placeholder.GetComponent<TextMeshProUGUI>();
-            _searchField.text = "";
+            _searchField = UIBuilderHelper.CreateInputField(search, "Search", "search settings...", Vector2.zero, Vector2.one, (int)FsValue);
             _searchField.onValueChanged.AddListener(s => { _search = s ?? ""; Navigate(_mod); });
 
             var close = NewRect("Close", bar);
             close.anchorMin = new Vector2(1, 0); close.anchorMax = new Vector2(1, 1); close.pivot = new Vector2(1, 0.5f);
-            close.anchoredPosition = new Vector2(-6, 0); close.sizeDelta = new Vector2(38, -8);
-            var closeImg = close.gameObject.AddComponent<Image>(); closeImg.color = new Color(0.5f, 0.15f, 0.1f, 0.9f);
-            var closeBtn = close.gameObject.AddComponent<Button>(); closeBtn.targetGraphic = closeImg; closeBtn.onClick.AddListener(Hide);
-            Stretch(Label(close, "✕", 15f, HelpTheme.TextGold, TextAlignmentOptions.Center, FontStyles.Bold));
+            close.anchoredPosition = new Vector2(-6, 0); close.sizeDelta = new Vector2(42, -8);
+            UIBuilderHelper.CreateButton(close, "X", Vector2.zero, Vector2.one,
+                new Color(0.5f, 0.15f, 0.1f, 0.9f), new Color(0.7f, 0.25f, 0.18f, 0.95f), new Color(0.4f, 0.1f, 0.08f, 1f), Hide);
         }
 
         private void BuildSidebar(RectTransform dialog)
@@ -238,10 +239,20 @@ namespace FiresCore.UI
 
             _content = BuildScroll(area, out _contentScroll, out _);
             var vlg = _content.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(14, 20, 10, 16); vlg.spacing = 3;
+            vlg.padding = new RectOffset(14, 22, 10, 16); vlg.spacing = 3;
             vlg.childControlWidth = vlg.childControlHeight = true;
             vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
             _content.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        }
+
+        private void BuildResizeGrip(RectTransform dialog)
+        {
+            var grip = NewRect("ResizeGrip", dialog);
+            grip.anchorMin = grip.anchorMax = new Vector2(1, 0); grip.pivot = new Vector2(1, 0);
+            grip.anchoredPosition = Vector2.zero; grip.sizeDelta = new Vector2(22, 22);
+            var img = grip.gameObject.AddComponent<Image>(); img.color = new Color(0.35f, 0.27f, 0.13f, 0.9f);
+            grip.gameObject.AddComponent<DragResize>().Target = dialog;
+            Stretch(Label(grip, "//", 12f, HelpTheme.TextGold, TextAlignmentOptions.Center, FontStyles.Bold));
         }
 
         // ---------------------------------------------------------------- sidebar (plugin list)
@@ -265,11 +276,10 @@ namespace FiresCore.UI
         {
             var go = NewRect("Mod", _sideContent);
             go.gameObject.AddComponent<LayoutElement>().minHeight = 34f;
-            var img = go.gameObject.AddComponent<Image>(); img.color = active ? HelpTheme.NavActive : HelpTheme.NavNormal;
-            var btn = go.gameObject.AddComponent<Button>(); btn.targetGraphic = img;
-            var c = btn.colors; c.normalColor = active ? HelpTheme.NavActive : HelpTheme.NavNormal; c.highlightedColor = HelpTheme.NavHover; c.pressedColor = HelpTheme.NavActive; c.selectedColor = c.normalColor; btn.colors = c;
-            btn.onClick.AddListener(() => onClick());
-            Stretch(Label(go, "  " + text, FsNav, active ? HelpTheme.TextGold : HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft, FontStyles.Bold), 10, 0, 6, 0);
+            UIBuilderHelper.CreateButton(go, "  " + text, Vector2.zero, Vector2.one,
+                active ? HelpTheme.NavActive : HelpTheme.NavNormal, HelpTheme.NavHover, HelpTheme.NavActive, () => onClick());
+            var t = go.GetComponentInChildren<TextMeshProUGUI>();
+            if (t != null) { t.color = active ? HelpTheme.TextGold : HelpTheme.TextLight; t.fontSize = FsNav; t.fontStyle = FontStyles.Bold; t.alignment = TextAlignmentOptions.MidlineLeft; }
         }
 
         // ---------------------------------------------------------------- content (categories + rows)
@@ -290,7 +300,7 @@ namespace FiresCore.UI
                 foreach (var d in CfgDiscovery.Descriptors)
                 {
                     if (!Matches(d, _search)) continue;
-                    string g = d.ModName + "  —  " + CleanSection(d.Section);
+                    string g = d.ModName + "  -  " + CleanSection(d.Section);
                     if (g != last) { last = g; AddCategoryHeader(g); _rowIndex = 0; }
                     try { BuildRow(d); shown++; } catch (Exception ex) { FiresConfigUI.Log.LogWarning($"row '{d.Section}/{d.Key}' failed: {ex.Message}"); }
                 }
@@ -319,7 +329,6 @@ namespace FiresCore.UI
             Stretch(Label(go, text, FsTitle, HelpTheme.HeaderColor, TextAlignmentOptions.BottomLeft, FontStyles.Bold), 2, 6, 2, 2);
         }
 
-        // The shudnal-style category bar: a full-width header strip with the section name centred.
         private void AddCategoryHeader(string text)
         {
             var go = NewRect("CatHeader", _content);
@@ -352,7 +361,7 @@ namespace FiresCore.UI
             var spacer = NewRect("Spacer", top);
             spacer.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
 
-            AddTextButton(top, "↺ reset", 70f, () => { try { d.Entry.BoxedValue = d.Entry.DefaultValue; } catch { } Navigate(_mod); });
+            CycleButton(top, 72f, "Reset", () => { try { d.Entry.BoxedValue = d.Entry.DefaultValue; } catch { } Navigate(_mod); });
 
             if (!string.IsNullOrEmpty(d.Description))
             {
@@ -361,6 +370,7 @@ namespace FiresCore.UI
             }
         }
 
+        // ---------------------------------------------------------------- typed controls (via UIBuilderHelper)
         private void BuildControl(RectTransform parent, CfgDescriptor d)
         {
             object val = d.BoxedValue;
@@ -368,16 +378,18 @@ namespace FiresCore.UI
             {
                 case CtrlKind.Bool:
                 {
-                    var t = AddToggle(parent, (bool)val);
-                    t.onValueChanged.AddListener(v => Set(d, v));
+                    var btn = CycleButton(parent, 130f, ((bool)val) ? "Enabled" : "Disabled", null);
+                    var tmp = btn.GetComponentInChildren<TextMeshProUGUI>();
+                    btn.onClick.AddListener(() => { bool nv = !(bool)d.BoxedValue; Set(d, nv); if (tmp != null) tmp.text = nv ? "Enabled" : "Disabled"; });
                     break;
                 }
                 case CtrlKind.IntRange:
                 case CtrlKind.FloatRange:
                 {
                     var valLbl = Label(parent, FormatNum(d, Convert.ToSingle(val)), FsValue, HelpTheme.TextGold, TextAlignmentOptions.MidlineLeft);
-                    valLbl.gameObject.AddComponent<LayoutElement>().preferredWidth = 64f;
-                    var slider = AddSlider(parent, (float)d.Min, (float)d.Max, Convert.ToSingle(val));
+                    valLbl.gameObject.AddComponent<LayoutElement>().preferredWidth = 62f;
+                    var slot = Slot(parent, 340f);
+                    var slider = UIBuilderHelper.CreateSlider(slot, "Slider", Vector2.zero, Vector2.one, (float)d.Min, (float)d.Max, Convert.ToSingle(val), null);
                     slider.onValueChanged.AddListener(v =>
                     {
                         float snapped = SnapStep(v, d);
@@ -392,32 +404,40 @@ namespace FiresCore.UI
                 {
                     var names = d.Options ?? Array.Empty<string>();
                     int cur = Math.Max(0, Array.IndexOf(names, val?.ToString()));
-                    var dd = AddDropdown(parent, names, cur);
-                    dd.onValueChanged.AddListener(i => SetOption(d, names.Length > 0 ? names[Mathf.Clamp(i, 0, names.Length - 1)] : null));
+                    var btn = CycleButton(parent, 240f, names.Length > 0 ? names[cur] : (val?.ToString() ?? ""), null);
+                    var tmp = btn.GetComponentInChildren<TextMeshProUGUI>();
+                    btn.onClick.AddListener(() =>
+                    {
+                        if (names.Length == 0) return;
+                        int now = Math.Max(0, Array.IndexOf(names, d.BoxedValue?.ToString()));
+                        int next = (now + 1) % names.Length;
+                        SetOption(d, names[next]);
+                        if (tmp != null) tmp.text = names[next];
+                    });
                     break;
                 }
                 case CtrlKind.IntField:
                 case CtrlKind.FloatField:
                 {
-                    var f = AddInput(parent, val?.ToString() ?? "", 200f);
+                    var f = MakeInput(parent, 200f, val?.ToString() ?? "");
                     f.onEndEdit.AddListener(s => { if (TryParseNumber(s, d.Type, out object p)) Set(d, p); });
                     break;
                 }
                 case CtrlKind.String:
                 {
-                    var f = AddInput(parent, (string)val ?? "", 440f);
+                    var f = MakeInput(parent, 440f, (string)val ?? "");
                     f.onEndEdit.AddListener(s => Set(d, s ?? ""));
                     break;
                 }
                 case CtrlKind.Color:
                 {
-                    var f = AddInput(parent, ColorToText((Color)val), 240f);
+                    var f = MakeInput(parent, 240f, ColorToText((Color)val));
                     f.onEndEdit.AddListener(s => { if (TryParseColor(s, out Color nc)) Set(d, nc); });
                     break;
                 }
                 case CtrlKind.KeyBind:
                 {
-                    var btn = AddTextButton(parent, val?.ToString() ?? "None", 240f, null);
+                    var btn = CycleButton(parent, 240f, val?.ToString() ?? "None", null);
                     var tmp = btn.GetComponentInChildren<TextMeshProUGUI>();
                     btn.onClick.AddListener(() => BeginCapture(d.Entry, tmp));
                     break;
@@ -429,6 +449,35 @@ namespace FiresCore.UI
                     break;
                 }
             }
+        }
+
+        // A control 'slot' inside the horizontal row layout, sized via LayoutElement; helper controls fill it.
+        private RectTransform Slot(RectTransform parent, float width, float height = 26f)
+        {
+            var slot = NewRect("Ctrl", parent);
+            var le = slot.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = width; le.minWidth = width; le.minHeight = height;
+            return slot;
+        }
+
+        private Button CycleButton(RectTransform parent, float width, string text, Action onClick)
+        {
+            var slot = Slot(parent, width);
+            var btn = UIBuilderHelper.CreateButton(slot, text, Vector2.zero, Vector2.one,
+                HelpTheme.NavActive, HelpTheme.NavHover, HelpTheme.NavNormal, onClick != null ? () => onClick() : (UnityEngine.Events.UnityAction)null);
+            var t = btn.GetComponentInChildren<TextMeshProUGUI>();
+            if (t != null) { t.color = HelpTheme.TextGold; t.fontSize = FsValue; }
+            return btn;
+        }
+
+        private TMP_InputField MakeInput(RectTransform parent, float width, string text)
+        {
+            var slot = Slot(parent, width);
+            var f = UIBuilderHelper.CreateInputField(slot, "Input", "", Vector2.zero, Vector2.one, (int)FsValue);
+            var img = f.GetComponent<Image>(); if (img != null) img.color = FieldBg;
+            if (f.textComponent != null) f.textComponent.color = HelpTheme.TextLight;
+            f.caretColor = HelpTheme.TextLight;
+            f.text = text;
+            return f;
         }
 
         // ---------------------------------------------------------------- write-back
@@ -487,7 +536,36 @@ namespace FiresCore.UI
             _capturing = false; _captureTarget = null; _captureLabel = null;
         }
 
-        // ---------------------------------------------------------------- uGUI builders
+        // ---------------------------------------------------------------- drag move / resize
+        private class DragMove : MonoBehaviour, IDragHandler
+        {
+            public RectTransform Target;
+            public void OnDrag(PointerEventData e)
+            {
+                if (Target == null) return;
+                Target.anchoredPosition += e.delta / CanvasScale(Target);
+            }
+        }
+
+        private class DragResize : MonoBehaviour, IDragHandler
+        {
+            public RectTransform Target;
+            public void OnDrag(PointerEventData e)
+            {
+                if (Target == null) return;
+                Vector2 d = e.delta / CanvasScale(Target);
+                var s = Target.sizeDelta + new Vector2(d.x, -d.y);
+                Target.sizeDelta = new Vector2(Mathf.Max(MinSize.x, s.x), Mathf.Max(MinSize.y, s.y));
+            }
+        }
+
+        private static float CanvasScale(Component c)
+        {
+            var canvas = c.GetComponentInParent<Canvas>();
+            return canvas != null && canvas.scaleFactor > 0f ? canvas.scaleFactor : 1f;
+        }
+
+        // ---------------------------------------------------------------- uGUI primitives
         private static RectTransform NewRect(string name, Transform parent)
         {
             var go = new GameObject(name, typeof(RectTransform));
@@ -515,94 +593,6 @@ namespace FiresCore.UI
         {
             try { var f = FiresCore.Help.HelpPanel.FontProvider?.Invoke(); if (f != null) tmp.font = f; }
             catch { }
-        }
-
-        private static Toggle AddToggle(Transform parent, bool on)
-        {
-            var rt = NewRect("Toggle", parent);
-            rt.gameObject.AddComponent<LayoutElement>().preferredWidth = 26f;
-            var bg = rt.gameObject.AddComponent<Image>(); bg.color = FieldBg;
-            var checkRt = NewRect("Check", rt); Stretch(checkRt, 4, 4, 4, 4);
-            var check = checkRt.gameObject.AddComponent<Image>(); check.color = HelpTheme.TextGold;
-            var tog = rt.gameObject.AddComponent<Toggle>();
-            tog.targetGraphic = bg; tog.graphic = check; tog.isOn = on;
-            return tog;
-        }
-
-        private static Slider AddSlider(Transform parent, float min, float max, float val)
-        {
-            var rt = NewRect("Slider", parent);
-            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = 340f; le.minHeight = 18f;
-            var bg = NewRect("BG", rt); Stretch(bg, 0, 7, 0, 7); bg.gameObject.AddComponent<Image>().color = FieldBg;
-            var fillArea = NewRect("FillArea", rt); Stretch(fillArea, 2, 7, 2, 7);
-            var fill = NewRect("Fill", fillArea); fill.sizeDelta = Vector2.zero;
-            fill.gameObject.AddComponent<Image>().color = HelpTheme.NavActive;
-            var handleArea = NewRect("HandleArea", rt); Stretch(handleArea, 2, 0, 2, 0);
-            var handle = NewRect("Handle", handleArea); handle.sizeDelta = new Vector2(12, 0);
-            handle.gameObject.AddComponent<Image>().color = HelpTheme.TextGold;
-            var s = rt.gameObject.AddComponent<Slider>();
-            s.fillRect = fill; s.handleRect = handle; s.targetGraphic = handle.GetComponent<Image>();
-            s.direction = Slider.Direction.LeftToRight; s.minValue = min; s.maxValue = max; s.value = Mathf.Clamp(val, min, max);
-            return s;
-        }
-
-        private TMP_Dropdown AddDropdown(Transform parent, string[] options, int value)
-        {
-            var rt = NewRect("Dropdown", parent);
-            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = 300f; le.minHeight = 26f;
-            rt.gameObject.AddComponent<Image>().color = FieldBg;
-
-            var labelRt = Label(rt, "", FsValue, HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft); Stretch(labelRt, 10, 2, 24, 2);
-            var arrow = Label(rt, "▾", FsValue, HelpTheme.TextMuted, TextAlignmentOptions.MidlineRight); Stretch(arrow, 0, 0, 8, 0);
-
-            var template = NewRect("Template", rt);
-            template.anchorMin = new Vector2(0, 0); template.anchorMax = new Vector2(1, 0); template.pivot = new Vector2(0.5f, 1);
-            template.anchoredPosition = new Vector2(0, 2); template.sizeDelta = new Vector2(0, 180);
-            template.gameObject.AddComponent<Image>().color = HelpTheme.PanelBg;
-            var tScroll = template.gameObject.AddComponent<ScrollRect>();
-            var vp = NewRect("Viewport", template); Stretch(vp); vp.gameObject.AddComponent<Image>().color = Color.clear; vp.gameObject.AddComponent<Mask>().showMaskGraphic = false;
-            var cont = NewRect("Content", vp); cont.anchorMin = new Vector2(0, 1); cont.anchorMax = new Vector2(1, 1); cont.pivot = new Vector2(0.5f, 1); cont.sizeDelta = new Vector2(0, 28);
-            var item = NewRect("Item", cont); item.anchorMin = new Vector2(0, 0.5f); item.anchorMax = new Vector2(1, 0.5f); item.sizeDelta = new Vector2(0, 26);
-            var itemBg = item.gameObject.AddComponent<Image>(); itemBg.color = HelpTheme.NavNormal;
-            var itemTog = item.gameObject.AddComponent<Toggle>(); itemTog.targetGraphic = itemBg;
-            var itemLbl = Label(item, "Option", FsValue, HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft); Stretch(itemLbl, 12, 1, 12, 1);
-            tScroll.content = cont; tScroll.viewport = vp; tScroll.horizontal = false; tScroll.movementType = ScrollRect.MovementType.Clamped;
-            template.gameObject.SetActive(false);
-
-            var dd = rt.gameObject.AddComponent<TMP_Dropdown>();
-            dd.targetGraphic = rt.GetComponent<Image>();
-            dd.template = template;
-            dd.captionText = labelRt.GetComponent<TextMeshProUGUI>();
-            dd.itemText = itemLbl.GetComponent<TextMeshProUGUI>();
-            dd.options.Clear();
-            foreach (var o in options) dd.options.Add(new TMP_Dropdown.OptionData(o));
-            dd.value = Mathf.Clamp(value, 0, Math.Max(0, options.Length - 1));
-            dd.RefreshShownValue();
-            return dd;
-        }
-
-        private TMP_InputField AddInput(Transform parent, string text, float width)
-        {
-            var rt = NewRect("Input", parent);
-            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = width; le.minHeight = 26f;
-            rt.gameObject.AddComponent<Image>().color = FieldBg;
-            var textRt = Label(rt, text, FsValue, HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft); Stretch(textRt, 10, 3, 10, 3);
-            var f = rt.gameObject.AddComponent<TMP_InputField>();
-            f.textComponent = textRt.GetComponent<TextMeshProUGUI>();
-            f.text = text;
-            return f;
-        }
-
-        private Button AddTextButton(Transform parent, string text, float width, Action onClick)
-        {
-            var rt = NewRect("Btn", parent);
-            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = width; le.minHeight = 26f;
-            var img = rt.gameObject.AddComponent<Image>(); img.color = HelpTheme.NavActive;
-            var btn = rt.gameObject.AddComponent<Button>(); btn.targetGraphic = img;
-            var c = btn.colors; c.normalColor = HelpTheme.NavActive; c.highlightedColor = HelpTheme.NavHover; c.pressedColor = HelpTheme.NavNormal; btn.colors = c;
-            if (onClick != null) btn.onClick.AddListener(() => onClick());
-            Stretch(Label(rt, text, FsValue, HelpTheme.TextGold, TextAlignmentOptions.Center));
-            return btn;
         }
 
         private RectTransform BuildScroll(RectTransform parent, out ScrollRect scroll, out RectTransform viewport)
