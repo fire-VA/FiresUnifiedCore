@@ -59,7 +59,16 @@ namespace FiresCore.Npc.Movement
             // Priority 4: Absolute priority command
             if (ctx.StateController != null && ctx.StateController.HasAbsolutePriorityCommand)
                 return State.CommandPriority;
-            
+
+            // Priority 4b: A work sub-behavior (patrol/gather/smelter/chest/farm/...) owns the body —
+            // commanded OR autonomous. Park the WHOLE combat-movement FSM so its Following/Idle paths
+            // can't fight the behavior. A Gather command is NOT an absolute-priority command (only
+            // Move/Attack are), so without this it falls through to Following and the follow path pulls
+            // the companion back to the owner — the run-to-tree / run-back oscillation, work never engaging.
+            // Mirrors CompanionAI.UpdateAI's sub-behavior gate and ExecuteIdleState's IsInSubBehavior park.
+            if (ctx.IdleBehavior != null && ctx.IdleBehavior.IsInSubBehavior)
+                return State.Skipped;
+
             // Priority 5: Emote frozen
             if (ctx.IdleBehavior != null && ctx.IdleBehavior.IsEmoteFrozen)
                 return State.EmoteFrozen;

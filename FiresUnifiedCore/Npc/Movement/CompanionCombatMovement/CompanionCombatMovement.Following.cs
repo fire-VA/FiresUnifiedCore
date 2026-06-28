@@ -51,7 +51,14 @@ namespace FiresCore.Npc
         private void ExecuteFollowingState()
         {
             ClearCombatCommitment();
-            
+
+            // Defense-in-depth (mirrors ExecuteIdleState's guard at the top of this file): if a work
+            // sub-behavior owns the body, park — never churn follow intent / relaxed-follow movement that
+            // would fight it and pull the companion back to the owner. The FSM should already be Skipped
+            // via EvaluateState's IsInSubBehavior gate, but we never drive here regardless.
+            if (_idleBehavior != null && _idleBehavior.IsInSubBehavior)
+                return;
+
             // CRITICAL FIX: CompanionCombatMovement should NOT handle following movement!
             // CompanionAI.UpdateFollowMovement() handles following with proper vanilla pathfinding.
             // If we also try to move here, we fight for the same Following authority and cause glitchy movement.

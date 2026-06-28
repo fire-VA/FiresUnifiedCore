@@ -173,14 +173,23 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (Companion == null) return false;
 
-            // Commanded gathering always runs.  Autonomous gathering is gated by
-            // the radial-menu toggle.
-            if (_commandedTarget == null && !CompanionBehaviorToggles.IsGatherEnabled(Companion)) return false;
+            bool commanded = _commandedTarget != null;
 
-            // Check base requirements including inventory space
-            if (!CanStartBase()) return false;
+            // Autonomous gathering is gated by the radial-menu toggle. A player-COMMANDED gather always runs.
+            if (!commanded && !CompanionBehaviorToggles.IsGatherEnabled(Companion))
+            {
+                return false;
+            }
 
-            if (_commandedTarget != null)
+            // Inventory-space gate applies to AUTONOMOUS gathering only. A player-commanded gather runs even
+            // if storage is full (the resource overflows/drops) rather than being silently refused — which
+            // left the companion oscillating in the command's fallback path.
+            if (!commanded && !CanStartBase())
+            {
+                return false;
+            }
+
+            if (commanded)
             {
                 var resourceData = ResourceDataHelper.GetResourceData(_commandedTarget);
                 if (resourceData == null || !resourceData.IsValid)

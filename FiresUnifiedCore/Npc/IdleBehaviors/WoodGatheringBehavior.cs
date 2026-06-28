@@ -146,13 +146,26 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (Companion == null) return false;
 
-            // Commanded chopping always runs.  Autonomous wood gathering is gated
-            // by the radial-menu toggle (shared with general gathering).
-            if (_commandedTarget == null && !CompanionBehaviorToggles.IsGatherEnabled(Companion)) return false;
+            bool commanded = _commandedTarget != null;
 
-            if (!CanStartBase()) return false;
+            // Autonomous wood gathering is gated by the radial-menu toggle (shared with general gathering).
+            // A player-COMMANDED chop always runs regardless of the toggle.
+            if (!commanded && !CompanionBehaviorToggles.IsGatherEnabled(Companion))
+            {
+                LogVerbose("CanStart: autonomous gather disabled by radial toggle");
+                return false;
+            }
 
-            if (_commandedTarget != null)
+            // Inventory-space gate applies to AUTONOMOUS gathering only. When the player explicitly
+            // commands a chop, run it even if storage is full — the wood overflows/drops rather than the
+            // command being silently refused (which left the companion oscillating in the fallback path).
+            if (!commanded && !CanStartBase())
+            {
+                LogVerbose("CanStart: autonomous gather blocked by CanStartBase (likely inventory full)");
+                return false;
+            }
+
+            if (commanded)
             {
                 // Verify it's actually a tree/log
                 var treeBase = _commandedTarget.GetComponent<TreeBase>() ?? _commandedTarget.GetComponentInParent<TreeBase>();
@@ -160,7 +173,8 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 if (treeBase == null && treeLog == null)
                 {
-                    LogVerbose("CanStart: commanded target is not a tree or log");
+                    // Explicit (not verbose) so a misrouted target is visible in the log, not silent.
+                    Debug.LogWarning($"[WoodGathering] {Companion?.companionName} CanStart: commanded target '{_commandedTarget.name}' is not a tree or log");
                     return false;
                 }
 
