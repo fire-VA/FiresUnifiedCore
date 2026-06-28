@@ -53,7 +53,29 @@ namespace FiresCore.Sync
             if (!ZNet.instance) return false;
             var peer = ZNet.instance.GetPeer(senderId);
             if (peer == null) return false;
-            return GetAdminList().Contains(peer.m_rpc.GetSocket().GetHostName());
+            return AdminListContains(peer.m_rpc.GetSocket().GetHostName());
+        }
+
+        // adminlist.txt entries may be stored bare ("7656...") or platform-prefixed ("Steam_7656..."),
+        // but the socket hostname is the bare form. Mirror Valheim's ZNet.ListContainsId so either stored
+        // form resolves the same host - a raw Contains would drop a real admin whose entry is "Steam_...".
+        private static bool AdminListContains(string hostName)
+        {
+            if (string.IsNullOrEmpty(hostName)) return false;
+            var list = GetAdminList();
+            if (list == null) return false;
+            if (list.Contains(hostName)) return true;
+            string norm = NormalizeId(hostName);
+            foreach (var entry in list.GetList())
+                if (NormalizeId(entry).Equals(norm, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        private static string NormalizeId(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return string.Empty;
+            int us = id.IndexOf('_');
+            return (us >= 0 ? id.Substring(us + 1) : id).Trim();
         }
 
         private static IEnumerator WatchAdminListChanges()

@@ -9,31 +9,28 @@ using UnityEngine.UI;
 
 namespace FiresCore.UI
 {
-    // The Fires config window: a real uGUI Canvas overlay (the construction the help panel uses) instead of
-    // fragile IMGUI. ScreenSpaceOverlay canvas + GraphicRaycaster renders deterministically and handles
-    // clicks natively. Layout follows shudnal's ConfigurationManager (a wide split: plugin/section list on
-    // the left, settings on the right) and the CineHUD look (bold gold headers, slider+value rows) in the
-    // Fires palette. Data from CfgDiscovery; input gated by the shared InputBlock + the game HUD is hidden
-    // while open (like the help panel) so the cursor is clean and the crosshair is gone.
+    // The Fires config window: a uGUI Canvas overlay laid out like shudnal's ConfigurationManager — a plugin
+    // list on the left, and the selected plugin's categories on the right, each as a full-width header bar
+    // with dense label / control / reset rows, in the Fires palette. Mouse handling matches the help panel:
+    // it registers with ModUiRegistry (so the game's input patches free the cursor + suppress player input)
+    // AND forces the cursor unlocked every frame in OnGUI (shudnal's trick), plus InputBlock + HUD-hide.
     public class ConfigPanel : MonoBehaviour
     {
         private const int OverlaySortingOrder = 350;
-        private const float SidebarWidth = 270f;
+        private const float SidebarWidth = 290f;
         private const float TitleBarH = 46f;
 
-        // CineHUD-style type scale, in the Fires palette.
         private const float FsTitle = 19f;
-        private const float FsSection = 17f;
-        private const float FsLabel = 14.5f;
-        private const float FsValue = 13.5f;
-        private const float FsDesc = 12f;
-        private const float FsNavHeader = 13.5f;
-        private const float FsNav = 12.5f;
-        private const float RowMinH = 34f;
-        private const float LabelW = 320f;
+        private const float FsSection = 16f;
+        private const float FsLabel = 14f;
+        private const float FsValue = 13f;
+        private const float FsNav = 13.5f;
+        private const float RowMinH = 28f;
+        private const float LabelW = 300f;
 
-        private static readonly Color RowBg = new Color(0.10f, 0.085f, 0.06f, 0.6f);
-        private static readonly Color RowAltBg = new Color(0.13f, 0.11f, 0.07f, 0.6f);
+        private static readonly Color RowBg = new Color(0.10f, 0.085f, 0.06f, 0.55f);
+        private static readonly Color RowAltBg = new Color(0.13f, 0.11f, 0.07f, 0.55f);
+        private static readonly Color CatHeaderBg = new Color(0.24f, 0.18f, 0.09f, 0.97f);
         private static readonly Color FieldBg = new Color(0.05f, 0.05f, 0.07f, 0.95f);
 
         private static ConfigPanel _instance;
@@ -45,6 +42,10 @@ namespace FiresCore.UI
             var go = new GameObject("FiresConfigPanelHost");
             UnityEngine.Object.DontDestroyOnLoad(go);
             _instance = go.AddComponent<ConfigPanel>();
+            // Register with the shared modal registry so the game's input patches (GUIManager.IsCustomPanelOpen
+            // -> ModUiRegistry.IsAnyOpen) free the cursor + suppress player input while we're open — the SAME
+            // path the help panel relies on. InputBlock alone wasn't enough; this is what makes the mouse work.
+            FiresCore.Bridge.ModUiRegistry.Register("FiresConfigPanel", () => IsOpen, () => _instance?.Hide(), () => _instance?._root);
         }
 
         public static void Toggle() { EnsureHost(); _instance.ToggleInternal(); }
@@ -58,9 +59,7 @@ namespace FiresCore.UI
         private ScrollRect _contentScroll;
         private TMP_InputField _searchField;
         private string _search = "";
-
         private string _mod;
-        private string _section;
         private int _rowIndex;
 
         private bool _hudHidden;
@@ -87,6 +86,16 @@ namespace FiresCore.UI
             if (toggle) ToggleInternal();
 
             if (IsOpen && UnityEngine.Input.GetKeyDown(KeyCode.Escape)) Hide();
+            if (IsOpen) { Cursor.lockState = CursorLockMode.None; Cursor.visible = true; }
+        }
+
+        // shudnal-style per-frame cursor enforcement: OnGUI runs AFTER Update/LateUpdate (and several times
+        // per frame), so forcing the cursor here wins the race against the game/GameCamera re-locking it.
+        private void OnGUI()
+        {
+            if (!IsOpen) return;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
         }
 
         private static void RegisterCommands()
@@ -105,11 +114,11 @@ namespace FiresCore.UI
                 if (_root == null) BuildPanel();
                 _root.SetActive(true);
                 _root.transform.SetAsLastSibling();
-                RebuildSidebar();
                 if (string.IsNullOrEmpty(_mod) || CfgDiscovery.SectionsOf(_mod).Count == 0) SelectFirst();
-                Navigate(_mod, _section);
+                RebuildSidebar();
+                Navigate(_mod);
                 InputBlock.Block(true);
-                HideGameUi(true);   // hide the HUD/crosshair so the cursor is clean (help-panel behavior)
+                HideGameUi(true);
                 FiresConfigUI.Log.LogInfo($"ConfigPanel opened: {CfgDiscovery.ModNames.Count} mod(s), {CfgDiscovery.Descriptors.Count} entries.");
             }
             catch (Exception ex) { FiresConfigUI.Log.LogError("ConfigPanel.Show failed: " + ex); }
@@ -123,8 +132,6 @@ namespace FiresCore.UI
             HideGameUi(false);
         }
 
-        // Hide/restore the vanilla HUD (crosshair, hotbar, minimap) while the panel is open, the way the
-        // help panel does, so the free cursor isn't fighting the in-world crosshair.
         private void HideGameUi(bool hide)
         {
             try
@@ -140,8 +147,6 @@ namespace FiresCore.UI
         {
             var mods = CfgDiscovery.ModNames;
             _mod = mods.Count > 0 ? mods[0] : null;
-            var sections = _mod != null ? CfgDiscovery.SectionsOf(_mod) : null;
-            _section = sections != null && sections.Count > 0 ? sections[0] : null;
         }
 
         // ---------------------------------------------------------------- panel scaffold
@@ -165,14 +170,13 @@ namespace FiresCore.UI
             var bc = backBtn.colors; bc.normalColor = bc.highlightedColor = bc.pressedColor = bc.selectedColor = HelpTheme.Backdrop; backBtn.colors = bc;
             backBtn.onClick.AddListener(Hide);
 
-            // Wide window sized toward shudnal's ConfigurationManager (~90% of the screen).
             var dialog = NewRect("Dialog", _root.transform);
-            dialog.anchorMin = new Vector2(0.05f, 0.05f);
-            dialog.anchorMax = new Vector2(0.95f, 0.95f);
+            dialog.anchorMin = new Vector2(0.04f, 0.05f);
+            dialog.anchorMax = new Vector2(0.96f, 0.95f);
             dialog.offsetMin = dialog.offsetMax = Vector2.zero;
             var dialogImg = dialog.gameObject.AddComponent<Image>();
             dialogImg.color = HelpTheme.PanelBg;
-            dialog.gameObject.AddComponent<Button>().targetGraphic = dialogImg;   // eat backdrop clicks
+            dialog.gameObject.AddComponent<Button>().targetGraphic = dialogImg;
 
             BuildTitleBar(dialog);
             BuildSidebar(dialog);
@@ -192,7 +196,7 @@ namespace FiresCore.UI
 
             var search = NewRect("Search", bar);
             search.anchorMin = new Vector2(0, 0); search.anchorMax = new Vector2(0, 1); search.pivot = new Vector2(0, 0.5f);
-            search.anchoredPosition = new Vector2(330, 0); search.sizeDelta = new Vector2(380, -12);
+            search.anchoredPosition = new Vector2(330, 0); search.sizeDelta = new Vector2(400, -12);
             search.gameObject.AddComponent<Image>().color = FieldBg;
             var sText = Label(search, "", FsValue, HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft); Stretch(sText, 10, 4, 10, 4);
             var placeholder = Label(search, "search settings...", FsValue, HelpTheme.TextMuted, TextAlignmentOptions.MidlineLeft); Stretch(placeholder, 10, 4, 10, 4);
@@ -200,7 +204,7 @@ namespace FiresCore.UI
             _searchField.textComponent = sText.GetComponent<TextMeshProUGUI>();
             _searchField.placeholder = placeholder.GetComponent<TextMeshProUGUI>();
             _searchField.text = "";
-            _searchField.onValueChanged.AddListener(s => { _search = s ?? ""; Navigate(_mod, _section); });
+            _searchField.onValueChanged.AddListener(s => { _search = s ?? ""; Navigate(_mod); });
 
             var close = NewRect("Close", bar);
             close.anchorMin = new Vector2(1, 0); close.anchorMax = new Vector2(1, 1); close.pivot = new Vector2(1, 0.5f);
@@ -234,13 +238,13 @@ namespace FiresCore.UI
 
             _content = BuildScroll(area, out _contentScroll, out _);
             var vlg = _content.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(16, 22, 12, 18); vlg.spacing = 5;
+            vlg.padding = new RectOffset(14, 20, 10, 16); vlg.spacing = 3;
             vlg.childControlWidth = vlg.childControlHeight = true;
             vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
             _content.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         }
 
-        // ---------------------------------------------------------------- sidebar nav
+        // ---------------------------------------------------------------- sidebar (plugin list)
         private void RebuildSidebar()
         {
             if (_sideContent == null) return;
@@ -248,69 +252,80 @@ namespace FiresCore.UI
 
             foreach (var mod in CfgDiscovery.ModNames)
             {
-                AddNavHeader(mod);
-                foreach (var section in CfgDiscovery.SectionsOf(mod))
+                string m = mod;
+                AddModButton(mod, mod == _mod, () =>
                 {
-                    string m = mod, s = section;
-                    AddNavButton(CleanSection(section), mod == _mod && section == _section,
-                        () => { _search = ""; if (_searchField != null) _searchField.SetTextWithoutNotify(""); Navigate(m, s); });
-                }
+                    _search = ""; if (_searchField != null) _searchField.SetTextWithoutNotify("");
+                    _mod = m; RebuildSidebar(); Navigate(m);
+                });
             }
         }
 
-        private void AddNavHeader(string text)
+        private void AddModButton(string text, bool active, Action onClick)
         {
-            var go = NewRect("Header", _sideContent);
-            go.gameObject.AddComponent<LayoutElement>().minHeight = 30f;
-            Stretch(Label(go, text, FsNavHeader, HelpTheme.HeaderColor, TextAlignmentOptions.BottomLeft, FontStyles.Bold), 8, 2, 4, 2);
-        }
-
-        private void AddNavButton(string text, bool active, Action onClick)
-        {
-            var go = NewRect("Nav", _sideContent);
-            go.gameObject.AddComponent<LayoutElement>().minHeight = 30f;
+            var go = NewRect("Mod", _sideContent);
+            go.gameObject.AddComponent<LayoutElement>().minHeight = 34f;
             var img = go.gameObject.AddComponent<Image>(); img.color = active ? HelpTheme.NavActive : HelpTheme.NavNormal;
             var btn = go.gameObject.AddComponent<Button>(); btn.targetGraphic = img;
             var c = btn.colors; c.normalColor = active ? HelpTheme.NavActive : HelpTheme.NavNormal; c.highlightedColor = HelpTheme.NavHover; c.pressedColor = HelpTheme.NavActive; c.selectedColor = c.normalColor; btn.colors = c;
             btn.onClick.AddListener(() => onClick());
-            Stretch(Label(go, "  " + text, FsNav, active ? HelpTheme.TextGold : HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft), 12, 0, 6, 0);
+            Stretch(Label(go, "  " + text, FsNav, active ? HelpTheme.TextGold : HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft, FontStyles.Bold), 10, 0, 6, 0);
         }
 
-        // ---------------------------------------------------------------- content
-        private void Navigate(string mod, string section)
+        // ---------------------------------------------------------------- content (categories + rows)
+        private void Navigate(string mod)
         {
-            _mod = mod; _section = section; _rowIndex = 0;
-            RebuildSidebar();
+            _mod = mod; _rowIndex = 0;
             if (_content == null) return;
             for (int i = _content.childCount - 1; i >= 0; i--) Destroy(_content.GetChild(i).gameObject);
             if (_contentScroll != null) _contentScroll.verticalNormalizedPosition = 1f;
 
             bool searching = !string.IsNullOrEmpty(_search);
-            AddContentTitle(searching ? "Results for \"" + _search + "\"" : (mod == null ? "" : mod + "   •   " + CleanSection(section ?? "")));
-
             int shown = 0;
-            string lastGroup = null;
-            foreach (var d in CfgDiscovery.Descriptors)
+
+            if (searching)
             {
-                if (searching)
+                AddPluginTitle("Results for \"" + _search + "\"");
+                string last = null;
+                foreach (var d in CfgDiscovery.Descriptors)
                 {
                     if (!Matches(d, _search)) continue;
-                    string g = d.ModName + "  /  " + CleanSection(d.Section);
-                    if (g != lastGroup) { lastGroup = g; AddContentTitle(g); }
+                    string g = d.ModName + "  —  " + CleanSection(d.Section);
+                    if (g != last) { last = g; AddCategoryHeader(g); _rowIndex = 0; }
+                    try { BuildRow(d); shown++; } catch (Exception ex) { FiresConfigUI.Log.LogWarning($"row '{d.Section}/{d.Key}' failed: {ex.Message}"); }
                 }
-                else if (d.ModName != mod || d.Section != section) continue;
-
-                try { BuildRow(d); shown++; }
-                catch (Exception ex) { FiresConfigUI.Log.LogWarning($"row '{d.Section}/{d.Key}' failed: {ex.Message}"); }
             }
-            if (shown == 0) AddContentTitle(searching ? "No matches." : "No settings.");
+            else if (mod != null)
+            {
+                AddPluginTitle(mod);
+                foreach (var section in CfgDiscovery.SectionsOf(mod))
+                {
+                    AddCategoryHeader(CleanSection(section));
+                    _rowIndex = 0;
+                    foreach (var d in CfgDiscovery.Descriptors)
+                    {
+                        if (d.ModName != mod || d.Section != section) continue;
+                        try { BuildRow(d); shown++; } catch (Exception ex) { FiresConfigUI.Log.LogWarning($"row '{d.Section}/{d.Key}' failed: {ex.Message}"); }
+                    }
+                }
+            }
+            if (shown == 0) AddCategoryHeader(searching ? "No matches." : "No settings.");
         }
 
-        private void AddContentTitle(string text)
+        private void AddPluginTitle(string text)
         {
-            var go = NewRect("Title", _content);
-            go.gameObject.AddComponent<LayoutElement>().minHeight = 36f;
+            var go = NewRect("PluginTitle", _content);
+            go.gameObject.AddComponent<LayoutElement>().minHeight = 32f;
             Stretch(Label(go, text, FsTitle, HelpTheme.HeaderColor, TextAlignmentOptions.BottomLeft, FontStyles.Bold), 2, 6, 2, 2);
+        }
+
+        // The shudnal-style category bar: a full-width header strip with the section name centred.
+        private void AddCategoryHeader(string text)
+        {
+            var go = NewRect("CatHeader", _content);
+            go.gameObject.AddComponent<LayoutElement>().minHeight = 28f;
+            go.gameObject.AddComponent<Image>().color = CatHeaderBg;
+            Stretch(Label(go, text, FsSection, HelpTheme.HeaderColor, TextAlignmentOptions.Center, FontStyles.Bold));
         }
 
         private void BuildRow(CfgDescriptor d)
@@ -318,7 +333,7 @@ namespace FiresCore.UI
             var row = NewRect("Row", _content);
             row.gameObject.AddComponent<Image>().color = (_rowIndex++ & 1) == 0 ? RowBg : RowAltBg;
             var rowV = row.gameObject.AddComponent<VerticalLayoutGroup>();
-            rowV.padding = new RectOffset(12, 12, 8, 8); rowV.spacing = 2;
+            rowV.padding = new RectOffset(12, 12, 4, 4); rowV.spacing = 1;
             rowV.childControlWidth = rowV.childControlHeight = true;
             rowV.childForceExpandWidth = true; rowV.childForceExpandHeight = false;
             row.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
@@ -337,11 +352,11 @@ namespace FiresCore.UI
             var spacer = NewRect("Spacer", top);
             spacer.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
 
-            AddTextButton(top, "↺ reset", 70f, () => { try { d.Entry.BoxedValue = d.Entry.DefaultValue; } catch { } Navigate(_mod, _section); });
+            AddTextButton(top, "↺ reset", 70f, () => { try { d.Entry.BoxedValue = d.Entry.DefaultValue; } catch { } Navigate(_mod); });
 
             if (!string.IsNullOrEmpty(d.Description))
             {
-                var desc = Label(row, d.Description, FsDesc, HelpTheme.TextMuted, TextAlignmentOptions.TopLeft);
+                var desc = Label(row, d.Description, FsValue - 1.5f, HelpTheme.TextMuted, TextAlignmentOptions.TopLeft);
                 desc.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             }
         }
@@ -361,7 +376,7 @@ namespace FiresCore.UI
                 case CtrlKind.FloatRange:
                 {
                     var valLbl = Label(parent, FormatNum(d, Convert.ToSingle(val)), FsValue, HelpTheme.TextGold, TextAlignmentOptions.MidlineLeft);
-                    valLbl.gameObject.AddComponent<LayoutElement>().preferredWidth = 68f;
+                    valLbl.gameObject.AddComponent<LayoutElement>().preferredWidth = 64f;
                     var slider = AddSlider(parent, (float)d.Min, (float)d.Max, Convert.ToSingle(val));
                     slider.onValueChanged.AddListener(v =>
                     {
@@ -402,7 +417,7 @@ namespace FiresCore.UI
                 }
                 case CtrlKind.KeyBind:
                 {
-                    var btn = AddTextButton(parent, val?.ToString() ?? "None", 260f, null);
+                    var btn = AddTextButton(parent, val?.ToString() ?? "None", 240f, null);
                     var tmp = btn.GetComponentInChildren<TextMeshProUGUI>();
                     btn.onClick.AddListener(() => BeginCapture(d.Entry, tmp));
                     break;
@@ -505,7 +520,7 @@ namespace FiresCore.UI
         private static Toggle AddToggle(Transform parent, bool on)
         {
             var rt = NewRect("Toggle", parent);
-            rt.gameObject.AddComponent<LayoutElement>().preferredWidth = 28f;
+            rt.gameObject.AddComponent<LayoutElement>().preferredWidth = 26f;
             var bg = rt.gameObject.AddComponent<Image>(); bg.color = FieldBg;
             var checkRt = NewRect("Check", rt); Stretch(checkRt, 4, 4, 4, 4);
             var check = checkRt.gameObject.AddComponent<Image>(); check.color = HelpTheme.TextGold;
@@ -517,9 +532,9 @@ namespace FiresCore.UI
         private static Slider AddSlider(Transform parent, float min, float max, float val)
         {
             var rt = NewRect("Slider", parent);
-            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = 340f; le.minHeight = 20f;
-            var bg = NewRect("BG", rt); Stretch(bg, 0, 8, 0, 8); bg.gameObject.AddComponent<Image>().color = FieldBg;
-            var fillArea = NewRect("FillArea", rt); Stretch(fillArea, 2, 8, 2, 8);
+            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = 340f; le.minHeight = 18f;
+            var bg = NewRect("BG", rt); Stretch(bg, 0, 7, 0, 7); bg.gameObject.AddComponent<Image>().color = FieldBg;
+            var fillArea = NewRect("FillArea", rt); Stretch(fillArea, 2, 7, 2, 7);
             var fill = NewRect("Fill", fillArea); fill.sizeDelta = Vector2.zero;
             fill.gameObject.AddComponent<Image>().color = HelpTheme.NavActive;
             var handleArea = NewRect("HandleArea", rt); Stretch(handleArea, 2, 0, 2, 0);
@@ -534,7 +549,7 @@ namespace FiresCore.UI
         private TMP_Dropdown AddDropdown(Transform parent, string[] options, int value)
         {
             var rt = NewRect("Dropdown", parent);
-            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = 300f; le.minHeight = 28f;
+            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = 300f; le.minHeight = 26f;
             rt.gameObject.AddComponent<Image>().color = FieldBg;
 
             var labelRt = Label(rt, "", FsValue, HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft); Stretch(labelRt, 10, 2, 24, 2);
@@ -546,8 +561,8 @@ namespace FiresCore.UI
             template.gameObject.AddComponent<Image>().color = HelpTheme.PanelBg;
             var tScroll = template.gameObject.AddComponent<ScrollRect>();
             var vp = NewRect("Viewport", template); Stretch(vp); vp.gameObject.AddComponent<Image>().color = Color.clear; vp.gameObject.AddComponent<Mask>().showMaskGraphic = false;
-            var cont = NewRect("Content", vp); cont.anchorMin = new Vector2(0, 1); cont.anchorMax = new Vector2(1, 1); cont.pivot = new Vector2(0.5f, 1); cont.sizeDelta = new Vector2(0, 30);
-            var item = NewRect("Item", cont); item.anchorMin = new Vector2(0, 0.5f); item.anchorMax = new Vector2(1, 0.5f); item.sizeDelta = new Vector2(0, 28);
+            var cont = NewRect("Content", vp); cont.anchorMin = new Vector2(0, 1); cont.anchorMax = new Vector2(1, 1); cont.pivot = new Vector2(0.5f, 1); cont.sizeDelta = new Vector2(0, 28);
+            var item = NewRect("Item", cont); item.anchorMin = new Vector2(0, 0.5f); item.anchorMax = new Vector2(1, 0.5f); item.sizeDelta = new Vector2(0, 26);
             var itemBg = item.gameObject.AddComponent<Image>(); itemBg.color = HelpTheme.NavNormal;
             var itemTog = item.gameObject.AddComponent<Toggle>(); itemTog.targetGraphic = itemBg;
             var itemLbl = Label(item, "Option", FsValue, HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft); Stretch(itemLbl, 12, 1, 12, 1);
@@ -569,7 +584,7 @@ namespace FiresCore.UI
         private TMP_InputField AddInput(Transform parent, string text, float width)
         {
             var rt = NewRect("Input", parent);
-            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = width; le.minHeight = 28f;
+            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = width; le.minHeight = 26f;
             rt.gameObject.AddComponent<Image>().color = FieldBg;
             var textRt = Label(rt, text, FsValue, HelpTheme.TextLight, TextAlignmentOptions.MidlineLeft); Stretch(textRt, 10, 3, 10, 3);
             var f = rt.gameObject.AddComponent<TMP_InputField>();
@@ -581,7 +596,7 @@ namespace FiresCore.UI
         private Button AddTextButton(Transform parent, string text, float width, Action onClick)
         {
             var rt = NewRect("Btn", parent);
-            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = width; le.minHeight = 28f;
+            var le = rt.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = width; le.minHeight = 26f;
             var img = rt.gameObject.AddComponent<Image>(); img.color = HelpTheme.NavActive;
             var btn = rt.gameObject.AddComponent<Button>(); btn.targetGraphic = img;
             var c = btn.colors; c.normalColor = HelpTheme.NavActive; c.highlightedColor = HelpTheme.NavHover; c.pressedColor = HelpTheme.NavNormal; btn.colors = c;
