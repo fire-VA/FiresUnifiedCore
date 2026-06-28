@@ -62,7 +62,12 @@ namespace FiresCore
             // Fires field stops leaking keystrokes to vanilla / other-mod hotkeys (e.g. a 'g' firing another
             // mod's [G] toggle). Client-only — a headless server has no EventSystem or typing UI.
             if (!Application.isBatchMode)
+            {
                 FiresCore.Input.FiresInputBlockDriver.Ensure();
+
+                // Hold-Alt right-click context menus. Core owns the system + input gate; mods register providers.
+                FiresCore.UI.ContextMenu.FiresContextMenuDriver.Ensure();
+            }
         }
 
         protected override void TitleScene(bool isFirstBoot)

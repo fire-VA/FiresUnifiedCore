@@ -157,6 +157,7 @@
     <Compile Include="Terrain\HeightmapOverrideConfig.cs" />
     <Compile Include="Terrain\HeightmapOverridePatches.cs" />
     <Compile Include="Terrain\VASnapToGroundSpreadPatch.cs" />
+    <Compile Include="Bridge\BoneEditingBridge.cs" />
     <Compile Include="Bridge\GroupHudBridge.cs" />
     <Compile Include="Bridge\ModUiRegistry.cs" />
     <Compile Include="Bridge\NpcCompanionBridge.cs" />
@@ -190,6 +191,7 @@
     <Compile Include="Audio\FiresCustomAudioStore.cs" />
     <Compile Include="Npc\Patrol\PatrolRoute.cs" />
     <Compile Include="Npc\Patrol\PatrolRouteManager.cs" />
+    <Compile Include="Npc\Patrol\PatrolRouteVisualizer.cs" />
     <Compile Include="Npc\Patrol\PatrolAssignment.cs" />
     <Compile Include="Npc\IdleBehaviors\PatrolBehavior.cs" />
     <Compile Include="Npc\NpcSaveState.cs" />
@@ -452,10 +454,17 @@
     <Compile Include="Help\CompendiumEntry.cs" />
     <Compile Include="Help\Compendium.cs" />
     <Compile Include="UI\InputBlock.cs" />
+    <Compile Include="UI\ContextMenu\ContextTarget.cs" />
+    <Compile Include="UI\ContextMenu\ContextMenuItem.cs" />
+    <Compile Include="UI\ContextMenu\IContextMenuProvider.cs" />
+    <Compile Include="UI\ContextMenu\FiresContextMenu.cs" />
+    <Compile Include="UI\ContextMenu\ContextMenuView.cs" />
+    <Compile Include="UI\ContextMenu\FiresContextMenuDriver.cs" />
     <Compile Include="Input\FiresInputBlock.cs" />
     <Compile Include="UI\UIBuilderHost.cs" />
     <Compile Include="UI\FiresConfigUI.cs" />
     <Compile Include="UI\CfgDiscovery.cs" />
+    <Compile Include="UI\ConfigPanel.cs" />
     <Compile Include="UI\UIBuilder\BundledLayoutExtractor.cs" />
     <Compile Include="UI\UIBuilder\UIBuilderAssetCache.cs" />
     <Compile Include="UI\UIBuilder\UIBuilderAutoDiscovery.cs" />
