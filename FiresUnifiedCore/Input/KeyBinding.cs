@@ -42,11 +42,13 @@ namespace FiresCore.Input
             Alt   = config.Bind(section, name + AltEntrySuffix,   defaultAlt,   "Require Alt held with " + name + ".");
         }
 
+        // Gated centrally: while a Fires text field is focused, no KeyBinding hotkey fires (the keys are being
+        // typed). Raw UnityEngine.Input can't be Harmony-patched, so every KeyBinding-based hotkey checks here.
         public bool IsPressed()
-            => UnityEngine.Input.GetKeyDown(Key.Value) && ModifiersMatch();
+            => !FiresInputBlock.IsCapturing && UnityEngine.Input.GetKeyDown(Key.Value) && ModifiersMatch();
 
         public bool IsHeld()
-            => UnityEngine.Input.GetKey(Key.Value) && ModifiersMatch();
+            => !FiresInputBlock.IsCapturing && UnityEngine.Input.GetKey(Key.Value) && ModifiersMatch();
 
         private bool ModifiersMatch()
         {

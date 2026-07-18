@@ -47,7 +47,13 @@ namespace FiresCore.Npc
         // Login check interval
         private float _loginCheckInterval = 2f;
         private float _lastLoginCheck;
-        
+
+        // Kennel-mirror reconciler interval. Server-side sweep that keeps every live owned
+        // companion's authoritative kennel (Alive) entry current — the catch-all for companions
+        // whose per-event MirrorToKennel was skipped because a CLIENT owned the ZDO (dedi taming).
+        private float _kennelMirrorInterval = 20f;
+        private float _lastKennelMirror;
+
         public static bool VerboseLogging = false;
 
         private class RespawnData
@@ -87,7 +93,43 @@ namespace FiresCore.Npc
            _lastLoginCheck = Time.time;
               CheckPlayerLogins();
       }
+
+        // Keep the authoritative kennel entries for live owned companions current.
+        if (Time.time - _lastKennelMirror >= _kennelMirrorInterval)
+        {
+            _lastKennelMirror = Time.time;
+            MirrorLiveCompanionsToKennel();
+        }
   }
+
+        /// <summary>
+        /// Server-side reconciler: mirror every live, owned, finalized companion into the kennel as
+        /// its <see cref="FiresCore.Bridge.DormancyKind.Alive"/> entry so the kennel is the always-
+        /// current authoritative store (the role the vault used to fill). This is the catch-all for
+        /// companions whose per-event <see cref="CompanionController.MirrorToKennel"/> was skipped
+        /// because a CLIENT owned the ZDO at the time (the normal case when a player tames a companion
+        /// standing next to them on a dedicated server). Defeated companions are owned by the death
+        /// handler's DeadPendingRespawn entry and skipped; not-yet-dressed wild spawns are skipped by
+        /// the completeness gate inside MirrorToKennel.
+        /// </summary>
+        private void MirrorLiveCompanionsToKennel()
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (!FiresCore.Bridge.NpcDormancyBridge.IsAvailable) return;
+
+            var all = CompanionController.AllCompanions;
+            if (all == null) return;
+
+            foreach (var companion in all)
+            {
+                if (companion == null) continue;
+                if (!companion.isTamed || companion.ownerPlayerId == 0L) continue;
+                // MirrorToKennel re-checks availability/defeated/completeness itself. backstopFillIn=true
+                // lets it fill a MISSING kennel entry for a client-owned companion (the server isn't the
+                // owner on a dedi) without ever overwriting a good, fresher client-forwarded entry.
+                companion.MirrorToKennel(backstopFillIn: true);
+            }
+        }
 
       #endregion
 
@@ -934,6 +976,22 @@ if (prefab == null)
      _pendingRespawns.Remove(data.CompanionId);
      yield break;
  }
+
+            // KENNEL-AUTHORITATIVE: with the kennel as the store, a miss here means the entry hasn't
+            // synced yet (or this is a pre-fix corrupt companion that has no entry). NEVER spawn a bare,
+            // identity-less companion as a fallback — that is exactly the "came back as CompanionNpc_Wild
+            // with no name/gear" bug. Defer and retry instead; the death handler always writes a
+            // DeadPendingRespawn kennel entry, so a legitimately-dead companion's entry will be present
+            // shortly. The legacy bare-spawn path below only remains for the (never, in practice) case
+            // of no dormant store registered at all.
+            if (FiresCore.Bridge.NpcDormancyBridge.IsAvailable)
+            {
+                Debug.LogWarning($"[CompanionRespawnManager] Kennel has no entry yet for {data.CompanionId} " +
+                                 $"— deferring respawn 10s (never spawning a bare identity-less fallback).");
+                data.RespawnTime = Time.time + 10f;
+                _pendingRespawns[data.CompanionId] = data;
+                yield break;
+            }
 
          // Get the prefab
      GameObject prefab = ZNetScene.instance?.GetPrefab(data.PrefabName);

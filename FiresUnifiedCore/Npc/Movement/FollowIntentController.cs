@@ -9,16 +9,20 @@ namespace FiresCore.Npc.Movement
     /// </summary>
     public class FollowIntentController
     {
-        // Distance thresholds with hysteresis (inner = exit, outer = enter)
-        public float StopDistanceInner { get; set; } = 2f;
-        public float StopDistanceOuter { get; set; } = 3.5f;
-        public float WalkDistanceInner { get; set; } = 3.5f;
-        public float WalkDistanceOuter { get; set; } = 5f;
-        public float JogDistanceInner { get; set; } = 6f;
-        public float JogDistanceOuter { get; set; } = 10f;
-        public float RunDistanceInner { get; set; } = 12f;
-        public float RunDistanceOuter { get; set; } = 18f;
-        public float SprintDistance { get; set; } = 30f;
+        // Distance thresholds with hysteresis (inner = exit, outer = enter). TIGHT so a following companion
+        // sticks close and runs/sprints to catch up promptly. This is the intent controller that gates
+        // follow-vs-idle for CompanionCombatMovement; it MUST agree with CompanionAI.Idle's DetermineFollowSpeed
+        // (the speed tier) or the two fight (companion decides "idle" here while the other says "run"). These
+        // used to sit at run=18 / sprint=30 - far too lenient, so the companion trailed and never caught up.
+        public float StopDistanceInner { get; set; } = 1.5f;
+        public float StopDistanceOuter { get; set; } = 2.5f;
+        public float WalkDistanceInner { get; set; } = 2.5f;
+        public float WalkDistanceOuter { get; set; } = 4f;
+        public float JogDistanceInner { get; set; } = 4f;
+        public float JogDistanceOuter { get; set; } = 6f;
+        public float RunDistanceInner { get; set; } = 6f;
+        public float RunDistanceOuter { get; set; } = 8f;
+        public float SprintDistance { get; set; } = 12f;
         
         // Timing
         private const float INTENT_MIN_DURATION = 2.0f;

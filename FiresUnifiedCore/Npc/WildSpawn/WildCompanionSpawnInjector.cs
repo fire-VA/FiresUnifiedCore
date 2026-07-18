@@ -6,44 +6,41 @@ using UnityEngine;
 namespace FiresCore.Npc.WildSpawn
 {
     /// <summary>
-    /// Adds our wild companion to the persistent <c>_ZoneCtrl</c> prefab's
-    /// <c>_SpawnList_base.m_spawners</c> the same way
-    /// BalrondExtendedAnimals adds its monsters: a single <c>SpawnData</c>
-    /// with all biomes flagged, registered during <c>ZNetScene.Awake</c>
-    /// while the prefab is still pristine. ExpandWorldSpawns picks the
-    /// entry up naturally on its first dump (<c>Manager.ToFile</c> writes
-    /// <c>expand_spawns.yaml</c> only if the file is missing) and treats
-    /// it as a first-class spawn from then on.
+    /// Makes our single <c>CompanionNpc_Wild</c> prefab spawn in the world via
+    /// two additive paths, never by replacing anyone else's spawn list:
     ///
-    /// We do NOT write our own YAML and we do NOT mutate
-    /// ExpandWorldSpawns' state. Previous versions shipped a YAML exporter
-    /// and a sibling SpawnSystemList holder; both are removed because they
-    /// caused EWS to load a partial spawn list (vanilla Deer/Boar/etc.
-    /// stripped), which made BalrondExtendedAnimals' setupMonster NRE on
-    /// the second login per Valheim process when its
-    /// <c>FindSpawnData(spawnSystemList, "Deer").Clone()</c> hit a null
-    /// SpawnData. Cascade: Balrond NRE â†’ ItemManager NRE â†’ EWD NRE â†’
-    /// ZDOMan.FilterZDO NRE â†’ world load failure â†’ respawn loop.
+    ///   (1) No ExpandWorldSpawns installed: append one <c>SpawnData</c>
+    ///       ("wild companions", all biomes) to the persistent <c>_ZoneCtrl</c>
+    ///       prefab's <c>_SpawnList_base.m_spawners</c> during <c>ZNetScene.Awake</c>,
+    ///       the same way BalrondExtendedAnimals adds its monsters. Vanilla
+    ///       <c>SpawnSystem</c> then spawns it.
     ///
-    /// MIGRATION FROM OLD VERSIONS
-    /// ---------------------------
-    /// The old <c>WildCompanionYamlExporter</c> wrote
-    /// <c>expand_spawns_firescompanions.yaml</c>. We delete that file once
-    /// at startup if it exists (it's ours, and leaving it behind keeps EWS
-    /// applying our 8 separate biome entries on top of vanilla, doubling
-    /// up on what this injector now adds). The user's
-    /// <c>expand_spawns.yaml</c> we don't touch â€” that file is theirs to
-    /// own. If it currently contains only our wild-companion entries
-    /// (a side effect of EWS's first dump while the old injector had
-    /// already corrupted the live state), deleting it manually lets EWS
-    /// re-dump a clean baseline on next launch.
+    ///   (2) ExpandWorldSpawns installed: EWS hard-OVERWRITES every per-zone
+    ///       <c>SpawnSystem.m_spawners</c> from <c>expand_spawns*.yaml</c> on
+    ///       <c>SpawnSystem.Awake</c> (HandleSpawnData.Set is a full replace, not
+    ///       a merge), so the prefab append in (1) is wiped before any zone
+    ///       spawns. The fix is to be IN the yaml EWS loads: EWS merges ALL files
+    ///       matching <c>expand_spawns*.yaml</c>, so we write a SIDECAR
+    ///       <c>expand_spawns_firescompanions.yaml</c> with our single entry. It
+    ///       ADDS our prefab without touching the user's <c>expand_spawns.yaml</c>.
+    ///
+    /// We deliberately never regenerate the user's <c>expand_spawns.yaml</c>: an
+    /// older version shipped a full exporter that emitted a partial list (vanilla
+    /// Deer/Boar/etc. stripped), which made BalrondExtendedAnimals' setupMonster
+    /// NRE on <c>FindSpawnData(list, "Deer").Clone()</c> - cascade Balrond NRE to
+    /// ItemManager to EWD to ZDOMan.FilterZDO to world-load failure to respawn
+    /// loop. The sidecar is purely additive and written only when absent, so user
+    /// edits and the vanilla list are never clobbered. Delete the sidecar to stop
+    /// EWS-driven wild spawns; per-spawn faction/gear/stars/recruit-price are
+    /// rolled at spawn time by biome (WildCompanionDresser + CompanionRandomLoadout),
+    /// independent of the spawn-table tuning here.
     /// </summary>
     [HarmonyPatch]
     public static class WildCompanionSpawnInjector
     {
         private const string BaseListName = "_SpawnList_base";
-        private const string LegacyYamlFileName = "expand_spawns_firescompanions.yaml";
-        private static bool _legacyYamlCleanupAttempted;
+        private const string SidecarYamlFileName = "expand_spawns_firescompanions.yaml";
+        private static bool _sidecarWriteAttempted;
 
         /// <summary>
         /// Postfix on ZNetScene.Awake â€” runs AFTER Balrond's Prefix, so
@@ -58,7 +55,7 @@ namespace FiresCore.Npc.WildSpawn
         {
             try
             {
-                CleanupLegacyYamlOnce();
+                EnsureSidecarYamlOnce();
 
                 var zs = ZoneSystem.instance;
                 if (zs == null) return;
@@ -138,24 +135,70 @@ namespace FiresCore.Npc.WildSpawn
             }
         }
 
-        private static void CleanupLegacyYamlOnce()
+        /// <summary>
+        /// Writes the additive ExpandWorldSpawns sidecar
+        /// <c>expand_spawns_firescompanions.yaml</c> once per process, but only
+        /// when the <c>expand_world</c> config dir exists (EWS installed) and the
+        /// file is absent. EWS merges every <c>expand_spawns*.yaml</c>, so this
+        /// adds our single <c>CompanionNpc_Wild</c> entry without rewriting the
+        /// user's main spawn table. Skipped if the file already exists so user
+        /// retuning sticks and we never clobber edits.
+        /// </summary>
+        private static void EnsureSidecarYamlOnce()
         {
-            if (_legacyYamlCleanupAttempted) return;
-            _legacyYamlCleanupAttempted = true;
+            if (_sidecarWriteAttempted) return;
+            _sidecarWriteAttempted = true;
             try
             {
                 string ewDir = Path.Combine(BepInEx.Paths.ConfigPath, "expand_world");
-                if (!Directory.Exists(ewDir)) return;
-                string legacyPath = Path.Combine(ewDir, LegacyYamlFileName);
-                if (!File.Exists(legacyPath)) return;
-                File.Delete(legacyPath);
-                Debug.Log($"[WildCompanionSpawnInjector] Deleted legacy YAML '{LegacyYamlFileName}' " +
-                          $"(written by older versions; superseded by direct prefab injection).");
+                if (!Directory.Exists(ewDir)) return; // EWS not installed - prefab injection below covers spawning.
+
+                string path = Path.Combine(ewDir, SidecarYamlFileName);
+                if (File.Exists(path)) return;        // already present - respect user edits, never clobber.
+
+                File.WriteAllText(path, BuildSidecarYaml());
+                Debug.Log($"[WildCompanionSpawnInjector] Wrote ExpandWorldSpawns sidecar '{SidecarYamlFileName}' " +
+                          $"(adds '{WildCompanionPrefabs.WildPrefabName}' to the spawn table; user's expand_spawns.yaml untouched).");
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[WildCompanionSpawnInjector] Legacy YAML cleanup failed: {ex.Message}");
+                Debug.LogWarning($"[WildCompanionSpawnInjector] Sidecar YAML write failed: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// The one EW Spawns entry, ASCII-only. Field names match ExpandWorld's
+        /// Spawn loader; values mirror the <c>SpawnData</c> appended to the prefab
+        /// list above so both ingestion paths produce identical spawns.
+        /// </summary>
+        private static string BuildSidecarYaml()
+        {
+            return
+                "# Fires wild companions - ExpandWorldSpawns sidecar (auto-written by FiresUnifiedCore).\n" +
+                "# ExpandWorld merges every expand_spawns*.yaml; this ADDS one entry without touching\n" +
+                "# your main expand_spawns.yaml. Delete this file to stop EWS-driven wild spawns, or edit\n" +
+                "# the values below to retune density - it is NOT regenerated while it exists. Per-spawn\n" +
+                "# faction / gear / stars / recruit-price are rolled at spawn time by biome.\n" +
+                "- prefab: " + WildCompanionPrefabs.WildPrefabName + "\n" +
+                "  enabled: true\n" +
+                "  name: wild companions\n" +
+                "  biome: Meadows, BlackForest, Swamp, Mountain, Plains, Mistlands, AshLands, DeepNorth\n" +
+                "  spawnChance: 50\n" +
+                "  maxSpawned: 2\n" +
+                "  spawnInterval: 600\n" +
+                "  minLevel: 1\n" +
+                "  maxLevel: 1\n" +
+                "  minAltitude: 0\n" +
+                "  maxAltitude: 1000\n" +
+                "  spawnDistance: 40\n" +
+                "  groupSizeMin: 1\n" +
+                "  groupSizeMax: 4\n" +
+                "  groupRadius: 6\n" +
+                "  minTilt: 0\n" +
+                "  maxTilt: 35\n" +
+                "  spawnAtDay: true\n" +
+                "  spawnAtNight: true\n" +
+                "  canSpawnCloseToPlayer: true\n";
         }
     }
 }

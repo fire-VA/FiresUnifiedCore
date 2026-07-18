@@ -423,15 +423,13 @@ namespace FiresCore.Npc.Core
             AuthorityDuration = duration;
             _authorityTimeoutTime = duration > 0 ? Time.time + duration : float.MaxValue;
             
-            // Only log when authority ACTUALLY changes hands (not silent extensions)
-            // Suppress routine IdleWander acquisitions unless VerboseLogging is on
-            if (previousSource != source || previousOwner != owner)
+            // Authority handoffs are a debug aid, not production log. Combat/dodge re-acquire every
+            // frame (CompanionDodge → Animation), which flooded the server BepInEx log. Gate the whole
+            // line behind VerboseLogging like every other diagnostic in this class.
+            if (VerboseLogging && (previousSource != source || previousOwner != owner))
             {
-                if (source != MovementSource.IdleWander || VerboseLogging)
-                {
-                    Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ACQUIRED {source} authority" +
-                        (previousOwner != "" ? $" (from {previousOwner})" : ""));
-                }
+                Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ACQUIRED {source} authority" +
+                    (previousOwner != "" ? $" (from {previousOwner})" : ""));
             }
             
             OnAuthorityChanged?.Invoke(previousSource, source);

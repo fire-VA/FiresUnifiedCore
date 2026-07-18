@@ -16,7 +16,8 @@ namespace FiresCore.Npc
         // ── Identity ──
         public string NpcId;
         public string PrefabName;
-        public string DisplayName;
+        public string DisplayName;      // effective shown name (override ?? base) — kept for back-compat consumers
+        public string BaseName;         // the underlying companionName, so a rename (override) round-trips distinctly
 
         // ── Ownership / follow (generic NPC concepts) ──
         public long OwnerPlayerId;
@@ -49,6 +50,7 @@ namespace FiresCore.Npc
         // equipped gear when re-spawned from a roster.
         public Dictionary<string, string> EquipmentPrefabs = new Dictionary<string, string>();  // equip slot → item prefab name
         public Dictionary<string, int> EquipmentQualities = new Dictionary<string, int>();       // equip slot → item quality/upgrade level
+        public Dictionary<string, int> EquipmentStacks = new Dictionary<string, int>();          // equip slot → stack count (throwables/bombs)
 
         // ── Serialized sub-systems (opaque blobs the runtime round-trips) ──
         public string StorageInventoryData;
@@ -57,6 +59,7 @@ namespace FiresCore.Npc
         public string StatsData;
         public string KillsData;
         public string LuckData;
+        public string ArchetypeSkillsData;   // "skill:level:xp,..." — archetype skill XP, else lost on kennel respawn
 
         public string ToJson() => JsonConvert.SerializeObject(this);
 

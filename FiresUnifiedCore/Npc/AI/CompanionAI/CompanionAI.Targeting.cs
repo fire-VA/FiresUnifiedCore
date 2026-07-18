@@ -486,7 +486,11 @@ namespace FiresCore.Npc.AI
                 {
                     if (aiTarget == m_character) return true;
                     if (ownerCharacter != null && aiTarget == ownerCharacter) return true;
-                    if (aiTarget.IsPlayer()) return true;
+                    // A monster locked onto some OTHER player only pulls us in while the fight is near
+                    // OUR owner — unbounded, every skirmish inside aggro range peeled the escort away
+                    // ("run off at anything that noticed a player"). Bound it by the combat leash so
+                    // companions prioritize fighting with and around their owner.
+                    if (aiTarget.IsPlayer() && distToOwner <= combatLeashDistance) return true;
                 }
             }
 

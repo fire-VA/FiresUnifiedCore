@@ -73,6 +73,18 @@ namespace FiresCore.Bridge
             catch (Exception ex) { Debug.LogWarning($"[FiresConnectReason] Send failed: {ex.Message}"); }
         }
 
+        /// <summary>
+        /// Client side, client-initiated refusal: cache a reason WITHOUT an RPC, so a client that
+        /// rejects its own connection (e.g. the Characters anti-import self-reject — refusing to join
+        /// with a character already played elsewhere) populates the same slot the server RPC would.
+        /// <see cref="FiresConnectReasonPanel"/> paints it on the next <c>ShowConnectError</c>.
+        /// </summary>
+        public static void SetLocalReason(string title, IEnumerable<string> lines = null)
+        {
+            _reasonText = BuildText(title, lines);
+            _reasonTime = Time.realtimeSinceStartup;
+        }
+
         /// <summary>Client side: take the cached reason if one arrived recently, then clear it.</summary>
         public static bool TryConsumeReason(out string text)
         {

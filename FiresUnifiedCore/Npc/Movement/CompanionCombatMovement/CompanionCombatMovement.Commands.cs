@@ -46,7 +46,6 @@ namespace FiresCore.Npc
             _committedMoveDirection = Vector3.zero;
             _lastSetMoveDir = Vector3.zero;
             _moveDirSet = false;
-            _movementModeSet = false;
             
             if (VerboseLogging)
                 Debug.Log($"[CompanionCombatMovement] {_companion?.companionName} movement LOCKED via StateController: {reason} for {duration}s");
@@ -72,7 +71,6 @@ namespace FiresCore.Npc
             _movementAuthority?.UnfreezeMovement();
             
             _moveDirSet = false;
-            _movementModeSet = false;
             
             if (VerboseLogging)
                 Debug.Log($"[CompanionCombatMovement] {_companion?.companionName} movement UNLOCKED via StateController");
@@ -272,7 +270,6 @@ namespace FiresCore.Npc
             }
             
             _moveDirSet = false;
-            _movementModeSet = false;
             
             if (VerboseLogging)
             {

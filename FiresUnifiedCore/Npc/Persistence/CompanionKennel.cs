@@ -43,6 +43,26 @@ namespace FiresCore.Npc.Persistence
         private const string KeyOwner = "kennel_owner";
         private const string KeyData  = "kennel_data";
 
+        /// <summary>
+        /// Routed RPC carrying a kennel write from a client to the server. The kennel ZDO can only
+        /// be created/owned server-side, but the WRITE frequently originates on a client: the death
+        /// handler runs on the companion's ZDO owner (usually the player standing next to it), and
+        /// logout capture runs on the leaving client. Without this transport those writes were
+        /// silently refused off-server ("GetOrCreate called off-server") and the death/logout
+        /// snapshot was dropped — the respawn then had nothing to restore (nameless, gearless).
+        /// Payload reuses <see cref="CompanionKennelSerializer"/> (a one-entry list).
+        /// </summary>
+        private const string RpcStoreName = "FiresCompanions_KennelStore";
+
+        /// <summary>
+        /// Routed RPC carrying a kennel REMOVE from a client to the server. Same transport reason as
+        /// <see cref="RpcStoreName"/>: client command paths (e.g. CommandFollow clearing a stale
+        /// Dismissed/DeadPendingRespawn entry) run on a machine that doesn't own the kennel ZDO, so a
+        /// direct Remove was silently dropped — leaving a lingering DeadPendingRespawn that can drive a
+        /// duplicate server-side respawn.
+        /// </summary>
+        private const string RpcRemoveName = "FiresCompanions_KennelRemove";
+
         /// <summary>Per-event verbose logging for kennel reads/writes.</summary>
         public static bool VerboseLogging = false;
 
@@ -57,6 +77,29 @@ namespace FiresCore.Npc.Persistence
         [HarmonyPostfix]
         public static void ZNet_Start_RegisterProvider()
         {
+            // Transport first, independent of which provider wins: the server must accept
+            // client-originated kennel writes (death/logout snapshots captured on the ZDO owner).
+            try
+            {
+                if (ZNet.instance != null && ZNet.instance.IsServer())
+                {
+                    if (ZRoutedRpc.instance != null)
+                    {
+                        ZRoutedRpc.instance.Register<long, ZPackage>(RpcStoreName, RPC_Store);
+                        ZRoutedRpc.instance.Register<long, string>(RpcRemoveName, RPC_Remove);
+                        Debug.Log($"[CompanionKennel] Registered server RPCs '{RpcStoreName}' / '{RpcRemoveName}' — accepting client-forwarded kennel writes/removes + death respawns.");
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"[CompanionKennel] ZRoutedRpc.instance null at ZNet.Start — '{RpcStoreName}' NOT registered; client kennel writes will be dropped.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionKennel] Failed to register {RpcStoreName}: {ex.Message}");
+            }
+
             // Core's kennel is the DEFAULT dormant store. A frontend may register its own provider
             // first (e.g. during the transition, FiresCompanions' adapter, or later a vault
             // provider) — respect that and stand by rather than clobbering it. Once the frontend
@@ -163,6 +206,16 @@ namespace FiresCore.Npc.Persistence
         public static void Store(long playerId, DormantNpcEntry entry)
         {
             if (entry == null || string.IsNullOrEmpty(entry.NpcId)) return;
+
+            // The kennel ZDO is server-owned, but the authoritative CAPTURE often happens on a
+            // client (death runs on the companion's ZDO owner; logout runs on the leaving client).
+            // Off-server, forward the entry to the server instead of dropping it.
+            if (ZNet.instance != null && !ZNet.instance.IsServer())
+            {
+                ForwardStoreToServer(playerId, entry);
+                return;
+            }
+
             var zdo = GetOrCreate(playerId);
             if (zdo == null) return;
             try
@@ -183,10 +236,97 @@ namespace FiresCore.Npc.Persistence
             }
         }
 
+        private static void ForwardStoreToServer(long playerId, DormantNpcEntry entry)
+        {
+            try
+            {
+                var rpc = ZRoutedRpc.instance;
+                if (rpc == null)
+                {
+                    Debug.LogWarning($"[CompanionKennel] Cannot forward kennel write for {entry.NpcId} — routed RPC unavailable; entry dropped");
+                    return;
+                }
+                entry.LastUpdatedUtcTicks = DateTime.UtcNow.Ticks;
+                var payload = CompanionKennelSerializer.Serialize(new List<DormantNpcEntry> { entry });
+                rpc.InvokeRoutedRPC(rpc.GetServerPeerID(), RpcStoreName, playerId, new ZPackage(payload));
+                // Non-verbose on purpose: this is a per-death/per-tame event (low volume) and it is the
+                // load-bearing step for companion persistence on a dedi — keep it visible in the log.
+                Debug.Log($"[CompanionKennel] Forwarded {entry.NpcId} ({entry.Kind}) to server for player {playerId}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionKennel] ForwardStoreToServer({playerId}, {entry?.NpcId}) failed: {ex.Message}");
+            }
+        }
+
+        private static void RPC_Store(long sender, long playerId, ZPackage pkg)
+        {
+            try
+            {
+                if (pkg == null || playerId == 0L) return;
+                var entries = CompanionKennelSerializer.Deserialize(pkg.GetArray());
+                if (entries == null || entries.Count == 0 || entries[0] == null) return;
+                var entry = entries[0];
+                Store(playerId, entry);
+                Debug.Log($"[CompanionKennel] RPC_Store: stored {entry.NpcId} ({entry.Kind}) for player {playerId} from peer {sender}");
+
+                // A client-forwarded death entry means the companion died on a machine that cannot reach
+                // the server-owned kennel to run its own respawn — its local respawn loop would never find
+                // this entry. Schedule the respawn HERE, on the server, where the kennel is readable. The
+                // deadline is absolute UTC (crash-resumable); translate it to a seconds-from-now delay.
+                if (entry.Kind == DormancyKind.DeadPendingRespawn && entry.Snapshot != null)
+                {
+                    float delay = (float)Math.Max(0.0,
+                        (new DateTime(entry.RecallDeadlineUtcTicks, DateTimeKind.Utc) - DateTime.UtcNow).TotalSeconds);
+                    FiresCore.Npc.CompanionRespawnManager.Instance?.ScheduleRespawn(
+                        entry.NpcId, playerId, entry.Snapshot.PrefabName, delay, ZDOID.None);
+                    Debug.Log($"[CompanionKennel] Scheduled server-side respawn for {entry.NpcId} in {delay:F0}s (client-forwarded death).");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionKennel] RPC_Store failed: {ex.Message}");
+            }
+        }
+
+        private static void RPC_Remove(long sender, long playerId, string npcId)
+        {
+            try
+            {
+                if (playerId == 0L || string.IsNullOrEmpty(npcId)) return;
+                if (Remove(playerId, npcId) && VerboseLogging)
+                    Debug.Log($"[CompanionKennel] RPC_Remove: removed {npcId} for player {playerId} from peer {sender}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionKennel] RPC_Remove failed: {ex.Message}");
+            }
+        }
+
         /// <summary>Remove an entry by NPC id. Returns <c>true</c> if removed.</summary>
         public static bool Remove(long playerId, string npcId)
         {
             if (string.IsNullOrEmpty(npcId)) return false;
+
+            // The kennel ZDO is server-owned; a client-side Remove can't touch it. Forward to the server
+            // (mirrors Store). Returns false locally — the removal happens asynchronously server-side.
+            if (ZNet.instance != null && !ZNet.instance.IsServer())
+            {
+                try
+                {
+                    var rpc = ZRoutedRpc.instance;
+                    if (rpc != null)
+                        rpc.InvokeRoutedRPC(rpc.GetServerPeerID(), RpcRemoveName, playerId, npcId);
+                    else
+                        Debug.LogWarning($"[CompanionKennel] Cannot forward kennel remove for {npcId} — routed RPC unavailable");
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[CompanionKennel] ForwardRemoveToServer({playerId}, {npcId}) failed: {ex.Message}");
+                }
+                return false;
+            }
+
             var zdo = Find(playerId);
             if (zdo == null) return false;
             try

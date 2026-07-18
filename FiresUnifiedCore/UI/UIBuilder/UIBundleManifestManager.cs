@@ -11,7 +11,7 @@ namespace FiresCore.UI
     /// Manages per-bundle manifests for cached asset bundles.
     /// 
     /// When we "yoink" a mod's asset bundle, we save:
-    ///   1. The raw bundle data file (no extension change — the actual UnityFS bytes)
+    ///   1. The raw bundle data file (no extension change ï¿½ the actual UnityFS bytes)
     ///   2. A per-bundle manifest JSON listing all assets in the bundle
     ///   3. Bundle metadata (source mod, internal name, file size, etc.)
     /// 
@@ -26,10 +26,10 @@ namespace FiresCore.UI
         // ???????????????????????????????????????
 
         private static readonly string BundleCacheDir = Path.Combine(
-            Paths.ConfigPath, "FiresRPGmaker", "UIAssets", "CapturedAssets", "bundles");
+            FiresCore.Storage.FiresConfigPaths.UiAssets, "CapturedAssets", "bundles");
 
         private static readonly string ManifestDir = Path.Combine(
-            Paths.ConfigPath, "FiresRPGmaker", "UIAssets", "CapturedAssets", "bundle_manifests");
+            FiresCore.Storage.FiresConfigPaths.UiAssets, "CapturedAssets", "bundle_manifests");
 
         // ???????????????????????????????????????
         //  Data structures
@@ -89,7 +89,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Loads all bundle manifests from disk into memory.
-        /// Safe to call multiple times — only loads once.
+        /// Safe to call multiple times ï¿½ only loads once.
         /// </summary>
         public static void LoadAllManifests()
         {

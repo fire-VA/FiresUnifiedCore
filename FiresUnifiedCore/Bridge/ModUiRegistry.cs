@@ -49,7 +49,10 @@ namespace FiresCore.Bridge
         /// <summary>Close every registered screen that exposes a close action.</summary>
         public static void CloseAll()
         {
-            foreach (var e in _entries.Values)
+            // Snapshot first: a Close callback very commonly Unregister()s itself (or opens/replaces another
+            // screen), which mutates _entries and would otherwise invalidate the live enumerator
+            // ("Collection was modified; enumeration operation may not execute").
+            foreach (var e in new List<Entry>(_entries.Values))
                 try { e.Close?.Invoke(); } catch { }
         }
 
@@ -57,7 +60,8 @@ namespace FiresCore.Bridge
         public static void ForEachOpenRoot(Action<GameObject> action)
         {
             if (action == null) return;
-            foreach (var e in _entries.Values)
+            // Snapshot: the action (font refresh etc.) may touch the registry.
+            foreach (var e in new List<Entry>(_entries.Values))
             {
                 try
                 {

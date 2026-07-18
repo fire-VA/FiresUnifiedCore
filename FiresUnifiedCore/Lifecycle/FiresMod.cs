@@ -164,32 +164,36 @@ namespace FiresCore.Lifecycle
                 bool hasDediSkip = dediSkip != null && dediSkip.Count > 0
                     && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null;
 
-                if (!hasDormant && !hasDediSkip)
+                // Per-type PatchAll (faithful to Harmony.PatchAll semantics — the stock call just
+                // runs a PatchClassProcessor over every type) with a per-type catch, so a class
+                // that fails to attach is logged BY NAME and cannot abort attachment of every
+                // class enumerated after it. A single try around the whole assembly silently lost
+                // all later patch classes behind one generic "PatchAll threw" line. Also applies
+                // (a) dormant namespaces and (b) on a dedicated server, client-only patch classes
+                // that would native-crash Mono's IL rewriter.
+                foreach (var type in HarmonyLib.AccessTools.GetTypesFromAssembly(_assembly))
                 {
-                    Harmony.PatchAll(_assembly);
-                }
-                else
-                {
-                    // PatchAll, minus (a) patch classes whose namespace (or a parent of it) is
-                    // dormant and (b) on a dedicated server, client-only patch classes that would
-                    // native-crash Mono's IL rewriter. Faithful to PatchAll otherwise.
-                    foreach (var type in HarmonyLib.AccessTools.GetTypesFromAssembly(_assembly))
+                    if (type == null) continue;
+
+                    if (hasDormant)
                     {
-                        if (type == null) continue;
+                        var ns = type.Namespace;
+                        bool skip = false;
+                        if (ns != null)
+                            foreach (var d in dormant)
+                                if (ns == d || ns.StartsWith(d + ".", StringComparison.Ordinal)) { skip = true; break; }
+                        if (skip) continue;
+                    }
 
-                        if (hasDormant)
-                        {
-                            var ns = type.Namespace;
-                            bool skip = false;
-                            if (ns != null)
-                                foreach (var d in dormant)
-                                    if (ns == d || ns.StartsWith(d + ".", StringComparison.Ordinal)) { skip = true; break; }
-                            if (skip) continue;
-                        }
+                    if (hasDediSkip && IsDedicatedServerSkip(type, dediSkip)) continue;
 
-                        if (hasDediSkip && IsDedicatedServerSkip(type, dediSkip)) continue;
-
+                    try
+                    {
                         new HarmonyLib.PatchClassProcessor(Harmony, type).Patch();
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError($"Harmony patch class '{type.FullName}' failed to attach: {ex.Message}");
                     }
                 }
             }

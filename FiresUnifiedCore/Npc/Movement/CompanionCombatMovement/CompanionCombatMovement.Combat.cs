@@ -159,7 +159,6 @@ namespace FiresCore.Npc
                 _stateTransitionHandler?.OnEnterCombat();
                 _hasActiveCommitment = false;
                 _isInCombatCooldown = false;
-                _movementModeSet = false;
                 _moveDirSet = false;
                 _hasRangedMovementRequest = false;
 
@@ -180,7 +179,6 @@ namespace FiresCore.Npc
                 _stateTransitionHandler?.OnExitCombat();
                 _isInCombatCooldown = true;
                 _lastEnemyKillTime = Time.time;
-                _movementModeSet = false;
                 _moveDirSet = false;
                 _hasRangedMovementRequest = false;
 
@@ -455,10 +453,7 @@ namespace FiresCore.Npc
                 return;
             }
          
-            if (!_movementModeSet)
-            {
-                SetWalkRunSafe(false, true);
-            }
+            SetWalkRunSafe(false, true);
             
             if (Time.time - _lastReassessTime > 0.5f)
             {
@@ -773,16 +768,9 @@ namespace FiresCore.Npc
                 _previousIntent = _currentIntent;
                 _lastStateChangeTime = Time.time;
                 
-                MovementMode oldMode = GetMovementModeForIntent();
                 _currentIntent = newIntent;
-                MovementMode newMode = GetMovementModeForIntent();
-                
-                if (oldMode != newMode)
-                {
-                    _movementModeSet = false;
-                }
-                
-                bool needsNewDirection = 
+
+                bool needsNewDirection =
                     (newIntent == MovementIntent.Idle) ||
                     (newIntent == MovementIntent.PlantedFiring) ||
                     (newIntent == MovementIntent.CombatBlock) ||
@@ -1116,7 +1104,6 @@ namespace FiresCore.Npc
                 _hasRangedMovementRequest = false;
                 _isStrafeCommitted = false;
                 _strafeDirection = 0;
-                _movementModeSet = false;
                 _moveDirSet = false;
                 
                 if (VerboseLogging)

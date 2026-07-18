@@ -234,10 +234,20 @@ namespace FiresCore.Input
             var es = UnityEngine.EventSystems.EventSystem.current;
             var go = es != null ? es.currentSelectedGameObject : null;
             if (go == null) return false;
+
+            bool focused;
             var tmp = go.GetComponent<TMPro.TMP_InputField>();
-            if (tmp != null) return tmp.isFocused;
-            var leg = go.GetComponent<UnityEngine.UI.InputField>();
-            return leg != null && leg.isFocused;
+            if (tmp != null) focused = tmp.isFocused;
+            else { var leg = go.GetComponent<UnityEngine.UI.InputField>(); focused = leg != null && leg.isFocused; }
+            if (!focused) return false;
+
+            // Only a FIRES UI field should drive the gate. Vanilla text inputs — the F5 console and chat (both
+            // Terminals) and the sign/rename/password TextInput dialog — already block the game while open and
+            // own their own keystrokes, so engaging the gate there just suppresses the keys you're typing into
+            // them (the reported "typing in the vanilla console affects inputs" bug). Skip anything under them.
+            if (go.GetComponentInParent<Terminal>() != null) return false;
+            if (go.GetComponentInParent<TextInput>() != null) return false;
+            return true;
         }
     }
 }

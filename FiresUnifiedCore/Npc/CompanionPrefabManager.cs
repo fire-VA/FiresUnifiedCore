@@ -91,6 +91,23 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
         /// </summary>
         private static void BuildWildCompanionVariant()
         {
+            const string wildName = WildSpawn.WildCompanionPrefabs.WildPrefabName;
+
+            // Preferred path: the wild variant ships as a real prefab in the bundle
+            // (FiresNpcPrefabBuilder), which gets the "activeSelf=true / Awake queued"
+            // lifecycle for free — no holder dance needed. The legacy runtime clone
+            // below stays as a fallback for a version-skewed older bundle.
+            var bundledWild = LoadCompanionPrefab(wildName);
+            if (bundledWild != null)
+            {
+                SetupCompanionPrefab(bundledWild, wildName);
+                AttachWildCompanionComponents(bundledWild);
+                ApplyWildFactionBaseline(bundledWild);
+                _loadedCompanions.Add(bundledWild);
+                Debug.Log($"[CompanionPrefabManager] Loaded wild-companion prefab '{wildName}' from bundle.");
+                return;
+            }
+
             var basePrefab = _loadedCompanions.Find(p =>
                 p != null && string.Equals(p.name, "CompanionNpc", System.StringComparison.OrdinalIgnoreCase));
             if (basePrefab == null)
@@ -98,8 +115,6 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
                 Debug.LogWarning("[CompanionPrefabManager] CompanionNpc base prefab missing; cannot build wild variant.");
                 return;
             }
-
-            const string wildName = WildSpawn.WildCompanionPrefabs.WildPrefabName;
 
             // CRITICAL LIFECYCLE INVARIANT
             // ----------------------------
@@ -172,38 +187,25 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             // companions are completely untouched by them.
             AttachWildCompanionComponents(wildPrefab);
 
-            // CRITICAL FACTION OVERRIDE
-            // -------------------------
-            // SetupCompanionPrefab/ConfigureHumanoid bakes m_faction = Players
-            // onto every companion prefab so tamed recruits are friendly to the
-            // owner. That default is WRONG for the wild variant Ã¯Â¿Â½ it makes
-            // player attacks count as same-faction friendly fire (zero damage)
-            // AND makes CompanionAI.IsEnemy(attacker) return false, so the
-            // companion never retaliates. Net effect for the player: "I can't
-            // hit them and they don't react."
-            //
-            // The WildCompanionDresser writes per-instance factions (Dverger /
-            // ForestMonsters / Demon) at spawn-time, but if the dresser ever
-            // fails or runs late, we need a sensible non-Players baseline.
-            // Dverger matches the Neutral default the dresser would pick anyway:
-            // passive towards the player, but treated as a separate faction so
-            // damage and aggro work correctly.
-            var wildHumanoid = wildPrefab.GetComponent<Humanoid>();
-            if (wildHumanoid != null)
-            {
-                wildHumanoid.m_faction = Character.Faction.Dverger;
-                // Clear the "player" m_group inherited from ConfigureHumanoid.
-                // With m_group="player" the engine and other mods bucket the
-                // wild NPC with the player team (PvP gates, friendly-fire
-                // skips, AI ally checks). Empty group + Dverger faction makes
-                // them behave like vanilla Dverger: hittable without PvP,
-                // retaliate when attacked.
-                wildHumanoid.m_group = string.Empty;
-            }
+            ApplyWildFactionBaseline(wildPrefab);
 
             _loadedCompanions.Add(wildPrefab);
             Debug.Log($"[CompanionPrefabManager] Built wild-companion variant '{wildName}' from CompanionNpc " +
                       $"(faction baseline = Dverger, dresser will override per-instance).");
+        }
+
+        // Wild variants must NOT ride the player team: ConfigureHumanoid (via SetupCompanionPrefab)
+        // stamps m_group="player" on every companion prefab, which makes player attacks count as
+        // friendly fire and CompanionAI.IsEnemy(attacker) return false — "I can't hit them and they
+        // don't react." Dverger + empty group restores the vanilla-Dverger baseline (hittable
+        // without PvP, retaliates); WildCompanionDresser still writes per-instance factions later.
+        // Runs AFTER SetupCompanionPrefab on both the bundled prefab and the legacy clone.
+        private static void ApplyWildFactionBaseline(GameObject wildPrefab)
+        {
+            var wildHumanoid = wildPrefab.GetComponent<Humanoid>();
+            if (wildHumanoid == null) return;
+            wildHumanoid.m_faction = Character.Faction.Dverger;
+            wildHumanoid.m_group = string.Empty;
         }
 
         private static void AttachWildCompanionComponents(GameObject prefab)
@@ -360,6 +362,13 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             }
             ConfigureCompanionAI(companionAI);
 
+            // Aggravatable so PLAYERS can hit companions/NPCs WITHOUT enabling PvP. The melee hit-filter
+            // (Attack.DoMeleeAttack) only lands a player's hit on a non-enemy target when that target's
+            // BaseAI.IsAggravatable() is true - the vanilla Dverger model. Companions are Dverger faction
+            // (neutral, not player-enemies), so without this the ONLY way to hit them was to toggle PvP.
+            // Ally/owner damage protection still lives in CompanionController.ShouldAllowDamage.
+            companionAI.m_aggravatable = true;
+
             // ========================================
    // 8. Tameable - Required for ownership and commands
      // ========================================
@@ -463,10 +472,13 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             }
 
      // ========================================
-     // 10. FootStep - SKIP - causes NullReferenceException without proper audio setup
+     // 10. FootStep - the BAKED component ships fully wired (FiresNpcPrefabBuilder copies the
+     // Player's per-material step table, and the Animator+ZNetView its Start() dereferences are
+     // baked too). Only a LEGACY bundle's FootStep - unconfigured or with broken rip refs, the
+     // original NRE source - still gets destroyed.
   // ========================================
    var existingFootStep = prefab.GetComponent<FootStep>();
-   if (existingFootStep != null)
+   if (existingFootStep != null && IsLegacyBrokenFootStep(existingFootStep))
        {
         Object.DestroyImmediate(existingFootStep);
             }
@@ -698,6 +710,23 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
 
             // Set layer to "character"
             prefab.layer = LayerMask.NameToLayer("character");
+
+            // Unity layers don't inherit: the bundle rig's CHILD objects (the visual meshes)
+            // come in on Default, unlike the vanilla Player whose whole rig is on "character".
+            // Anything layer-driven that should treat an NPC as a character missed them —
+            // e.g. the FiresGlass sun-occlusion camera (character/piece/static_solid allowlist)
+            // rendered the player's shadow but not companions'/NPCs'. Lift ONLY Default-layer
+            // children so intentional special layers (triggers, hitboxes, UI) keep theirs.
+            int characterLayer = prefab.layer;
+            foreach (var child in prefab.GetComponentsInChildren<Transform>(true))
+                if (child.gameObject.layer == 0)
+                    child.gameObject.layer = characterLayer;
+
+            // Late-setup path (StaticNpc via VAPieceManager runs at piece-registration time, when
+            // ZNetScene is already up): rebind baked effect refs to live prefabs immediately.
+            // Companion prefabs set up before ZNetScene get the same pass in RegisterWithZNetScene.
+            if (ZNetScene.instance != null)
+                NpcPrefabSetup.RebindEffectPrefabsToLive(prefab);
             
             // ========================================
             // 19. Fix Body Material Shader - CRITICAL
@@ -705,6 +734,18 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             // We must copy the REAL shader from Valheim's Player prefab at runtime.
             // This is deferred until ZNetScene is ready via FixCompanionShaders().
             // ========================================
+        }
+
+        private static bool IsLegacyBrokenFootStep(FootStep footStep)
+        {
+            if (footStep.m_effects == null || footStep.m_effects.Count == 0) return true;
+            foreach (var step in footStep.m_effects)
+            {
+                if (step == null || step.m_effectPrefabs == null) return true;
+                foreach (var fx in step.m_effectPrefabs)
+                    if (fx == null) return true;
+            }
+            return false;
         }
 
         private static void ConfigureHumanoid(Humanoid humanoid, Rigidbody rigidbody)
@@ -738,17 +779,23 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             humanoid.m_swimTurnSpeed = 100f;
             humanoid.m_swimAcceleration = 0.05f;
 
-    // Find or create eye transform
-  Transform eyeTransform = FindTransformByNames(prefab.transform, new[] { "Eye", "eye", "Head", "head", "EyePos" });
-            if (eyeTransform == null)
-        {
-  var eyeObj = new GameObject("Eye");
-             eyeObj.transform.SetParent(prefab.transform);
-           eyeObj.transform.localPosition = new Vector3(0, 1.6f, 0.1f);
-    eyeObj.transform.localRotation = Quaternion.identity;
-             eyeTransform = eyeObj.transform;
-  }
-            humanoid.m_eye = eyeTransform;
+            // Respect a baked m_eye (FiresNpcPrefabBuilder wires EyePos — the vanilla Player
+            // convention). Only search when the prefab didn't ship one. EyePos before Head:
+            // Character.UpdateEyeRotation writes m_eye.rotation every frame, so pointing it
+            // at the Head BONE fights the animator.
+            if (humanoid.m_eye == null)
+            {
+                Transform eyeTransform = FindTransformByNames(prefab.transform, new[] { "EyePos", "Eye", "eye", "Head", "head" });
+                if (eyeTransform == null)
+                {
+                    var eyeObj = new GameObject("EyePos");
+                    eyeObj.transform.SetParent(prefab.transform);
+                    eyeObj.transform.localPosition = new Vector3(0, 1.6f, 0.1f);
+                    eyeObj.transform.localRotation = Quaternion.identity;
+                    eyeTransform = eyeObj.transform;
+                }
+                humanoid.m_eye = eyeTransform;
+            }
 
        // Find visual transform
          Transform visualTransform = FindTransformByNames(prefab.transform, new[] { "Visual", "visual" });
@@ -823,16 +870,19 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             companionAI.aggroRange = 30f;
             companionAI.attackRange = 2.5f;
             
-            // Follow settings - buffer zones
+            // Follow settings - buffer zones. Tight run threshold so the companion runs to catch up the
+            // moment it trails ~6m (see CompanionController/CompanionAI — keep all three in sync).
             companionAI.stopDistanceInner = 2f;
-            companionAI.stopDistanceOuter = 5f;
-            companionAI.walkDistanceOuter = 8f;
-            companionAI.runDistanceInner = 12f;
-            companionAI.runDistanceOuter = 18f;
-            companionAI.catchUpDistance = 30f;
+            companionAI.stopDistanceOuter = 4f;
+            companionAI.walkDistanceOuter = 5f;
+            companionAI.runDistanceInner = 4f;
+            companionAI.runDistanceOuter = 6f;
+            companionAI.catchUpDistance = 12f;
             // teleportDistance removed Ã¯Â¿Â½ recall is owned by CompanionController.CheckFollowTeleport()
-            companionAI.combatLeashDistance = 40f;
-            companionAI.maxChaseDistance = 100f;
+            // Escort-scale leash (mirrors ConfigureCompanionAI in CompanionController): fights stay
+            // around the owner; a chase breaks off 15 m out instead of 40.
+            companionAI.combatLeashDistance = 15f;
+            companionAI.maxChaseDistance = 30f;
             companionAI.giveUpTime = 15f;
             
             // Protection settings
@@ -904,6 +954,12 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             // The asset bundle has broken Custom/Player shader references.
             // We must copy the real shader from Valheim's Player prefab.
             FixCompanionShaders();
+
+            // Swap baked FootStep/effect-list prefab refs to the live game's copies (correct audio
+            // mixer routing, tracks game updates). Runs here because ZNetScene is up; the rip-time
+            // refs shipped in the bundle remain as the fallback wherever no live match exists.
+            foreach (var prefab in _loadedCompanions)
+                NpcPrefabSetup.RebindEffectPrefabsToLive(prefab);
 
           foreach (var prefab in _loadedCompanions)
        {
@@ -1010,6 +1066,26 @@ return companion;
         {
           return new List<GameObject>(_loadedCompanions);
         }
+
+        /// <summary>
+        /// Returns the registered base <c>CompanionNpc</c> prefab (the shader-fixed, fully-attached
+        /// humanoid), or null if it isn't loaded yet. Used by the mannequin preview builder, which clones
+        /// it and strips the gameplay machinery for a static, ZDO-free portrait. Falls back to
+        /// ZNetScene if the in-memory list is somehow empty but the prefab is registered.
+        /// </summary>
+        public static GameObject GetCompanionNpcPrefab()
+        {
+            var fromList = _loadedCompanions.Find(p =>
+                p != null && string.Equals(p.name, "CompanionNpc", System.StringComparison.OrdinalIgnoreCase));
+            if (fromList != null) return fromList;
+            return ZNetScene.instance != null ? ZNetScene.instance.GetPrefab("CompanionNpc") : null;
+        }
+
+        /// <summary>
+        /// Exposes the permanently-inactive prefab holder so callers (e.g. the mannequin builder) can
+        /// instantiate clones whose Awake is queued, not fired, while they strip components.
+        /// </summary>
+        public static GameObject GetInactivePrefabHolder() => GetPrefabHolder();
         
         /// <summary>
         /// Cached eye emission texture extracted from companion prefab before shader swap.
@@ -1025,9 +1101,37 @@ return companion;
             return _cachedEyeEmissionTexture;
         }
         
+        /// <summary>True when the prefab ships a body-model table usable for male/female switching —
+        /// both entries present with meshes (the baked bundles serialize rip-consistent body/bodyfem).</summary>
+        private static bool HasUsableModelTable(VisEquipment ve)
+        {
+            if (ve.m_models == null || ve.m_models.Length < 2) return false;
+            for (int i = 0; i < 2; i++)
+            {
+                if (ve.m_models[i] == null || ve.m_models[i].m_mesh == null) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Per-prefab copy of the Player's model table. Never hand out the Player's own array
+        /// reference — a later mutation on either side would silently alias the other.</summary>
+        private static VisEquipment.PlayerModel[] ClonePlayerModels(VisEquipment.PlayerModel[] source)
+        {
+            var copy = new VisEquipment.PlayerModel[source.Length];
+            for (int i = 0; i < source.Length; i++)
+            {
+                copy[i] = source[i] == null ? null : new VisEquipment.PlayerModel
+                {
+                    m_mesh = source[i].m_mesh,
+                    m_baseMaterial = source[i].m_baseMaterial
+                };
+            }
+            return copy;
+        }
+
         /// <summary>
         /// Fixes the body material shader on all companion prefabs.
-        /// 
+        ///
         /// PROBLEM: The Custom/Player shader in our asset bundle is broken.
         /// Unity exports the shader reference but not the compiled shader bytecode.
         /// This causes "Failed to find expected binary shader data in 'Custom/Player'" warnings.
@@ -1070,24 +1174,24 @@ return companion;
             var playerVisEquip = playerPrefab.GetComponent<VisEquipment>();
             Material playerBodyMaterial = null;
             
-            // CRITICAL: Copy m_models from Player to all companion prefabs
-            // CharacterAnimEvent.CustomLateUpdate() calls VisEquipment.GetModelIndex() every frame
-            // for ALL characters, regardless of whether VisEquipment is enabled.
-            // If m_models is null or empty, GetModelIndex() throws NRE.
-            // By copying the Player's valid m_models array, we prevent the NRE spam during loading.
-            // NpcVisEquipment.SetupPlayerModels() will later set up the proper models.
+            // Fill VisEquipment.m_models ONLY on legacy bundles that shipped no usable table.
+            // CharacterAnimEvent.CustomLateUpdate() calls VisEquipment.GetModelIndex() every frame and
+            // NREs when m_models is null/empty, so legacy prefabs still need a runtime copy — but it
+            // must be a CLONE of the Player's array, never the array reference itself. Baked prefabs
+            // ship rip-consistent m_models (rig + body + bodyfem all at 53 bones/bindposes) and MUST
+            // keep them: unconditionally stomping them with the live Player's models here was the root
+            // cause of the female-NPC "mesh data size and vertex stride" render-stop spam — the live
+            // game's bodyfem no longer skins on the ripped rig even though its bindpose count still
+            // matches, so every female spawn assigned a mesh Unity rejects (invisible body).
             if (playerVisEquip?.m_models != null && playerVisEquip.m_models.Length > 0)
             {
                 foreach (var prefab in _loadedCompanions)
                 {
                     if (prefab == null) continue;
                     var companionVisEquip = prefab.GetComponent<VisEquipment>();
-                    if (companionVisEquip != null)
-                    {
-                        // Copy the Player's models array - this gives us valid m_mesh references
-                        // so GetModelIndex() can safely iterate without NRE
-                        companionVisEquip.m_models = playerVisEquip.m_models;
-                    }
+                    if (companionVisEquip == null || HasUsableModelTable(companionVisEquip)) continue;
+                    companionVisEquip.m_models = ClonePlayerModels(playerVisEquip.m_models);
+                    Debug.Log($"[CompanionPrefabManager] {prefab.name}: legacy bundle without baked m_models — copied {companionVisEquip.m_models.Length} live Player models as fallback");
                 }
             }
             

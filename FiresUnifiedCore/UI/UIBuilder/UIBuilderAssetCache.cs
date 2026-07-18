@@ -25,13 +25,13 @@ namespace FiresCore.UI
     public static class UIBuilderAssetCache
     {
         private static readonly string CacheDir = Path.Combine(
-            Paths.ConfigPath, "FiresRPGmaker", "UIAssets", "CapturedAssets", "sprites");
+            FiresCore.Storage.FiresConfigPaths.UiAssets, "CapturedAssets", "sprites");
         private static readonly string ManifestPath = Path.Combine(
-            Paths.ConfigPath, "FiresRPGmaker", "UIAssets", "CapturedAssets", "manifest.json");
+            FiresCore.Storage.FiresConfigPaths.UiAssets, "CapturedAssets", "manifest.json");
 
         /// <summary>Directory where raw asset bundle files are cached for later embedding.</summary>
         private static readonly string BundleCacheDir = Path.Combine(
-            Paths.ConfigPath, "FiresRPGmaker", "UIAssets", "CapturedAssets", "bundles");
+            FiresCore.Storage.FiresConfigPaths.UiAssets, "CapturedAssets", "bundles");
 
         /// <summary>Tracks bundle names already cached this session to avoid redundant disk writes.</summary>
         private static readonly HashSet<string> _cachedBundleNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -47,7 +47,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Sprites loaded from cached asset bundles, keyed by sprite name.
-        /// This is the primary sprite source — provides real sprites with all original metadata.
+        /// This is the primary sprite source ï¿½ provides real sprites with all original metadata.
         /// </summary>
         private static readonly Dictionary<string, Sprite> _bundleSprites =
             new Dictionary<string, Sprite>(StringComparer.OrdinalIgnoreCase);
@@ -72,7 +72,7 @@ namespace FiresCore.UI
         public static bool ForceRecache { get; set; }
 
         // ???????????????????????????????????????
-        //  Public API — Caching (used during capture)
+        //  Public API ï¿½ Caching (used during capture)
         // ???????????????????????????????????????
 
         /// <summary>
@@ -91,7 +91,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Caches a sprite to disk if it appears to be from a mod. Returns the sprite name
-        /// to store in the layout data — either "cached:filename" or the original name.
+        /// to store in the layout data ï¿½ either "cached:filename" or the original name.
         /// </summary>
         public static string CacheSprite(Sprite sprite, string fallbackName = null)
         {
@@ -185,7 +185,7 @@ namespace FiresCore.UI
         }
 
         // ???????????????????????????????????????
-        //  Public API — Loading (used by renderer)
+        //  Public API ï¿½ Loading (used by renderer)
         // ???????????????????????????????????????
 
         /// <summary>
@@ -433,10 +433,10 @@ namespace FiresCore.UI
         /// Loads all cached .bundle files from the bundles directory and indexes every
         /// Sprite asset they contain. This gives us the REAL sprite objects with full
         /// original metadata (9-slice borders, pivot, pixels-per-unit, atlas rects,
-        /// compression, etc.) — exactly as the source mod shipped them.
+        /// compression, etc.) ï¿½ exactly as the source mod shipped them.
         ///
         /// Call this once early (e.g., from ScanAndCacheAllModBundles or Init).
-        /// Safe to call multiple times — only loads once unless force is true.
+        /// Safe to call multiple times ï¿½ only loads once unless force is true.
         /// </summary>
         public static void LoadCachedBundles(bool force = false)
         {
@@ -555,7 +555,7 @@ namespace FiresCore.UI
             // Only search sprites that have already been indexed via LoadRequiredBundles(),
             // IndexAllLiveModBundles(), or IndexSpritesFromBundle(). We do NOT auto-call
             // LoadCachedBundles() here because that synchronously loads every .bundle file
-            // from disk — which is catastrophically expensive during capture/rendering and
+            // from disk ï¿½ which is catastrophically expensive during capture/rendering and
             // causes server disconnects.
 
             // Direct lookup
@@ -913,7 +913,7 @@ namespace FiresCore.UI
         /// Unlike LoadCachedBundles(), this never tries to load .bundle files from disk
         /// (which would conflict with already-loaded bundles). It only indexes sprites
         /// from bundles that are already in memory.
-        /// Safe to call multiple times — skips bundles already indexed.
+        /// Safe to call multiple times ï¿½ skips bundles already indexed.
         /// </summary>
         public static void IndexAllLiveModBundles()
         {
@@ -986,7 +986,7 @@ namespace FiresCore.UI
         /// Maximum wall-clock milliseconds the scanner is allowed to spend per frame
         /// before yielding. 4 ms keeps us well under the 16 ms budget for 60 fps and
         /// leaves plenty of headroom for the game's own work. The previous 8 ms budget
-        /// was too generous — individual sprite cache operations (GPU blit + ReadPixels +
+        /// was too generous ï¿½ individual sprite cache operations (GPU blit + ReadPixels +
         /// file I/O) frequently exceed 8 ms each, causing frame spikes that accumulate
         /// into server heartbeat timeouts and disconnects.
         /// </summary>
@@ -1015,7 +1015,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Known Valheim asset bundle name patterns. These are the game's own bundles
-        /// that ship in valheim_Data/ — we never need to cache assets from these because
+        /// that ship in valheim_Data/ ï¿½ we never need to cache assets from these because
         /// they're always available at runtime.
         /// </summary>
         private static readonly string[] VanillaBundlePatterns =
@@ -1080,14 +1080,14 @@ namespace FiresCore.UI
         /// Also scans BepInEx plugins and config directories for loose PNG files
         /// (e.g., Minimal UI's MUI_*.png pattern) and caches those too.
         ///
-        /// Only caches MODDED assets — vanilla game bundles and Unity built-in assets
+        /// Only caches MODDED assets ï¿½ vanilla game bundles and Unity built-in assets
         /// are skipped since they're always available at runtime.
         ///
         /// This is the key method that "steals" assets from other mods so our layouts
         /// work even after those mods are removed. Call this during capture or before
         /// applying overrides.
         ///
-        /// Safe to call multiple times — only runs the full scan once per session
+        /// Safe to call multiple times ï¿½ only runs the full scan once per session
         /// unless force is true.
         ///
         /// This is a lightweight kick-off method. The actual heavy scanning runs as a
@@ -1116,7 +1116,7 @@ namespace FiresCore.UI
             else
             {
                 // Fallback: run synchronously (step the enumerator without yielding)
-                Debug.LogWarning("[UIBuilderAssetCache] No MonoBehaviour host available — running scan synchronously.");
+                Debug.LogWarning("[UIBuilderAssetCache] No MonoBehaviour host available ï¿½ running scan synchronously.");
                 var enumerator = ScanAndCacheAllModBundlesCoroutine();
                 while (enumerator.MoveNext()) { }
             }
@@ -1141,7 +1141,7 @@ namespace FiresCore.UI
             if (_scanInProgress) yield break;
             _scanInProgress = true;
             ScanProgress = 0f;
-            ScanStatusLabel = "Starting mod asset scan…";
+            ScanStatusLabel = "Starting mod asset scanï¿½";
 
             int cachedSprites = 0;
             int cachedTextures = 0;
@@ -1199,7 +1199,7 @@ namespace FiresCore.UI
             var sw = new System.Diagnostics.Stopwatch();
 
             // ??? Phase 1: Index sprites from loaded AssetBundles (memory only, no PNG extraction) ???
-            // We do NOT call CacheSprite() here — that triggers Graphics.Blit + ReadPixels +
+            // We do NOT call CacheSprite() here ï¿½ that triggers Graphics.Blit + ReadPixels +
             // File.WriteAllBytes for EVERY sprite, which is extremely expensive and causes
             // server disconnects. Instead, we just index sprites into _bundleSprites for fast
             // lookup. The raw .bundle files are cached to disk in Phase 4, which is the
@@ -1263,7 +1263,7 @@ namespace FiresCore.UI
                                 {
                                     // Index the sprite for fast lookup. Only cache to PNG if
                                     // it's NOT already in our bundle index (bundle sprites are
-                                    // preserved via raw .bundle caching in Phase 4 — far cheaper
+                                    // preserved via raw .bundle caching in Phase 4 ï¿½ far cheaper
                                     // than per-sprite GPU blit + ReadPixels + disk write).
                                     if (!_bundleSprites.ContainsKey(sprite.name))
                                     {
@@ -1316,7 +1316,7 @@ namespace FiresCore.UI
             }
 
             // ??? Phase 3: Loose PNG files ???
-            ScanStatusLabel = "Phase 3/4: Scanning loose image files…";
+            ScanStatusLabel = "Phase 3/4: Scanning loose image filesï¿½";
             ScanProgress = (float)completedUnits / totalUnits;
 
             try { cachedFiles += ScanDirectoryForModImages(Paths.PluginPath); } catch { }
@@ -1326,7 +1326,7 @@ namespace FiresCore.UI
             completedUnits++;
 
             // ??? Phase 4: Raw .bundle files ???
-            ScanStatusLabel = "Phase 4/4: Caching raw bundle files…";
+            ScanStatusLabel = "Phase 4/4: Caching raw bundle filesï¿½";
             ScanProgress = (float)completedUnits / totalUnits;
             sw.Restart();
 
@@ -1471,7 +1471,7 @@ namespace FiresCore.UI
         /// via the Phase 1 per-bundle scan which properly yields between sprites.
         ///
         /// Previously this method called CacheSprite() for every sprite which
-        /// triggered GPU blit + ReadPixels + File.WriteAllBytes for each one —
+        /// triggered GPU blit + ReadPixels + File.WriteAllBytes for each one ï¿½
         /// an extremely expensive operation that caused server disconnects.
         /// Returns the number of sprites indexed.
         /// </summary>
@@ -1481,7 +1481,7 @@ namespace FiresCore.UI
             try
             {
                 // Just index sprites into _bundleSprites for fast lookup.
-                // Don't extract to PNG here — that's done during capture or Phase 1.
+                // Don't extract to PNG here ï¿½ that's done during capture or Phase 1.
                 indexed = IndexSpritesFromBundle(bundle, bundle.name ?? "unknown");
             }
             catch { }
@@ -1807,7 +1807,7 @@ namespace FiresCore.UI
                         }
 
                         // If internal name doesn't match but filename matches exactly,
-                        // still return it — the file was explicitly named for this bundle
+                        // still return it ï¿½ the file was explicitly named for this bundle
                         string fileName = Path.GetFileName(matchingFiles[i]);
                         if (string.Equals(fileName, bundleName, StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(fileName, bundleName + ".bundle", StringComparison.OrdinalIgnoreCase))
@@ -2005,7 +2005,7 @@ namespace FiresCore.UI
             try
             {
                 // Only scan files with bundle-like extensions instead of ALL files.
-                // This dramatically reduces I/O — a typical plugins folder has thousands
+                // This dramatically reduces I/O ï¿½ a typical plugins folder has thousands
                 // of .dll, .cfg, .md, .png files that can never be bundles.
                 var bundleExtensions = new[] { "*.bundle", "*.assets", "*.resource" };
                 var candidateFiles = new List<string>();
@@ -2476,7 +2476,7 @@ namespace FiresCore.UI
             }
             catch
             {
-                // Texture not readable — fall through to blit
+                // Texture not readable ï¿½ fall through to blit
             }
 
             // RenderTexture blit fallback for non-readable textures
@@ -2555,7 +2555,7 @@ namespace FiresCore.UI
                         return (byte[])method.Invoke(null, new object[] { tex });
                 }
 
-                // Fallback — try instance method on Texture2D (older Unity)
+                // Fallback ï¿½ try instance method on Texture2D (older Unity)
                 var instanceMethod = typeof(Texture2D).GetMethod("EncodeToPNG",
                     System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public,
                     null, Type.EmptyTypes, null);
@@ -2627,7 +2627,7 @@ namespace FiresCore.UI
         private static string DetectSpriteAssembly(Sprite sprite)
         {
             // We can't directly determine which assembly a sprite came from at runtime,
-            // since sprites are pure data. Return empty — the manifest entry records this
+            // since sprites are pure data. Return empty ï¿½ the manifest entry records this
             // based on the context of the capture (the canvas classification).
             return "";
         }
@@ -2694,7 +2694,7 @@ namespace FiresCore.UI
 
         private static CacheManifest DeserializeManifest(string json)
         {
-            // Minimal hand-rolled parser — just needs to read the entries array
+            // Minimal hand-rolled parser ï¿½ just needs to read the entries array
             var manifest = new CacheManifest();
             if (string.IsNullOrEmpty(json)) return manifest;
 

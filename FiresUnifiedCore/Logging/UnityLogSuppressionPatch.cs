@@ -49,11 +49,16 @@ namespace FiresCore.Logging
         private const string CombineMeshFragment         = "Cannot combine mesh that does not allow access";
         private const string NavMeshReadFragment         = "RuntimeNavMeshBuilder: Source mesh";
         private const string NavMeshReadAccessFragment   = "does not allow read access";
+        // [EnvironmentBoxPatches] "Suppressed ClutterSystem NRE for patch (x, y)" — FAT/Galaxies log a warning
+        // each time they swallow a ClutterSystem NRE during custom-terrain / zone load; one per patch coordinate,
+        // so it floods world-load. Harmless noise — suppress centrally like the rest of this list.
+        private const string ClutterNreFragment          = "Suppressed ClutterSystem NRE";
 
         private const int ShaderSummaryInterval         = 100;
         private const int MissingScriptSummaryInterval  = 100;
         private const int KinematicSummaryInterval      = 200;
         private const int NonReadableMeshSummaryInterval = 100;
+        private const int ClutterNreSummaryInterval      = 100;
         private const double LimitExceededThrottleSeconds = 30.0;
 
         private const string SummaryPrefix = "[FiresUnifiedCore]";
@@ -65,6 +70,7 @@ namespace FiresCore.Logging
         private static int _suppressedMissingScriptWarnings;
         private static int _suppressedKinematicWarnings;
         private static int _suppressedNonReadableMeshWarnings;
+        private static int _suppressedClutterNreWarnings;
         private static DateTime _lastLimitExceeded = DateTime.MinValue;
 
         // Diagnostic - surfaces in BepInEx logs once at startup so we
@@ -165,6 +171,12 @@ namespace FiresCore.Logging
                 EmitNonReadableMeshSummaryIfDue();
                 return true;
             }
+            if (type == LogType.Warning && Contains(message, ClutterNreFragment))
+            {
+                _suppressedClutterNreWarnings++;
+                EmitClutterNreSummaryIfDue();
+                return true;
+            }
             if (Contains(message, LimitExceededFragment))
             {
                 var now = DateTime.UtcNow;
@@ -214,6 +226,13 @@ namespace FiresCore.Logging
             if (_suppressedNonReadableMeshWarnings != 1
                 && _suppressedNonReadableMeshWarnings % NonReadableMeshSummaryInterval != 0) return;
             Debug.Log($"{SummaryPrefix} Suppressed {_suppressedNonReadableMeshWarnings} non-readable-mesh warnings (CombineMeshes / RuntimeNavMeshBuilder read access - R/W-off meshes on Ashlands + modded content). Set verbose to surface.");
+        }
+
+        private static void EmitClutterNreSummaryIfDue()
+        {
+            if (_suppressedClutterNreWarnings != 1
+                && _suppressedClutterNreWarnings % ClutterNreSummaryInterval != 0) return;
+            Debug.Log($"{SummaryPrefix} Suppressed {_suppressedClutterNreWarnings} '[EnvironmentBoxPatches] ClutterSystem NRE' warnings (custom-terrain / zone load). Set verbose to surface.");
         }
     }
 }

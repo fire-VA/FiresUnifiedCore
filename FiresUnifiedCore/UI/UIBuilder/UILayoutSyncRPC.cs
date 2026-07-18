@@ -113,7 +113,7 @@ namespace FiresCore.UI
 
         private static string UILayoutsDir
         {
-            get { return Path.Combine(Paths.ConfigPath, "FiresRPGmaker", "UILayouts"); }
+            get { return Path.Combine(FiresCore.Storage.FiresConfigPaths.UiLayouts); }
         }
 
         /// <summary>
@@ -622,7 +622,18 @@ namespace FiresCore.UI
                 }
 
                 File.WriteAllText(fullPath, jsonContent);
-                MarkCodexDirty();
+
+                // Incremental upsert — parse THIS one layout and put it straight into the codex
+                // instead of a full disk LoadAll. Files arrive seconds apart over a slow login sync,
+                // so the old per-file MarkCodexDirty (250ms debounce) still fired one full reload per
+                // file = 29 LoadAll passes = a multi-second main-thread stall + 29 log lines. O(1) now.
+                try
+                {
+                    var def = UILayoutSerializer.Deserialize(jsonContent);
+                    if (def != null && !string.IsNullOrEmpty(def.UID)) UILayoutCodex.AddOrReplace(def);
+                    else MarkCodexDirty();
+                }
+                catch { MarkCodexDirty(); }
             }
             catch (Exception ex)
             {

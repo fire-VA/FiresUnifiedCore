@@ -39,8 +39,10 @@ namespace FiresCore.UI.GroupHud
         private static readonly Color StaminaBarColor = new Color(0.9f, 0.8f, 0.2f, 1f);
         private static readonly Color EitrBarColor = new Color(0.3f, 0.5f, 0.9f, 1f);
         private static readonly Color BarBackgroundColor = new Color(0.1f, 0.08f, 0.06f, 0.8f);
-        private static readonly Color PanelBackgroundColor = new Color(0.02f, 0.02f, 0.04f, 0.6f);
-        private static readonly Color PanelDraggingColor = new Color(0.1f, 0.1f, 0.15f, 0.85f);
+        private static readonly Color PanelBackgroundColor = new Color(0.13f, 0.093f, 0.058f, 0.9f);  // FUC brown, matches territory box / quest tracker
+        private static readonly Color PanelGoldBorder = new Color(0.72f, 0.55f, 0.28f, 1f);
+        private static readonly Color RowFill = new Color(0.09f, 0.065f, 0.04f, 0.55f);
+        private static readonly Color RowBorder = new Color(0.4f, 0.3f, 0.16f, 0.6f);
         private static readonly Color NameColor = new Color(1f, 0.85f, 0.5f, 1f);
         private static readonly Color DistanceColor = new Color(0.7f, 0.7f, 0.7f, 1f);
         private static readonly Color DeadNameColor = new Color(0.5f, 0.4f, 0.35f, 1f);
@@ -218,8 +220,8 @@ namespace FiresCore.UI.GroupHud
             if (_root != null)
             {
                 _root.SetActive(show);
-                if (_backgroundImage != null)
-                    _backgroundImage.color = _isDragging ? PanelDraggingColor : PanelBackgroundColor;
+                if (_backgroundImage != null) // tint the baked brown/gold sprite: warm highlight while dragging, plain otherwise
+                    _backgroundImage.color = _isDragging ? new Color(1f, 0.92f, 0.78f) : Color.white;
             }
         }
 
@@ -231,6 +233,8 @@ namespace FiresCore.UI.GroupHud
         {
             if (GroupHudConfig.ShowGroupHud != null && !GroupHudConfig.ShowGroupHud.Value) return false;
             if (_localPlayer == null) return false;
+            // Honour the vanilla "hide HUD" toggle (Ctrl+F3) — the same gate vanilla nameplates / health bars use.
+            if (Hud.IsUserHidden()) return false;
             if (InventoryGui.IsVisible()) return false;
             if (Minimap.instance != null && Minimap.instance.m_mode == Minimap.MapMode.Large) return false;
             if (Console.IsVisible()) return false;
@@ -390,7 +394,9 @@ namespace FiresCore.UI.GroupHud
             _rootRect.sizeDelta = new Vector2(PANEL_WIDTH, 30f);
 
             _backgroundImage = _root.AddComponent<Image>();
-            _backgroundImage.color = PanelBackgroundColor;
+            _backgroundImage.sprite = FiresCore.UI.FiresRoundedSkin.RoundedSprite(13, PanelBackgroundColor, PanelGoldBorder, 2);
+            _backgroundImage.type = Image.Type.Sliced;
+            _backgroundImage.color = Color.white;
             _backgroundImage.raycastTarget = false;
 
             var viewportGO = new GameObject("Viewport");
@@ -485,7 +491,9 @@ namespace FiresCore.UI.GroupHud
             le.minHeight = MEMBER_HEIGHT + STATUS_EFFECT_ROW_HEIGHT;
 
             var bg = memberGO.AddComponent<Image>();
-            bg.color = new Color(0.05f, 0.05f, 0.08f, 0.5f);
+            bg.sprite = FiresCore.UI.FiresRoundedSkin.RoundedSprite(8, RowFill, RowBorder, 1);
+            bg.type = Image.Type.Sliced;
+            bg.color = Color.white;
             bg.raycastTarget = false;
 
             CreateNameRow(memberGO.transform, ui);

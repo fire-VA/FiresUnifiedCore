@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
@@ -81,16 +82,22 @@ namespace FiresCore.Npc
             humanoid.m_swimTurnSpeed = 100f;
             humanoid.m_swimAcceleration = 0.05f;
 
-            Transform eyeTransform = FindTransformByNames(prefab.transform, new[] { "Eye", "eye", "Head", "head", "EyePos" });
-            if (eyeTransform == null)
+            // Respect a baked m_eye (FiresNpcPrefabBuilder wires EyePos — vanilla Player convention).
+            // EyePos before Head: Character.UpdateEyeRotation writes m_eye.rotation every frame,
+            // so pointing it at the Head BONE fights the animator.
+            if (humanoid.m_eye == null)
             {
-                var eyeObj = new GameObject("Eye");
-                eyeObj.transform.SetParent(prefab.transform);
-                eyeObj.transform.localPosition = new Vector3(0, 1.6f, 0.1f);
-                eyeObj.transform.localRotation = Quaternion.identity;
-                eyeTransform = eyeObj.transform;
+                Transform eyeTransform = FindTransformByNames(prefab.transform, new[] { "EyePos", "Eye", "eye", "Head", "head" });
+                if (eyeTransform == null)
+                {
+                    var eyeObj = new GameObject("EyePos");
+                    eyeObj.transform.SetParent(prefab.transform);
+                    eyeObj.transform.localPosition = new Vector3(0, 1.6f, 0.1f);
+                    eyeObj.transform.localRotation = Quaternion.identity;
+                    eyeTransform = eyeObj.transform;
+                }
+                humanoid.m_eye = eyeTransform;
             }
-            humanoid.m_eye = eyeTransform;
 
             Transform visualTransform = FindTransformByNames(prefab.transform, new[] { "Visual", "visual" }) ?? prefab.transform;
 
@@ -109,6 +116,134 @@ namespace FiresCore.Npc
             catch (Exception ex)
             {
                 Debug.LogWarning($"[NpcPrefabSetup] Failed to set protected Character fields: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Swaps baked effect-prefab references (FootStep step table + Character/Humanoid effect lists)
+        /// to the LIVE game's prefabs of the same name when ZNetScene has them. The bundle ships
+        /// rip-time copies so the prefab is complete on its own; live prefabs route audio through the
+        /// game's real mixer and track game updates. Ripped refs stay wherever no live match exists.
+        /// </summary>
+        public static void RebindEffectPrefabsToLive(GameObject prefab)
+        {
+            if (prefab == null || ZNetScene.instance == null) return;
+            int swapped = 0;
+            _repairedMaterials = 0;
+            _repairedShaders = 0;
+            _reroutedAudio = 0;
+
+            var footStep = prefab.GetComponent<FootStep>();
+            if (footStep != null && footStep.m_effects != null)
+            {
+                foreach (var step in footStep.m_effects)
+                {
+                    if (step == null || step.m_effectPrefabs == null) continue;
+                    for (int i = 0; i < step.m_effectPrefabs.Length; i++)
+                        swapped += SwapToLive(ref step.m_effectPrefabs[i]);
+                }
+            }
+
+            var humanoid = prefab.GetComponent<Humanoid>();
+            if (humanoid != null)
+            {
+                foreach (var list in new[]
+                {
+                    humanoid.m_hitEffects, humanoid.m_critHitEffects, humanoid.m_backstabHitEffects,
+                    humanoid.m_waterEffects, humanoid.m_tarEffects, humanoid.m_slideEffects,
+                    humanoid.m_jumpEffects, humanoid.m_flyingContinuousEffect, humanoid.m_lavaHeatEffects,
+                    humanoid.m_pickupEffects, humanoid.m_dropEffects, humanoid.m_consumeItemEffects,
+                    humanoid.m_equipEffects, humanoid.m_perfectBlockEffect
+                })
+                {
+                    if (list == null || list.m_effectPrefabs == null) continue;
+                    foreach (var entry in list.m_effectPrefabs)
+                        if (entry != null) swapped += SwapToLive(ref entry.m_prefab);
+                }
+            }
+
+            if (swapped > 0 || _repairedMaterials > 0 || _repairedShaders > 0 || _reroutedAudio > 0)
+                Debug.Log($"[NpcPrefabSetup] {prefab.name}: rebound {swapped} effect refs to live prefabs; " +
+                          $"repaired ripped effects in place ({_repairedMaterials} live materials, {_repairedShaders} live shaders, {_reroutedAudio} audio sources → live mixer)");
+        }
+
+        private static int SwapToLive(ref GameObject slot)
+        {
+            if (slot == null) return 0;
+            var live = ZNetScene.instance.GetPrefab(slot.name);
+            if (live == null || ReferenceEquals(live, slot))
+            {
+                // No live prefab of that name (most one-shot fx are spawned by direct reference and
+                // never registered in ZNetScene) — the ripped copy stays in use, so make it render.
+                RepairRippedEffectMaterials(slot);
+                return 0;
+            }
+            slot = live;
+            return 1;
+        }
+
+        // Ripped effect prefabs that stay in use keep their bundle materials, whose rip-time shaders
+        // carry no usable GPU bytecode — they render magenta. Repair them in place from the shared
+        // VanillaMaterialCache: the same-name live MATERIAL when one exists (exact vanilla fidelity),
+        // else the live SHADER of the same name onto the ripped material. Effect assets are shared
+        // across the NPC prefab tables, so each object is repaired once; headless skips (nothing
+        // renders there).
+        private static readonly HashSet<int> _repairedEffectObjects = new HashSet<int>();
+        private static Dictionary<string, Shader> _liveShadersByName;
+        private static int _repairedMaterials;
+        private static int _repairedShaders;
+        private static int _reroutedAudio;
+
+        private static void RepairRippedEffectMaterials(GameObject fx)
+        {
+            if (fx == null) return;
+            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null) return;
+            if (!_repairedEffectObjects.Add(fx.GetInstanceID())) return;
+
+            // Ripped sfx also serialize their AudioSources against the RIPPED duplicate mixer —
+            // wrong processing chain + deaf to the player's volume sliders. Rebind to the live one.
+            _reroutedAudio += FiresCore.Services.LiveAudioRouting.RouteWorldSfx(fx);
+
+            FiresCore.Services.VanillaMaterialCache.EnsureBuilt();
+            if (!FiresCore.Services.VanillaMaterialCache.IsBuilt) return;
+
+            if (_liveShadersByName == null)
+            {
+                _liveShadersByName = new Dictionary<string, Shader>();
+                foreach (var cached in FiresCore.Services.VanillaMaterialCache.ByName.Values)
+                {
+                    if (cached == null || cached.shader == null) continue;
+                    if (!_liveShadersByName.ContainsKey(cached.shader.name))
+                        _liveShadersByName[cached.shader.name] = cached.shader;
+                }
+            }
+
+            foreach (var renderer in fx.GetComponentsInChildren<Renderer>(true))
+            {
+                if (renderer == null) continue;
+                var mats = renderer.sharedMaterials;
+                bool changed = false;
+                for (int i = 0; i < mats.Length; i++)
+                {
+                    var mat = mats[i];
+                    if (mat == null) continue;
+                    string matName = mat.name.Replace(" (Instance)", "").Trim();
+                    if (FiresCore.Services.VanillaMaterialCache.ByName.TryGetValue(matName, out var liveMat)
+                        && liveMat != null && !ReferenceEquals(liveMat, mat))
+                    {
+                        mats[i] = liveMat;
+                        changed = true;
+                        _repairedMaterials++;
+                    }
+                    else if (mat.shader != null
+                             && _liveShadersByName.TryGetValue(mat.shader.name, out var liveShader)
+                             && !ReferenceEquals(liveShader, mat.shader))
+                    {
+                        mat.shader = liveShader;
+                        _repairedShaders++;
+                    }
+                }
+                if (changed) renderer.sharedMaterials = mats;
             }
         }
 

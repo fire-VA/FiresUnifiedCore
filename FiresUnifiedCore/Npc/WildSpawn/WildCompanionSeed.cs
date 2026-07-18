@@ -17,7 +17,7 @@ namespace FiresCore.Npc.WildSpawn
         /// <summary>Bitmask over <see cref="ArchetypeClass"/> values; ~0 = all allowed.</summary>
         public int AllowedArchetypesMask = ~0;
 
-        /// <summary>Gear tier indices into <see cref="CompanionGearTables"/>.</summary>
+        /// <summary>Gear tier indices consumed by <see cref="CompanionRandomLoadout"/> when rolling wild gear.</summary>
         public int[] AllowedGearTiers = new[] { 0 };
 
         /// <summary>Weights for 0/1/2 stars (sum need not be 100).</summary>

@@ -67,7 +67,14 @@ namespace FiresCore.Npc
         
         // Archetype stamina multiplier (set by ArchetypeController)
         private float _archetypeStaminaMultiplier = 1.0f;
-        
+
+        // Archetype health + move-speed multipliers (set by ArchetypeController, mirror stamina).
+        private float _archetypeHealthMultiplier = 1.0f;
+        private float _archetypeSpeedMultiplier = 1.0f;
+        // Cached base walk/run speed so the speed multiplier is applied to the base, not compounded.
+        private float _baseWalkSpeed = -1f;
+        private float _baseRunSpeed = -1f;
+
         // Track when we last synced to ZDO
         private float _lastZdoSyncTime;
         
@@ -230,9 +237,8 @@ namespace FiresCore.Npc
             
             // If consumables loaded food and our health already reflects it, skip recalculation
             // This prevents race conditions where DeferredStatsRecalculation overwrites correct values
-            float expectedMaxWithFood = (baseMaxHealth * GetHealthMultiplierFromRandomLoadout()) + 
-                                        (_progression?.GetAttributeValue(CompanionProgression.AttributeType.Health) * (_progression?.healthBonusPerPoint ?? 5f) ?? 0f) +
-                                        currentFoodBonus;
+            float attributeHealthBonus = _progression?.GetAttributeValue(CompanionProgression.AttributeType.Health) * (_progression?.healthBonusPerPoint ?? 5f) ?? 0f;
+            float expectedMaxWithFood = ComputeMaxHealth(attributeHealthBonus, currentFoodBonus);
             
             bool healthAlreadyCorrect = Mathf.Abs(_maxHealth - expectedMaxWithFood) < 1f && _currentHealth > 0;
             
@@ -401,6 +407,19 @@ namespace FiresCore.Npc
         /// Calculates what the max health SHOULD be based on all bonuses.
         /// Used for validation.
         /// </summary>
+        /// <summary>
+        /// THE canonical max-health formula: multiplicative core (base x scale/biome x effective-level x
+        /// archetype) + flat bonuses (attributes + food). RecalculateMaxStats AND the periodic validator
+        /// both call this so they can never diverge - a divergence is exactly what made the validator
+        /// false-fail into an endless "Forcing refresh" loop after the archetype/level terms were added.
+        /// </summary>
+        private float ComputeMaxHealth(float healthBonus, float foodHealthBonus)
+        {
+            float healthMultiplier = GetHealthMultiplierFromRandomLoadout();
+            int effectiveLevel = _companion != null ? _companion.GetEffectiveLevel() : 1;
+            return (baseMaxHealth * healthMultiplier * effectiveLevel * _archetypeHealthMultiplier) + healthBonus + foodHealthBonus;
+        }
+
         private float CalculateExpectedMaxHealth()
         {
             EnsureComponentReferences();
@@ -412,9 +431,7 @@ namespace FiresCore.Npc
             }
             
             float foodHealthBonus = _consumables?.GetFoodHealthBonus() ?? 0f;
-            float healthMultiplier = GetHealthMultiplierFromRandomLoadout();
-            
-            return (baseMaxHealth * healthMultiplier) + healthBonus + foodHealthBonus;
+            return ComputeMaxHealth(healthBonus, foodHealthBonus);
         }
         
         /// <summary>
@@ -568,11 +585,12 @@ namespace FiresCore.Npc
             float oldCurrentStamina = _currentStamina;
             float oldCurrentEitr = _currentEitr;
             
-            // Get scale/biome multiplier from CompanionRandomLoadout
-            // This accounts for giant/dwarf scaling and biome-based health differences
-            float healthMultiplier = GetHealthMultiplierFromRandomLoadout();
-            
-            _maxHealth = (baseMaxHealth * healthMultiplier) + healthBonus + foodHealthBonus;
+            // Health = scale/biome x effective-level x archetype, + flat bonuses (attributes + food).
+            // Centralised in ComputeMaxHealth so the periodic validator computes the SAME value and can never
+            // false-fail into a "Forcing refresh" loop.
+            _maxHealth = ComputeMaxHealth(healthBonus, foodHealthBonus);
+            // Stamina keeps the original (base+bonuses)*archetype convention and is intentionally NOT
+            // level-scaled (vanilla creatures do not grow stamina with level).
             _maxStamina = (baseMaxStamina + staminaBonus + foodStaminaBonus) * _archetypeStaminaMultiplier;
             _maxEitr = baseMaxEitr + eitrBonus + foodEitrBonus;
             
@@ -917,9 +935,12 @@ namespace FiresCore.Npc
             {
                 combatMult = inCombat ? combatHealthRegenMultiplier : 1f;
                 
-                // Base health regen + food regen bonus
+                // Base health regen + food regen bonus, scaled by world buffs/debuffs (Rested, etc.)
+                // through the vanilla SEMan hook - the same modifier Player health regen uses.
                 float foodRegen = _consumables?.GetFoodHealthRegen() ?? 0f;
-                float totalHealthRegen = (healthRegenPerSecond + foodRegen) * combatMult * dt;
+                float semanRegenMult = 1f;
+                _character?.GetSEMan()?.ModifyHealthRegen(ref semanRegenMult);
+                float totalHealthRegen = (healthRegenPerSecond + foodRegen) * combatMult * semanRegenMult * dt;
                 
                 float oldHealth = _currentHealth;
                 _currentHealth = Mathf.Min(_currentHealth + totalHealthRegen, _maxHealth);
@@ -959,7 +980,9 @@ namespace FiresCore.Npc
                     retreatBonus = _staminaManager.GetStaminaRegenMultiplier();
                 }
                 
-                float staminaRegen = staminaRegenPerSecond * combatMult * enduranceBonus * retreatBonus * dt;
+                float semanStaminaMult = 1f;
+                _character?.GetSEMan()?.ModifyStaminaRegen(ref semanStaminaMult);
+                float staminaRegen = staminaRegenPerSecond * combatMult * enduranceBonus * retreatBonus * semanStaminaMult * dt;
                 _currentStamina = Mathf.Min(_currentStamina + staminaRegen, _maxStamina);
             }
             
@@ -1164,13 +1187,45 @@ namespace FiresCore.Npc
         {
             _archetypeStaminaMultiplier = multiplier;
             RecalculateMaxStats();
-            
+
             if (VerboseLogging)
             {
                 Debug.Log($"[CompanionStats] Archetype stamina multiplier set to {multiplier:F2}x, new max={_maxStamina:F0}");
             }
         }
-        
+
+        /// <summary>
+        /// Sets the archetype max-health multiplier (mirrors SetArchetypeStaminaMultiplier).
+        /// Stacks multiplicatively with effective-level scaling in RecalculateMaxStats.
+        /// </summary>
+        public void SetArchetypeHealthMultiplier(float multiplier)
+        {
+            _archetypeHealthMultiplier = multiplier <= 0f ? 1f : multiplier;
+            RecalculateMaxStats();
+
+            if (VerboseLogging)
+                Debug.Log($"[CompanionStats] Archetype health multiplier set to {_archetypeHealthMultiplier:F2}x, new max={_maxHealth:F0}");
+        }
+
+        /// <summary>
+        /// Sets the archetype move-speed multiplier and applies it to the Character's walk/run speed
+        /// (scaled from the cached base so repeated calls don't compound).
+        /// </summary>
+        public void SetArchetypeSpeedMultiplier(float multiplier)
+        {
+            _archetypeSpeedMultiplier = multiplier <= 0f ? 1f : multiplier;
+            ApplyArchetypeSpeedToCharacter();
+        }
+
+        private void ApplyArchetypeSpeedToCharacter()
+        {
+            var ch = _companion != null ? _companion.GetComponent<Character>() : GetComponent<Character>();
+            if (ch == null) return;
+            if (_baseWalkSpeed < 0f) { _baseWalkSpeed = ch.m_walkSpeed; _baseRunSpeed = ch.m_runSpeed; }
+            ch.m_walkSpeed = _baseWalkSpeed * _archetypeSpeedMultiplier;
+            ch.m_runSpeed = _baseRunSpeed * _archetypeSpeedMultiplier;
+        }
+
         #endregion
     }
 }

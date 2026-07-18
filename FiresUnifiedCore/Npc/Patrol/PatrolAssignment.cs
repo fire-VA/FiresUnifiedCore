@@ -13,6 +13,12 @@ namespace FiresCore.Npc.Patrol
     {
         public string RouteName;
 
+        /// <summary>
+        /// Name of the DBSM speed preset selected for this NPC on its route (empty = Default = flat base
+        /// walk, today's behaviour). Set from NpcController.patrolSpeedPreset on spawn, alongside RouteName.
+        /// </summary>
+        public string PresetName;
+
         public bool HasRoute => !string.IsNullOrEmpty(RouteName)
                                 && PatrolRouteManager.GetRoute(RouteName) != null;
     }

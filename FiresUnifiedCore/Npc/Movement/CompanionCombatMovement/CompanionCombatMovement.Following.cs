@@ -125,7 +125,6 @@ namespace FiresCore.Npc
                 _isPlayerIdle = false;
                 _isRelaxedFollowing = false;
                 _moveDirSet = false;
-                _movementModeSet = false;
                 
                 if (VerboseLogging)
                     Debug.Log($"[CompanionCombatMovement] {_companion?.companionName} exiting relaxed state - player is moving");
@@ -203,7 +202,6 @@ namespace FiresCore.Npc
                 _isRelaxedFollowing = false;
                 
                 _moveDirSet = false;
-                _movementModeSet = false;
                 
                 if (VerboseLogging)
                     Debug.Log($"[CompanionCombatMovement] {_companion?.companionName} snapping back to following - player started moving");

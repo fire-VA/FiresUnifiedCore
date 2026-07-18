@@ -132,11 +132,19 @@ namespace FiresCore.ClientLogRelay.Transport
                 }
 
                 byte[] result = bytes;
-                try { onComplete(result); }
-                catch (Exception ex)
+                // Marshal the callback onto the MAIN THREAD (the doc contract above). We are on a
+                // ThreadPool worker here, and the callback touches Unity/networking APIs — ZRoutedRpc
+                // and coroutine starts (the anti-cheat challenge response) — which silently fail off the
+                // main thread. Calling onComplete directly on this worker is why the challenge response
+                // was never sent even after the client had fully loaded and was running around in-world.
+                FiresCore.Async.MainThreadDispatcher.Enqueue(() =>
                 {
-                    Debug.LogWarning($"[ClientLogRelay] ReadLocalBepInExLogAsync callback threw: {ex.Message}");
-                }
+                    try { onComplete(result); }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[ClientLogRelay] ReadLocalBepInExLogAsync callback threw: {ex.Message}");
+                    }
+                });
             });
         }
     }

@@ -16,8 +16,13 @@ namespace FiresCore.Storage
         public const string MailUsersCollection = "Users";
         public const string MailEntriesCollection = "Mails";
         public const string LeaderboardCollection = "Leaderboard";
+        // Season archive: rows copied here (tagged with their Season) when a season is rolled; the live
+        // Leaderboard collection is then wiped for the new season. Meta holds the current season number.
+        public const string LeaderboardArchiveCollection = "LeaderboardArchive";
+        public const string LeaderboardMetaCollection = "LeaderboardMeta";
         public const string GuildCollection = "Guild";
         public const string PlayerIdentityCollection = "PlayerIdentity";
+        public const string PlayerAppearanceCollection = "PlayerAppearance";
 
         private static string _databasePath;
         private static bool _mapperConfigured;

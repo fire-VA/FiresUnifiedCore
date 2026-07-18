@@ -155,6 +155,17 @@ namespace FiresCore.Npc
                 {
                     if (_nview != null && _nview.IsOwner())
                     {
+                        // Static (placed) NPCs ragdoll like companions and leave a joke gravestone instead
+                        // of silently vanishing. Wild roamers keep the plain destroy (no body clutter on the
+                        // map). Both branches still fall through to the safety-net destroy below.
+                        var npcModule = GetComponent<FiresCore.Npc.NpcMode.CompanionNpcModule>();
+                        if (npcModule != null && npcModule.isStaticPlacement)
+                        {
+                            try { PlayDeathEffects(); }
+                            catch (Exception ex) { Debug.LogWarning($"[CompanionDeathHandler] static ragdoll failed: {ex.Message}"); }
+                            try { CreateStaticNpcTombstone(); }
+                            catch (Exception ex) { Debug.LogWarning($"[CompanionDeathHandler] static tombstone failed: {ex.Message}"); }
+                        }
                         StartCoroutine(DestroyAfterDelay(1.0f));
                     }
                     return;
@@ -254,6 +265,18 @@ namespace FiresCore.Npc
             }
         }
 
+        /// <summary>True when the snapshot carries only prefab-placeholder identity (no real name).</summary>
+        private static bool IsPlaceholderSnapshot(NpcSaveState snap)
+        {
+            if (snap == null) return true;
+            var name = snap.DisplayName;
+            return string.IsNullOrWhiteSpace(name)
+                || name == "Companion"
+                || name == "Companion NPC"
+                || name == "CompanionNpc"
+                || name == "CompanionNpc_Wild";
+        }
+
         private void SaveDeathState()
         {
             if (_companion == null || _companion.ownerPlayerId == 0) return;
@@ -272,6 +295,21 @@ namespace FiresCore.Npc
                 var deathSnap = _companion.CaptureState();
                 if (deathSnap != null && FiresCore.Bridge.NpcDormancyBridge.IsAvailable)
                 {
+                    // A capture taken from an instance whose deferred ZDO load hadn't populated yet
+                    // (fresh zone-stream, the ~1s CompanionInventory window) carries only the prefab
+                    // placeholder name and empty gear. Never let that overwrite a good kennel entry:
+                    // if the capture is blank and the kennel already holds a real snapshot for this
+                    // companion, keep the stored identity and only update the death bookkeeping.
+                    if (IsPlaceholderSnapshot(deathSnap))
+                    {
+                        var existing = FiresCore.Bridge.NpcDormancyBridge.Get(_companion.ownerPlayerId, deathSnap.NpcId);
+                        if (existing?.Snapshot != null && !IsPlaceholderSnapshot(existing.Snapshot))
+                        {
+                            Debug.LogWarning($"[CompanionDeathHandler] Death capture for {deathSnap.NpcId} was a blank placeholder — preserving the kennel's last good snapshot ('{existing.Snapshot.DisplayName}')");
+                            deathSnap = existing.Snapshot;
+                        }
+                    }
+
                     if (dropEquipmentOnDeath)
                     {
                         deathSnap.EquipmentPrefabs?.Clear();
@@ -469,6 +507,42 @@ namespace FiresCore.Npc
             }
         }
 
+        /// <summary>
+        /// Spawns a gravestone for a dead STATIC NPC holding exactly one Pukeberries - a joke drop so killed
+        /// static NPCs leave a body + marker instead of vanishing. Mirrors CreateTombstone but never touches
+        /// the NPC's own inventory. Degrades gracefully if the tombstone or Pukeberries prefab is missing.
+        /// </summary>
+        private void CreateStaticNpcTombstone()
+        {
+            var tombstonePrefab = GetTombstonePrefab();
+            if (tombstonePrefab == null) return;
+
+            Vector3 spawnPos = transform.position;
+            if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(spawnPos, out float groundHeight))
+                spawnPos.y = groundHeight + 0.5f;
+
+            var tombstoneObj = CompanionNetworkHelper.Spawn(tombstonePrefab, spawnPos, Quaternion.identity);
+            if (tombstoneObj == null) return;
+
+            var tombstone = tombstoneObj.GetComponent<TombStone>();
+            if (tombstone != null)
+                tombstone.Setup($"Here lies {_companion.companionName}", _companion.ownerPlayerId);
+
+            var container = tombstoneObj.GetComponent<Container>();
+            var inv = container != null ? container.GetInventory() : null;
+            if (inv != null)
+            {
+                var pukePrefab = ZNetScene.instance?.GetPrefab("Pukeberries");
+                var pukeDrop = pukePrefab != null ? pukePrefab.GetComponent<ItemDrop>() : null;
+                if (pukeDrop != null && pukeDrop.m_itemData != null)
+                {
+                    var puke = pukeDrop.m_itemData.Clone();
+                    puke.m_stack = 1;
+                    inv.AddItem(puke);
+                }
+            }
+        }
+
         private void TransferItemsToTombstone(Inventory tombstoneInv)
         {
             // Storage inventory
@@ -537,6 +611,17 @@ namespace FiresCore.Npc
 
             float respawnTime = Time.time + respawnDelay;
             _pendingRespawns[_companion.companionId] = respawnTime;
+
+            // The respawn must run where the kennel is READABLE — the server. On a dedicated server a
+            // client-owned companion dies on the CLIENT, which cannot read the server-owned kennel ZDO,
+            // so a client-scheduled respawn loops "Kennel has no entry yet" forever (the exact symptom).
+            // The DeadPendingRespawn entry SaveDeathState just forwarded to the server triggers the
+            // server-side respawn there (CompanionKennel.RPC_Store). Only the server schedules directly.
+            if (ZNet.instance != null && !ZNet.instance.IsServer())
+            {
+                Debug.Log($"[CompanionDeathHandler] {_companion.companionName} died client-side — server will respawn it from the forwarded kennel entry.");
+                return;
+            }
 
             CompanionRespawnManager.Instance?.ScheduleRespawn(
                 _companion.companionId,

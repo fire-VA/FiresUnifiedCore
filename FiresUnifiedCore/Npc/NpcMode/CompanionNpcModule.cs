@@ -44,6 +44,9 @@ namespace FiresCore.Npc.NpcMode
         [Tooltip("Whether to allow idle wandering when stationed (within wanderRadius)")]
         public bool allowIdleWandering = false;
 
+        [Tooltip("Never turn the body toward nearby players (ZDO npc_no_face_player). kg-migrated NPCs set this: kg bodies hold their placed facing, and turning breaks locked crafting poses.")]
+        public bool suppressFacePlayer = false;
+
         [Tooltip("Radius for idle wandering when stationed (ignored if inside a territory)")]
         public float idleWanderRadius = 20f;
         
@@ -58,7 +61,7 @@ namespace FiresCore.Npc.NpcMode
 
         [Header("NPC Identity")]
         public string npcDisplayName = "";
-        public NpcType npcType = NpcType.QuestNpc;
+        public NpcType npcType = NpcType.None;
 
         [Header("Profiles")]
         public string dialogueProfile = "";
@@ -81,10 +84,12 @@ namespace FiresCore.Npc.NpcMode
         private CompanionIdleBehavior _idleBehavior;
         private CompanionInteractionBehavior _interactionBehavior;
         private CompanionAI _companionAI;
+        private MonsterAI _monsterAI;
         private Character _character;
         private ZNetView _nview;
         private Animator _animator;
         private Rigidbody _rigidbody;
+        private float _staticInertNextCheck;   // throttle for the static-fixture AI-off re-assert
 
         // Stationed position
         private Vector3 _stationedPosition;
@@ -232,6 +237,7 @@ namespace FiresCore.Npc.NpcMode
             _idleBehavior = GetComponent<CompanionIdleBehavior>();
             _interactionBehavior = GetComponent<CompanionInteractionBehavior>();
             _companionAI = GetComponent<CompanionAI>();
+            _monsterAI = GetComponent<MonsterAI>();
             _character = GetComponent<Character>();
             _nview = GetComponent<ZNetView>();
             _animator = GetComponentInChildren<Animator>(true);
@@ -256,12 +262,38 @@ namespace FiresCore.Npc.NpcMode
             // Static placed NPCs have no CompanionController ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ allow them through
             if (_companion == null && !isStaticPlacement) return;
 
+            // Static fixtures NEVER run AI — re-assert every tick regardless of the stationed-flag timing.
+            EnforceStaticInertness();
+
             // If stationed as NPC, enforce the stationed state
             if (isStationedAsNpc)
             {
                 EnforceStationedState();
                 UpdateProximityDetection();
             }
+        }
+
+        /// <summary>
+        /// A static fixture (placed, NOT a wanderer, NOT on a patrol route) must NEVER aggro, dodge, or face
+        /// enemies. On relog various companion/vanilla systems re-enable CompanionAI/MonsterAI in the seconds
+        /// after spawn — the body then rolls and looks at enemies. Re-assert the fixture contract on a ~0.5s
+        /// throttle (cached refs, cheap): AI brains OFF, m_aiSkipTarget ON, so it stays an inert prop. Wander
+        /// and patrol NPCs are excluded — they keep their AI. Runs on every machine (the visual is client-side).
+        /// </summary>
+        private void EnforceStaticInertness()
+        {
+            if (!isStaticPlacement || allowIdleWandering || HasPatrolRoute()) return;
+            if (Time.time < _staticInertNextCheck) return;
+            _staticInertNextCheck = Time.time + 0.5f;
+
+            bool caught = false;
+            if (_companionAI != null && _companionAI.enabled) { _companionAI.enabled = false; caught = true; }
+            if (_monsterAI != null && _monsterAI.enabled) { _monsterAI.enabled = false; caught = true; }
+            if (_character != null && !_character.m_aiSkipTarget) { _character.m_aiSkipTarget = true; caught = true; }
+            // Only logs when it ACTUALLY caught a re-enable — proves the relog dodge/look-at-enemy bug is a
+            // downstream re-enable (names the culprit's timing) rather than a willMove data problem.
+            if (caught)
+                Debug.LogWarning($"[CompanionNpcModule][ai-guard] re-disabled AI on static fixture '{DisplayName}' — something re-enabled it after the static stage was applied");
         }
 
         private void LateUpdate()
@@ -272,6 +304,9 @@ namespace FiresCore.Npc.NpcMode
             // instead of fighting it. We just set m_lookDir and let Character.UpdateBodyRotation
             // do the smooth turning.
             if (_character == null) return;
+
+            // Per-NPC opt-out (kg-migrated bodies): hold the placed facing, never greet-turn.
+            if (suppressFacePlayer) return;
 
             // Only turn to face a nearby player while STOPPED. Vanilla Character.UpdateRotation turns the body
             // toward m_lookDir only when m_moveDir is zero (otherwise it faces the move heading), so writing
@@ -604,7 +639,15 @@ namespace FiresCore.Npc.NpcMode
             var forward = rotation * Vector3.forward;
             forward.y = 0f;
             if (forward.sqrMagnitude > 0.001f)
+            {
+                // Set BOTH, exactly like the greet-turn path above: Character.UpdateRotation turns the BODY
+                // toward m_lookYaw (Character.cs:835/1178), NOT m_lookDir. Writing only m_lookDir (as this did
+                // before) aimed the head/look but never rotated the body — so a stationed/migrated NPC held its
+                // default spawn facing no matter what placement rotation we passed. THIS was the "rotation is
+                // still off, and neither offset changes it" bug: the offset went into a field the body ignores.
                 _character.m_lookDir = forward.normalized;
+                _character.m_lookYaw = Quaternion.LookRotation(forward.normalized);
+            }
         }
 
         /// <summary>
@@ -1152,9 +1195,11 @@ namespace FiresCore.Npc.NpcMode
             isStationedAsNpc = zdo.GetBool("npc_stationed", false);
             isStaticPlacement = zdo.GetBool("npc_static_placement", false);
             allowIdleWandering = zdo.GetBool("npc_allow_idle_wander", false);
+            suppressFacePlayer = zdo.GetBool("npc_no_face_player", false);
             allowNpcInteractionsWhileFollowing = zdo.GetBool("npc_allow_while_following", false);
             npcDisplayName = zdo.GetString("npc_display_name", "");
-            npcType = (NpcType)zdo.GetInt("npc_type", 0);
+            // Unset = None (decorative) — only the book's role assignment ever writes npc_type.
+            npcType = (NpcType)zdo.GetInt("npc_type", (int)NpcType.None);
             dialogueProfile = zdo.GetString("npc_dialogue_profile", "");
             questProfile = zdo.GetString("npc_quest_profile", "");
             infoProfile = zdo.GetString("npc_info_profile", "");

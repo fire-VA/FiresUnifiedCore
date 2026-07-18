@@ -88,7 +88,13 @@ namespace FiresCore.Sync
             set => forceConfigLocking = value;
         }
 
-        public bool IsAdmin => lockExempt || isSourceOfTruth;
+        // ADMIN GATE — fail CLOSED. lockExempt is the server's explicit verdict (AdminSyncing
+        // pushes true/false to every peer from the normalized adminlist). isSourceOfTruth must
+        // never grant admin: it DEFAULTS true and only means "no server config package received
+        // yet (or ever)" — any mod without a synced package read as admin-for-EVERYONE, leaking
+        // every admin UI (configure hover, admin book, context menus, territory brush, wayshrine
+        // tools) to non-admin clients. A local host / dedicated server is always admin.
+        public bool IsAdmin => lockExempt || ZNet.instance == null || ZNet.instance.IsServer();
 
         public bool IsSourceOfTruth
         {
