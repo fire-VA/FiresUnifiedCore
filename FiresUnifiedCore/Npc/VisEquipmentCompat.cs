@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
+using HarmonyLib;
 
 namespace FiresCore.Npc
 {
@@ -121,5 +122,93 @@ namespace FiresCore.Npc
 
         public static void CopyBeardItem(VisEquipment src, VisEquipment dst)
             => CopyTypeShiftedField(src, dst, "m_beardItem", "SetBeardItem");
+
+        // ──────────────────────────────────────────────────────────────────
+        //  ZDO-free, hash-aware slot dressing for the mannequin preview.
+        //
+        //  The vanilla Set*Item methods write the desired hash to the ZNetView
+        //  ZDO (m_nview.GetZDO()) — they NRE when the VisEquipment has no live
+        //  ZDO, which is exactly the case for the static mannequin. So instead
+        //  of going through them, we write the STRING backing field
+        //  (m_leftItem / m_chestItem / …) directly. With no ZDO present,
+        //  VisEquipment.UpdateEquipmentVisuals() reads those string fields and
+        //  hashes them itself (GetStableHashCode → ObjectDB.GetItemPrefab(hash)),
+        //  so the attach result is identical to the networked path.
+        //
+        //  Token forms (Phase-1 capture wrote each as a token string):
+        //    • prefab NAME  ("ArmorIronChest")  → set the name verbatim.
+        //    • literal HASH ("-1234567")        → all-digit (optionally leading
+        //      '-') token == the int stable hash. We reverse-resolve it to the
+        //      prefab name via ObjectDB so the string field hashes back to the
+        //      SAME value. If ObjectDB can't resolve it (not loaded / unknown
+        //      hash) the slot is left empty rather than mis-hashing a numeric
+        //      string into garbage.
+        // ──────────────────────────────────────────────────────────────────
+
+        private static readonly Dictionary<string, FieldInfo> _itemFieldCache =
+            new Dictionary<string, FieldInfo>();
+
+        private static FieldInfo ItemField(string fieldName)
+        {
+            lock (_lock)
+            {
+                if (_itemFieldCache.TryGetValue(fieldName, out var cached)) return cached;
+                var f = AccessTools.Field(typeof(VisEquipment), fieldName);
+                if (f != null && f.FieldType != typeof(string)) f = null;
+                _itemFieldCache[fieldName] = f;
+                return f;
+            }
+        }
+
+        private static bool IsAllDigitHashToken(string token)
+        {
+            if (string.IsNullOrEmpty(token)) return false;
+            int start = (token[0] == '-') ? 1 : 0;
+            if (start >= token.Length) return false;
+            for (int i = start; i < token.Length; i++)
+                if (token[i] < '0' || token[i] > '9') return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves a capture token to the prefab NAME the body of
+        /// VisEquipment will accept. Prefab-name tokens pass through. All-digit
+        /// (hash) tokens are reverse-resolved through ObjectDB; if that fails
+        /// the slot resolves to empty. Never throws.
+        /// </summary>
+        public static string ResolveTokenToName(string token)
+        {
+            if (string.IsNullOrEmpty(token)) return "";
+            if (!IsAllDigitHashToken(token)) return token;
+
+            try
+            {
+                if (!int.TryParse(token, out int hash)) return "";
+                if (hash == 0) return "";
+                var odb = ObjectDB.instance;
+                if (odb == null) return "";
+                var prefab = odb.GetItemPrefab(hash);
+                return prefab != null ? prefab.name : "";
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>
+        /// Writes a slot's STRING backing field directly (ZDO-free). The token
+        /// is resolved name-vs-hash first. Returns false only when the field
+        /// couldn't be found on this build (degrades to an empty slot).
+        /// </summary>
+        public static bool SetItemFieldDirect(VisEquipment vis, string fieldName, string token)
+        {
+            if (vis == null) return false;
+            var f = ItemField(fieldName);
+            if (f == null) return false;
+            try
+            {
+                f.SetValue(vis, ResolveTokenToName(token) ?? "");
+                return true;
+            }
+            catch { return false; }
+        }
     }
 }

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using FiresCore.Npc.Core;
 using FiresCore.Npc.Formation;
 
@@ -161,11 +161,22 @@ namespace FiresCore.Npc.AI
             UpdateOwnerIdleState(ownerPos);
             UpdateOwnerStance();
             DetermineFollowSpeed(distToOwner);
+
+            // Always-on, throttled (2s) follow diagnostic — pins the "won't catch up / stick close" behavior
+            // without per-frame verbose spam. Shows the live gap, the chosen speed tier, and the owner stance
+            // that drove it, on whichever peer owns the companion (client when near, server when far).
+            if (FiresCore.Config.ConfigManager.Instance?.configCompanionFollowDiag?.Value == true
+                && Time.time - _lastFollowDiag > 2f)
+            {
+                _lastFollowDiag = Time.time;
+                Debug.Log($"[CompanionFollowDiag] {m_character?.m_name} dist={distToOwner:F1} speed={_currentFollowSpeed} " +
+                          $"ownerSpeed={_ownerSpeed:F1} ownerWalk={_isOwnerWalking} ownerSneak={_isOwnerSneaking} closing={_isClosingGap}");
+            }
             
             // Apply crouch/sneak state independently of movement speed.
             // The companion should mirror the owner's crouch even when stationary.
             // _isOwnerSneaking is set by UpdateOwnerStance() from the owner's IsCrouching().
-            bool shouldSneak = _isOwnerSneaking;
+            bool shouldSneak = _isOwnerSneaking && distToOwner <= catchUpDistance; // stand up to sprint back if stranded
             if (shouldSneak != _isCompanionSneaking)
             {
                 _isCompanionSneaking = shouldSneak;
@@ -307,86 +318,58 @@ namespace FiresCore.Npc.AI
                 _isOwnerSneaking = _ownerPlayer.IsCrouching();
                 _isOwnerWalking = _ownerPlayer.IsWalking();
                 _isOwnerRunning = _ownerPlayer.IsRunning();
+
+                // Measured horizontal speed is the ground truth for pace matching — the IsRunning/IsWalking flags
+                // read stale (they logged False while the owner was clearly moving). This drives which gait the
+                // companion mirrors once it's tucked into the trail band.
+                Vector3 v = _ownerPlayer.GetVelocity();
+                v.y = 0f;
+                _ownerSpeed = v.magnitude;
             }
         }
         
         private void DetermineFollowSpeed(float distToOwner)
         {
-            // 1) EMERGENCY CATCH-UP ï¿½ distance overrides everything
+            // Resolve the gait that MATCHES the owner right now, from their measured speed + stance. Player
+            // default movement is run, walk is a toggle, crouch is sneak. Measured owner speed (not the stale
+            // IsRunning flag) picks the pace tier; the crouch flag forces Sneaking.
+            FollowSpeed matched;
+            if (_isOwnerSneaking)
+                matched = FollowSpeed.Sneaking;
+            else if (_ownerSpeed < OWNER_STANDING_SPEED)
+                matched = FollowSpeed.Stopped;
+            else if (_isOwnerWalking || _ownerSpeed < OWNER_WALK_SPEED)
+                matched = FollowSpeed.Walking;
+            else if (_ownerSpeed < OWNER_JOG_SPEED)
+                matched = FollowSpeed.Jogging;
+            else
+                matched = FollowSpeed.Running;
+
+            // EMERGENCY: way behind the owner -> sprint to close, regardless of the owner's pace or stance.
             if (distToOwner > catchUpDistance)
             {
                 _currentFollowSpeed = FollowSpeed.Sprinting;
+                _isClosingGap = true;
                 return;
             }
-            
-            // 2) If far enough that we risk falling behind, run regardless of owner stance
-            if (distToOwner > runDistanceOuter)
+
+            // OUT OF THE TRAIL BAND -> CLOSE the gap. Match the owner's urgency: a running owner needs a run to
+            // keep pace AND close; a slow / standing owner only needs a gentle jog to tuck back in, never a
+            // sprint (this is what stops "always running/sprinting behind a walking owner"). Hysteresis: once
+            // closing, keep closing until tucked inside the inner trail distance.
+            bool closing = distToOwner > runDistanceOuter
+                        || (_isClosingGap && distToOwner > stopDistanceInner);
+            if (closing)
             {
-                _currentFollowSpeed = FollowSpeed.Running;
+                _isClosingGap = distToOwner > stopDistanceInner;
+                _currentFollowSpeed = (matched == FollowSpeed.Running) ? FollowSpeed.Running : FollowSpeed.Jogging;
                 return;
             }
-            
-            // Hysteresis: stay running until we close inside the inner threshold
-            if (_currentFollowSpeed == FollowSpeed.Running && distToOwner > runDistanceInner)
-            {
-                return;
-            }
-            if (_currentFollowSpeed == FollowSpeed.Sprinting && distToOwner > runDistanceInner)
-            {
-                _currentFollowSpeed = FollowSpeed.Running;
-                return;
-            }
-            
-            // 3) CLOSE ENOUGH ï¿½ stop (but preserve sneak posture if owner is crouching)
-            if (distToOwner <= stopDistanceInner)
-            {
-                _currentFollowSpeed = _isOwnerSneaking ? FollowSpeed.Sneaking : FollowSpeed.Stopped;
-                return;
-            }
-            // Hysteresis for stopped state
-            if ((_currentFollowSpeed == FollowSpeed.Stopped || (_currentFollowSpeed == FollowSpeed.Sneaking && !_isOwnerSneaking))
-                && distToOwner <= stopDistanceOuter)
-            {
-                _currentFollowSpeed = _isOwnerSneaking ? FollowSpeed.Sneaking : FollowSpeed.Stopped;
-                return;
-            }
-            // Owner idle and close enough ï¿½ stop
-            if (_isOwnerIdle && distToOwner <= walkDistanceOuter)
-            {
-                _currentFollowSpeed = _isOwnerSneaking ? FollowSpeed.Sneaking : FollowSpeed.Stopped;
-                return;
-            }
-            
-            // 4) STANCE MATCHING ï¿½ mirror the owner's movement state
-            //    Owner sneaking ? companion sneaks (crouch + slow walk)
-            //    Owner walking  ? companion walks (m_walk = true, slow speed)
-            //    Owner running  ? companion runs  (m_run = true, sprint speed)
-            //    Owner jogging  ? companion jogs  (default speed, neither walk nor run)
-            //    Owner standing ? companion walks to close gap, then stops
-            if (_isOwnerSneaking)
-            {
-                _currentFollowSpeed = FollowSpeed.Sneaking;
-                return;
-            }
-            
-            if (_isOwnerRunning)
-            {
-                // Owner is sprinting/running ï¿½ always run to keep pace
-                _currentFollowSpeed = FollowSpeed.Running;
-                return;
-            }
-            
-            if (_isOwnerWalking)
-            {
-                // Owner has toggled walk mode ï¿½ companion should walk too
-                // Valheim walk mode uses m_walkSpeed which is much slower than jog
-                _currentFollowSpeed = FollowSpeed.Walking;
-                return;
-            }
-            
-            // Owner is jogging (default movement: not walking, not running, not sneaking)
-            // or owner is idle. If owner is idle and we still need to close distance, jog.
-            _currentFollowSpeed = _isOwnerIdle ? FollowSpeed.Stopped : FollowSpeed.Jogging;
+
+            // TUCKED IN behind the owner -> MATCH their pace + stance exactly (walk when they walk, sneak when
+            // they sneak, run when they run, stop when they stop). This is the pace / stance match.
+            _isClosingGap = false;
+            _currentFollowSpeed = matched;
         }
         
         /// <summary>
@@ -397,7 +380,16 @@ namespace FiresCore.Npc.AI
         private void ApplyFollowSpeedToCharacter(FollowSpeed speed)
         {
             if (m_character == null) return;
-            
+
+            // Publish the run-tier catch-up boost so CompanionSpeedRamp can push the follower ABOVE its
+            // archetype run speed while catching up (a plain run only matches an owner running at the same
+            // speed and never closes). Sprinting = emergency, Running = gentle tuck-in, everything else
+            // clears the boost back to 1.0 so a stopped/jogging/walking companion runs at its base speed.
+            float catchUpBoost = 1f;
+            if (speed == FollowSpeed.Sprinting) catchUpBoost = SprintCatchUpBoost;
+            else if (speed == FollowSpeed.Running) catchUpBoost = RunCatchUpBoost;
+            CompanionSpeedRamp.SetCatchUpMultiplier(m_character, catchUpBoost);
+
             switch (speed)
             {
                 case FollowSpeed.Stopped:

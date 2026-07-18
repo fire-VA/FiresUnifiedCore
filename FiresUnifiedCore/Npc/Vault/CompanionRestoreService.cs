@@ -407,6 +407,7 @@ namespace FiresCore.Npc.Vault
         private static bool TrySpawnDormant(DormantNpcEntry entry, Vector3 ownerPos, out CompanionController controller)
         {
             controller = null;
+            GameObject go = null;
             try
             {
                 var snap = entry.Snapshot;
@@ -419,13 +420,14 @@ namespace FiresCore.Npc.Vault
                     return false;
                 }
 
-                var go = UnityEngine.Object.Instantiate(prefab, ownerPos, Quaternion.identity);
+                go = UnityEngine.Object.Instantiate(prefab, ownerPos, Quaternion.identity);
                 if (go == null) return false;
 
                 controller = go.GetComponent<CompanionController>();
                 if (controller == null)
                 {
                     Debug.LogWarning($"{LogPrefix} Dormant prefab '{snap.PrefabName}' has no CompanionController — entry consumed");
+                    DestroySpawn(go);
                     return true;
                 }
 
@@ -436,8 +438,23 @@ namespace FiresCore.Npc.Vault
             catch (Exception ex)
             {
                 Debug.LogWarning($"{LogPrefix} TrySpawnDormant({entry?.NpcId}) failed: {ex.Message}");
+                // Never leave a half-applied instance alive — it would be a nameless, unowned blank
+                // in the world while the dormant entry is retried (duplicating on success).
+                DestroySpawn(go);
+                controller = null;
                 return false;
             }
+        }
+
+        private static void DestroySpawn(GameObject go)
+        {
+            if (go == null) return;
+            try
+            {
+                if (ZNetScene.instance != null) ZNetScene.instance.Destroy(go);
+                else UnityEngine.Object.Destroy(go);
+            }
+            catch { }
         }
 
         /// <summary>

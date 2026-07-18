@@ -205,12 +205,7 @@ namespace FiresCore.Npc
         // Animation
         private static readonly int Hash_inair = Animator.StringToHash("inair");
 
-        // MOVEMENT MODE TRACKING - Avoid spamming SetWalk/SetRun every frame
-        private bool _lastWalkState = false;
-        private bool _lastRunState = false;
-        private bool _movementModeSet = false;
-        
-        // MOVE DIRECTION TRACKING - Avoid spamming SetMoveDir every frame  
+        // MOVE DIRECTION TRACKING - Avoid spamming SetMoveDir every frame
         private Vector3 _lastSetMoveDir = Vector3.zero;
         private bool _moveDirSet = false;
         private const float MOVE_DIR_CHANGE_THRESHOLD = 0.05f;
@@ -688,7 +683,6 @@ namespace FiresCore.Npc
             _hasActiveCommitment = false;
             _isInCombatCooldown = false;
             _lastEnemyKillTime = Time.time;
-            _movementModeSet = false;
             _moveDirSet = false;
             _hasRangedMovementRequest = false;
         }

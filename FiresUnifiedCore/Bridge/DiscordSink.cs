@@ -57,6 +57,36 @@ namespace FiresCore.Bridge
             IReadOnlyList<DiscordRewardItem> items);
     }
 
+    /// <summary>Which server-side anti-cheat list changed — the Discord integration styles the readout by this.</summary>
+    public enum DiscordListKind { Enforced, Whitelist, ServerOnly, Blacklist, AdminOnly }
+
+    /// <summary>
+    /// One server-side mod-list change, handed to the Discord integration to render as a readout panel.
+    /// The producer (FiresVAngarde) pre-formats every entry (GUID + version where known) because only it
+    /// holds the version authority; the consumer just styles by <see cref="Kind"/> and posts. All string
+    /// lists are display-ready (may contain Discord markdown). Counts describe the full four-list state so
+    /// the panel can show a one-line summary alongside the changed list.
+    /// </summary>
+    public sealed class DiscordListChangeInfo
+    {
+        public DiscordListKind Kind;
+        public string Trigger;                         // "admin Foo connected", "config edited", "startup", ...
+        public System.Collections.Generic.IReadOnlyList<string> Added;    // e.g. "`com.foo.bar` `v1.2.3`"
+        public System.Collections.Generic.IReadOnlyList<string> Removed;
+        public System.Collections.Generic.IReadOnlyList<string> Changed;  // enforced version bumps: "`guid` `v1` → `v2`"
+        public System.Collections.Generic.IReadOnlyList<string> Current;  // the FULL current list, formatted
+        public int EnforcedCount, WhitelistCount, ServerOnlyCount, BlacklistCount, AdminOnlyCount;
+    }
+
+    /// <summary>
+    /// Additive anti-cheat sink, reached via cast exactly like <see cref="IDiscordEventSink"/>, so introducing
+    /// server-list events never forces every <see cref="IDiscordSink"/> implementer to change.
+    /// </summary>
+    public interface IDiscordAntiCheatSink
+    {
+        void OnServerListChanged(DiscordListChangeInfo info, Action onComplete = null);
+    }
+
     /// <summary>
     /// Cross-mod contract for posting anti-cheat / character events to a Discord integration.
     /// The Discord integration mod registers a concrete implementation via <see cref="DiscordSink.Register"/>;
@@ -141,6 +171,30 @@ namespace FiresCore.Bridge
         public static void OnAdminCommandSnapshot(string playerName, string platformId,
             string changedCommand, bool enabled, IReadOnlyList<string> activeAdminCommands)
             => _impl?.OnAdminCommandSnapshot(playerName, platformId, changedCommand, enabled, activeAdminCommands);
+
+        /// <summary>A server-side anti-cheat list changed. No-ops unless the sink implements <see cref="IDiscordAntiCheatSink"/>.</summary>
+        public static void OnServerListChanged(DiscordListChangeInfo info, Action onComplete = null)
+        {
+            if (_impl is IDiscordAntiCheatSink s) s.OnServerListChanged(info, onComplete);
+            else onComplete?.Invoke();
+        }
+
+        // ── Server-list snapshot provider: the reverse direction. The Discord integration pulls the
+        //    CURRENT four-list dump on demand (a user reacted on a list message), so the readout is always
+        //    live rather than frozen at post time. The anti-cheat mod registers the provider at init. ──
+
+        private static Func<string> _serverListSnapshotProvider;
+
+        /// <summary>Register a provider that dumps the current server mod lists as display-ready plain text.</summary>
+        public static void RegisterServerListSnapshotProvider(Func<string> provider)
+            => _serverListSnapshotProvider = provider;
+
+        /// <summary>Current server mod lists as plain text, or null when no provider is registered / it fails.</summary>
+        public static string GetServerListSnapshot()
+        {
+            try { return _serverListSnapshotProvider?.Invoke(); }
+            catch { return null; }
+        }
 
         // ── Domain events (leaderboard / guild / group / death). Routed to the sink only if it also implements
         //    IDiscordEventSink, so these are no-ops against an older anti-cheat-only sink. All server-emitted. ──

@@ -17,5 +17,9 @@ namespace FiresCore.Npc
         Mail = 9,
         Transmog = 10,
         Teleporter = 11,
+        Buffer = 12,
+        // No role: decorative NPC (dress-up / hammer templates). Placed NPCs start here until an
+        // admin assigns a role in the book. Appended value — stored ints must never be reordered.
+        None = 13,
     }
 }

@@ -18,7 +18,7 @@ namespace FiresCore.Sync
     public static class AdminSyncing
     {
         private const string AdminStatusRpcSuffix = " AdminStatusSync";
-        private const float AdminListPollIntervalSeconds = 30f;
+        private const float AdminListPollIntervalSeconds = 4f;
         private const int CompressedPackageThresholdBytes = 10000;
         private const int CompressedPackageMagic = 4;
         private const long ServerPeerLoopbackId = 0L;
@@ -41,6 +41,11 @@ namespace FiresCore.Sync
                 _isServer = __instance.IsServer();
                 if (FiresCoreRoot.Instance == null) return;
 
+                // lockExempt is static and would otherwise BLEED between sessions: admin on server A,
+                // then joining server B (which may never push a status) kept the stale grant. Every
+                // world join starts non-admin until THIS server says otherwise — fail closed.
+                if (!_isServer) ConfigSync.lockExempt = false;
+
                 ZRoutedRpc.instance.Register<ZPackage>(AdminStatusRpcName, RPC_AdminStatusSync);
 
                 if (_isServer)
@@ -54,6 +59,32 @@ namespace FiresCore.Sync
             var peer = ZNet.instance.GetPeer(senderId);
             if (peer == null) return false;
             return AdminListContains(peer.m_rpc.GetSocket().GetHostName());
+        }
+
+        /// <summary>
+        /// The ONE canonical "is the LOCAL player an admin" check for the whole Fires family. Every
+        /// FUC-consuming mod should call this instead of rolling its own — it unions every signal so
+        /// whichever arrives first grants admin, and the only window that reads false is the brief moment
+        /// right after connect before ANY signal lands:
+        ///   • server/host (dedicated console + listen host) — <c>ZNet.IsServer()</c>
+        ///   • Valheim's server-synced admin list, valid on a pure client — <c>ZNet.LocalPlayerIsAdminOrHost()</c>
+        ///   • the Fires admin-status push that set <c>ConfigSync.lockExempt</c> (covers the window before
+        ///     Valheim's own admin sync lands, and vice-versa — each has gaps the others fill).
+        /// For an init-time gate that ran too early, subscribe to <see cref="AdminStatusChanged"/> and re-run
+        /// when it flips (the FiresAdminPrefabs deferred-init pattern), rather than caching a one-shot result.
+        ///
+        /// DO NOT use this for a SERVER-SIDE per-player check of a REMOTE player. It short-circuits true on
+        /// <c>IsServer()</c>, so on a dedicated server it returns true for everyone — which would e.g. grant
+        /// every player admin bypass. For "is player X (by id) an admin", use <see cref="IsAdmin(long)"/>.
+        /// </summary>
+        public static bool IsLocalAdmin()
+        {
+            var znet = ZNet.instance;
+            if (znet == null) return false;
+            try { if (znet.IsServer()) return true; } catch { }
+            try { if (znet.LocalPlayerIsAdminOrHost()) return true; } catch { }
+            try { if (ConfigSync.lockExempt) return true; } catch { }
+            return false;
         }
 
         // adminlist.txt entries may be stored bare ("7656...") or platform-prefixed ("Steam_7656..."),
@@ -78,33 +109,50 @@ namespace FiresCore.Sync
             return (us >= 0 ? id.Substring(us + 1) : id).Trim();
         }
 
+        // Peers already told their admin status (by m_uid), so a fresh connection gets pushed even when the admin
+        // list never changes (the "static adminlist.txt → connecting admin never receives lockExempt" bug).
+        private static readonly HashSet<long> _sentPeers = new HashSet<long>();
+
         private static IEnumerator WatchAdminListChanges()
         {
             var adminList = GetAdminList();
             var currentAdmins = new HashSet<string>(adminList.GetList());
+            bool first = true;
 
             while (true)
             {
-                yield return new WaitForSeconds(AdminListPollIntervalSeconds);
-
                 var newAdmins = new HashSet<string>(adminList.GetList());
-                if (newAdmins.SetEquals(currentAdmins)) continue;
+                bool changed = !newAdmins.SetEquals(currentAdmins);
 
-                BroadcastAdminStatusChanges(newAdmins);
-                currentAdmins = newAdmins;
+                if (changed || first)
+                {
+                    // list changed (or first pass) → re-send EVERY ready peer its status.
+                    _sentPeers.Clear();
+                    PushAdminStatus(ZNet.instance.GetPeers().Where(p => p.IsReady()));
+                    currentAdmins = newAdmins;
+                    first = false;
+                }
+                else
+                {
+                    // no change → push to any newly-ready peer that hasn't been told (fresh connections).
+                    PushAdminStatus(ZNet.instance.GetPeers().Where(p => p.IsReady() && !_sentPeers.Contains(p.m_uid)));
+                }
+
+                _sentPeers.RemoveWhere(uid => !ZNet.instance.GetPeers().Any(p => p.m_uid == uid));
+                yield return new WaitForSeconds(AdminListPollIntervalSeconds);
             }
         }
 
-        private static void BroadcastAdminStatusChanges(HashSet<string> newAdmins)
+        // Send each given peer its admin/non-admin status (via the normalized admin-list match) and mark it sent.
+        private static void PushAdminStatus(IEnumerable<ZNetPeer> targets)
         {
-            var peers = ZNet.instance.GetPeers();
-            var adminPeers = peers
-                .Where(p => newAdmins.Contains(p.m_rpc.GetSocket().GetHostName()))
-                .ToList();
-            var nonAdminPeers = peers.Except(adminPeers).ToList();
-
+            var list = targets?.ToList();
+            if (list == null || list.Count == 0) return;
+            var adminPeers = list.Where(p => AdminListContains(p.m_rpc.GetSocket().GetHostName())).ToList();
+            var nonAdminPeers = list.Except(adminPeers).ToList();
             SendAdminStatus(nonAdminPeers, isAdmin: false);
             SendAdminStatus(adminPeers, isAdmin: true);
+            foreach (var p in list) _sentPeers.Add(p.m_uid);
         }
 
         private static void SendAdminStatus(List<ZNetPeer> peers, bool isAdmin)
@@ -129,11 +177,13 @@ namespace FiresCore.Sync
         {
             var peer = ZNet.instance.GetPeer(sender);
             if (peer == null) return;
-            if (!GetAdminList().Contains(peer.m_rpc.GetSocket().GetHostName())) return;
+            if (!AdminListContains(peer.m_rpc.GetSocket().GetHostName())) return;
 
             var pkg = new ZPackage();
             pkg.Write(true);
-            peer.m_rpc.Invoke(AdminStatusRpcName, pkg);
+            // ROUTED, to match the routed Register (see SendZPackage) — a direct peer.m_rpc.Invoke
+            // lands on a channel the client never registered, so it is silently dropped.
+            ZRoutedRpc.instance.InvokeRoutedRPC(sender, AdminStatusRpcName, pkg);
         }
 
         private static void HandleClientSideAdminStatusReceived(ZPackage package)
@@ -158,11 +208,12 @@ namespace FiresCore.Sync
 
             foreach (var peer in peers.Where(p => p.IsReady()))
             {
-                if (_isServer)
-                {
-                    peer.m_rpc.Invoke(AdminStatusRpcName, package);
-                    continue;
-                }
+                // ALWAYS routed — the handler is registered via ZRoutedRpc.instance.Register, so the
+                // server MUST route (peer.m_uid) too. The old `if (_isServer) peer.m_rpc.Invoke(...)`
+                // sent on the direct channel, which the client never registered → the push was
+                // silently dropped, lockExempt stayed false, and real admins were gated OUT of their
+                // own admin UI once IsAdmin stopped falling open on isSourceOfTruth (Core 0.1.14).
+                // Every working Fires server→client RPC routes to peer.m_uid the same way.
                 long target = peer.m_server ? ServerPeerLoopbackId : peer.m_uid;
                 ZRoutedRpc.instance.InvokeRoutedRPC(target, AdminStatusRpcName, package);
             }

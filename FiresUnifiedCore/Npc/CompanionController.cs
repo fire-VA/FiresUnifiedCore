@@ -175,36 +175,15 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
         private float _lastDeferredFollowCheck = 0f;
         private const float DEFERRED_FOLLOW_CHECK_INTERVAL = 0.5f; // seconds between owner-presence polls
 
-        // CATCH-UP DETECTION (was: STRANDED DETECTION)
-        //
-        // Behavioural intent:
-        //   When a following companion drifts past <see cref="maxFollowDistance"/>, the OLD code
-        //   teleported them after only 2 s (STRANDED_GRACE). On a fresh world that produced the
-        //   "companion snaps to me every time I take a few steps" UX the user reported — they
-        //   could have just turned around and walked back, no teleport needed.
-        //
-        //   The refined model is a two-phase catch-up:
-        //     1. CATCH-UP — the moment distance exceeds the follow radius, snap the AI out of any
-        //        idle wander/work behaviour via <see cref="AI.CompanionAI.SetFollowTarget"/> (FSM
-        //        Idle→Following) and let the companion path back on foot. Track the closest
-        //        distance achieved this session (<see cref="_catchupBestDistance"/>) as a
-        //        progress signal.
-        //     2. TELEPORT (last resort) — only when one of the following is true:
-        //        • <see cref="HARD_STRAND_MULTIPLIER"/> hit (player did a portal / long jump),
-        //        • CATCHUP_WINDOW elapsed AND closing-the-gap progress was below
-        //          <see cref="CATCHUP_PROGRESS_REQUIRED"/> (companion is stuck / blocked terrain),
-        //        • CATCHUP_WINDOW elapsed AND current distance > start distance (companion is
-        //          actively losing ground — owner is moving faster than they can path).
-        //
-        //   When the companion gets back inside the follow radius on foot, all catch-up state
-        //   resets and the next drift starts a fresh attempt.
-        private float _strandedSinceTime         = -1f;  // time catchup began (-1 = not in catchup)
-        private float _catchupStartDistance      = 0f;   // distance to owner at catchup entry
-        private float _catchupBestDistance       = 0f;   // closest we've gotten during this catchup session
-        private bool  _catchupInterruptIssued    = false;// SetFollowTarget already called this session?
-        private const float CATCHUP_WINDOW            = 15f;  // seconds to attempt walking back before considering teleport
-        private const float CATCHUP_PROGRESS_REQUIRED = 5f;   // metres of net inward progress that counts as "they're making it"
-        private const float HARD_STRAND_MULTIPLIER    = 2.5f; // distance > maxFollowDistance * this = bypass catchup, teleport now
+        // RUN-BACK / SNAP STATE (the leash). All thresholds + the snap decision live in the single source of
+        // truth FiresCore.Npc.Core.CompanionLeash; CheckFollowTeleport just drives the per-companion run-back
+        // with the three progress fields below. Within CompanionLeash.LeashDistance the AI follows normally;
+        // past it the companion drops combat/idle and runs back (CommitReturnToOwner), and only snaps (via the
+        // server-authoritative reconcile) when CompanionLeash.ShouldSnap says running back won't work.
+        private float _strandedSinceTime         = -1f;  // time run-back began (-1 = not leashed)
+        private float _catchupStartDistance      = 0f;   // owner distance when the leash first engaged
+        private float _catchupBestDistance       = 0f;   // closest we've reached since (run-back progress signal)
+        // Leash distances/timing + the snap predicate live in FiresCore.Npc.Core.CompanionLeash (single source of truth).
 
         // GLITCH PREVENTION - Teleport loop detection
         private int _consecutiveTeleports = 0;
@@ -598,8 +577,12 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
             // Combat ranges
             _companionAI.aggroRange = aggroRange;
             _companionAI.attackRange = attackRange;
-            _companionAI.maxChaseDistance = 100f;
-            _companionAI.combatLeashDistance = 40f;
+            // Escort-scale leash: companions fight WITH and AROUND the owner. 40/100 let a chase drift
+            // 40 m from the owner before the Returning state kicked in — "running off doing their own
+            // thing". 15 m keeps every engagement inside the fight around the owner; the Returning
+            // re-engage guard (immediate-threat only) already prevents leash yo-yo.
+            _companionAI.maxChaseDistance = 30f;
+            _companionAI.combatLeashDistance = 15f;
             _companionAI.giveUpTime = 15f;
             
             // Protection settings
@@ -607,13 +590,16 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
             _companionAI.proactiveProtection = proactiveProtection;
             _companionAI.interceptPriority = 2f;
             
-            // Follow settings - buffer zones
+            // Follow settings - buffer zones. Tight run threshold so the companion runs to catch up the
+            // moment it trails ~6m (base gaits walk=2/jog=4/run=7; a running owner outpaces the jog tier,
+            // so a lenient threshold left it slow-walking and never catching up). Keep in sync with the
+            // CompanionAI field defaults and CompanionPrefabManager.
             _companionAI.stopDistanceInner = 2f;
-            _companionAI.stopDistanceOuter = 5f;
-            _companionAI.walkDistanceOuter = 8f;
-            _companionAI.runDistanceInner = 12f;
-            _companionAI.runDistanceOuter = 18f;
-            _companionAI.catchUpDistance = 30f;
+            _companionAI.stopDistanceOuter = 4f;
+            _companionAI.walkDistanceOuter = 5f;
+            _companionAI.runDistanceInner = 4f;
+            _companionAI.runDistanceOuter = 6f;
+            _companionAI.catchUpDistance = 12f;
             
             // Self-preservation
             _companionAI.fleeHealthPercent = 0.2f;
@@ -739,7 +725,6 @@ if (isTamed && ownerPlayerId == 0 &&
             _strandedSinceTime      = -1f;
             _catchupStartDistance   = 0f;
             _catchupBestDistance    = 0f;
-            _catchupInterruptIssued = false;
         }
 
         private void CheckFollowTeleport()
@@ -797,25 +782,20 @@ if (isTamed && ownerPlayerId == 0 &&
                 // flipped, refuse to mutate follow state. Reset catch-up too: the brief
                 // owner-lookup gap during a death/respawn should not poison the next
                 // CATCHUP_WINDOW after the player comes back.
-                if (Player.m_localPlayer == null ||
-                    !PlayerSpawnGate.IsReadyForCustomDataWrite(Player.m_localPlayer))
-                {
-                    _consecutiveTeleports = 0;
-                    ResetCatchupState();
-                    return;
-                }
+                // Owner not resolvable from THIS peer's scene. This is a VISIBILITY condition — the owner is in
+                // another/unloaded zone, or their Player object is briefly absent during a respawn / zone
+                // transition — NEVER a signal that the player wants the companion to stop following. The follow
+                // latch is owner-command-only (Stay / Dismiss), so we leave it completely alone here. We also
+                // can't teleport locally (we don't know where the owner is); the server-authoritative leash
+                // heartbeat in CompanionTeleportService — the one peer that always sees every player — reels this
+                // follower in if it has genuinely drifted too far.
+                ResetCatchupState();
 
+                // Diagnostic ONLY (never disables follow): surface a sustained owner-lookup gap so the log shows
+                // WHY a companion isn't teleporting. Logs once per sustained gap, not every tick.
                 _consecutiveTeleports++;
-                if (_consecutiveTeleports >= MAX_CONSECUTIVE_TELEPORTS)
-                {
-                    Debug.LogWarning($"[CompanionController] {companionName} can't find owner after {_consecutiveTeleports} attempts - pausing follow until owner returns (vault state preserved)");
-                    if (_companionAI != null)
-                    {
-                        _companionAI.SetShouldFollow(false);
-                        _companionAI.SetStayPosition(transform.position);
-                    }
-                    _consecutiveTeleports = 0;
-                }
+                if (_consecutiveTeleports == MAX_CONSECUTIVE_TELEPORTS)
+                    Debug.Log($"[CompanionController] {companionName}: owner not in local scene — follow latch preserved, awaiting server leash / owner return.");
                 return;
             }
 
@@ -827,21 +807,19 @@ if (isTamed && ownerPlayerId == 0 &&
                 return;
             }
 
-            // === Normal teleport logic starts here ===
+            // === Leash (single authority: FiresCore.Npc.Core.CompanionLeash) ===
             Vector3 ownerPos = owner.transform.position;
             float distance = Vector3.Distance(transform.position, ownerPos);
 
-            // Inside the follow radius → reset all catch-up state. Pathing continues to keep the
-            // companion close via the AI's normal Following state; we don't intervene.
-            if (distance <= maxFollowDistance)
+            // Within the leash radius: normal following. The AI keeps the companion close at its own gait and may
+            // fight along the way; the tether does not intervene.
+            if (distance <= Core.CompanionLeash.LeashDistance)
             {
                 ResetCatchupState();
                 return;
             }
 
-            float timeSinceTeleport = Time.time - _lastTeleportTime;
-
-            // Owner velocity sample (used to skip teleports while the owner is portal-jumping).
+            // Owner velocity sample (used to skip snapping while the owner is portal-jumping / admin-flying).
             float ownerSpeed = 0f;
             if (_lastOwnerPositionTime > 0f)
             {
@@ -855,149 +833,75 @@ if (isTamed && ownerPlayerId == 0 &&
                 _lastOwnerPositionTime = Time.time;
             }
 
-            // === CATCH-UP PHASE ENTRY ===
-            // First tick past maxFollowDistance: stamp the entry time + start/best distance.
+            // === LEASHED (past LeashDistance): drop everything and run back ===
+            // Stamp the run-back entry (time + start/best distance) the first tick we cross the leash.
             if (_strandedSinceTime < 0f)
             {
                 _strandedSinceTime    = Time.time;
                 _catchupStartDistance = distance;
                 _catchupBestDistance  = distance;
-                _catchupInterruptIssued = false;
             }
-            // Track closest approach so we can tell if walking-back is working.
             if (distance < _catchupBestDistance)
                 _catchupBestDistance = distance;
 
-            // Interrupt-and-pursue: ONE-SHOT per catchup session, the moment we entered the phase.
-            // SetFollowTarget snaps the AI FSM Idle→Following (drops wandering / resource-gather /
-            // smelter-operator etc) so the companion starts pathing toward the owner immediately
-            // instead of waiting for the next idle-behaviour cycle. Combat / Returning states are
-            // intentionally NOT clobbered — the companion finishes its fight, then catches up.
-            if (!_catchupInterruptIssued && _companionAI != null)
-            {
-                try { _companionAI.SetFollowTarget(owner.gameObject); }
-                catch { }
-                _catchupInterruptIssued = true;
-            }
+            // Commit to returning EVERY leashed tick: drop combat + idle work and pursue the owner at full follow
+            // speed. Unlike the old one-shot interrupt this keeps combat suppressed for the whole run-back, so a
+            // fight cannot re-steal the companion while it is supposed to be sprinting home.
+            CommitReturnToOwner(owner);
 
-            // === TELEPORT DECISION ===
-            // The "should we give up and teleport?" predicate:
-            //   • hardStrand: owner ran > 2.5× the follow radius away → almost certainly a portal /
-            //     dungeon entry / admin-fly. Teleport now; walking would never close it.
-            //   • catchupWindowElapsed + notMakingProgress: we gave them 15 s to walk back and
-            //     they haven't closed at least CATCHUP_PROGRESS_REQUIRED metres of ground. They're
-            //     blocked (terrain, snag, lost path) → teleport.
-            //   • catchupWindowElapsed + losingGround: distance is GROWING despite catchup. Owner
-            //     is outpacing them → teleport.
-            // Otherwise: return, keep letting them walk.
-            bool hardStrand          = distance > maxFollowDistance * HARD_STRAND_MULTIPLIER;
-            float catchupElapsed     = Time.time - _strandedSinceTime;
-            bool catchupWindowElapsed = catchupElapsed >= CATCHUP_WINDOW;
-            float progressMade        = _catchupStartDistance - _catchupBestDistance; // positive = closing
-            bool notMakingProgress    = progressMade < CATCHUP_PROGRESS_REQUIRED;
-            bool losingGround         = distance > _catchupStartDistance;
+            // === SNAP (last resort) ===
+            // Snap only when running back will not work: hit the SnapDistance ceiling, or had the full run-back
+            // window without closing the gap (blocked / outpaced). Otherwise keep running back on foot.
+            float secondsLeashed = Time.time - _strandedSinceTime;
+            if (!Core.CompanionLeash.ShouldSnap(distance, _catchupStartDistance, _catchupBestDistance, secondsLeashed))
+                return;
 
-            bool isStranded = hardStrand
-                           || (catchupWindowElapsed && notMakingProgress)
-                           || (catchupWindowElapsed && losingGround);
-
-            if (!isStranded)
-                return;  // still attempting catchup on foot — no teleport this tick
-
-            // Owner-velocity gate: skip teleport while the owner appears to be portal-jumping
-            // (above human-running speed), UNLESS we ourselves just fired a portal teleport
-            // on the previous tick — _portalTeleportPending is a single-use bypass marker set
-            // by TeleportToPositionInternal(isPortal=true).
-            //
-            // FIX (prev. bug): the flag used to be cleared unconditionally on EVERY pass through
-            // this point, including ticks where the speed gate wasn't triggered (owner moving
-            // normally). That silently consumed the bypass before the tick that actually needed
-            // it could see it. Now we only consume the flag on the tick that ACTUALLY uses it
-            // to bypass the speed gate. On any tick where owner is moving normally, the flag
-            // is left intact so it can still rescue a future "owner instantly accelerated"
-            // portal-jump sample.
-            if (ownerSpeed > OWNER_TELEPORT_MAX_SPEED)
+            // Do not snap while the owner is portal-jumping / admin-flying (chasing a teleporting owner just
+            // loops), unless we ourselves just fired a portal teleport last tick (_portalTeleportPending bypass).
+            if (ownerSpeed > Core.CompanionLeash.OwnerTooFastToSnap)
             {
                 if (!_portalTeleportPending)
-                    return;          // owner is flying / portal-jumping, no bypass available — wait
-                _portalTeleportPending = false;  // consume the bypass exactly here, where it was needed
+                    return;
+                _portalTeleportPending = false;
             }
 
-            // HARD THROTTLE — one teleport, then a 5-second cooldown before
-            // we'll fire another, regardless of distance. The previous
-            // implementation had a catastrophic-distance bypass that let us
-            // fire every tick when the companion was stranded thousands of
-            // meters away. That's exactly the visual "companion teleports in
-            // for one frame, gets reverted, teleports in again" symptom — at
-            // catastrophic distances the next CheckFollowTeleport tick fires
-            // a brand-new teleport before the network has had time to
-            // confirm whether the previous one stuck. With the bypass gone,
-            // we trust the previous teleport for a full 5 seconds, and only
-            // fire a retry if the companion genuinely failed to make it.
-            const float TELEPORT_THROTTLE_TIME = 5f;
-            if (timeSinceTeleport < TELEPORT_THROTTLE_TIME) return;
+            // Throttle: one snap, then a settle cooldown before another.
+            if (Time.time - _lastTeleportTime < Core.CompanionLeash.SnapThrottle)
+                return;
 
-            // Loop detector removed in Phase 2. The legacy detector tracked
-            // _consecutiveTeleports across teleport ticks and switched to
-            // the cross-peer RPC after 3 failed local writes to break the
-            // ownership-flap loop. With CompanionTeleportService routing
-            // every stranded teleport server-authoritatively from the
-            // first attempt, the loop scenario can no longer arise — the
-            // server is the verified ZDO owner before it writes, so the
-            // write sticks. _consecutiveTeleports is still maintained by
-            // the owner-not-found branch above (different concern: pause
-            // follow if we genuinely can't find the owner) but the
-            // distance-based loop detector is gone.
-            _consecutiveTeleports = 0;
-
-            if (isStranded && _companionAI != null)
-            {
-                try
-                {
-                    _companionAI.OnTeleportedFar();
-                    _companionAI.SetFollowTarget(owner.gameObject);
-                    _combatMovement?.OnTeleportedFar();
-                }
-                catch { }
-            }
-
-            Debug.Log($"[CompanionController] {companionName} too far from owner ({distance:F0}m, stranded={isStranded}), teleporting...");
+            // SNAP = server-authoritative reconcile (the single teleport path). The server scans ZDOMan for every
+            // follower of this owner and reels in any that are far, claiming ZDO ownership first so the write
+            // cannot lose to closest-peer ownership flap. Drop combat, fire it, settle.
+            CommitReturnToOwner(owner);
+            Debug.Log($"[CompanionController] {companionName} can't close the gap ({distance:F0}m) - snapping to owner.");
             _lastTeleportDistance = distance;
             _lastTeleportTime = Time.time;
             _ownerPosAtLastTeleport = ownerPos;
             ResetCatchupState();
-
             ReleaseAllMovementLocks();
 
-            // STRANDED → fire the reconcile RPC. Server scans ZDOMan for
-            // EVERY follower of this owner (not just this one companion)
-            // and teleports any that are far from the player. The
-            // distance gate inside the reconcile handler skips
-            // companions that are already close, so even though we send
-            // the bulk request the only ZDO that actually moves is this
-            // one (assuming the owner's other followers are nearby —
-            // which is the typical case for a single-companion stranded
-            // event). Single RPC, single handler, no ownership flap.
-            //
-            // Non-stranded (small drift) keeps the local-write path
-            // because ownership is stable for in-zone follows and the
-            // local write makes the visual update instant.
-            if (isStranded)
+            Core.CompanionTeleportService.RequestReconcileFollowers(owner);
+            CompanionPatches.SuppressCompanionTeleportsUntil =
+                Time.unscaledTime + CompanionPatches.SUPPRESS_DURATION_STRANDED_SETTLE;
+            _companionAI?.ResetPathfindingState();
+        }
+
+        /// <summary>
+        /// Drop combat + idle work and dedicate the companion to returning to its owner at full follow speed —
+        /// the run-back phase of the leash. Cheap to call every leashed tick: it reuses the post-teleport
+        /// combat-drop plumbing (OnTeleportedFar clears the target, refreshes the combat-suppression window, and
+        /// forces the FSM back to Following) so a fight cannot re-steal the body mid run-back. Does NOT teleport.
+        /// </summary>
+        private void CommitReturnToOwner(Player owner)
+        {
+            if (_companionAI == null || owner == null) return;
+            try
             {
-                Core.CompanionTeleportService.RequestReconcileFollowers(owner);
-
-                CompanionPatches.SuppressCompanionTeleportsUntil =
-                    Time.unscaledTime + CompanionPatches.SUPPRESS_DURATION_STRANDED_SETTLE;
-
-                _consecutiveTeleports = 0;
-                ResetCatchupState();
-                _lastTeleportTime = Time.time;
-                _ownerPosAtLastTeleport = ownerPos;
-                _companionAI?.ResetPathfindingState();
-                return;
+                _companionAI.OnTeleportedFar();
+                _companionAI.SetFollowTarget(owner.gameObject);
+                _combatMovement?.OnTeleportedFar();
             }
-
-            TeleportToOwner();
+            catch { }
         }
 
         // ==================== NEW HELPER ====================
@@ -1149,14 +1053,11 @@ if (isTamed && ownerPlayerId == 0 &&
             var owner = GetOwner();
             if (owner == null)
             {
-                // No owner - just force stay mode as fallback
-                Debug.LogWarning($"[CompanionController] {companionName} glitch recovery failed - no owner found, forcing stay mode");
-                if (_companionAI != null)
-                {
-                    _companionAI.SetShouldFollow(false);
-                    _companionAI.SetStayPosition(transform.position);
-                }
-                // DON'T save to vault - companion is in corrupted state
+                // Can't resolve the owner right now (not in this peer's scene). We do NOT force stay — the follow
+                // latch is owner-command-only and must survive glitch recovery. Bail without saving corrupted
+                // state; the companion keeps its follow intent and recovers on a later tick / reload (LoadFromZDO
+                // restores follow from the sticky companion_wasfollowing flag).
+                Debug.LogWarning($"[CompanionController] {companionName} glitch recovery deferred - owner not resolvable; follow intent preserved.");
                 return;
             }
             
@@ -1623,24 +1524,21 @@ if (isTamed && ownerPlayerId == 0 &&
                 return false;
             }
 
-            // Deduct. Drain stacks oldest-first; remove any that hit zero.
+            // Deduct. Drain stacks oldest-first. Go through Inventory.RemoveItem
+            // rather than writing m_stack directly: it decrements (or removes the
+            // stack when it hits zero) AND fires Inventory.Changed, which both
+            // refreshes the UI and lets VAInventory re-persist the coin purse's
+            // over-cap stack. A raw m_stack write is invisible to that re-persist,
+            // so spending from the purse would otherwise be refunded on the next
+            // load/respawn (vanilla clamps the over-cap stack on Load).
             int remaining = tamingItemAmount;
             foreach (var stack in candidates)
             {
                 if (remaining <= 0) break;
                 int take = Math.Min(stack.m_stack, remaining);
-                stack.m_stack -= take;
+                inventory.RemoveItem(stack, take);
                 remaining -= take;
-                if (stack.m_stack <= 0)
-                {
-                    inventory.RemoveItem(stack);
-                }
             }
-
-            // RemoveItem already triggers internal Inventory bookkeeping; the
-            // m_stack mutations above will be picked up by the next UI redraw.
-            // (We avoided calling Changed() because it isn't a method on the
-            //  current Valheim Inventory class in this build.)
 
             TameCompanion(player);
             return true;
@@ -1680,6 +1578,22 @@ if (isTamed && ownerPlayerId == 0 &&
         }
       }
 
+      // IDENTITY COMPLETENESS (fixes "tamed before it got a name"): a wild companion's
+      // name / appearance / gear are assigned by CompanionRandomLoadout on a ~0.5s delay after
+      // spawn. Taming inside that window used to lock in a nameless companion — the loadout's own
+      // isTamed guard then refuses to ever run. Force the wild loadout to finalize NOW, while
+      // isTamed is still false so its guards allow it, so every tamed companion starts with a
+      // complete, persistable identity (which the kennel mirror below then stores authoritatively).
+      if (!HasCompleteIdentity())
+      {
+          var pendingLoadout = GetComponent<CompanionRandomLoadout>();
+          if (pendingLoadout != null)
+          {
+              try { pendingLoadout.GenerateRandomLoadout(); }
+              catch (Exception ex) { Debug.LogWarning($"[CompanionController] Pre-tame identity finalize failed: {ex.Message}"); }
+          }
+      }
+
       // Generate unique ID on taming if not already set
       if (string.IsNullOrEmpty(companionId))
     {
@@ -1690,6 +1604,13 @@ companionId = GenerateUniqueCompanionId();
             isTamed = true;
            ownerPlayerId = owner.GetPlayerID();
        isDefeated = false;
+
+            // Taming is a user action on THIS machine — claim the ZDO so the identity writes below
+            // (and SaveToZDO) are authoritative. Without this, a non-owned write under broad
+            // server-ownership transfer is overwritten by the owner's blank copy, and the tame
+            // silently never sticks (the root of "companion lost its name/owner after death").
+            if (_nview != null && _nview.IsValid() && !_nview.IsOwner())
+                _nview.ClaimOwnership();
 
            if (_character != null)
        {
@@ -2413,6 +2334,23 @@ private void RPC_TameCompanion(long sender)
                 Debug.Log($"[CompanionController] Saved to ZDO: {companionName} (ID: {companionId}), tamed={isTamed}, owner={ownerPlayerId}, following={shouldFollow}");
         }
 
+        /// <summary>
+        /// Persists EVERY companion sub-system (inventory + equipment, skills, progression, stats, kill
+        /// tracker) plus core identity to the ZDO in one call. The vault/kennel restore path loads all of
+        /// this into MEMORY but must then write it to the ZDO, or (a) remote clients read an empty ZDO
+        /// (naked, level 1) and (b) the companion's own deferred LoadFromZDO reads the empty fields back
+        /// and wipes the freshly-restored state. Mirrors the persist block in TryRestoreEquipmentFromVault.
+        /// </summary>
+        public void PersistAllToZDO()
+        {
+            _inventory?.SaveToZDO();
+            _skills?.SaveToZDO();
+            _progression?.SaveToZDO();
+            _stats?.SaveToZDO();
+            _killTracker?.SaveToZDO();
+            SaveToZDO();
+        }
+
         public void LoadFromZDO()
    {
             var zdo = _nview?.GetZDO();
@@ -2431,8 +2369,12 @@ private void RPC_TameCompanion(long sender)
     companionId = zdo.GetString("companion_id", companionId);
             companionName = zdo.GetString("companion_name", companionName);
             displayNameOverride = zdo.GetString("companion_displayname", "");
-       isTamed = zdo.GetBool("companion_tamed", false);
-  ownerPlayerId = zdo.GetLong("companion_owner", 0);
+            // Like id/name above, tamed/owner keep the CURRENT field values when the ZDO keys are
+            // absent. A restore path that set these in memory but couldn't complete its ZDO write
+            // (fresh ZNetView not yet valid) used to get reset to untamed/unowned here — producing
+            // the "recruit me for coins" / "belongs to someone else" blank companion.
+       isTamed = zdo.GetBool("companion_tamed", isTamed);
+  ownerPlayerId = zdo.GetLong("companion_owner", ownerPlayerId);
             isDefeated = zdo.GetBool("companion_defeated", false);
         defeatedTime = zdo.GetFloat("companion_defeatedtime", 0f);
             canFight = zdo.GetBool("companion_canfight", true);
@@ -2459,6 +2401,7 @@ private void RPC_TameCompanion(long sender)
      
     // Load follow state and apply to CompanionAI
          bool wasFollowing = zdo.GetBool("companion_wasfollowing", false);
+
 
          // CRITICAL: Only the owner's direct command (CommandFollow / CommandStay /
          // ForceDismiss / SetFollowMode / radial menu) is allowed to mutate the
@@ -2508,19 +2451,44 @@ if (isTamed)
             // Load inventory from ZDO first
        _inventory?.LoadFromZDO();
     
-      // Check if equipment was loaded from ZDO - if not, try to restore from vault
-     // But DON'T save back to vault during this restore to avoid overwriting good data
-    if (isTamed && ownerPlayerId != 0 && _inventory != null)
-            {
-     if (!_inventory.HasAnyEquipmentLoaded())
-            {
-    Debug.Log($"[CompanionController] ZDO equipment empty for {companionName}, attempting vault restore...");
-     TryRestoreEquipmentFromVault();
- }
-            }
-     
+      // (Legacy per-load vault equipment-restore removed — the kennel identity restore below is the
+      // single authoritative recovery path now that the companion store is the kennel, not the vault.)
+
  // Load skills
   _skills?.LoadFromZDO();
+
+            // ── KENNEL RESTORE (authoritative identity recovery) ─────────────────────────────────────
+            // A tamed companion whose world ZDO reloaded WITHOUT a finalized identity (no real name —
+            // a pre-fix corrupt save, or a ZDO written before its kennel mirror ran) restores its OWN
+            // name / loadout / appearance / stats from its kennel entry, keyed by companionId. This is
+            // the recovery path the vault used to provide. SERVER-ONLY: the server ApplyStates and
+            // re-persists to the world ZDO, which then syncs the recovered identity to every client.
+            // Placed AFTER inventory + skills load so ApplyState is the final authority — nothing
+            // reloads the empty ZDO over it. Keyed on "no real name" (the clear corruption signal); a
+            // named companion's live ZDO stays authoritative for its current gear.
+            if (isTamed && ownerPlayerId != 0L
+                && ZNet.instance != null && ZNet.instance.IsServer()
+                && FiresCore.Bridge.NpcDormancyBridge.IsAvailable
+                && !string.IsNullOrEmpty(companionId)
+                && !HasCompleteIdentity())
+            {
+                var kennelEntry = FiresCore.Bridge.NpcDormancyBridge.Get(ownerPlayerId, companionId);
+                if (kennelEntry?.Snapshot != null && !string.IsNullOrEmpty(kennelEntry.Snapshot.DisplayName))
+                {
+                    Debug.Log($"[CompanionController] Tamed companion {companionId} loaded incomplete — restoring identity " +
+                              $"'{kennelEntry.Snapshot.DisplayName}' from kennel (authoritative store).");
+                    try
+                    {
+                        ApplyState(kennelEntry.Snapshot);
+                        UpdateCharacterName(GetDisplayName());
+                        SaveToZDO(); // persist the recovered identity back to the world ZDO
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[CompanionController] Kennel identity restore failed for {companionId}: {ex.Message}");
+                    }
+                }
+            }
  
                     // Reconfigure AI if tamed
              if (isTamed)
@@ -2707,11 +2675,13 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
        try
  {
        var slot = (CompanionInventory.EquipmentSlot)Enum.Parse(typeof(CompanionInventory.EquipmentSlot), kvp.Key);
-    var quality = savedData.EquipmentQualities != null && savedData.EquipmentQualities.ContainsKey(kvp.Key) 
+    var quality = savedData.EquipmentQualities != null && savedData.EquipmentQualities.ContainsKey(kvp.Key)
    ? savedData.EquipmentQualities[kvp.Key] : 1;
-  
-    _inventory.RestoreEquipmentFromVault(slot, kvp.Value, quality);
-     Debug.Log($"[CompanionController] Restored equipment {slot} = {kvp.Value} (quality {quality})");
+    var stack = savedData.EquipmentStacks != null && savedData.EquipmentStacks.ContainsKey(kvp.Key)
+   ? savedData.EquipmentStacks[kvp.Key] : 1;
+
+    _inventory.RestoreEquipmentFromVault(slot, kvp.Value, quality, stack);
+     Debug.Log($"[CompanionController] Restored equipment {slot} = {kvp.Value} (quality {quality}, stack {stack})");
        }
   catch (Exception ex)
     {
@@ -2812,6 +2782,12 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         public void ApplyState(NpcSaveState state)
         {
             if (state == null) return;
+            // Dormancy restore calls this synchronously in the same frame as Instantiate — before
+            // Start() has run InitializeCompanion(), so _inventory/_skills/_stats/_progression are
+            // still null and RestoreInventory/RestoreProgressionSystems silently no-op: the companion
+            // came back named but naked at level 1. Init is idempotent (_initialized guard), so make
+            // sure the components exist before applying the snapshot.
+            InitializeCompanion();
             CompanionVault.RestoreCompanion(this, ToCompanionSaveData(state));
         }
 
@@ -2822,6 +2798,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
                 NpcId = sd.CompanionId,
                 PrefabName = sd.PrefabName,
                 DisplayName = !string.IsNullOrEmpty(sd.DisplayNameOverride) ? sd.DisplayNameOverride : sd.CompanionName,
+                BaseName = sd.CompanionName,
                 OwnerPlayerId = sd.OwnerPlayerId,
                 IsFollowing = sd.IsFollowing,
 
@@ -2847,12 +2824,14 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
 
                 EquipmentPrefabs = sd.EquipmentPrefabs != null ? new Dictionary<string, string>(sd.EquipmentPrefabs) : new Dictionary<string, string>(),
                 EquipmentQualities = sd.EquipmentQualities != null ? new Dictionary<string, int>(sd.EquipmentQualities) : new Dictionary<string, int>(),
+                EquipmentStacks = sd.EquipmentStacks != null ? new Dictionary<string, int>(sd.EquipmentStacks) : new Dictionary<string, int>(),
                 StorageInventoryData = sd.StorageInventoryData,
                 SkillsData = sd.SkillsData,
                 ProgressionData = sd.ProgressionData,
                 StatsData = sd.StatsData,
                 KillsData = sd.KillsData,
                 LuckData = sd.LuckData,
+                ArchetypeSkillsData = sd.ArchetypeSkillsData,
             };
         }
 
@@ -2861,8 +2840,11 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
             return new CompanionSaveData
             {
                 CompanionId = ns.NpcId,
-                CompanionName = ns.DisplayName,
-                DisplayNameOverride = ns.DisplayName,
+                // Round-trip both name fields distinctly. BaseName carries the underlying companionName;
+                // DisplayName carries the effective shown name. If they differ, there was a rename override.
+                // Old snapshots (no BaseName) fall back to DisplayName for both = prior behavior.
+                CompanionName = !string.IsNullOrEmpty(ns.BaseName) ? ns.BaseName : ns.DisplayName,
+                DisplayNameOverride = (!string.IsNullOrEmpty(ns.BaseName) && ns.DisplayName != ns.BaseName) ? ns.DisplayName : "",
                 PrefabName = ns.PrefabName,
                 OwnerPlayerId = ns.OwnerPlayerId,
                 IsFollowing = ns.IsFollowing,
@@ -2890,27 +2872,150 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
 
                 EquipmentPrefabs = ns.EquipmentPrefabs != null ? new Dictionary<string, string>(ns.EquipmentPrefabs) : new Dictionary<string, string>(),
                 EquipmentQualities = ns.EquipmentQualities != null ? new Dictionary<string, int>(ns.EquipmentQualities) : new Dictionary<string, int>(),
+                EquipmentStacks = ns.EquipmentStacks != null ? new Dictionary<string, int>(ns.EquipmentStacks) : new Dictionary<string, int>(),
                 StorageInventoryData = ns.StorageInventoryData,
                 SkillsData = ns.SkillsData,
                 ProgressionData = ns.ProgressionData,
                 StatsData = ns.StatsData,
                 KillsData = ns.KillsData,
                 LuckData = ns.LuckData,
+                ArchetypeSkillsData = ns.ArchetypeSkillsData,
             };
+        }
+
+        /// <summary>
+        /// Re-establishes stationed-NPC placement or the stay-mode home anchor after a kennel/dormancy
+        /// restore. ApplyState → CompanionVault.RestoreCompanion did NOT do this (only the legacy
+        /// RestoreCompanionFromVault path did), so on a dedi a "stay and guard" companion respawned at the
+        /// owner and wandered off, and a stationed NPC lost its post. Mirrors the stationed/stay branches of
+        /// CompanionRespawnManager. Follow intent is restored elsewhere (companion_wasfollowing + the
+        /// follow-teleport pipeline), so this only covers the stationed + stay-home cases.
+        /// </summary>
+        public void RestoreStationingAndHome(CompanionSaveData saveData)
+        {
+            if (saveData == null) return;
+            try
+            {
+                if (saveData.IsStationedAsNpc)
+                {
+                    var npcModule = GetComponent<FiresCore.Npc.NpcMode.CompanionNpcModule>()
+                                    ?? gameObject.AddComponent<FiresCore.Npc.NpcMode.CompanionNpcModule>();
+                    var pos = new Vector3(saveData.StationedPositionX, saveData.StationedPositionY, saveData.StationedPositionZ);
+                    var rot = Quaternion.Euler(0f, saveData.StationedRotationY, 0f);
+                    transform.position = pos;
+                    transform.rotation = rot;
+                    npcModule.allowIdleWandering = saveData.AllowIdleWandering;
+                    npcModule.StationAtPosition(pos, rot);
+                    npcModule.SaveToZDO();
+                    return;
+                }
+
+                // Not stationed and NOT following → restore the stay-home anchor so a guarding companion
+                // holds its post instead of running back to the owner. SaveToZDO (via PersistAllToZDO)
+                // then writes companion_hashome/homepos from the idle behavior.
+                if (!saveData.IsFollowing && saveData.HasHomePosition)
+                {
+                    var home = new Vector3(saveData.HomePositionX, saveData.HomePositionY, saveData.HomePositionZ);
+                    var combatMovement = GetComponent<CompanionCombatMovement>();
+                    if (combatMovement != null) { combatMovement.SetHomePosition(home); combatMovement.SetMoveDestination(home); }
+                    var idle = GetComponent<CompanionIdleBehavior>();
+                    if (idle != null) idle.SetHomePosition(home);
+                    var ai = GetCompanionAI();
+                    if (ai != null) { ai.SetShouldFollow(false); ai.SetStayPosition(home); }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionController] RestoreStationingAndHome failed for {companionName}: {ex.Message}");
+            }
         }
 
         #endregion
 
     public void SaveCompanionToVault()
     {
-        // Phase 6 (save refactor): vault is a debug mirror only. The
-        // live ZDO is authoritative for in-world state and the
-        // per-player roster is authoritative for follow / pending /
-        // dismissed state. CompanionVault.FlushDebugMirror runs on a
-        // periodic tick and rebuilds the vault JSON from those
-        // sources, so per-event saves like this one are no longer
-        // needed. Public method retained as a no-op for back-compat
-        // with any callers we haven't migrated yet.
+        // KENNEL-AUTHORITATIVE persistence (post-vault decouple). This is the alive-save hook,
+        // called at tame + every identity / gear / skill / stat change. It mirrors the companion's
+        // current state into the Core kennel as its Alive entry, making the kennel the single
+        // authoritative persistent companion store the way the old vault was — so a live companion
+        // whose world ZDO reloads incomplete can restore its OWN name/loadout/items from it.
+        //
+        // The legacy vault (debug mirror) and m_customData roster are gone from this path.
+        MirrorToKennel();
+    }
+
+    /// <summary>
+    /// True when this companion has a finalized, real identity — a proper name, not the prefab /
+    /// default placeholder written by CompanionPrefabManager before CompanionRandomLoadout dresses a
+    /// wild spawn. Gates kennel mirroring (never store a nameless snapshot) and drives the load-time
+    /// restore-from-kennel decision.
+    /// </summary>
+    public bool HasCompleteIdentity()
+    {
+        if (string.IsNullOrEmpty(companionName)) return false;
+        switch (companionName)
+        {
+            case "CompanionNpc_Wild":
+            case "CompanionNpc":
+            case "Companion NPC":
+            case "Companion":
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    /// <summary>
+    /// Upsert this companion's current snapshot into the kennel as its <see cref="DormancyKind.Alive"/>
+    /// entry. Captures ONLY on the companion's ZDO owner (the machine whose live state is
+    /// authoritative); CompanionKennel.Store handles transport — server-side it writes the kennel ZDO
+    /// directly, client-side it forwards over routed RPC. This closes the window where a companion
+    /// tamed and killed while client-owned never got an Alive kennel entry (the old server-only gate
+    /// meant only the 20s server reconciler wrote one, and it skipped client-owned companions).
+    /// No-op for untamed / unowned / defeated (the death handler owns the DeadPendingRespawn entry) /
+    /// not-yet-dressed companions.
+    /// </summary>
+    internal void MirrorToKennel(bool backstopFillIn = false)
+    {
+        if (!isTamed || ownerPlayerId == 0L) return;
+        if (isDefeated) return; // dead → death handler owns the DeadPendingRespawn entry
+        if (!FiresCore.Bridge.NpcDormancyBridge.IsAvailable) return;
+        if (!HasCompleteIdentity()) return; // never write a nameless placeholder
+
+        // Capture only when THIS peer authoritatively OWNS the companion — the owner's live state is
+        // fresh by definition; any other machine's copy can lag and would risk overwriting a good kennel
+        // entry with stale data.
+        if (_nview != null && !_nview.IsOwner())
+        {
+            // On a dedi the server is NOT the owner of a client-owned companion, so the per-companion
+            // MirrorToKennel above never fires server-side — meaning the server backstop can't recover
+            // if the client's per-event forward was dropped. As a SAFE backstop, fill in the kennel from
+            // the server's ZDO-backed copy ONLY when there is NO entry at all: this recovers a missing
+            // entry (the identity-loss case) without ever overwriting a good, fresher client entry.
+            if (!backstopFillIn) return;
+            if (FiresCore.Bridge.NpcDormancyBridge.Get(ownerPlayerId, companionId) != null) return;
+            try
+            {
+                FiresCore.Npc.Persistence.CompanionKennel.CaptureAndStore(
+                    ownerPlayerId, this, FiresCore.Bridge.DormancyKind.Alive, 0L);
+                Debug.Log($"[CompanionController] Kennel backstop: filled missing Alive entry for {companionName} (client-owned, no prior entry).");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionController] Kennel backstop failed for {companionName}: {ex.Message}");
+            }
+            return;
+        }
+
+        try
+        {
+            FiresCore.Npc.Persistence.CompanionKennel.CaptureAndStore(
+                ownerPlayerId, this, FiresCore.Bridge.DormancyKind.Alive, 0L);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[CompanionController] Kennel mirror failed for {companionName}: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -3120,6 +3225,24 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         public CompanionSkills GetSkills() => _skills;
         public CompanionStats GetStats() => _stats;
         public CompanionProgression GetProgression() => _progression;
+
+        // --- Effective level (vanilla-style stat scaling) -----------------------------------
+        // ONE level source for base health/damage scaling, shared by CompanionStats and
+        // CompanionEquipmentData so the two pipelines agree. Wild companions read their star
+        // level (the dresser's Character.SetLevel(1+stars)); tamed companions GROW with their
+        // progression level, banded into the same range so investment out-scales wild stars
+        // without going absurd. Vanilla-steep: health x level, damage x(1+(level-1)*0.5).
+        private const int TamedProgressionLevelsPerTier = 20;  // every N progression levels = +1 effective level
+        private const int MaxEffectiveLevel = 6;               // cap (mirrors the 0..6 biome gear tiers)
+
+        public int GetEffectiveLevel()
+        {
+            if (isTamed && _progression != null)
+                return Mathf.Clamp(1 + (_progression.Level / TamedProgressionLevelsPerTier), 1, MaxEffectiveLevel);
+            int starLevel = _character != null ? _character.GetLevel() : 1;
+            return Mathf.Clamp(starLevel, 1, MaxEffectiveLevel);
+        }
+
      public CompanionConsumables GetConsumables() => _consumables;
         public CompanionCombatMovement GetCombatMovement() => _combatMovement;
         public CompanionKillTracker GetKillTracker() => _killTracker;
@@ -3312,6 +3435,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
       // Equipment prefab names and qualities for full persistence
         public Dictionary<string, string> EquipmentPrefabs = new Dictionary<string, string>();
  public Dictionary<string, int> EquipmentQualities = new Dictionary<string, int>();
+        public Dictionary<string, int> EquipmentStacks = new Dictionary<string, int>();
 
   // Storage inventory as base64 ZPackage
   public string StorageInventoryData;
@@ -3332,7 +3456,11 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         
         // Luck data - the companion's luck stat for level scaling
         public string LuckData;
-        
+
+        // Archetype skill XP ("skill:level:xp,...") - owner-gated ZDO save never fires server-side, so
+        // this snapshot field is what carries it across a kennel-driven respawn.
+        public string ArchetypeSkillsData;
+
         // Respawn state - allows companion to respawn after logout during respawn timer
         public bool IsPendingRespawn;
         public float RespawnTimeRemaining; // Seconds remaining at time of save

@@ -72,6 +72,7 @@ namespace FiresCore.Npc.Archetypes
         private CompanionCombatMovement _movement;
         private CompanionInventory _inventory;
         private CompanionStats _stats;
+        private CompanionEquipmentData _equipmentData;
         private CompanionProgression _progression;
         private StaminaManager _staminaManager;
         private Character _character;
@@ -166,6 +167,7 @@ namespace FiresCore.Npc.Archetypes
             _movement = GetComponent<CompanionCombatMovement>();
             _inventory = GetComponent<CompanionInventory>();
             _stats = GetComponent<CompanionStats>();
+            _equipmentData = GetComponent<CompanionEquipmentData>();
             _progression = GetComponent<CompanionProgression>();
             _staminaManager = GetComponent<StaminaManager>();
             _character = GetComponent<Character>();
@@ -1008,19 +1010,25 @@ namespace FiresCore.Npc.Archetypes
                 }
             }
             
-            // Apply combat modifiers (only if method exists)
-            // CompanionCombat may not have SetArchetypeModifiers method
-            /*
-            if (_combat != null)
+            // Apply health / move-speed / damage / armor modifiers. Mirrors the stamina wiring above:
+            // each archetype multiplier is scaled by level (GetScaledBonus) and pushed to the component
+            // that owns that stat, stacking ON TOP of the vanilla-style effective-level scaling. Damage and
+            // armor land in CompanionEquipmentData (the custom outgoing-damage + the damage-prefix mitigation);
+            // health and move-speed land in CompanionStats.
+            if (_stats != null)
             {
-                _combat.SetArchetypeModifiers(
-                    _currentDefinition.GetScaledBonus(_currentDefinition.AttackDamageMultiplier, level),
-                    _currentDefinition.GetScaledBonus(_currentDefinition.AttackSpeedMultiplier, level),
-                    _currentDefinition.CriticalChanceBonus + (level * 0.005f),
-                    _currentDefinition.GetScaledBonus(_currentDefinition.CriticalDamageMultiplier, level),
-                    _currentDefinition.GetScaledBonus(blockPriorityMultiplier, level));
+                _stats.SetArchetypeHealthMultiplier(_currentDefinition.GetScaledBonus(_currentDefinition.MaxHealthMultiplier, level));
+                _stats.SetArchetypeSpeedMultiplier(_currentDefinition.GetScaledBonus(_currentDefinition.MovementSpeedMultiplier, level));
             }
-            */
+            if (_equipmentData != null)
+            {
+                _equipmentData.SetArchetypeDamageMultiplier(_currentDefinition.GetScaledBonus(_currentDefinition.AttackDamageMultiplier, level));
+                _equipmentData.SetArchetypeArmorMultiplier(_currentDefinition.GetScaledBonus(_currentDefinition.ArmorMultiplier, level));
+                _equipmentData.SetArchetypeAttackSpeedMultiplier(_currentDefinition.GetScaledBonus(_currentDefinition.AttackSpeedMultiplier, level));
+                _equipmentData.SetArchetypeCrit(
+                    _currentDefinition.CriticalChanceBonus + (level * 0.005f),
+                    _currentDefinition.GetScaledBonus(_currentDefinition.CriticalDamageMultiplier, level));
+            }
         }
         
         private void ConfigureAsTank()

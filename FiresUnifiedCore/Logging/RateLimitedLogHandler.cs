@@ -33,6 +33,11 @@ namespace FiresCore.Logging
         private const string KinematicAngularFragment     = "Setting angular velocity of a kinematic body is not supported";
         private const string ShieldGeneratorStackFragment = "ShieldGenerator.OnDestroy";
         private const string ArcheryTargetStackFragment   = "ArcheryTarget.Start";
+        // ExpandWorld Prefabs throws an unhandled NRE in its ZDO-destroy handler (reads a null prefab name for every
+        // destroyed dungeon/streamed ZDO it doesn't recognise). It is a third-party bug we cannot fix; without this it
+        // floods the relay thousands of times per session. Matched on its throw-site frame (works through the
+        // TargetInvocationException the routed-RPC dispatch wraps it in).
+        private const string ExpandWorldPrefabDestroyFragment = "ExpandWorld.Prefab.Manager.Handle";
 
         private const double LimitExceededThrottleSeconds   = 30.0;
         private const int    NreSummaryEmitInterval         = 50;
@@ -57,15 +62,23 @@ namespace FiresCore.Logging
 
         public void LogFormat(LogType logType, UnityEngine.Object context, string format, params object[] args)
         {
-            if (!VerbosePassThrough() && ShouldSuppress(logType, format, args)) return;
+            string message = ResolveMessage(format, args);
+
+            // Drop the raw native-console echo for our OWN mods' lines. Every Debug.Log ALSO reaches BepInEx via
+            // Application.logMessageReceived (independent of this handler), where FiresLogColorPatch prints it as a
+            // single colored line — so forwarding to the native writer here is exactly what produces the second,
+            // uncolored "white duplicate". Suppressing the native echo leaves only the colored BepInEx line, the
+            // same result mods get by logging through their own ManualLogSource. Not verbose-gated: this removes a
+            // redundant duplicate, not diagnostic content, so it applies even in verbose mode.
+            if (FiresLogColorPatch.IsOurModMessage(message)) return;
+
+            if (!VerbosePassThrough() && ShouldSuppress(logType, message)) return;
             _inner.LogFormat(logType, context, format, args);
         }
 
         public void LogException(Exception exception, UnityEngine.Object context)
         {
-            if (!VerbosePassThrough()
-                && exception is NullReferenceException
-                && IsKnownVanillaNre(exception))
+            if (!VerbosePassThrough() && IsKnownNoFixNre(exception))
             {
                 _suppressedValheimNreBugs++;
                 EmitNreSummaryIfDue();
@@ -161,9 +174,8 @@ namespace FiresCore.Logging
             catch { return false; }
         }
 
-        private bool ShouldSuppress(LogType logType, string format, object[] args)
+        private bool ShouldSuppress(LogType logType, string message)
         {
-            string message = ResolveMessage(format, args);
             if (string.IsNullOrEmpty(message)) return false;
 
             if (logType == LogType.Warning && IsKinematicVelocityWarning(message))
@@ -216,12 +228,19 @@ namespace FiresCore.Logging
             return false;
         }
 
-        private static bool IsKnownVanillaNre(Exception exception)
+        // Known NRE stacks we have no fix for: vanilla bugs (ShieldGenerator, ArcheryTarget) and third-party floods we
+        // cannot patch (ExpandWorld Prefabs' unhandled ZDO-destroy NRE). Scans the whole inner-exception chain because
+        // the routed-RPC dispatch wraps the real throw in a TargetInvocationException.
+        private static bool IsKnownNoFixNre(Exception exception)
         {
-            string stack = exception?.StackTrace;
-            if (string.IsNullOrEmpty(stack)) return false;
-            if (stack.Contains(ShieldGeneratorStackFragment)) return true;
-            if (stack.Contains(ArcheryTargetStackFragment)) return true;
+            for (Exception e = exception; e != null; e = e.InnerException)
+            {
+                string stack = e.StackTrace;
+                if (string.IsNullOrEmpty(stack)) continue;
+                if (stack.Contains(ShieldGeneratorStackFragment)) return true;
+                if (stack.Contains(ArcheryTargetStackFragment)) return true;
+                if (stack.Contains(ExpandWorldPrefabDestroyFragment)) return true;
+            }
             return false;
         }
 
@@ -229,7 +248,7 @@ namespace FiresCore.Logging
         {
             if (_suppressedValheimNreBugs != 1 && _suppressedValheimNreBugs % NreSummaryEmitInterval != 0) return;
             _inner.LogFormat(LogType.Log, null,
-                $"{LogPrefix} Suppressed {{0}} known Valheim NRE bugs (ShieldGenerator, ArcheryTarget, etc.) - set verbose to surface.",
+                $"{LogPrefix} Suppressed {{0}} known no-fix NRE floods (vanilla ShieldGenerator/ArcheryTarget + ExpandWorld prefab-destroy) - set verbose to surface.",
                 _suppressedValheimNreBugs);
         }
 

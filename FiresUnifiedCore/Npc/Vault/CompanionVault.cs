@@ -286,10 +286,22 @@ namespace FiresCore.Npc.Vault
                 
                 // Restore scale
                 RestoreScale(companion, saveData);
-                
-                if (VerboseLogging)
-                    Debug.Log($"[CompanionVault] Restored {companion.companionName} from vault");
-                
+
+                // Re-establish stationed placement / stay-mode home anchor — the dormancy/ApplyState path
+                // skipped these (only the legacy respawn path restored them), so a stationed NPC lost its
+                // post and a "stay and guard" companion respawned at the owner and wandered off.
+                companion.RestoreStationingAndHome(saveData);
+
+                // CRITICAL: the Restore* helpers above load equipment/skills/stats/progression into
+                // MEMORY only (RestoreToZDO wrote just identity/appearance/scale). Persist everything to
+                // the ZDO now, or clients read an empty ZDO (naked, level 1) and the companion's own
+                // deferred LoadFromZDO (~1s later) reads those empty fields back and wipes the restore.
+                // On a dedicated server this now actually writes — the teleport-suppression gate no
+                // longer blocks server-side saves (see AreCompanionTeleportsSuppressed).
+                companion.PersistAllToZDO();
+
+                Debug.Log($"[CompanionVault] Restored {companion.companionName} from vault and persisted to ZDO");
+
                 return true;
             }
             catch (Exception ex)
@@ -474,6 +486,7 @@ namespace FiresCore.Npc.Vault
                 var slotStr = kvp.Key.ToString();
                 saveData.EquipmentPrefabs[slotStr] = kvp.Value.prefab;
                 saveData.EquipmentQualities[slotStr] = kvp.Value.quality;
+                saveData.EquipmentStacks[slotStr] = kvp.Value.stack;
             }
             
             // Storage inventory
@@ -522,7 +535,14 @@ namespace FiresCore.Npc.Vault
             {
                 saveData.KillsData = killTracker.GetKillsDataForVault();
             }
-            
+
+            // Archetype skills (separate component; owner-gated ZDO save can't run server-side)
+            var archetypeSkills = companion.GetComponent<FiresCore.Npc.Archetypes.ArchetypeSkillSystem>();
+            if (archetypeSkills != null)
+            {
+                saveData.ArchetypeSkillsData = archetypeSkills.GetSkillsDataForVault();
+            }
+
             // Luck
             var luck = companion.GetComponent<CompanionLuck>();
             if (luck != null)
@@ -590,8 +610,10 @@ namespace FiresCore.Npc.Vault
                             typeof(CompanionInventory.EquipmentSlot), kvp.Key);
                         var quality = saveData.EquipmentQualities != null && saveData.EquipmentQualities.ContainsKey(kvp.Key)
                             ? saveData.EquipmentQualities[kvp.Key] : 1;
-                        
-                        inventory.RestoreEquipmentFromVault(slot, kvp.Value, quality);
+                        var stack = saveData.EquipmentStacks != null && saveData.EquipmentStacks.ContainsKey(kvp.Key)
+                            ? saveData.EquipmentStacks[kvp.Key] : 1;
+
+                        inventory.RestoreEquipmentFromVault(slot, kvp.Value, quality, stack);
                     }
                     catch (Exception ex)
                     {
@@ -657,6 +679,13 @@ namespace FiresCore.Npc.Vault
             {
                 var luck = companion.GetComponent<CompanionLuck>();
                 luck?.RestoreLuckFromVault(saveData.LuckData);
+            }
+
+            // Archetype skills
+            if (!string.IsNullOrEmpty(saveData.ArchetypeSkillsData))
+            {
+                var archetypeSkills = companion.GetComponent<FiresCore.Npc.Archetypes.ArchetypeSkillSystem>();
+                archetypeSkills?.RestoreSkillsFromVault(saveData.ArchetypeSkillsData);
             }
         }
         

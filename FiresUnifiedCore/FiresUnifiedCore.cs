@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using BepInEx;
 using UnityEngine;
 using FiresCore.Config;
@@ -22,7 +22,12 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.1.0";
+        public const string PluginVersion = "0.1.75";
+
+        // Core's BepInEx log source. The shared LoadSummary banner emitter routes
+        // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
+        // white duplicate in the console next to BepInEx's formatted line.
+        public static BepInEx.Logging.ManualLogSource Log;
 
         public ConfigSync configSync;
 
@@ -48,14 +53,32 @@ namespace FiresCore
                 // Connection-reject panel patches FejdStartup.ShowConnectError (client-only menu);
                 // same IL-rewriter crash class as the other FejdStartup patches above.
                 "FiresCore.Bridge.FiresConnectReasonPanel",
+                // Env-box config popup: Hud.Update Esc/cursor driver + logout guard touch client-only UI. Skip headless.
+                "FiresCore.UI.EnvironmentBoxPanel+Hud_Update_Patch",
+                "FiresCore.UI.EnvironmentBoxPanel+ZNet_Shutdown_PanelGuard",
             };
 
         protected override void Setup()
         {
-            Debug.Log($"[{PluginName}] Awake() — version {PluginVersion}");
+            Log = Logger;
+            FiresCoreBanner.PrintBig();
+            Debug.Log($"[{PluginName}] Awake() â€” version {PluginVersion}");
+
+            // Consolidate + group the whole Fires-family config folder before anything reads it this session.
+            FiresCore.Storage.FiresConfigPaths.Migrate();
 
             InstallLogFilter();
             InitializeConfigAndSync();
+
+            // The Diagnostics guards attach EXPLICITLY with read-back verification â€” the
+            // attribute-based versions compiled into 0.1.60-0.1.65 but never attached in the
+            // field (EnemyHud.TestShow NRE persisted with zero guard log lines). The client
+            // gate mirrors the DedicatedServerSkipPatchTypes rationale: patching the
+            // client-only EnemyHud type on a headless server native-crashes the IL rewriter;
+            // the Character.OnDestroy finalizer + s_characters sweep stay active on the dedi.
+            bool guardsClientSide = SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null;
+            FiresCore.Diagnostics.CharacterListLeakGuard.Register(Harmony, guardsClientSide);
+            FiresCore.Diagnostics.VisEquipmentDropPrefabHeal.Register(Harmony);
 
             // Bind the Fires config window's own appearance (font/opacity/accent) into Core's config and
             // register it, so an "Appearance" section shows right in the window and restyles live.
@@ -63,12 +86,14 @@ namespace FiresCore
 
             // Auto-engage the shared text-capture gate whenever a UI text field is focused, so typing into any
             // Fires field stops leaking keystrokes to vanilla / other-mod hotkeys (e.g. a 'g' firing another
-            // mod's [G] toggle). Client-only — a headless server has no EventSystem or typing UI.
+            // mod's [G] toggle). Client-only â€” a headless server has no EventSystem or typing UI.
             if (!Application.isBatchMode)
             {
                 FiresCore.Input.FiresInputBlockDriver.Ensure();
 
-                // Hold-Alt right-click context menus. Core owns the system + input gate; mods register providers.
+                // Hold-modifier right-click context menus. Core owns the system + input gate; mods register
+                // providers. Bind the (client-local) enable + rebindable-modifier config before starting the driver.
+                FiresCore.UI.ContextMenu.ContextMenuConfig.Initialize(Config);
                 FiresCore.UI.ContextMenu.FiresContextMenuDriver.Ensure();
             }
         }
@@ -79,7 +104,7 @@ namespace FiresCore
 
         protected override void WorldStart()
         {
-            Debug.Log($"[{PluginName}] Loaded.");
+            FiresCoreBanner.Print();
 
             // Re-enumerate config now that every mod has bound (some bind after Core.Setup). The window also
             // rebuilds on open, but this primes the cache so va_config_dump is accurate before first open.
@@ -129,7 +154,7 @@ namespace FiresCore
 
             // BalrondCompat: server-locked toggles for our neutralization patches against specific
             // BalrondAmazingNature behaviors. Patches auto-activate through Harmony.PatchAll and
-            // each one self-gates on its config entry — default-on so a fresh install gets the
+            // each one self-gates on its config entry â€” default-on so a fresh install gets the
             // fixes (e.g. Mistlands locations stay in Mistlands, not spilling mist into DeepNorth).
             FiresCore.Compat.Balrond.BalrondCompatConfig.Initialize(Config);
             FiresCore.Compat.Balrond.BalrondCompatConfig.BindToSync(configSync);
@@ -143,7 +168,7 @@ namespace FiresCore
             FiresCore.Bridge.GroupHudBridge.IsBlockingUiOpen = FiresCore.Bridge.ModUiRegistry.IsAnyOpen;
             FiresCore.Npc.CompanionGroupHudProvider.Register();
 
-            // HuntList: server-synced, admin-editable list of passive "hunt-only" prey (deer/boar/…)
+            // HuntList: server-synced, admin-editable list of passive "hunt-only" prey (deer/boar/â€¦)
             // that companions ignore unless Hunt is toggled on or the creature attacks first.
             FiresCore.Npc.HuntListConfig.Initialize(Config);
             FiresCore.Npc.HuntListConfig.BindToSync(configSync);
@@ -153,6 +178,11 @@ namespace FiresCore
             // pathfinding still moves, flip off to revert instantly.
             FiresCore.Npc.Core.MovementGateConfig.Initialize(Config);
             FiresCore.Npc.Core.MovementGateConfig.BindToSync(configSync);
+
+            // SmoothSpeedRamp: ease companion run speed up to full instead of snapping (ported from
+            // FiresValcast NaturalWalk; min/max = the companion's own walk/run speed). Default ON.
+            FiresCore.Npc.Core.MovementRampConfig.Initialize(Config);
+            FiresCore.Npc.Core.MovementRampConfig.BindToSync(configSync);
         }
 
         private void TryDisposeConfigManager()

@@ -17,7 +17,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Initialize the codex by scanning all JSON files in the UILayouts directory.
-        /// Safe to call multiple times — only loads once unless Reload() is called.
+        /// Safe to call multiple times ï¿½ only loads once unless Reload() is called.
         /// </summary>
         public static void Init()
         {
@@ -35,6 +35,10 @@ namespace FiresCore.UI
             Reload();
         }
 
+        // Reload fires once per synced layout FILE at login (29 files = 29 reloads) â€” only say
+        // something when the set actually changed.
+        private static int _lastLoggedCount = -1;
+
         /// <summary>
         /// Force-reload all layouts from disk. Called after server sync or file changes.
         /// </summary>
@@ -43,7 +47,11 @@ namespace FiresCore.UI
             try
             {
                 _layouts = UILayoutSerializer.LoadAll();
-                Debug.Log($"[UILayoutCodex] Loaded {_layouts.Count} layout(s)");
+                if (_layouts.Count != _lastLoggedCount)
+                {
+                    _lastLoggedCount = _layouts.Count;
+                    Debug.Log($"[UILayoutCodex] Loaded {_layouts.Count} layout(s)");
+                }
             }
             catch (Exception ex)
             {
@@ -96,7 +104,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Adds or replaces a layout in the in-memory cache.
-        /// Does NOT save to disk — use UILayoutSerializer.SaveToFile for persistence.
+        /// Does NOT save to disk ï¿½ use UILayoutSerializer.SaveToFile for persistence.
         /// </summary>
         public static void AddOrReplace(UILayoutDefinition layout)
         {

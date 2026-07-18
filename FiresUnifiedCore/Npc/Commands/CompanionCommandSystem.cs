@@ -241,6 +241,7 @@ namespace FiresCore.Npc.Commands
 
         private void ProcessCommandInput()
         {
+            if (FiresCore.Input.FiresInputBlock.IsCapturing) return; // typing in a Fires field — don't fire command hotkeys
             // Check for modifier + mouse button (ping command)
             bool shiftHeld = UnityEngine.Input.GetKey(modifierKey) || UnityEngine.Input.GetKey(KeyCode.RightShift);
             bool altHeld = UnityEngine.Input.GetKey(KeyCode.LeftAlt) || UnityEngine.Input.GetKey(KeyCode.RightAlt);
@@ -718,7 +719,15 @@ namespace FiresCore.Npc.Commands
 
             GameObject hitObj = hit.collider.gameObject;
             Vector3 hitPoint = hit.point;
+            return ResolveCommand(hitObj, hitPoint);
+        }
 
+        /// <summary>
+        /// Maps a hit object + point to the command a companion should run there. Public so the context menu
+        /// offers the same actions on Alt+Shift right-click that Shift+MMB issues.
+        /// </summary>
+        public (CommandType type, Vector3 position, GameObject targetObj, Character targetChar)? ResolveCommand(GameObject hitObj, Vector3 hitPoint)
+        {
             // Check what we hit and determine command type
 
             // 1. Check for Character (enemy, creature, NPC)
@@ -2675,6 +2684,12 @@ namespace FiresCore.Npc.Commands
             var target = (type, position, targetObj, targetChar);
             IssueCommand(companion, target);
         }
+
+        /// <summary>
+        /// Owned, following, non-stationed companions the local player can command (mirrors the Shift+MMB ping
+        /// filter). Public so the context menu offers the same per-companion commands.
+        /// </summary>
+        public List<CompanionController> GetCommandableCompanions(Player player) => GetOwnedCompanions(player);
 
         #endregion
 

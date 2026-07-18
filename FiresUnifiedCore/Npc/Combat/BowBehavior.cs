@@ -72,6 +72,9 @@ namespace FiresCore.Npc.Combat
         private const float REPOSITION_DURATION = 1.0f;
       private const float PLANT_DURATION = 0.1f; // Very quick plant
   private const float THREAT_CHECK_INTERVAL = 0.15f;
+        // How long a bow companion will run away trying to open distance before it gives up and plants to fire
+        // anyway. Prevents the "run in place forever against a same-speed enemy, never firing" loop up close.
+        private const float RETREAT_GIVEUP_TIME = 1.2f;
 
         #endregion
         
@@ -288,29 +291,32 @@ namespace FiresCore.Npc.Combat
         
         private void HandleDangerZone(Character target)
         {
+            // Point-blank. We do NOT cancel-and-run here: a melee enemy matches our move speed, so retreating
+            // never opens distance and the old code looped forever (draw -> too close -> cancel -> retreat ->
+            // draw ...) without ever firing — the "bow companion is useless up close" bug. Instead we COMMIT to
+            // the shot, take the hit if we must, and only reposition once the arrow is away.
+            _retreatAfterShot = true;
+            _retreatThreat = target;
+
             if (_isBowDrawing)
             {
+                // Already drawing: release as soon as possible. Drop the draw target to the emergency floor and
+                // fire the instant we reach it. NEVER cancel a live draw for proximity.
+                _targetDrawPercent = QUICK_DRAW_PERCENT;
                 float drawProgress = GetCurrentDrawPercent();
                 if (drawProgress >= QUICK_DRAW_PERCENT)
-                {
-                    // Fire and then retreat (backpedal)
-                    _retreatAfterShot = true;
-                    _retreatThreat = target;
                     CompleteBowShot(drawProgress);
-                }
-                else
-                {
-                    // Draw too low - cancel and retreat
-                    CancelBowDraw();
-                    SetPhase(RangedCombatPhase.Retreating);
-                    RequestMovement(MovementRequest.RunAway, -GetDirectionToTarget(target));
-                }
+                // else keep drawing — UpdateBowDraw fires the moment we hit QUICK_DRAW_PERCENT.
+                return;
             }
-            else if (_currentPhase != RangedCombatPhase.Retreating)
+
+            // Not drawing yet: plant and quick-draw right here rather than fleeing. A brief backpedal is fine,
+            // but we are committing to get the shot off.
+            _targetDrawPercent = QUICK_DRAW_PERCENT;
+            if (_currentPhase != RangedCombatPhase.Planting && _currentPhase != RangedCombatPhase.Drawing)
             {
-                // Not drawing - just retreat
-                SetPhase(RangedCombatPhase.Retreating);
-                RequestMovement(MovementRequest.RunAway, -GetDirectionToTarget(target));
+                SetPhase(RangedCombatPhase.Planting);
+                RequestMovement(MovementRequest.Backpedal, -GetDirectionToTarget(target));
             }
         }
       
@@ -481,17 +487,29 @@ private void DecideNextAction(Character target)
         }
         
         private void UpdateRetreating(Character target)
-  {
-       if (_lastKnownTargetDistance >= OPTIMAL_MIN)
-       {
-            _targetDrawPercent = _lastKnownTargetDistance < CLOSE_RANGE ? FAST_DRAW_PERCENT : FULL_DRAW_PERCENT;
- SetPhase(RangedCombatPhase.Planting);
-    RequestMovement(MovementRequest.Stop, Vector3.zero);
-     return;
-     }
-            
-   RequestMovement(MovementRequest.RunAway, -GetDirectionToTarget(target));
-   }
+        {
+            // Opened enough distance -> plant and shoot.
+            if (_lastKnownTargetDistance >= OPTIMAL_MIN)
+            {
+                _targetDrawPercent = _lastKnownTargetDistance < CLOSE_RANGE ? FAST_DRAW_PERCENT : FULL_DRAW_PERCENT;
+                SetPhase(RangedCombatPhase.Planting);
+                RequestMovement(MovementRequest.Stop, Vector3.zero);
+                return;
+            }
+
+            // Can't open the gap (enemy matches our speed) -> don't run in place forever. After a short attempt,
+            // plant and quick-draw anyway: take the hit, get the shot off. This is what stops a cornered bow
+            // companion from endlessly retreating without firing.
+            if (Time.time - _phaseStartTime >= RETREAT_GIVEUP_TIME)
+            {
+                _targetDrawPercent = QUICK_DRAW_PERCENT;
+                SetPhase(RangedCombatPhase.Planting);
+                RequestMovement(MovementRequest.Backpedal, -GetDirectionToTarget(target));
+                return;
+            }
+
+            RequestMovement(MovementRequest.RunAway, -GetDirectionToTarget(target));
+        }
         
         private void DecideRepositionDirection(Character target)
         {
@@ -697,7 +715,10 @@ Context.Animator.SetFloat("drawpercent", 0f);
            // unsightable enemies in the first place, but a target can move into
            // cover after engagement begins ï¿½ this catches that case so we don't
            // waste arrows into walls in dungeons.
-           if (Context.CompanionAI != null && !Context.CompanionAI.HasClearShotToCurrentTarget())
+           // Only abort-and-reposition for a blocked shot at RANGE (obstacle between us in a dungeon, etc). At
+           // point-blank the target is right in our face — LOS is effectively clear and canceling would just feed
+           // the useless-up-close loop, so we commit and fire regardless.
+           if (Context.CompanionAI != null && _lastKnownTargetDistance > CLOSE_RANGE && !Context.CompanionAI.HasClearShotToCurrentTarget())
            {
                if (CompanionCombat.VerboseLogging)
                {

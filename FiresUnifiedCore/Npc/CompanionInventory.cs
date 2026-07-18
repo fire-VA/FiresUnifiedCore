@@ -60,6 +60,9 @@ namespace FiresCore.Npc
         private int _equipRightBackQuality = 1;
         private int _equipLeftBackQuality = 1;
 
+        // Stack counts for equipped items (throwables/bombs deplete per attack). Absent slot = 1.
+        private readonly Dictionary<EquipmentSlot, int> _equipStacks = new Dictionary<EquipmentSlot, int>();
+
         private ZNetView _nview;
         private Inventory _inventory; // General storage inventory
   private CompanionController _companion;
@@ -572,7 +575,7 @@ EnsureInitialized();
       string prefabName = GetItemPrefabName(item);
       
      // Store prefab name for persistence
-      SetEquipmentPrefabName(slot, prefabName, item.m_quality);
+      SetEquipmentPrefabName(slot, prefabName, item.m_quality, item.m_stack);
 
             // Recalculate stats
           RecalculateEquipmentBonuses();
@@ -620,7 +623,7 @@ EnsureInitialized();
    string prefabName = GetItemPrefabName(item);
       
             // Store prefab name for persistence
-   SetEquipmentPrefabName(slot, prefabName, item.m_quality);
+   SetEquipmentPrefabName(slot, prefabName, item.m_quality, item.m_stack);
 
             return true;
         }
@@ -851,8 +854,10 @@ case ItemDrop.ItemData.ItemType.Utility:
   /// <summary>
         /// Sets the equipment prefab name for a slot (used for persistence).
   /// </summary>
-     private void SetEquipmentPrefabName(EquipmentSlot slot, string prefabName, int quality)
+     private void SetEquipmentPrefabName(EquipmentSlot slot, string prefabName, int quality, int stack = 1)
         {
+            if (string.IsNullOrEmpty(prefabName)) _equipStacks.Remove(slot);
+            else _equipStacks[slot] = Mathf.Max(1, stack);
   switch (slot)
    {
   case EquipmentSlot.Helmet: _equipHelmet = prefabName; _equipHelmetQuality = quality; break;
@@ -890,6 +895,27 @@ case ItemDrop.ItemData.ItemType.Utility:
         /// <summary>
         /// Gets the equipment quality for a slot.
         /// </summary>
+        private int GetEquipmentStack(EquipmentSlot slot)
+        {
+            return _equipStacks.TryGetValue(slot, out var stack) ? Mathf.Max(1, stack) : 1;
+        }
+
+        /// <summary>
+        /// Updates the persisted stack count for an equipped slot (consumable throwables deplete per
+        /// attack). Clamps to 1 — depleting the last one goes through UnequipSlot, not a zero stack.
+        /// Caller persists via TriggerSaveToZDO.
+        /// </summary>
+        public void SetEquippedStack(EquipmentSlot slot, int stack)
+        {
+            if (!_equippedItems.ContainsKey(slot)) return;
+            _equipStacks[slot] = Mathf.Max(1, stack);
+        }
+
+        public int GetEquipmentStackPublic(EquipmentSlot slot)
+        {
+            return GetEquipmentStack(slot);
+        }
+
         private int GetEquipmentQuality(EquipmentSlot slot)
         {
   return slot switch
@@ -1195,21 +1221,21 @@ case ItemDrop.ItemData.ItemType.Utility:
         /// Restores equipment from vault data.
         /// Sets the prefab name and recreates the ItemData.
         /// </summary>
-        public void RestoreEquipmentFromVault(EquipmentSlot slot, string prefabName, int quality)
+        public void RestoreEquipmentFromVault(EquipmentSlot slot, string prefabName, int quality, int stack = 1)
         {
    if (string.IsNullOrEmpty(prefabName)) return;
-   
+
             // CRITICAL: Skip equipment on ghost/preview objects (hammer placement preview)
             if (IsGhostPreview()) return;
 
           // Set the prefab name for persistence
-            SetEquipmentPrefabName(slot, prefabName, quality);
+            SetEquipmentPrefabName(slot, prefabName, quality, stack);
 
     // Recreate the ItemData
-            LoadEquipmentSlotFromPrefab(slot, prefabName, quality);
+            LoadEquipmentSlotFromPrefab(slot, prefabName, quality, stack);
 
      if (FiresLogger.VerboseEnabled)
-         Debug.Log($"[CompanionInventory] Restored {slot} = {prefabName} (quality {quality}) from vault");
+         Debug.Log($"[CompanionInventory] Restored {slot} = {prefabName} (quality {quality}, stack {stack}) from vault");
         }
 
         /// <summary>
@@ -1297,16 +1323,23 @@ string inventoryData = zdo.GetString("companion_inventory", "");
                     try
                     {
                         var eqPkg = new ZPackage(packedEquip);
-                        int version = eqPkg.ReadInt(); // currently 1
-                        _equipHelmet     = eqPkg.ReadString(); _equipHelmetQuality     = eqPkg.ReadInt();
-                        _equipChest      = eqPkg.ReadString(); _equipChestQuality      = eqPkg.ReadInt();
-                        _equipLegs       = eqPkg.ReadString(); _equipLegsQuality       = eqPkg.ReadInt();
-                        _equipShoulder   = eqPkg.ReadString(); _equipShoulderQuality   = eqPkg.ReadInt();
-                        _equipUtility    = eqPkg.ReadString(); _equipUtilityQuality    = eqPkg.ReadInt();
-                        _equipRightHand  = eqPkg.ReadString(); _equipRightHandQuality  = eqPkg.ReadInt();
-                        _equipLeftHand   = eqPkg.ReadString(); _equipLeftHandQuality   = eqPkg.ReadInt();
-                        _equipRightBack  = eqPkg.ReadString(); _equipRightBackQuality  = eqPkg.ReadInt();
-                        _equipLeftBack   = eqPkg.ReadString(); _equipLeftBackQuality   = eqPkg.ReadInt();
+                        int version = eqPkg.ReadInt(); // 1 = name+quality, 2 = +stack
+                        _equipStacks.Clear();
+                        int ReadStack(EquipmentSlot slot)
+                        {
+                            int stack = version >= 2 ? eqPkg.ReadInt() : 1;
+                            if (stack > 1) _equipStacks[slot] = stack;
+                            return stack;
+                        }
+                        _equipHelmet     = eqPkg.ReadString(); _equipHelmetQuality     = eqPkg.ReadInt(); ReadStack(EquipmentSlot.Helmet);
+                        _equipChest      = eqPkg.ReadString(); _equipChestQuality      = eqPkg.ReadInt(); ReadStack(EquipmentSlot.Chest);
+                        _equipLegs       = eqPkg.ReadString(); _equipLegsQuality       = eqPkg.ReadInt(); ReadStack(EquipmentSlot.Legs);
+                        _equipShoulder   = eqPkg.ReadString(); _equipShoulderQuality   = eqPkg.ReadInt(); ReadStack(EquipmentSlot.Shoulder);
+                        _equipUtility    = eqPkg.ReadString(); _equipUtilityQuality    = eqPkg.ReadInt(); ReadStack(EquipmentSlot.Utility);
+                        _equipRightHand  = eqPkg.ReadString(); _equipRightHandQuality  = eqPkg.ReadInt(); ReadStack(EquipmentSlot.RightHand);
+                        _equipLeftHand   = eqPkg.ReadString(); _equipLeftHandQuality   = eqPkg.ReadInt(); ReadStack(EquipmentSlot.LeftHand);
+                        _equipRightBack  = eqPkg.ReadString(); _equipRightBackQuality  = eqPkg.ReadInt(); ReadStack(EquipmentSlot.RightBack);
+                        _equipLeftBack   = eqPkg.ReadString(); _equipLeftBackQuality   = eqPkg.ReadInt(); ReadStack(EquipmentSlot.LeftBack);
                         loadedFromPacked = true;
                     }
                     catch (Exception ex)
@@ -1317,6 +1350,7 @@ string inventoryData = zdo.GetString("companion_inventory", "");
 
                 if (!loadedFromPacked)
                 {
+                    _equipStacks.Clear();
                     // Legacy path ï¿½ read 18 per-slot fields. Next SaveToZDO will migrate
                     // them into the packed field and remove the legacy keys automatically.
        _equipHelmet = zdo.GetString("companion_equip_helmet", "");
@@ -1349,15 +1383,15 @@ string inventoryData = zdo.GetString("companion_inventory", "");
        _equippedItems.Clear();
                 if (ObjectDB.instance != null)
                 {
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.Helmet, _equipHelmet, _equipHelmetQuality);
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.Chest, _equipChest, _equipChestQuality);
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.Legs, _equipLegs, _equipLegsQuality);
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.Shoulder, _equipShoulder, _equipShoulderQuality);
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.Utility, _equipUtility, _equipUtilityQuality);
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.RightHand, _equipRightHand, _equipRightHandQuality);
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.LeftHand, _equipLeftHand, _equipLeftHandQuality);
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.RightBack, _equipRightBack, _equipRightBackQuality);
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.LeftBack, _equipLeftBack, _equipLeftBackQuality);
+    LoadEquipmentSlotFromPrefab(EquipmentSlot.Helmet, _equipHelmet, _equipHelmetQuality, GetEquipmentStack(EquipmentSlot.Helmet));
+    LoadEquipmentSlotFromPrefab(EquipmentSlot.Chest, _equipChest, _equipChestQuality, GetEquipmentStack(EquipmentSlot.Chest));
+    LoadEquipmentSlotFromPrefab(EquipmentSlot.Legs, _equipLegs, _equipLegsQuality, GetEquipmentStack(EquipmentSlot.Legs));
+    LoadEquipmentSlotFromPrefab(EquipmentSlot.Shoulder, _equipShoulder, _equipShoulderQuality, GetEquipmentStack(EquipmentSlot.Shoulder));
+    LoadEquipmentSlotFromPrefab(EquipmentSlot.Utility, _equipUtility, _equipUtilityQuality, GetEquipmentStack(EquipmentSlot.Utility));
+    LoadEquipmentSlotFromPrefab(EquipmentSlot.RightHand, _equipRightHand, _equipRightHandQuality, GetEquipmentStack(EquipmentSlot.RightHand));
+    LoadEquipmentSlotFromPrefab(EquipmentSlot.LeftHand, _equipLeftHand, _equipLeftHandQuality, GetEquipmentStack(EquipmentSlot.LeftHand));
+    LoadEquipmentSlotFromPrefab(EquipmentSlot.RightBack, _equipRightBack, _equipRightBackQuality, GetEquipmentStack(EquipmentSlot.RightBack));
+    LoadEquipmentSlotFromPrefab(EquipmentSlot.LeftBack, _equipLeftBack, _equipLeftBackQuality, GetEquipmentStack(EquipmentSlot.LeftBack));
          }
 
  // Recalculate bonuses after loading
@@ -1407,7 +1441,7 @@ string inventoryData = zdo.GetString("companion_inventory", "");
         /// Loads an equipment slot from a prefab name.
         /// Creates ItemData from the prefab.
    /// </summary>
-private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, int quality)
+private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, int quality, int stack = 1)
         {
             if (string.IsNullOrEmpty(prefabName)) return;
   if (ObjectDB.instance == null) return;
@@ -1427,6 +1461,7 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
      
      var itemData = itemDrop.m_itemData.Clone();
            itemData.m_quality = quality;
+           itemData.m_stack = Mathf.Max(1, stack);
           itemData.m_dropPrefab = itemPrefab; // Important for visual equipment
           
      // CRITICAL: Clamp m_variant to prevent IndexOutOfRangeException in GetIcon()
@@ -1752,29 +1787,29 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
         /// Gets all equipment prefab names and qualities for vault persistence.
         /// This returns data from the prefab name fields, not from _equippedItems.
         /// </summary>
-   public Dictionary<EquipmentSlot, (string prefab, int quality)> GetAllEquipmentForVault()
+   public Dictionary<EquipmentSlot, (string prefab, int quality, int stack)> GetAllEquipmentForVault()
         {
-    var result = new Dictionary<EquipmentSlot, (string prefab, int quality)>();
-   
+    var result = new Dictionary<EquipmentSlot, (string prefab, int quality, int stack)>();
+
             if (!string.IsNullOrEmpty(_equipHelmet))
-            result[EquipmentSlot.Helmet] = (_equipHelmet, _equipHelmetQuality);
+            result[EquipmentSlot.Helmet] = (_equipHelmet, _equipHelmetQuality, GetEquipmentStack(EquipmentSlot.Helmet));
             if (!string.IsNullOrEmpty(_equipChest))
-            result[EquipmentSlot.Chest] = (_equipChest, _equipChestQuality);
+            result[EquipmentSlot.Chest] = (_equipChest, _equipChestQuality, GetEquipmentStack(EquipmentSlot.Chest));
             if (!string.IsNullOrEmpty(_equipLegs))
-            result[EquipmentSlot.Legs] = (_equipLegs, _equipLegsQuality);
+            result[EquipmentSlot.Legs] = (_equipLegs, _equipLegsQuality, GetEquipmentStack(EquipmentSlot.Legs));
             if (!string.IsNullOrEmpty(_equipShoulder))
-            result[EquipmentSlot.Shoulder] = (_equipShoulder, _equipShoulderQuality);
+            result[EquipmentSlot.Shoulder] = (_equipShoulder, _equipShoulderQuality, GetEquipmentStack(EquipmentSlot.Shoulder));
             if (!string.IsNullOrEmpty(_equipUtility))
-            result[EquipmentSlot.Utility] = (_equipUtility, _equipUtilityQuality);
+            result[EquipmentSlot.Utility] = (_equipUtility, _equipUtilityQuality, GetEquipmentStack(EquipmentSlot.Utility));
             if (!string.IsNullOrEmpty(_equipRightHand))
-            result[EquipmentSlot.RightHand] = (_equipRightHand, _equipRightHandQuality);
+            result[EquipmentSlot.RightHand] = (_equipRightHand, _equipRightHandQuality, GetEquipmentStack(EquipmentSlot.RightHand));
             if (!string.IsNullOrEmpty(_equipLeftHand))
-            result[EquipmentSlot.LeftHand] = (_equipLeftHand, _equipLeftHandQuality);
+            result[EquipmentSlot.LeftHand] = (_equipLeftHand, _equipLeftHandQuality, GetEquipmentStack(EquipmentSlot.LeftHand));
             if (!string.IsNullOrEmpty(_equipRightBack))
-            result[EquipmentSlot.RightBack] = (_equipRightBack, _equipRightBackQuality);
+            result[EquipmentSlot.RightBack] = (_equipRightBack, _equipRightBackQuality, GetEquipmentStack(EquipmentSlot.RightBack));
             if (!string.IsNullOrEmpty(_equipLeftBack))
-            result[EquipmentSlot.LeftBack] = (_equipLeftBack, _equipLeftBackQuality);
-           
+            result[EquipmentSlot.LeftBack] = (_equipLeftBack, _equipLeftBackQuality, GetEquipmentStack(EquipmentSlot.LeftBack));
+
      return result;
      }
 
@@ -1812,16 +1847,16 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
                 // N items" warning threshold during world saves).
                 {
                     var eqPkg = new ZPackage();
-                    eqPkg.Write(1); // version, for future schema changes
-                    eqPkg.Write(_equipHelmet ?? "");      eqPkg.Write(_equipHelmetQuality);
-                    eqPkg.Write(_equipChest ?? "");       eqPkg.Write(_equipChestQuality);
-                    eqPkg.Write(_equipLegs ?? "");        eqPkg.Write(_equipLegsQuality);
-                    eqPkg.Write(_equipShoulder ?? "");    eqPkg.Write(_equipShoulderQuality);
-                    eqPkg.Write(_equipUtility ?? "");     eqPkg.Write(_equipUtilityQuality);
-                    eqPkg.Write(_equipRightHand ?? "");   eqPkg.Write(_equipRightHandQuality);
-                    eqPkg.Write(_equipLeftHand ?? "");    eqPkg.Write(_equipLeftHandQuality);
-                    eqPkg.Write(_equipRightBack ?? "");   eqPkg.Write(_equipRightBackQuality);
-                    eqPkg.Write(_equipLeftBack ?? "");    eqPkg.Write(_equipLeftBackQuality);
+                    eqPkg.Write(2); // version, for future schema changes (2 = +stack per slot)
+                    eqPkg.Write(_equipHelmet ?? "");      eqPkg.Write(_equipHelmetQuality);    eqPkg.Write(GetEquipmentStack(EquipmentSlot.Helmet));
+                    eqPkg.Write(_equipChest ?? "");       eqPkg.Write(_equipChestQuality);     eqPkg.Write(GetEquipmentStack(EquipmentSlot.Chest));
+                    eqPkg.Write(_equipLegs ?? "");        eqPkg.Write(_equipLegsQuality);      eqPkg.Write(GetEquipmentStack(EquipmentSlot.Legs));
+                    eqPkg.Write(_equipShoulder ?? "");    eqPkg.Write(_equipShoulderQuality);  eqPkg.Write(GetEquipmentStack(EquipmentSlot.Shoulder));
+                    eqPkg.Write(_equipUtility ?? "");     eqPkg.Write(_equipUtilityQuality);   eqPkg.Write(GetEquipmentStack(EquipmentSlot.Utility));
+                    eqPkg.Write(_equipRightHand ?? "");   eqPkg.Write(_equipRightHandQuality); eqPkg.Write(GetEquipmentStack(EquipmentSlot.RightHand));
+                    eqPkg.Write(_equipLeftHand ?? "");    eqPkg.Write(_equipLeftHandQuality);  eqPkg.Write(GetEquipmentStack(EquipmentSlot.LeftHand));
+                    eqPkg.Write(_equipRightBack ?? "");   eqPkg.Write(_equipRightBackQuality); eqPkg.Write(GetEquipmentStack(EquipmentSlot.RightBack));
+                    eqPkg.Write(_equipLeftBack ?? "");    eqPkg.Write(_equipLeftBackQuality);  eqPkg.Write(GetEquipmentStack(EquipmentSlot.LeftBack));
                     zdo.Set("companion_equipment", eqPkg.GetBase64());
                 }
 

@@ -84,6 +84,34 @@ namespace FiresCore.Logging
             ("NPC",            ConsoleColor.DarkGreen),
             ("Tameable",       ConsoleColor.DarkGreen),
             ("Fashion",        ConsoleColor.DarkGreen),
+            ("Kennel",         ConsoleColor.DarkGreen),
+            ("Mount",          ConsoleColor.DarkGreen),
+
+            ("Guild",          ConsoleColor.DarkYellow),
+            ("Wayshrine",      ConsoleColor.Cyan),
+            ("Shrine",         ConsoleColor.Cyan),
+            ("Portal",         ConsoleColor.Cyan),
+            ("Mausoleum",      ConsoleColor.DarkMagenta),
+            ("Memorial",       ConsoleColor.DarkMagenta),
+            ("Ledger",         ConsoleColor.DarkMagenta),
+            ("Dungeon",        ConsoleColor.DarkYellow),
+            ("Lockpick",       ConsoleColor.DarkYellow),
+            ("VAngarde",       ConsoleColor.DarkRed),
+            ("Characters",     ConsoleColor.DarkRed),
+            ("Discord",        ConsoleColor.Blue),
+            ("Relay",          ConsoleColor.Blue),
+            ("Heartbeat",      ConsoleColor.Blue),
+            ("Shader",         ConsoleColor.DarkCyan),
+            ("Aurora",         ConsoleColor.Cyan),
+            ("Sky",            ConsoleColor.Cyan),
+            ("Planet",         ConsoleColor.DarkMagenta),
+            ("Moon",           ConsoleColor.Cyan),
+            ("Galax",          ConsoleColor.DarkMagenta),
+            ("Tide",           ConsoleColor.DarkCyan),
+            ("Current",        ConsoleColor.DarkCyan),
+            ("Diag",           ConsoleColor.Green),
+            ("Probe",          ConsoleColor.Green),
+            ("Corrupt",        ConsoleColor.Green),
 
             ("Inventory",      ConsoleColor.Yellow),
             ("Backpack",       ConsoleColor.Yellow),
@@ -123,6 +151,18 @@ namespace FiresCore.Logging
             ("🔨", ConsoleColor.DarkYellow),   // hammer / placing
             ("🖼", ConsoleColor.DarkYellow),   // icons
             ("🎨", ConsoleColor.DarkMagenta),  // materials
+            ("🐺", ConsoleColor.DarkGreen),    // companions
+            ("🐴", ConsoleColor.DarkGreen),    // mounts
+            ("⚔",  ConsoleColor.DarkYellow),   // guilds
+            ("🏰", ConsoleColor.DarkYellow),   // dungeons (torchlit — off Red, which reads as a warning)
+            ("🌀", ConsoleColor.Cyan),         // wayshrines / portals
+            ("🌌", ConsoleColor.DarkMagenta),  // galaxies / celestial
+            ("🛡",  ConsoleColor.DarkRed),      // vangarde / anti-cheat
+            ("🎬", ConsoleColor.Gray),         // valcast / cameras
+            ("♨",  ConsoleColor.Gray),         // steamy dumps
+            ("⚰",  ConsoleColor.DarkMagenta),  // mausoleum
+            ("📖", ConsoleColor.DarkYellow),   // quests / books / dialogue
+            ("🐛", ConsoleColor.Green),        // debuggin tools
         };
 
         private const string LoadSummaryClassTag = "LoadSummary";
@@ -138,11 +178,24 @@ namespace FiresCore.Logging
             "[FiresAdminTerrain",
             "[FiresGhetto",
             "[FiresNPCs",
+            "[FiresRPGmaker",
             "[FiresValcast",
             "[FiresSteamyDumps",
             "[FiresEasyBakeMeshes",
             "[FiresDebugginTools",
             "[FiresDiscordIntegration",
+            "[FiresCompanions",
+            "[FiresGuilds",
+            "[FiresMausoleum",
+            "[FiresMounts",
+            "[FiresDungeonMaster",
+            "[FiresWayshrines",
+            "[FiresVAngarde",
+            "[FiresTossinShade",
+            "[FiresValheimGalaxies",
+            "[FiresHDPreloader",
+            "[FiresHashFixer",
+            "[FiresSteamworksPatcher",
             "[FiresWaterExtendedRing",
             "[FiresWater",
             "[FiresSkyboxAurora",
@@ -184,7 +237,7 @@ namespace FiresCore.Logging
                 string message = eventArgs.Data?.ToString();
                 if (string.IsNullOrEmpty(message)) return true;
                 if (!ClaimOwnershipOrBail()) return true;
-                if (!IsOurModMessage(message)) return true;
+                if (!IsOurModMessage(message) && !IsOurModSource(eventArgs)) return true;
                 if (ShouldKeepVanillaColor(eventArgs.Level)) return true;
 
                 ConsoleColor color = PickColorFromClassName(message);
@@ -209,14 +262,28 @@ namespace FiresCore.Logging
             return owner == MyOwnerName;
         }
 
-        private static bool IsOurModMessage(string message)
+        // internal so RateLimitedLogHandler shares the SAME tag set when deciding which native-console lines are
+        // ours (to drop their raw uncolored duplicate) — one source of truth for "is this a Fires mod line".
+        internal static bool IsOurModMessage(string message)
         {
+            if (string.IsNullOrEmpty(message)) return false;
             for (int i = 0; i < s_ourModTags.Length; i++)
             {
                 if (message.IndexOf(s_ourModTags[i], StringComparison.Ordinal) >= 0)
                     return true;
             }
             return false;
+        }
+
+        // A Fires mod emitting through its OWN BepInEx ManualLogSource (e.g. FAP's
+        // summary banners) carries the mod name in the event SOURCE, not in the
+        // message text — so colour those by source too. This is how a banner stays
+        // coloured after being moved off Debug.Log (which avoids the stdout-echo
+        // console duplicate).
+        private static bool IsOurModSource(LogEventArgs eventArgs)
+        {
+            var name = eventArgs?.Source?.SourceName;
+            return !string.IsNullOrEmpty(name) && name.StartsWith("Fires", StringComparison.Ordinal);
         }
 
         private static bool ShouldKeepVanillaColor(LogLevel level)

@@ -37,6 +37,7 @@ namespace FiresCore.Help
         public static HelpPanel Instance => _instance;
 
         private GameObject _root;
+        private bool _menuWasOpen;   // was the vanilla pause menu open when Help was shown? only then restore it
         private GameObject _helpButton;
         private RectTransform _contentArea;
         private ScrollRect _contentScroll;
@@ -101,12 +102,16 @@ namespace FiresCore.Help
         {
             if (_root == null) CreatePanel();
             RebuildSidebar();
+            // Remember whether the pause menu was open BEFORE we hide it, so Hide() only restores it when Help
+            // was actually launched from the menu (Help ↔ menu toggle). Otherwise Hide() would spuriously OPEN
+            // the pause menu.
+            _menuWasOpen = Menu.instance != null && Menu.instance.m_root != null && Menu.instance.m_root.gameObject.activeSelf;
             _root.SetActive(true);
             _root.transform.SetAsLastSibling();
             SetInputBlocked(true);
 
             if (Hud.instance != null) Hud.instance.m_rootObject.SetActive(false);
-            if (Menu.instance != null) Menu.instance.m_root.gameObject.SetActive(false);
+            if (Menu.instance != null && Menu.instance.m_root != null) Menu.instance.m_root.gameObject.SetActive(false);
 
             if (_navEntries.Count > 0)
                 NavigateTo(_current ?? _navEntries[0].Section);
@@ -114,10 +119,20 @@ namespace FiresCore.Help
 
         public void Hide()
         {
-            if (_root != null) _root.SetActive(false);
+            // GUARD: do NOTHING if Help isn't actually open. GUIManager.CloseAllPanels() calls Hide() on EVERY
+            // panel close (including closing a dialogue via the Escape hook). Without this guard the
+            // unconditional Menu.m_root.SetActive(true) below OPENED the vanilla pause menu on every dialogue
+            // close — bypassing Menu.Show, so the Escape hook could never catch it. THIS was the "Escape opens
+            // the esc menu" bug.
+            if (_root == null || !_root.activeSelf) return;
+
+            _root.SetActive(false);
             SetInputBlocked(false);
             if (Hud.instance != null) Hud.instance.m_rootObject.SetActive(true);
-            if (Menu.instance != null) Menu.instance.m_root.gameObject.SetActive(true);
+            // Restore the pause menu ONLY if it was open when Help was shown (Help was opened from it).
+            if (_menuWasOpen && Menu.instance != null && Menu.instance.m_root != null)
+                Menu.instance.m_root.gameObject.SetActive(true);
+            _menuWasOpen = false;
         }
 
         private static void SetInputBlocked(bool blocked)

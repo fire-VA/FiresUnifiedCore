@@ -45,16 +45,38 @@ namespace FiresCore.Npc.AI
         #region Configuration
 
         [Header("Follow Settings - Buffer Zones")]
+        // Distance bands that drive DetermineFollowSpeed. Base gaits are walk=2, jog(m_speed)=4, run=7.
+        // A following owner normally moves at RUN pace, so the companion MUST reach the run tier while
+        // only a few metres back or it cruises in the jog tier (4) behind a 7-speed owner and drifts
+        // ever further away — the "never runs / always slow-walking, never catches up" report. Keep the
+        // run threshold at a tight follow distance so it runs the moment it trails. These are overridden
+        // per-spawn in CompanionController.ConfigureAI / CompanionPrefabManager — keep all three in sync.
         public float stopDistanceInner = 2f;
-        public float stopDistanceOuter = 3.5f;
+        public float stopDistanceOuter = 4f;
         public float walkDistanceOuter = 5f;
-        public float runDistanceInner = 8f;
-        public float runDistanceOuter = 12f;
-        public float catchUpDistance = 20f;
+        public float runDistanceInner = 4f;
+        public float runDistanceOuter = 6f;
+        public float catchUpDistance = 12f;
         public float playerIdleThreshold = 3f;
+
+        // Run-tier catch-up boosts (multipliers on the archetype run speed, applied by CompanionSpeedRamp).
+        // An owner following at RUN pace moves as fast as the companion's own run speed, so a plain run
+        // only HOLDS the gap - it never closes. A small Running boost lets the follower gently tuck back in;
+        // the Sprinting (emergency, > catchUpDistance) boost closes a large gap fast even vs a buffed owner.
+        // This is what makes "run to us when far, regardless of our current speed" actually reachable.
+        private const float RunCatchUpBoost = 1.15f;
+        private const float SprintCatchUpBoost = 1.5f;
+
+        // Owner-speed -> matched-gait thresholds (m/s). Once tucked into the trail band the companion mirrors how
+        // fast the owner is ACTUALLY moving (pace matching) instead of always running at range. Measured owner
+        // speed is the source of truth (the IsRunning flag reads stale), with stance flags layered for crouch/walk.
+        private const float OWNER_STANDING_SPEED = 0.5f;   // below this the owner is standing -> companion stops
+        private const float OWNER_WALK_SPEED     = 2.6f;   // walk / crouch-walk pace -> companion walks
+        private const float OWNER_JOG_SPEED      = 4.6f;   // medium pace -> companion jogs; at/above -> runs
         
         private enum FollowSpeed { Stopped, Sneaking, Walking, Jogging, Running, Sprinting }
         private FollowSpeed _currentFollowSpeed = FollowSpeed.Stopped;
+        private float _lastFollowDiag; // throttle for the always-on [CompanionFollowDiag] line
         
         // Owner stance matching - companion mirrors the player's movement stance when following
         private bool _isOwnerSneaking = false;
@@ -62,12 +84,14 @@ namespace FiresCore.Npc.AI
         private bool _isOwnerRunning = false;
         private bool _isCompanionSneaking = false;
         private float _lastOwnerStanceCheck = -10f;
+        private float _ownerSpeed = 0f;      // owner horizontal speed (m/s), sampled in UpdateOwnerStance -> pace matching
+        private bool _isClosingGap = false;  // hysteresis: true while catching up to the trail band, until tucked in
         private const float OWNER_STANCE_CHECK_INTERVAL = 0.2f;
         
-        // Reflection for Character.SetCrouch (protected method) and m_crouching field
-        private static System.Reflection.MethodInfo _setCrouchMethod;
-        private static System.Reflection.FieldInfo _crouchingField;
-        private static bool _setCrouchMethodResolved = false;
+        // Vanilla's crouch animator parameter ("crouching", replicated by ZSyncAnimation) — the ONLY
+        // crouch state a non-player Humanoid has. Shared with the stealth-factor patch so enemy
+        // sight range shrinks for a crouched companion on every machine.
+        public static readonly int CrouchingAnimHash = ZSyncAnimation.GetHash("crouching");
 
         [Header("Combat Settings")]
         // Detection radius for the threat scan loop. Lowered from 20 to 15 m
@@ -1105,84 +1129,22 @@ namespace FiresCore.Npc.AI
         
         /// <summary>
         /// Sets the companion's crouch/sneak state.
-        /// 
-        /// Valheim's Character.SetCrouch is protected and uses an RPC to sync crouch state.
-        /// For companions we need a multi-layered approach:
-        ///   1. Try Character.SetCrouch via reflection (handles RPC sync to all clients)
-        ///   2. Directly set m_crouching field (ensures IsCrouching() returns correct value)
-        ///   3. Set the ZSyncAnimation "crouch" bool (drives the animation)
-        ///   4. Set the ZDO "Crouch" value (network persistence)
-        /// 
-        /// Steps 2-4 act as insurance in case SetCrouch fails or the RPC doesn't
-        /// reach all clients properly for modded NPC characters.
+        ///
+        /// For a non-player Humanoid the "crouching" animator bool IS the crouch state:
+        /// Character.SetCrouch is an EMPTY virtual (only Player overrides it), Character has no
+        /// m_crouching field, and Character.IsCrouching() is virtual-false for non-players. The bool
+        /// uses vanilla's parameter name (Player.s_crouching = ZSyncAnimation.GetHash("crouching"))
+        /// and ZSyncAnimation replicates it, so every machine plays the crouch animation and the
+        /// stealth-factor patch can read the same state. The old layered approach invoked the empty
+        /// virtual, poked a nonexistent field, and set a wrong-named bool ("crouch") — all no-ops.
         /// </summary>
         private void SetCompanionCrouch(bool crouch)
         {
             if (m_character == null) return;
-            
-            if (!_setCrouchMethodResolved)
-            {
-                var bindingFlags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;
-                _setCrouchMethod = typeof(Character).GetMethod("SetCrouch", bindingFlags);
-                _crouchingField = typeof(Character).GetField("m_crouching", bindingFlags);
-                _setCrouchMethodResolved = true;
-                
-                if (VerboseLogging)
-                    Debug.Log($"[CompanionAI] SetCrouch reflection: method={(_setCrouchMethod != null ? "found" : "NOT FOUND")}, field={(_crouchingField != null ? "found" : "NOT FOUND")}");
-            }
-            
-            bool setCrouchWorked = false;
-            
-            // Layer 1: Try the proper SetCrouch method which handles RPC sync
-            if (_setCrouchMethod != null)
-            {
-                try
-                {
-                    _setCrouchMethod.Invoke(m_character, new object[] { crouch });
-                    setCrouchWorked = true;
-                }
-                catch (Exception ex)
-                {
-                    if (VerboseLogging)
-                        Debug.LogWarning($"[CompanionAI] SetCrouch reflection invoke failed: {ex.Message}");
-                }
-            }
-            
-            // Layer 2: Directly set m_crouching field to ensure IsCrouching() works
-            // This is critical ï¿½ if SetCrouch uses an RPC that doesn't work for NPCs,
-            // at least the local state will be correct.
-            if (_crouchingField != null)
-            {
-                try
-                {
-                    _crouchingField.SetValue(m_character, crouch);
-                }
-                catch (Exception ex)
-                {
-                    if (VerboseLogging)
-                        Debug.LogWarning($"[CompanionAI] m_crouching field set failed: {ex.Message}");
-                }
-            }
-            
-            // Layer 3: Always set the animation bool ï¿½ this drives the visual crouch
+
             if (_zanim != null)
             {
-                _zanim.SetBool("crouch", crouch);
-            }
-            
-            // Layer 4: Set ZDO for network persistence across clients.
-            // Skip during local player respawn / loading screen â€” defensive.
-            if (!setCrouchWorked && !FiresCore.Npc.CompanionPatches.AreCompanionTeleportsSuppressed())
-            {
-                var nview = m_character.GetComponent<ZNetView>();
-                if (nview != null && nview.IsValid())
-                {
-                    var zdo = nview.GetZDO();
-                    if (zdo != null)
-                    {
-                        zdo.Set("Crouch", crouch);
-                    }
-                }
+                _zanim.SetBool(CrouchingAnimHash, crouch);
             }
         }
 

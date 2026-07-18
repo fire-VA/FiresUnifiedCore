@@ -18,7 +18,7 @@ namespace FiresCore.UI
     /// directly onto the original vanilla GameObjects.
     /// All MonoBehaviours (Hud, GuiBar, Animator, Minimap, etc.), component references,
     /// button callbacks, and game wiring remain intact. The game treats the modified vanilla
-    /// hierarchy as the real thing — because it IS the real thing, just repositioned/resized
+    /// hierarchy as the real thing ï¿½ because it IS the real thing, just repositioned/resized
     /// and re-skinned.
     ///
     /// The override is non-destructive:
@@ -29,8 +29,8 @@ namespace FiresCore.UI
     ///   even when the source mod is removed
     ///
     /// Metadata keys used on UILayoutDefinition:
-    ///   "VanillaOverrideTarget"  — The GameObject path/name to modify (e.g., "HUD")
-    ///   "VanillaOverrideEnabled" — "true" if override is active
+    ///   "VanillaOverrideTarget"  ï¿½ The GameObject path/name to modify (e.g., "HUD")
+    ///   "VanillaOverrideEnabled" ï¿½ "true" if override is active
     /// </summary>
     /// 
 
@@ -107,7 +107,7 @@ namespace FiresCore.UI
 
         // Config directory for override state persistence
         private static string OverrideConfigDir =>
-            Path.Combine(Paths.ConfigPath, "FiresRPGmaker", "UIOverrides");
+            Path.Combine(FiresCore.Storage.FiresConfigPaths.UiOverrides);
 
         private static string OverrideConfigFile =>
             Path.Combine(OverrideConfigDir, "active_overrides.txt");
@@ -122,7 +122,7 @@ namespace FiresCore.UI
         /// <summary>
         /// Tag value that marks a layout node (and its entire subtree) as override-protected.
         /// When the override system encounters a node with this tag, it skips that node and
-        /// all of its descendants — no transform changes, no visual changes, no injection.
+        /// all of its descendants ï¿½ no transform changes, no visual changes, no injection.
         /// This allows modded UI panels (e.g., VNEI, EpicLoot) captured inside a vanilla
         /// hierarchy to remain untouched by the override, preventing duplicate/broken UIs.
         /// Set via the Inspector Tag field or context menu in the editor.
@@ -137,7 +137,7 @@ namespace FiresCore.UI
         /// <summary>
         /// Initializes the override system. Loads persisted override state and applies
         /// any overrides whose layouts exist in the codex.
-        /// Safe to call multiple times — only loads once.
+        /// Safe to call multiple times ï¿½ only loads once.
         /// </summary>
         public static void Init()
         {
@@ -198,7 +198,7 @@ namespace FiresCore.UI
         /// <summary>
         /// Enables a vanilla UI override for the given layout.
         /// The layout must have "VanillaOverrideTarget" metadata set.
-        /// This modifies the vanilla GO's transforms in-place — all MonoBehaviours,
+        /// This modifies the vanilla GO's transforms in-place ï¿½ all MonoBehaviours,
         /// component wiring, and game references remain intact.
         /// </summary>
         /// <returns>True if the override was successfully applied.</returns>
@@ -436,7 +436,7 @@ namespace FiresCore.UI
         }
 
         /// <summary>
-        /// Refreshes an active override — re-applies the layout transforms in-place.
+        /// Refreshes an active override ï¿½ re-applies the layout transforms in-place.
         /// Useful after editing and re-saving a layout.
         /// </summary>
         public static bool RefreshOverride(string layoutUID)
@@ -451,7 +451,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Called periodically to apply pending overrides whose vanilla targets weren't
-        /// found at enable time. Only call this during active gameplay sessions — vanilla
+        /// found at enable time. Only call this during active gameplay sessions ï¿½ vanilla
         /// HUD/UI GameObjects don't exist on the menu screen.
         /// </summary>
         public static void ProcessPendingOverrides()
@@ -467,7 +467,7 @@ namespace FiresCore.UI
                 var active = kvp.Value;
                 if (active.VanillaRoot != null) continue; // Already applied
 
-                // Use the quiet variant that doesn't log warnings on failure —
+                // Use the quiet variant that doesn't log warnings on failure ï¿½
                 // the target simply isn't loaded yet and that's expected.
                 var vanillaGO = FindVanillaTargetQuiet(active.VanillaTargetName);
                 if (vanillaGO == null) continue;
@@ -494,7 +494,7 @@ namespace FiresCore.UI
             foreach (var kvp in _activeOverrides)
             {
                 var active = kvp.Value;
-                // Don't try to restore transforms — the GOs are being destroyed.
+                // Don't try to restore transforms ï¿½ the GOs are being destroyed.
                 // Just clear our references so we don't hold stale pointers.
                 if (active.VanillaRoot != null)
                 {
@@ -511,7 +511,7 @@ namespace FiresCore.UI
             }
 
             if (cleared > 0)
-                Debug.Log($"[UIVanillaOverride] Session ended — cleared {cleared} active override(s). " +
+                Debug.Log($"[UIVanillaOverride] Session ended ï¿½ cleared {cleared} active override(s). " +
                     "Will re-apply when targets become available in next session.");
         }
 
@@ -522,12 +522,12 @@ namespace FiresCore.UI
         /// the vanilla UI is hidden (e.g., inventory closed) and visible when it's shown.
         ///
         /// Elements managed by a compat MonoBehaviour (e.g., <see cref="UIOverrideAzuEPICompat"/>)
-        /// are SKIPPED — the compat class has full control over their visibility via its own
+        /// are SKIPPED ï¿½ the compat class has full control over their visibility via its own
         /// per-frame Update(). Without this exclusion the compat class hides panels but
         /// SyncInjectedVisibility immediately re-shows them, causing flicker and broken UIs.
         ///
         /// Elements injected deep in the hierarchy (not direct children of the override root)
-        /// are also skipped — they naturally inherit visibility from their intermediate vanilla
+        /// are also skipped ï¿½ they naturally inherit visibility from their intermediate vanilla
         /// parents via Unity's activeInHierarchy propagation. Only direct children of the
         /// override root need explicit sync because they have no intermediate vanilla parent
         /// to follow.
@@ -553,7 +553,7 @@ namespace FiresCore.UI
                     var go = active.InjectedObjects[i];
                     if (go == null) continue;
 
-                    // Skip elements managed by a compat MonoBehaviour — it controls their visibility
+                    // Skip elements managed by a compat MonoBehaviour ï¿½ it controls their visibility
                     if (compatManaged != null && compatManaged.Contains(go))
                         continue;
 
@@ -603,7 +603,7 @@ namespace FiresCore.UI
         }
 
         // ---------------------------------------
-        //  Internal — In-place transform override
+        //  Internal ï¿½ In-place transform override
         // ---------------------------------------
 
         private static bool ApplyOverride(UILayoutDefinition layout, GameObject vanillaGO)
@@ -644,7 +644,7 @@ namespace FiresCore.UI
             }
             else
             {
-                // Legacy layout without required_bundles metadata — fall back to
+                // Legacy layout without required_bundles metadata ï¿½ fall back to
                 // scanning live mod bundles in memory (no disk loading = no errors)
                 UIBuilderAssetCache.IndexAllLiveModBundles();
             }
@@ -692,7 +692,7 @@ namespace FiresCore.UI
             overrideEntry.LayoutUID = layoutUID;
             overrideEntry.VanillaTargetName = target;
             overrideEntry.VanillaRoot = vanillaGO;
-            overrideEntry.CustomRoot = vanillaGO; // Same GO — in-place modification
+            overrideEntry.CustomRoot = vanillaGO; // Same GO ï¿½ in-place modification
             overrideEntry.WasVanillaActive = wasActive;
             overrideEntry.Backups = new List<TransformBackup>();
             overrideEntry.InjectedObjects = new List<GameObject>();
@@ -708,7 +708,7 @@ namespace FiresCore.UI
             Debug.Log($"[UIVanillaOverride] Built vanilla lookup: {vanillaLookup.Count} unique names");
 
             // Compute which nodes have been modified from the capture baseline.
-            // If a baseline exists, only modified/new nodes are overridden — unchanged
+            // If a baseline exists, only modified/new nodes are overridden ï¿½ unchanged
             // captured nodes are left untouched. If no baseline exists (legacy layout
             // or user-created from scratch), all nodes are overridden as before.
             var modifiedIds = UIOverrideDiffEngine.ComputeModifiedNodeIds(layout);
@@ -719,7 +719,7 @@ namespace FiresCore.UI
             }
             else
             {
-                Debug.Log($"[UIVanillaOverride] No capture baseline — applying full override (legacy behavior)");
+                Debug.Log($"[UIVanillaOverride] No capture baseline ï¿½ applying full override (legacy behavior)");
             }
 
             // Apply transforms recursively, matching by name/path
@@ -869,7 +869,7 @@ namespace FiresCore.UI
             }
             else if (rect != null && !shouldApply)
             {
-                // Node exists but is unchanged from baseline — skip it.
+                // Node exists but is unchanged from baseline ï¿½ skip it.
                 // We don't back up or modify this element at all.
             }
 
@@ -877,7 +877,7 @@ namespace FiresCore.UI
             // The captured layout records Active=true because the UI was open at capture time.
             // If we force SetActive(true) here, UIs like the inventory screen become permanently
             // visible (bypassing InventoryGui.Show/Hide). The game's own code manages visibility
-            // of its own hierarchy. We only modify transforms and visuals — never visibility of
+            // of its own hierarchy. We only modify transforms and visuals ï¿½ never visibility of
             // existing vanilla elements.
             //
             // The only exception would be if the user explicitly deactivated a node in the editor
@@ -885,7 +885,7 @@ namespace FiresCore.UI
             // currently track "original captured active state" vs "editor-modified active state",
             // the safe default is to never touch active state on matched vanilla elements.
 
-            // Recurse into children — match by parallel index + name verification
+            // Recurse into children ï¿½ match by parallel index + name verification
             if (node.Children == null || node.Children.Count == 0) return;
 
             // Track which vanilla child indices have already been claimed by a layout node.
@@ -907,7 +907,7 @@ namespace FiresCore.UI
 
                 GameObject matchedChild = null;
 
-                // Strategy 1: parallel index match — if the vanilla GO has a child at the same index
+                // Strategy 1: parallel index match ï¿½ if the vanilla GO has a child at the same index
                 // with the same name, that's our match (most common case for captured layouts)
                 if (i < vanillaGO.transform.childCount && !claimedVanillaIndices.Contains(i))
                 {
@@ -938,7 +938,7 @@ namespace FiresCore.UI
                 }
 
                 // Strategy 3: broader lookup by name (handles reparented elements).
-                // Only used when no unclaimed sibling matched — avoids cross-parent mismatches.
+                // Only used when no unclaimed sibling matched ï¿½ avoids cross-parent mismatches.
                 if (matchedChild == null && vanillaLookup.TryGetValue(childNode.Name, out var candidates))
                 {
                     if (candidates.Count == 1)
@@ -947,7 +947,7 @@ namespace FiresCore.UI
                     }
                     else if (candidates.Count > 1)
                     {
-                        // Multiple matches — try to find an unclaimed one under the current parent
+                        // Multiple matches ï¿½ try to find an unclaimed one under the current parent
                         for (int c = 0; c < candidates.Count; c++)
                         {
                             if (candidates[c].transform.parent == vanillaGO.transform)
@@ -974,7 +974,7 @@ namespace FiresCore.UI
                 }
                 else
                 {
-                    // No vanilla match — this is a mod-injected element captured in the layout.
+                    // No vanilla match ï¿½ this is a mod-injected element captured in the layout.
                     // Instantiate it from the layout data and parent it to the current vanilla GO
                     // so the captured mod UI survives even when the source mod is removed.
                     try
@@ -1117,7 +1117,7 @@ namespace FiresCore.UI
                 string rawTexName = node.ImageData.SpriteName;
                 if (!string.IsNullOrEmpty(rawTexName))
                 {
-                    // RawImage uses Texture, not Sprite — resolve through the full
+                    // RawImage uses Texture, not Sprite ï¿½ resolve through the full
                     // sprite pipeline and extract the texture from the result
                     var resolvedSprite = ResolveSprite(rawTexName);
                     if (resolvedSprite != null && resolvedSprite.texture != null)
@@ -1139,7 +1139,7 @@ namespace FiresCore.UI
         ///   1. Indexed bundle sprites (from live mod bundles + cached .bundle files)
         ///   2. All sprites loaded in memory (vanilla + active mod sprites)
         ///   3. Our asset bundle (VAMiscAssetManager)
-        ///   4. Cached PNGs from disk (last resort — flat rasterized sprites)
+        ///   4. Cached PNGs from disk (last resort ï¿½ flat rasterized sprites)
         /// </summary>
         private static Sprite ResolveSprite(string spriteName)
         {
@@ -1217,7 +1217,7 @@ namespace FiresCore.UI
         }
 
         // ---------------------------------------
-        //  Post-injection wiring — connect dead visual shells to live game systems
+        //  Post-injection wiring ï¿½ connect dead visual shells to live game systems
         // ---------------------------------------
 
         /// <summary>
@@ -1302,7 +1302,7 @@ namespace FiresCore.UI
                         if (WireHudBarFill(go, nameLower, "guardian")) return true;
                 }
 
-                // --- AzuEPI elements — skip name-based wiring --------
+                // --- AzuEPI elements ï¿½ skip name-based wiring --------
                 // These are handled entirely by UIOverrideAzuEPICompat.
                 // We return false so they aren't double-wired by generic logic.
                 if (UIOverrideElementTags.IsAzuEPIElement(name))
@@ -1799,7 +1799,7 @@ namespace FiresCore.UI
                 // Skip our own types
                 if (ns.StartsWith("VerdantsAscent", StringComparison.Ordinal)) continue;
 
-                // This is a mod MonoBehaviour — the mod is managing this element
+                // This is a mod MonoBehaviour ï¿½ the mod is managing this element
                 return true;
             }
 
@@ -1851,7 +1851,7 @@ namespace FiresCore.UI
         /// <summary>
         /// Checks if a layout node is tagged as override-protected.
         /// Override-protected nodes and their entire subtrees are skipped during override
-        /// application — no transform changes, no visual changes, no injection.
+        /// application ï¿½ no transform changes, no visual changes, no injection.
         /// This allows users to tag modded UI panels (e.g., VNEI, EpicLoot panels) that
         /// were captured inside a vanilla hierarchy so the override doesn't duplicate or
         /// break them. The tag can be set via the Inspector's Tag field or context menu.
@@ -1941,7 +1941,7 @@ namespace FiresCore.UI
             }
             else if (!Mathf.Approximately(screenScale, 1f))
             {
-                // No saved position but non-default scale — apply scale only,
+                // No saved position but non-default scale ï¿½ apply scale only,
                 // convert to center-anchored so children lay out correctly inside the scaled root.
                 Vector2 canvasSize = GetEffectiveCanvasSize(layout);
                 if (canvasSize.x >= 1f && canvasSize.y >= 1f)
@@ -2051,13 +2051,13 @@ namespace FiresCore.UI
 
             // Track whether the targetName matched a known VanillaTarget/KnownTarget UID
             // OR a known GO name pattern. If so, we must NOT fall through to generic
-            // GameObject.Find() — that would match the wrong "root" or other generic name.
+            // GameObject.Find() ï¿½ that would match the wrong "root" or other generic name.
             // Instead we return null and let ProcessPendingOverrides retry later when
             // the game singleton becomes available.
             bool isKnownTarget = false;
 
             // Strategy 1: Check known VanillaTargets registry by UID.
-            // This is the most reliable method — uses the same FindRoot() delegate
+            // This is the most reliable method ï¿½ uses the same FindRoot() delegate
             // that was used during capture, which accesses singleton references
             // (e.g., InventoryGui.instance.m_inventoryRoot) instead of generic
             // GameObject.Find() that can match the wrong "root" GO.
@@ -2095,7 +2095,7 @@ namespace FiresCore.UI
                             return found;
                         }
                     }
-                    catch { /* FindRoot returned null — singleton not ready. Mark as known so we don't
+                    catch { /* FindRoot returned null ï¿½ singleton not ready. Mark as known so we don't
                                fall through to GameObject.Find which would match the wrong GO. */ }
                 }
 
@@ -2103,14 +2103,14 @@ namespace FiresCore.UI
                 // is KNOWN to produce a GO with this name. If so, treat it as a known target
                 // and don't fall through to the generic search strategies.
                 // We do a lightweight check: try each FindRoot() and if it threw or returned null,
-                // that's a signal the singleton isn't ready — but the target IS a known pattern.
+                // that's a signal the singleton isn't ready ï¿½ but the target IS a known pattern.
                 // We compare against the UID's leaf name and common GO name patterns.
                 for (int i = 0; i < UILayoutParser.VanillaTargets.Count; i++)
                 {
                     var vt = UILayoutParser.VanillaTargets[i];
                     // Check if the VanillaTarget's UID ends with the target name
                     // (e.g., targetName="root" could belong to "vanilla_inventory_root")
-                    // This is a heuristic — we only set the flag, not return a result.
+                    // This is a heuristic ï¿½ we only set the flag, not return a result.
                     // The actual GO will be found on a later retry when the singleton is ready.
                     string uidLower = vt.UID.ToLowerInvariant();
                     string targetLower = targetName.ToLowerInvariant();
@@ -2159,7 +2159,7 @@ namespace FiresCore.UI
 
             // If the target name matched a known VanillaTarget or KnownTarget (by UID or GO name
             // pattern) but FindRoot() returned null, the game singleton simply isn't ready yet.
-            // Do NOT fall through to GameObject.Find — generic names like "root" will match the
+            // Do NOT fall through to GameObject.Find ï¿½ generic names like "root" will match the
             // wrong GO in the scene. Return null so ProcessPendingOverrides retries later.
             if (isKnownTarget)
                 return null;
@@ -2214,7 +2214,7 @@ namespace FiresCore.UI
         }
 
         // ---------------------------------------
-        //  Persistence — survive session restart
+        //  Persistence ï¿½ survive session restart
         // ---------------------------------------
 
         private static void PersistOverrides()

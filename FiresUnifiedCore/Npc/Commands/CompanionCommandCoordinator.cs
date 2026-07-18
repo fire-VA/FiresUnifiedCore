@@ -124,12 +124,24 @@ namespace FiresCore.Npc.Commands
             return true;
         }
         
+        /// <summary>
+        /// Optional external gate: return true to SUPPRESS the whistle this frame. A dependent mod sets this when
+        /// Shift+RightClick means something else in its context (e.g. FiresDungeonMaster's build-box staging area,
+        /// where the player is placing/editing a section). Null = never suppress.
+        /// </summary>
+        public static System.Func<bool> WhistleSuppressor;
+
         private void ProcessWhistleInput()
         {
             bool shiftHeld = UnityEngine.Input.GetKey(whistleModifier) || UnityEngine.Input.GetKey(KeyCode.RightShift);
+            bool altHeld = UnityEngine.Input.GetKey(KeyCode.LeftAlt) || UnityEngine.Input.GetKey(KeyCode.RightAlt);
             bool rightMousePressed = UnityEngine.Input.GetMouseButtonDown(whistleMouseButton);
-            
-            if (!shiftHeld || !rightMousePressed) return;
+
+            // Alt+Shift+RightClick is the in-world context-menu / editor combo (FiresContextMenuDriver), never a whistle.
+            if (!shiftHeld || altHeld || !rightMousePressed) return;
+
+            // External staging-area gate (e.g. near a FiresDungeonMaster footprint box) suppresses the whistle entirely.
+            if (WhistleSuppressor != null) { try { if (WhistleSuppressor()) return; } catch { } }
             
             // Check cooldown
             if (Time.time - _lastWhistleTime < WHISTLE_COOLDOWN) return;

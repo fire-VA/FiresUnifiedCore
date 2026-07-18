@@ -25,7 +25,7 @@ namespace FiresCore.UI
                 Version = 1
             };
 
-            // Root panel — centered, 520x480
+            // Root panel ï¿½ centered, 520x480
             var root = new UIElementNode
             {
                 Id = "root",
@@ -326,7 +326,7 @@ namespace FiresCore.UI
                     string category = string.IsNullOrEmpty(target.Category) ? "custom" : target.Category.ToLowerInvariant();
                     string fileName = $"{category}/{uid}.json";
                     string fullPath = System.IO.Path.Combine(
-                        BepInEx.Paths.ConfigPath, "FiresRPGmaker", "UILayouts", fileName);
+                        FiresCore.Storage.FiresConfigPaths.UiLayouts, fileName);
 
                     // Only capture if template doesn't already exist
                     if (System.IO.File.Exists(fullPath)) continue;
@@ -383,7 +383,7 @@ namespace FiresCore.UI
             string category = string.IsNullOrEmpty(layout.Category) ? "custom" : layout.Category.ToLowerInvariant();
             string fileName = $"{category}/{layout.UID}.json";
             string fullPath = System.IO.Path.Combine(
-                BepInEx.Paths.ConfigPath, "FiresRPGmaker", "UILayouts", fileName);
+                FiresCore.Storage.FiresConfigPaths.UiLayouts, fileName);
 
             if (System.IO.File.Exists(fullPath)) return;
 

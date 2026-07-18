@@ -37,5 +37,18 @@ namespace FiresCore.Npc
         public string EquipLeftHandData { get; set; }
 
         public string FashionJson { get; set; }
+
+        /// <summary>Base64 PNG hammer icon — a 128px render of the dressed NPC captured at save time
+        /// (Marketplace-style), shown on the template's build piece. Null on records saved headless
+        /// or before icons existed; the piece falls back to the shield placeholder until backfilled.</summary>
+        public string IconPng { get; set; }
+
+        /// <summary>JSON snapshot of the VANILLA VisEquipment look read from the live body's ZDO at
+        /// save time (model index, hair/beard prefab names, hair/skin colors, item prefab names per
+        /// slot). Randomly-dressed NPCs carry their whole look in these vanilla vars — NOT in
+        /// FashionJson or the NpcController equip fields, which are empty for them — so without this
+        /// a template saved from such an NPC contains no appearance at all (naked ghost, blank icon,
+        /// naked placement). Additive field: old template files deserialize with it null.</summary>
+        public string LookJson { get; set; }
     }
 }

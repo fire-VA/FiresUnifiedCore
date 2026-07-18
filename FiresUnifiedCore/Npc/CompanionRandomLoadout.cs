@@ -209,6 +209,7 @@ namespace FiresCore.Npc
         {
             if (_inventory == null || _companion == null) return;
             if (_companion.isTamed) return; // Tamed companions use vault
+            if (IsAuthoredNpcBody()) return; // authored statics/migrated NPCs never regen gear
             
             // Check if we have equipment - if not, we need to regenerate it
             if (!_inventory.HasAnyEquipment())
@@ -253,7 +254,13 @@ namespace FiresCore.Npc
         {
             var nview = GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return;
-            
+
+            // Authored NPC bodies store their look in npc_* keys and are restored by
+            // StaticNpcInitializer — this companion-side restore reads companion_* keys, finds
+            // nothing, and its bald-fallback then generated a FRESH RANDOM look (hair + skin +
+            // gender) over migrated/template NPCs. Never run it for authored bodies.
+            if (IsAuthoredNpcBody()) return;
+
             var zdo = nview.GetZDO();
             if (zdo == null) return;
             
@@ -341,30 +348,45 @@ namespace FiresCore.Npc
         }
         
         /// <summary>
-        /// Grounds the companion to the terrain to prevent floating on spawn.
+        /// Grounds the companion to the surface UNDERFOOT to prevent floating on spawn.
+        /// Runs in Awake — i.e. inside Player.PlacePiece's Instantiate for hammer-placed
+        /// NPCs — so it must respect whatever surface the piece was placed on. A physics
+        /// probe (piece + terrain + static_solid layers) finds the real walkable surface:
+        /// build-piece floors and custom terrain included. ZoneSystem.GetGroundHeight is
+        /// HEIGHTMAP-ONLY — the old code snapped floor-placed NPCs through their floor to
+        /// the dirt, and on custom terrain (heightmap disagrees with the actual surface by
+        /// meters) it LIFTED fresh bodies 2-5m, which then poisoned every position stamped
+        /// downstream (wander home, static feet-pin, anchor mint). It survives only as an
+        /// underground rescue when the probe finds nothing at all.
         /// </summary>
         private void GroundCompanionOnSpawn()
         {
-            // Find ground height at current position
             Vector3 pos = transform.position;
-            
-            if (ZoneSystem.instance != null)
+            int surfaceMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain", "Default_small");
+            if (Physics.Raycast(pos + Vector3.up * 1.5f, Vector3.down, out var surfaceHit, 8f, surfaceMask, QueryTriggerInteraction.Ignore))
             {
-                float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(pos, out groundHeight))
+                float feetError = pos.y - surfaceHit.point.y;
+                if (feetError > 0.25f || feetError < -0.25f)
                 {
-                    // Only adjust if significantly above ground
-                    if (pos.y > groundHeight + 2f || pos.y < groundHeight - 1f)
-                    {
-                        pos.y = groundHeight + 0.1f;
-                        transform.position = pos;
-                        _spawnPosition = pos; // Update spawn position
-                        if (VerboseLogging)
-                            Debug.Log($"[CompanionRandomLoadout] Grounded companion at height {groundHeight:F1}");
-                    }
+                    Vector3 grounded = new Vector3(pos.x, surfaceHit.point.y + 0.05f, pos.z);
+                    Debug.LogWarning($"[CompanionGround] '{name}' snapped to surface underfoot: {pos} -> {grounded} " +
+                        $"(hit '{surfaceHit.collider.name}' layer={LayerMask.LayerToName(surfaceHit.collider.gameObject.layer)})");
+                    transform.position = grounded;
+                    _spawnPosition = grounded;
                 }
             }
-            
+            else if (ZoneSystem.instance != null
+                && ZoneSystem.instance.GetGroundHeight(pos, out float groundHeight)
+                && pos.y < groundHeight - 2f)
+            {
+                // Probe found no surface within 8m below AND the body is buried under the
+                // heightmap — true underground rescue (the one case the old code was for).
+                Vector3 rescued = new Vector3(pos.x, groundHeight + 0.1f, pos.z);
+                Debug.LogWarning($"[CompanionGround] '{name}' underground rescue: {pos} -> {rescued}");
+                transform.position = rescued;
+                _spawnPosition = rescued;
+            }
+
             // Zero out any velocity on the rigidbody - only if NOT kinematic
             // Unity 6 doesn't allow setting velocity on kinematic rigidbodies
             var rb = GetComponent<Rigidbody>();
@@ -1360,14 +1382,39 @@ namespace FiresCore.Npc
         /// </summary>
         private List<string> GetAvailableHairStyles()
         {
+            // Mirror the vanilla barber EXACTLY: enumerate ObjectDB Customization items whose prefab name
+            // starts with "Hair" — the SAME pool PlayerCustomization shows, so modded customization
+            // hairstyles are included automatically and stale/invalid names can never be rolled. (Case-
+            // sensitive prefix excludes rig prefabs like "hair_11".) Fall back to the known vanilla list
+            // only if ObjectDB isn't loaded yet.
+            var db = ObjectDB.instance;
+            if (db != null)
+            {
+                var names = db.GetAllItems(ItemDrop.ItemData.ItemType.Customization, "Hair")
+                              .Select(d => d.gameObject != null ? d.gameObject.name : null)
+                              .Where(n => !string.IsNullOrEmpty(n))
+                              .Distinct()
+                              .ToList();
+                if (names.Count > 0) return names;
+            }
             return KnownHairStyles.Where(h => !string.IsNullOrEmpty(h)).ToList();
         }
-        
+
         /// <summary>
         /// Gets available beard style prefab names.
         /// </summary>
         private List<string> GetAvailableBeardStyles()
         {
+            var db = ObjectDB.instance;
+            if (db != null)
+            {
+                var names = db.GetAllItems(ItemDrop.ItemData.ItemType.Customization, "Beard")
+                              .Select(d => d.gameObject != null ? d.gameObject.name : null)
+                              .Where(n => !string.IsNullOrEmpty(n))
+                              .Distinct()
+                              .ToList();
+                if (names.Count > 0) return names;
+            }
             return KnownBeardStyles.Where(b => !string.IsNullOrEmpty(b)).ToList();
         }
         
@@ -1379,6 +1426,21 @@ namespace FiresCore.Npc
             _hasGeneratedLoadout = false;
             GenerateRandomLoadout();
         }
+
+        /// <summary>True for AUTHORED NPC bodies — hammer-placed static NPCs and kg-migrated
+        /// Marketplace NPCs. Their appearance/equipment is authored (dressing room / migration seed)
+        /// and applied by the static restore path; the random generator must never touch them. Reads
+        /// the ZDO flags first (reliable from the first frame on every machine), module as fallback.</summary>
+        private bool IsAuthoredNpcBody()
+        {
+            var nview = GetComponent<ZNetView>();
+            var zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
+            if (zdo != null && (zdo.GetBool("npc_static_placement", false)
+                                || zdo.GetBool("npc_stationed", false)
+                                || zdo.GetBool("npc_initialized", false))) return true;
+            var module = GetComponent<FiresCore.Npc.NpcMode.CompanionNpcModule>();
+            return module != null && (module.isStationedAsNpc || module.isStaticPlacement);
+        }
         
         #endregion
         
@@ -1387,9 +1449,14 @@ namespace FiresCore.Npc
         private bool ShouldGenerateRandomLoadout()
         {
             if (_companion == null) return false;
-            
+
             // Only generate for wild (untamed) companions
             if (_companion.isTamed) return false;
+
+            // Authored NPC bodies (hammer-placed statics, kg-migrated Marketplace NPCs) NEVER roll
+            // random gear — their look is authored and applied by the static restore path. This
+            // generator was re-rolling random armor over migrated NPCs ("wild companion" false match).
+            if (IsAuthoredNpcBody()) return false;
             
             // Check if already has equipment
             if (_inventory != null && _inventory.HasAnyEquipment())

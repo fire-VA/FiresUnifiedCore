@@ -13,7 +13,7 @@ namespace FiresCore.UI
     /// </summary>
     public static class VAMiscAssetManager
     {
-        private static readonly string UIAssetsDir = Path.Combine(Paths.ConfigPath, "FiresRPGmaker", "UIAssets");
+        private static readonly string UIAssetsDir = Path.Combine(FiresCore.Storage.FiresConfigPaths.UiAssets);
         private static readonly Dictionary<string, Sprite> _cachedSprites = new();
         private static readonly HashSet<string> _negativeSpriteCache = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
 
@@ -183,7 +183,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Loads external sprites from the UIAssets/Sprites folder (custom mod sprites).
-        /// CapturedAssets/sprites are NOT bulk-loaded at startup — they are loaded
+        /// CapturedAssets/sprites are NOT bulk-loaded at startup ï¿½ they are loaded
         /// lazily on demand via GetSprite() ? TryLoadFromCapturedAssets(), since
         /// most of those are vanilla/mod textures already available in memory.
         /// </summary>
@@ -263,7 +263,7 @@ namespace FiresCore.UI
                 return sprite;
             }
 
-            // Remember this name was not found — avoid repeating expensive lookups
+            // Remember this name was not found ï¿½ avoid repeating expensive lookups
             _negativeSpriteCache.Add(cleanName);
             return null;
         }
@@ -473,7 +473,7 @@ if (!loaded)
        foreach (var key in keysToRemove)
   _cachedSprites.Remove(key);
 
-            // Try to reload from disk — check Sprites folder first, then CapturedAssets
+            // Try to reload from disk ï¿½ check Sprites folder first, then CapturedAssets
             string spritesDir = Path.Combine(UIAssetsDir, "Sprites");
             string capturedDir = Path.Combine(UIAssetsDir, "CapturedAssets", "sprites");
             string pngPath = Path.Combine(spritesDir, nameNoExt + ".png");

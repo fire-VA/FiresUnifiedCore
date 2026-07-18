@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -67,6 +67,14 @@
     <Reference Include="assembly_valheim">
       <HintPath>..\libs\assembly_valheim_publicized.dll</HintPath>
     </Reference>
+    <!-- Publicized stand-in for SoftReferenceableAssets (same identity as the runtime DLL). Gives the dungeon
+         engine the SoftReference/AssetBundleLoader surface its room + ZoneLocation registration needs (ported
+         from BalrondNature). Private=False: the real game assembly loads at runtime; we only need the
+         public-widened metadata to compile. Lives only at the lib stash (no copy under ..\libs\). -->
+    <Reference Include="SoftReferenceableAssets">
+      <HintPath>..\..\assembly_valheim\lib\SoftReferenceableAssets_publicized.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="BepInEx">
       <HintPath>..\..\..\customspawnsmod\lib\BepInEx.dll</HintPath>
     </Reference>
@@ -79,6 +87,10 @@
     </Reference>
     <Reference Include="LiteDB">
       <HintPath>..\libs\LiteDB.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="System.Buffers">
+      <HintPath>..\libs\System.Buffers.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="Splatform, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
@@ -154,6 +166,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="FiresUnifiedCore.cs" />
+    <Compile Include="Debug\SleepDiag.cs" />
     <Compile Include="Terrain\HeightmapOverrideConfig.cs" />
     <Compile Include="Terrain\HeightmapOverridePatches.cs" />
     <Compile Include="Terrain\VASnapToGroundSpreadPatch.cs" />
@@ -163,14 +176,24 @@
     <Compile Include="Bridge\NpcCompanionBridge.cs" />
     <Compile Include="Bridge\CompanionBridge.cs" />
     <Compile Include="Bridge\DiscordSink.cs" />
+    <Compile Include="Bridge\EnvironmentBoxBridge.cs" />
+    <Compile Include="Bridge\FiresDungeonBridge.cs" />
     <Compile Include="Bridge\FiresConnectReason.cs" />
+    <Compile Include="Bridge\ProgressEvents.cs" />
     <Compile Include="Bridge\FiresConnectReasonPanel.cs" />
     <Compile Include="Bridge\GuildBridge.cs" />
     <Compile Include="Bridge\GroupBridge.cs" />
     <Compile Include="Bridge\LeaderboardBridge.cs" />
+    <Compile Include="Bridge\ServerPushBridge.cs" />
+    <Compile Include="Bridge\PlayerAppearanceBridge.cs" />
+    <Compile Include="Appearance\PlayerAppearanceCapture.cs" />
     <Compile Include="Bridge\NpcModeBridge.cs" />
     <Compile Include="Bridge\CompanionEventBridge.cs" />
     <Compile Include="Bridge\NpcDormancyBridge.cs" />
+    <Compile Include="Bridge\NpcAnchorBridge.cs" />
+    <Compile Include="Npc\Anchor\NpcAnchorFields.cs" />
+    <Compile Include="Npc\Anchor\NpcAnchorKeeper.cs" />
+    <Compile Include="Npc\NpcAttachmentScaleFix.cs" />
     <Compile Include="Bridge\NpcInteractionBridge.cs" />
     <Compile Include="Bridge\CompanionVaultBridge.cs" />
     <Compile Include="Bridge\NpcUiBridge.cs" />
@@ -195,14 +218,23 @@
     <Compile Include="Npc\NpcPrefabSetup.cs" />
     <Compile Include="Audio\FiresCustomAudioStore.cs" />
     <Compile Include="Npc\Patrol\PatrolRoute.cs" />
+    <Compile Include="Npc\Patrol\PatrolSpline.cs" />
+    <Compile Include="Npc\Patrol\DbsmEnvelope.cs" />
     <Compile Include="Npc\Patrol\PatrolRouteManager.cs" />
     <Compile Include="Npc\Patrol\PatrolRouteVisualizer.cs" />
     <Compile Include="Npc\Patrol\PatrolAssignment.cs" />
+    <Compile Include="Npc\Patrol\PatrolSpeedState.cs" />
+    <Compile Include="Npc\Patrol\PatrolEditSession.cs" />
     <Compile Include="Npc\IdleBehaviors\PatrolBehavior.cs" />
     <Compile Include="Npc\NpcSaveState.cs" />
+    <Compile Include="Npc\NpcBodyMeshGuard.cs" />
     <Compile Include="Npc\NpcVisEquipment.cs" />
     <Compile Include="Npc\VisEquipmentCompat.cs" />
+    <Compile Include="Npc\VanillaHairSpawnGate.cs" />
+    <Compile Include="Npc\FiresMannequinBuilder.cs" />
     <Compile Include="Storage\VaultDatabase.cs" />
+    <Compile Include="Storage\KgVaultImport.cs" />
+    <Compile Include="Storage\FiresConfigPaths.cs" />
     <Compile Include="Storage\BankSlot.cs" />
     <Compile Include="Storage\LeaderboardEntry.cs" />
     <Compile Include="Storage\MailUser.cs" />
@@ -212,12 +244,17 @@
     <Compile Include="Storage\MailEntry.cs" />
     <Compile Include="Storage\BankRepository.cs" />
     <Compile Include="Storage\LeaderboardRepository.cs" />
+    <Compile Include="Storage\PlayerAppearance.cs" />
+    <Compile Include="Storage\PlayerAppearanceRepository.cs" />
+    <Compile Include="Storage\GuildRecord.cs" />
+    <Compile Include="Storage\GuildRepository.cs" />
     <Compile Include="Storage\MailRepository.cs" />
     <Compile Include="Storage\MarketplaceRepository.cs" />
     <Compile Include="Storage\PlayerVaultData.cs" />
     <Compile Include="Storage\VaultDump.cs" />
     <Compile Include="Identity\PlayerIdentityRecord.cs" />
     <Compile Include="Identity\PlayerIdentityRepository.cs" />
+    <Compile Include="Identity\OwnerKeys.cs" />
     <Compile Include="Identity\PlayerIdentity.cs" />
     <Compile Include="Identity\PlayerIdentityPatches.cs" />
     <Compile Include="Compat\Balrond\BalrondCompatConfig.cs" />
@@ -321,6 +358,7 @@
     <Compile Include="Npc\Combat\WeaponSwapManager.cs" />
     <Compile Include="Npc\Commands\CompanionCommandCoordinator.cs" />
     <Compile Include="Npc\Commands\CompanionCommandSystem.cs" />
+    <Compile Include="Npc\Commands\CompanionContextProvider.cs" />
     <Compile Include="Npc\CompanionAutoPickup.cs" />
     <Compile Include="Npc\CompanionBehaviorToggles.cs" />
     <Compile Include="Npc\CompanionChatHelper.cs" />
@@ -344,7 +382,9 @@
     <Compile Include="Npc\CompanionLuck.cs" />
     <Compile Include="Npc\CompanionMapMarker.cs" />
     <Compile Include="Npc\CompanionNetworkHelper.cs" />
+    <Compile Include="Npc\CompanionConsumablePatches.cs" />
     <Compile Include="Npc\CompanionPatches.cs" />
+    <Compile Include="Npc\ZSyncTransformKinematicPatch.cs" />
     <Compile Include="Npc\CompanionPrefabManager.cs" />
     <Compile Include="Npc\CompanionProgression.cs" />
     <Compile Include="Npc\CompanionRandomLoadout.cs" />
@@ -356,7 +396,10 @@
     <Compile Include="Npc\CompanionWeaponScaler.cs" />
     <Compile Include="Npc\Core\BehaviorCoordinator.cs" />
     <Compile Include="Npc\Core\BehaviorPhaseManager.cs" />
+    <Compile Include="Npc\Core\CompanionSpeedRamp.cs" />
+    <Compile Include="Npc\Core\MovementRampConfig.cs" />
     <Compile Include="Npc\Core\ChestInteractionService.cs" />
+    <Compile Include="Npc\Core\CompanionLeash.cs" />
     <Compile Include="Npc\Core\CompanionTeleportService.cs" />
     <Compile Include="Npc\Core\ContainerRegistry.cs" />
     <Compile Include="Npc\Core\ContainerRegistryPatches.cs" />
@@ -448,7 +491,6 @@
     <Compile Include="Npc\Vault\PlayerCompanionRoster.cs" />
     <Compile Include="Npc\Vault\PlayerCompanionStorage.cs" />
     <Compile Include="Npc\WildSpawn\CompanionFaction.cs" />
-    <Compile Include="Npc\WildSpawn\CompanionGearTables.cs" />
     <Compile Include="Npc\WildSpawn\CompanionNamePool.cs" />
     <Compile Include="Npc\WildSpawn\WildCompanionDresser.cs" />
     <Compile Include="Npc\WildSpawn\WildCompanionLootOnDeath.cs" />
@@ -462,18 +504,38 @@
     <Compile Include="Help\HelpPanel.cs" />
     <Compile Include="Help\CompendiumEntry.cs" />
     <Compile Include="Help\Compendium.cs" />
+    <Compile Include="UI\FiresModIcons.cs" />
     <Compile Include="UI\InputBlock.cs" />
+    <Compile Include="UI\MiniGameCamera.cs" />
+    <Compile Include="UI\MiniGameCameraTuner.cs" />
+    <Compile Include="UI\ItemIconRenderer.cs" />
+    <Compile Include="UI\EnvironmentBoxPanel.cs" />
+    <Compile Include="UI\PencilSfx.cs" />
+    <Compile Include="UI\Minigames\FiresMinigameSprites.cs" />
+    <Compile Include="UI\Minigames\FiresMinigameAudio.cs" />
+    <Compile Include="UI\Minigames\FiresMinigameOverlay.cs" />
+    <Compile Include="Queue\FiresQueue.cs" />
+    <Compile Include="Queue\FiresQueueLobby.cs" />
+    <Compile Include="Tables\FiresTableNet.cs" />
+    <Compile Include="UI\Chat\FiresChatSkin.cs" />
+    <EmbeddedResource Include="UI\Chat\Art\*.png" />
     <Compile Include="UI\ContextMenu\ContextTarget.cs" />
     <Compile Include="UI\ContextMenu\ContextMenuItem.cs" />
     <Compile Include="UI\ContextMenu\IContextMenuProvider.cs" />
     <Compile Include="UI\ContextMenu\FiresContextMenu.cs" />
     <Compile Include="UI\ContextMenu\ContextMenuView.cs" />
     <Compile Include="UI\ContextMenu\FiresContextMenuDriver.cs" />
+    <Compile Include="UI\ContextMenu\ContextMenuConfig.cs" />
     <Compile Include="Input\FiresInputBlock.cs" />
     <Compile Include="UI\UIBuilderHost.cs" />
     <Compile Include="UI\FiresConfigUI.cs" />
     <Compile Include="UI\CfgDiscovery.cs" />
     <Compile Include="UI\ConfigPanel.cs" />
+    <Compile Include="UI\FiresRoundedSkin.cs" />
+    <Compile Include="UI\FiresPopupTheme.cs" />
+    <Compile Include="UI\FiresHoverTip.cs" />
+    <Compile Include="UI\NpcPhotoManager.cs" />
+    <Compile Include="UI\PreviewStage.cs" />
     <Compile Include="UI\UIBuilder\BundledLayoutExtractor.cs" />
     <Compile Include="UI\UIBuilder\UIBuilderAssetCache.cs" />
     <Compile Include="UI\UIBuilder\UIBuilderAutoDiscovery.cs" />
@@ -489,6 +551,7 @@
     <Compile Include="UI\GroupHud\GroupHudDragHandler.cs" />
     <Compile Include="UI\GroupHud\GroupHudMember.cs" />
     <Compile Include="UI\UIBuilder\UIFontConfig.cs" />
+    <Compile Include="UI\UIBuilder\UIBackgroundLoader.cs" />
     <Compile Include="UI\UIBuilder\UIHarmonyPatchAuditor.cs" />
     <Compile Include="UI\UIBuilder\UILayoutCodex.cs" />
     <Compile Include="UI\UIBuilder\UILayoutDefinition.cs" />
@@ -511,6 +574,7 @@
     <Compile Include="UI\UIBuilder\UIOverrideMapWiring.cs" />
     <Compile Include="UI\UIBuilder\UIOverrideMinimapWirer.cs" />
     <Compile Include="UI\UIBuilder\UIOverridePackagingHelper.cs" />
+    <Compile Include="UI\UIBuilder\UIMannequinPreview.cs" />
     <Compile Include="UI\UIBuilder\UIOverridePlayerPreview.cs" />
     <Compile Include="UI\UIBuilder\UIOverrideSkillsWiring.cs" />
     <Compile Include="UI\UIBuilder\UIOverrideSlotInteraction.cs" />
@@ -529,6 +593,8 @@
     <Compile Include="Async\PrewarmCoroutine.cs" />
     <Compile Include="Config\ConfigManager.cs" />
     <Compile Include="Diagnostics\FrameTimer.cs" />
+    <Compile Include="Diagnostics\VisEquipmentDropPrefabHeal.cs" />
+    <Compile Include="Diagnostics\CharacterListLeakGuard.cs" />
     <Compile Include="Input\KeyBinding.cs" />
     <Compile Include="Input\WheelBinding.cs" />
     <Compile Include="Lifecycle\AdminCheck.cs" />
@@ -536,6 +602,7 @@
     <Compile Include="Lifecycle\PlayerSpawnGate.cs" />
     <Compile Include="Logging\Banner.cs" />
     <Compile Include="Logging\BepInExLogSuppressionPatch.cs" />
+    <Compile Include="Logging\FiresCoreBanner.cs" />
     <Compile Include="Logging\FiresLog.cs" />
     <Compile Include="Logging\FiresLogColorPatch.cs" />
     <Compile Include="Logging\FiresLogger.cs" />
@@ -551,15 +618,31 @@
     <Compile Include="Services\DistantRenderer.cs" />
     <Compile Include="Services\MaterialSwapper.cs" />
     <Compile Include="Services\VanillaMaterialCache.cs" />
+    <Compile Include="Services\LiveAudioRouting.cs" />
     <Compile Include="Services\ShaderSwapper.cs" />
     <Compile Include="Services\VanillaAssetResolver.cs" />
     <Compile Include="Services\WaterShaderBridge.cs" />
+    <Compile Include="Services\WaterState.cs" />
     <Compile Include="Services\MoonPhase.cs" />
     <Compile Include="Sync\AdminSyncing.cs" />
+    <Compile Include="Sync\ConfigPushService.cs" />
     <Compile Include="Sync\ConfigSync.cs" />
     <Compile Include="Sync\FiresServerScope.cs" />
     <Compile Include="Sync\ManifestDiffSync.cs" />
     <Compile Include="Utilities\BrushFalloffCurves.cs" />
+    <Compile Include="Utilities\EnvironmentBoxController.cs" />
+    <Compile Include="Utilities\EnvironmentBoxContextMenu.cs" />
+    <Compile Include="Utilities\EnvironmentBoxScaler.cs" />
+    <Compile Include="Skills\FiresSkills.cs" />
+    <Compile Include="Dungeon\DungeonSpec.cs" />
+    <Compile Include="Dungeon\DungeonExitInteractPatch.cs" />
+    <Compile Include="Dungeon\FiresDungeonTeardown.cs" />
+    <Compile Include="Dungeon\FiresDungeonRegistry.cs" />
+    <Compile Include="Dungeon\FiresDungeonAssets.cs" />
+    <Compile Include="Dungeon\FiresDungeonCore.cs" />
+    <Compile Include="Dungeon\FiresDungeonService.cs" />
+    <Compile Include="Dungeon\FiresDungeonPortalLink.cs" />
+    <Compile Include="Dungeon\DungeonDoorBlockerController.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
@@ -571,10 +654,24 @@
        managed mod folder; other files there (LiteDB, etc.) are left untouched. -->
   <PropertyGroup>
     <BlueHillsPluginDir>C:\Users\travi\AppData\Roaming\r2modmanPlus-local\Valheim\profiles\BlueHills\BepInEx\plugins\FiresUnifiedCore\</BlueHillsPluginDir>
+    <BlueHillsDediDir>C:\Program Files (x86)\Steam\steamapps\common\Valheim dedicated server - BlueHills\BepInEx\plugins\FiresUnifiedCore\</BlueHillsDediDir>
   </PropertyGroup>
   <Target Name="DeployToBlueHills" AfterTargets="Build" Condition="Exists('$(BlueHillsPluginDir)')">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BlueHillsPluginDir)" OverwriteReadOnlyFiles="true" />
     <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(BlueHillsPluginDir)" OverwriteReadOnlyFiles="true" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
     <Message Importance="high" Text="Deployed $(TargetFileName) (+pdb) -> $(BlueHillsPluginDir)" />
+  </Target>
+  <Target Name="DeployToBlueHillsDedi" AfterTargets="Build" Condition="Exists('$(BlueHillsDediDir)')">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BlueHillsDediDir)" OverwriteReadOnlyFiles="true" />
+    <Message Importance="high" Text="Deployed $(TargetFileName) -> $(BlueHillsDediDir)" />
+  </Target>
+  <!-- The plain dedi receives FiresRPGmaker on every deploy; without Core alongside it, the pair
+       skews and new Core APIs MissingMethod-crash there (parity plan bug B5). -->
+  <PropertyGroup>
+    <PlainDediDir>C:\Program Files (x86)\Steam\steamapps\common\Valheim dedicated server\BepInEx\plugins\</PlainDediDir>
+  </PropertyGroup>
+  <Target Name="DeployToPlainDedi" AfterTargets="Build" Condition="Exists('$(PlainDediDir)')">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PlainDediDir)" OverwriteReadOnlyFiles="true" />
+    <Message Importance="high" Text="Deployed $(TargetFileName) -> $(PlainDediDir)" />
   </Target>
 </Project>

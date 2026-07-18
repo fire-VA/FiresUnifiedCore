@@ -57,6 +57,7 @@ namespace FiresCore.Async
             string worstName = string.Empty;
 
             var runtimeSlowSkips = new HashSet<string>(StringComparer.Ordinal);
+            LoadPersistedSkips(options.PersistSlowSkipPath, runtimeSlowSkips, logInfo);
             var nameTokens = ParseSkipTokens(options.SkipNameContains);
 
             var wall = Stopwatch.StartNew();
@@ -70,17 +71,44 @@ namespace FiresCore.Async
                 var prefab = prefabs[i];
                 if (prefab == null) { skipped++; continue; }
 
+                // Cheapest first: known-slow (persisted from prior sessions) +
+                // config name tokens are string checks — a 29s mega-prefab on
+                // the persisted list must not even pay a component scan.
+                if (ShouldSkipByName(prefab.name, nameTokens, runtimeSlowSkips))
+                {
+                    skipped++;
+                    if (options.Verbose) logDebug($"[Prewarm] Skipped {prefab.name} (name-pattern / known-slow).");
+                    continue;
+                }
+
+                // Pre-flight size gate: a single Instantiate is atomic on the
+                // main thread — no frame budget can split it. Instantiate cost
+                // scales with hierarchy size, so counting transforms (a cheap
+                // traversal, no Awake, no shader compile) rejects mega-prefabs
+                // (combined-build pieces with thousands of children) BEFORE the
+                // first-ever 20-30s freeze, not after.
+                if (options.MaxTransformCount > 0)
+                {
+                    int cap = options.MaxTransformCount;
+                    int nodes = CountTransforms(prefab.transform, cap + 1);
+                    if (nodes > cap)
+                    {
+                        skipped++;
+                        if (runtimeSlowSkips.Add(prefab.name))
+                        {
+                            logWarn($"[Prewarm] '{prefab.name}' exceeds {cap} transforms — skipping warm-up "
+                                + "(a single mega-prefab Instantiate can freeze the client for tens of seconds; "
+                                + "it will warm on first real spawn instead). Persisted for future sessions.");
+                            AppendPersistedSkip(options.PersistSlowSkipPath, prefab.name, logWarn);
+                        }
+                        continue;
+                    }
+                }
+
                 if (options.SkipStatefulComponents && HasStatefulComponent(prefab))
                 {
                     skipped++;
                     if (options.Verbose) logDebug($"[Prewarm] Skipped {prefab.name} (stateful component).");
-                    continue;
-                }
-
-                if (ShouldSkipByName(prefab.name, nameTokens, runtimeSlowSkips))
-                {
-                    skipped++;
-                    if (options.Verbose) logDebug($"[Prewarm] Skipped {prefab.name} (name-pattern / runtime-slow).");
                     continue;
                 }
 
@@ -118,10 +146,14 @@ namespace FiresCore.Async
                     double elapsedMs = elapsed * 1000.0 / Stopwatch.Frequency;
                     if (elapsedMs >= options.SlowInstantiateThresholdMs && runtimeSlowSkips.Add(prefab.name))
                     {
+                        // Persist: without this the stall repeats on EVERY login
+                        // (each prefab warms once per session, so a session-only
+                        // list never actually saved anyone anything).
                         logWarn(
                             $"[Prewarm] '{prefab.name}' took {elapsedMs:F0}ms to instantiate " +
                             $"(threshold {options.SlowInstantiateThresholdMs:F0}ms). " +
-                            $"Future batches will skip it this session.");
+                            $"Persisted to the slow-prefab skip list — future sessions won't warm it.");
+                        AppendPersistedSkip(options.PersistSlowSkipPath, prefab.name, logWarn);
                     }
                 }
 
@@ -187,6 +219,56 @@ namespace FiresCore.Async
             return false;
         }
 
+        // Transform-hierarchy node count with an early-exit cap, so probing a
+        // 10k-node mega-prefab costs cap+1 visits instead of a full traversal
+        // (and no array allocation like GetComponentsInChildren would).
+        private static int CountTransforms(Transform t, int cap)
+        {
+            int count = 1;
+            for (int i = 0; i < t.childCount && count < cap; i++)
+                count += CountTransforms(t.GetChild(i), cap - count);
+            return count;
+        }
+
+        // One prefab name per line; '#' comments allowed. Missing file = empty.
+        private static void LoadPersistedSkips(string path, HashSet<string> into, Action<string> logInfo)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            try
+            {
+                if (!System.IO.File.Exists(path)) return;
+                int added = 0;
+                foreach (var line in System.IO.File.ReadAllLines(path))
+                {
+                    string t = line?.Trim();
+                    if (string.IsNullOrEmpty(t) || t.StartsWith("#", StringComparison.Ordinal)) continue;
+                    if (into.Add(t)) added++;
+                }
+                if (added > 0)
+                    logInfo($"[Prewarm] Loaded {added} persisted slow-prefab skip(s) from {System.IO.Path.GetFileName(path)}.");
+            }
+            catch (Exception ex)
+            {
+                logInfo($"[Prewarm] Could not read slow-skip file '{path}': {ex.Message}");
+            }
+        }
+
+        private static void AppendPersistedSkip(string path, string prefabName, Action<string> logWarn)
+        {
+            if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(prefabName)) return;
+            try
+            {
+                string dir = System.IO.Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
+                    System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.AppendAllText(path, prefabName + Environment.NewLine);
+            }
+            catch (Exception ex)
+            {
+                logWarn($"[Prewarm] Could not persist slow-skip '{prefabName}': {ex.Message}");
+            }
+        }
+
         // Prefabs whose Awake / OnDestroy depends on world state that
         // doesn't exist at our (0,-1000,0) prewarm position. Each of these
         // was caught throwing NRE during prewarm in production logs.
@@ -226,9 +308,23 @@ namespace FiresCore.Async
         public float FrameBudgetMs = 8f;
 
         // When a single prefab's Instantiate exceeds this, remember its
-        // name for the rest of the session and skip subsequent passes.
-        // Zero = disabled.
+        // name (and persist it via PersistSlowSkipPath when set) so it is
+        // never warmed again. Zero = disabled.
         public float SlowInstantiateThresholdMs = 500f;
+
+        // Pre-flight hierarchy gate: skip any prefab with more transform
+        // nodes than this BEFORE Instantiating. A single Instantiate is
+        // atomic on the main thread — no frame budget can split it — and a
+        // combined-build mega-prefab can freeze the client for 20-30s. The
+        // count is a cheap capped traversal. Zero = disabled.
+        public int MaxTransformCount = 0;
+
+        // File persisting slow/oversize prefab names across sessions (one
+        // name per line, '#' comments). Loaded at Run start; appended when
+        // the threshold or the transform gate trips. Null/empty = in-memory
+        // only (the pre-persistence behavior, which re-pays every stall on
+        // every login).
+        public string PersistSlowSkipPath = null;
 
         // Per-line debug logging during the pass.
         public bool Verbose = false;

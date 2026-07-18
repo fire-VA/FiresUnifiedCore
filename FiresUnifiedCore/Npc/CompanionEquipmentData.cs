@@ -73,7 +73,13 @@ namespace FiresCore.Npc
         // AI Settings (from weapon SharedData)
         public float AIAttackRange { get; private set; } = 2.5f;
         public float AIAttackRangeMin { get; private set; } = 0f;
-        public float AIAttackInterval { get; private set; } = 2f;
+        // Base AI attack interval from weapon data; the public AIAttackInterval divides it by the
+        // archetype attack-speed multiplier so faster classes attack more frequently (one cadence lever).
+        private float _baseAttackInterval = 2f;
+        private float _archetypeAttackSpeedMultiplier = 1f;
+        public void SetArchetypeAttackSpeedMultiplier(float m) =>
+            _archetypeAttackSpeedMultiplier = m <= 0f ? 1f : m;
+        public float AIAttackInterval => _baseAttackInterval / _archetypeAttackSpeedMultiplier;
         public float AIAttackMaxAngle { get; private set; } = 5f;
   
         // Bow/Crossbow Data
@@ -309,6 +315,7 @@ namespace FiresCore.Npc
          RefreshArmorData();
    RefreshSetBonuses();
             RefreshEquipmentStatusEffects();
+            ApplyGearStatusEffectsToSEMan();
             RecalculateAggregatedStats();
 
     OnEquipmentChanged?.Invoke();
@@ -609,6 +616,25 @@ return HitData.DamageModifier.Normal;
             return basePower + (basePower * skillFactor * 0.5f);
         }
      
+        // Archetype outgoing-damage multiplier (set by ArchetypeController, applied in CreateWeaponHitData).
+        private float _archetypeDamageMultiplier = 1f;
+        public void SetArchetypeDamageMultiplier(float multiplier) =>
+            _archetypeDamageMultiplier = multiplier <= 0f ? 1f : multiplier;
+
+        // Archetype armor multiplier (set by ArchetypeController, applied via GetEffectiveArmor in the prefix).
+        private float _archetypeArmorMultiplier = 1f;
+        public void SetArchetypeArmorMultiplier(float multiplier) =>
+            _archetypeArmorMultiplier = multiplier <= 0f ? 1f : multiplier;
+
+        // Archetype crit (set by ArchetypeController, rolled in CreateWeaponHitData; crit only amplifies).
+        private float _archetypeCritChance = 0f;
+        private float _archetypeCritDamageMultiplier = 1f;
+        public void SetArchetypeCrit(float chance, float damageMult)
+        {
+            _archetypeCritChance = Mathf.Clamp01(chance);
+            _archetypeCritDamageMultiplier = damageMult <= 1f ? 1f : damageMult;
+        }
+
         /// <summary>
         /// Creates HitData for dealing damage with current weapon.
         /// Pulls all combat properties directly from the weapon's ItemDrop.ItemData.SharedData.
@@ -632,7 +658,12 @@ return HitData.DamageModifier.Normal;
                     // Add per-level damage for each quality level above 1
                     hit.m_damage.Add(WeaponDamagePerLevel, WeaponItem.m_quality - 1);
   }
-  
+
+                // Apply world-level gear damage bonus, matching vanilla ItemDrop.GetDamage
+                // (IncreaseEqually(worldLevel * m_worldLevelGearBaseDamage)); no-op at worldLevel 0.
+                if (Game.instance != null && Game.m_worldLevel > 0)
+                    hit.m_damage.IncreaseEqually(Game.m_worldLevel * (float)Game.instance.m_worldLevelGearBaseDamage, true);
+
     // Apply skill bonus (same formula as vanilla: 1 + skill * 0.005)
          if (_skills != null)
                 {
@@ -640,7 +671,23 @@ return HitData.DamageModifier.Normal;
              float skillBonus = 1f + (skillLevel * 0.005f);
    hit.m_damage.Modify(skillBonus);
        }
-       
+
+                // Vanilla-style level/star damage scaling, then the per-archetype damage multiplier ON TOP
+                // of stars (two independent multiplicative terms, each applied exactly once - companions
+                // never run vanilla Attack.GetLevelDamageFactor, so there is no double count).
+                int effLevel = _companion != null ? _companion.GetEffectiveLevel() : 1;
+                hit.m_damage.Modify(1f + Mathf.Max(0, effLevel - 1) * 0.5f);
+                if (_archetypeDamageMultiplier != 1f)
+                    hit.m_damage.Modify(_archetypeDamageMultiplier);
+
+                // Archetype critical hit: roll once, amplify on success (never reduces). Server rolls
+                // outgoing damage so UnityEngine.Random is fine here.
+                if (_archetypeCritChance > 0f && _archetypeCritDamageMultiplier > 1f
+                    && UnityEngine.Random.value < _archetypeCritChance)
+                {
+                    hit.m_damage.Modify(_archetypeCritDamageMultiplier);
+                }
+
                 // Apply progression attribute bonuses (Strength for melee, Intelligence for magic)
                 var progression = _companion?.GetProgression();
                 if (progression != null)
@@ -669,6 +716,11 @@ return HitData.DamageModifier.Normal;
          {
          hit.m_damage.Modify(damageMultiplier);
         }
+
+                // Status-effect attack modifiers LAST, so active buffs/debuffs (guardian power, set/food
+                // effects, etc.) layer on top of weapon + skill + level + archetype. No-op when the
+                // attacker has no active status effects, so this never spikes damage on its own.
+                attacker?.GetSEMan()?.ModifyAttack(hit.m_skill, ref hit);
                 
                 // Set all combat properties from weapon data
    hit.m_pushForce = AttackForce * ForceMultiplier;
@@ -742,7 +794,7 @@ return HitData.DamageModifier.Normal;
             // AI settings
       AIAttackRange = shared.m_aiAttackRange > 0 ? shared.m_aiAttackRange : 2.5f;
       AIAttackRangeMin = shared.m_aiAttackRangeMin;
-            AIAttackInterval = shared.m_aiAttackInterval > 0 ? shared.m_aiAttackInterval : 2f;
+            _baseAttackInterval = shared.m_aiAttackInterval > 0 ? shared.m_aiAttackInterval : 2f;
       AIAttackMaxAngle = shared.m_aiAttackMaxAngle > 0 ? shared.m_aiAttackMaxAngle : 5f;
   
             // Damage data
@@ -973,7 +1025,7 @@ SneakStaminaModifier = shared.m_sneakStaminaModifier,
             
             AIAttackRange = 2.5f;
 AIAttackRangeMin = 0f;
-            AIAttackInterval = 2f;
+            _baseAttackInterval = 2f;
             AIAttackMaxAngle = 5f;
  IsBowDraw = false;
             DrawDurationMin = 1.5f;
@@ -1082,29 +1134,58 @@ ShieldBlockPowerPerLevel = 0f;
            }
             }
 
-            // CRITICAL: Push the calculated armor into the Character's m_armorSkin field so
-            // Valheim's own Character.Damage() path (which calls GetBodyArmor()) actually
-            // reduces incoming damage. Without this, companions have 0 effective armor
-            // even when the stats screen shows a positive value because our TotalArmor is
-            // only tracked internally and never seen by the native damage pipeline.
-            // We use m_armorSkin rather than equipping items on Humanoid slots because that
-            // would require full item-slot management; m_armorSkin is additive with any
-            // slot-equipped items so there is no double-counting.
-            var character = GetComponent<Character>();
-            if (character != null)
-            {
-                try
-                {
-                    var armorField = typeof(Character).GetField("m_armorSkin",
-                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                        System.Reflection.BindingFlags.Instance);
-                    armorField?.SetValue(character, TotalArmor);
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"[CompanionEquipmentData] Could not set m_armorSkin: {ex.Message}");
-                }
-            }
+            // Armor mitigation is applied in the companion damage prefix (CompanionPatches), NOT here.
+            // Character.m_armorSkin does not exist in vanilla, so the old reflection write silently
+            // no-op'd and companions took FULL physical damage regardless of gear. TotalArmor and
+            // DamageModifiers are now read straight off this component by the prefix and fed to
+            // hit.ApplyArmor / hit.ApplyResistance, the same math vanilla uses for players.
+        }
+
+        /// <summary>Total armor after the per-archetype armor multiplier (read by the damage prefix).</summary>
+        public float GetEffectiveArmor() => Mathf.Max(0f, TotalArmor * _archetypeArmorMultiplier);
+
+        /// <summary>
+        /// Builds a vanilla HitData.DamageModifiers from this companion's equipped-gear damage-type
+        /// resistances so the damage prefix can call hit.ApplyResistance before armor reduction.
+        /// </summary>
+        public HitData.DamageModifiers BuildDamageModifiers()
+        {
+            var mods = new HitData.DamageModifiers();
+            if (DamageModifiers.Count == 0) return mods;
+            var list = new System.Collections.Generic.List<HitData.DamageModPair>(DamageModifiers.Count);
+            foreach (var kv in DamageModifiers)
+                list.Add(new HitData.DamageModPair { m_type = kv.Key, m_modifier = kv.Value });
+            mods.Apply(list);
+            return mods;
+        }
+
+        // Set + per-piece equipment status effects we've pushed onto SEMan, tracked so we can diff/remove.
+        private readonly System.Collections.Generic.HashSet<StatusEffect> _appliedGearEffects =
+            new System.Collections.Generic.HashSet<StatusEffect>();
+
+        /// <summary>
+        /// Pushes equipped-gear status effects (per-piece equipment effects + completed-set bonuses) onto
+        /// the companion's SEMan and removes ones no longer active - mirrors vanilla
+        /// Humanoid.UpdateEquipmentStatusEffects so set bonuses and gear effects actually apply.
+        /// </summary>
+        private void ApplyGearStatusEffectsToSEMan()
+        {
+            var seman = GetComponent<Character>()?.GetSEMan();
+            if (seman == null) return;
+
+            var current = new System.Collections.Generic.HashSet<StatusEffect>();
+            if (EquipmentStatusEffects != null)
+                foreach (var se in EquipmentStatusEffects) if (se != null) current.Add(se);
+            if (ActiveSetEffects != null)
+                foreach (var se in ActiveSetEffects) if (se != null) current.Add(se);
+
+            foreach (var se in _appliedGearEffects)
+                if (se != null && !current.Contains(se)) seman.RemoveStatusEffect(se.NameHash());
+            foreach (var se in current)
+                if (!_appliedGearEffects.Contains(se)) seman.AddStatusEffect(se);
+
+            _appliedGearEffects.Clear();
+            _appliedGearEffects.UnionWith(current);
         }
     
         private void RefreshSetBonuses()

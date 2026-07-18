@@ -40,7 +40,7 @@ namespace FiresCore.UI
                 if (resources.Length == 0) return;
 
                 string baseDir = Path.Combine(
-                    BepInEx.Paths.ConfigPath, "FiresRPGmaker", "UILayouts");
+                    FiresCore.Storage.FiresConfigPaths.UiLayouts);
                 if (!Directory.Exists(baseDir))
                     Directory.CreateDirectory(baseDir);
 

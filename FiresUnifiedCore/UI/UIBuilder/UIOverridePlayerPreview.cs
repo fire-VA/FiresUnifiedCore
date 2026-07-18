@@ -26,7 +26,9 @@ namespace FiresCore.UI
         public int TextureHeight = 512;
 
         /// <summary>Camera offset from the player's chest.</summary>
-        public Vector3 CameraOffset = new Vector3(0f, 0.8f, 2.5f);
+        // Aim at body center (y=1.0, the LookAt target) and stand back (z) to frame a standing player head-to-foot
+        // with a little margin at FOV 22. z pulled back slightly from 4.6 → 5.2 for a touch more headroom/footroom.
+        public Vector3 CameraOffset = new Vector3(0f, 1.0f, 5.2f);
 
         /// <summary>Current rotation angle around the player (Y axis).</summary>
         public float RotationAngle = 180f;
@@ -39,6 +41,13 @@ namespace FiresCore.UI
         private RenderTexture _renderTexture;
         private GameObject _cameraGO;
         private bool _isDragging;
+
+        // The layer the preview camera renders. Attached equipment (helmet, cape, shoulders, weapons) is instantiated
+        // from item prefabs that keep their OWN layer, not the player's "character" layer — so a character-only cull
+        // shows the body + skinned armor but drops every attached piece. We re-stamp the whole visual subtree onto
+        // this layer each frame so the camera renders the full equipped look. The main camera already renders
+        // "character", so this is invisible in-game; equipment visuals have no gameplay colliders, so it's side-effect free.
+        private int _previewLayer = -1;
 
         private void Start()
         {
@@ -94,6 +103,17 @@ namespace FiresCore.UI
             }
             catch { }
 
+            // Pull every renderer in the player's visual onto the camera's render layer so attached equipment shows.
+            if (_previewLayer >= 0)
+            {
+                var renderers = visual.GetComponentsInChildren<Renderer>(true);
+                for (int i = 0; i < renderers.Length; i++)
+                {
+                    var go = renderers[i].gameObject;
+                    if (go.layer != _previewLayer) go.layer = _previewLayer;
+                }
+            }
+
             Vector3 center = visual.position + Vector3.up * CameraOffset.y;
 
             float rad = RotationAngle * Mathf.Deg2Rad;
@@ -123,7 +143,7 @@ namespace FiresCore.UI
             _camera.clearFlags = CameraClearFlags.SolidColor;
             _camera.backgroundColor = new Color(0, 0, 0, 0); // transparent
             _camera.cullingMask = LayerMask.GetMask("character"); // Valheim player layer
-            _camera.fieldOfView = 20f;
+            _camera.fieldOfView = 22f;
             _camera.nearClipPlane = 0.1f;
             _camera.farClipPlane = 50f;
             _camera.depth = -10; // don't affect main camera
@@ -140,15 +160,26 @@ namespace FiresCore.UI
                 _camera.cullingMask = 1 << Player.m_localPlayer.gameObject.layer;
             }
 
+            // The single layer we re-stamp the visual onto (first layer in the final cull mask).
+            _previewLayer = FirstLayerInMask(_camera.cullingMask);
+
             _rawImage.texture = _renderTexture;
             _rawImage.color = Color.white;
 
             Debug.Log($"[UIOverridePlayerPreview] Created preview camera (layer mask: {_camera.cullingMask})");
         }
 
-        // ???????????????????????????????????????
+        private static int FirstLayerInMask(int mask)
+        {
+            if (mask == 0) return -1;
+            for (int i = 0; i < 32; i++)
+                if ((mask & (1 << i)) != 0) return i;
+            return -1;
+        }
+
+        // ---------------------------------------
         //  Drag to rotate
-        // ???????????????????????????????????????
+        // ---------------------------------------
 
         public void OnBeginDrag(PointerEventData eventData)
         {

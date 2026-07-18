@@ -74,11 +74,49 @@ namespace FiresCore.Storage
         public static void RecordHarvested(string ownerKey, string playerName, string prefab, int amount = 1)
             => Mutate(ownerKey, playerName, e => Bump(e.Harvested, prefab, amount));
 
+        // Per-weapon-prefab kill tally. The "favorite weapon" is read as the highest-count entry here.
+        public static void RecordWeaponKill(string ownerKey, string playerName, string weaponPrefab, int amount = 1)
+            => Mutate(ownerKey, playerName, e =>
+            {
+                if (e.WeaponKills == null) e.WeaponKills = new Dictionary<string, int>();
+                Bump(e.WeaponKills, weaponPrefab, amount);
+            });
+
+        // Latest-wins skill level for a single skill (key = Skills.SkillType name, level 0..100).
+        public static void SetSkillLevel(string ownerKey, string playerName, string skill, int level)
+            => Mutate(ownerKey, playerName, e =>
+            {
+                if (string.IsNullOrEmpty(skill)) return;
+                if (e.Skills == null) e.Skills = new Dictionary<string, int>();
+                e.Skills[skill] = level;
+            });
+
         public static void RecordDeath(string ownerKey, string playerName)
             => Mutate(ownerKey, playerName, e => e.DeathAmount++);
 
         public static void SetMapExplored(string ownerKey, string playerName, float percent)
             => Mutate(ownerKey, playerName, e => { if (percent > e.MapExplored) e.MapExplored = percent; });
+
+        // Set-once flag for the first time a player enters a biome (key = Heightmap.Biome name).
+        public static void RecordBiomeReached(string ownerKey, string playerName, string biome)
+            => Mutate(ownerKey, playerName, e =>
+            {
+                if (string.IsNullOrEmpty(biome)) return;
+                if (e.BiomesReached == null) e.BiomesReached = new Dictionary<string, int>();
+                e.BiomesReached[biome] = 1;
+            });
+
+        // Running count of creatures tamed. >0 satisfies the "first tame" milestone.
+        public static void RecordTamed(string ownerKey, string playerName, int amount = 1)
+            => Mutate(ownerKey, playerName, e => e.Tamed += Math.Max(1, amount));
+
+        // Hoe terrain ops (raise / level / path). Separate from BuiltStructures so terraforming isn't a "build".
+        public static void RecordTerraformed(string ownerKey, string playerName, int amount = 1)
+            => Mutate(ownerKey, playerName, e => e.Terraformed += Math.Max(1, amount));
+
+        // Cultivator ops (cultivate farmland + plant seeds/saplings).
+        public static void RecordCultivated(string ownerKey, string playerName, int amount = 1)
+            => Mutate(ownerKey, playerName, e => e.Cultivated += Math.Max(1, amount));
 
         public static LeaderboardEntry GetForPlayer(string ownerKey)
         {
@@ -104,6 +142,162 @@ namespace FiresCore.Storage
             }
             catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} GetTop failed: {ex.Message}"); }
             return result;
+        }
+
+        // ── Seasons ─────────────────────────────────────────────────────────────────────────────────
+        // The live Leaderboard collection IS the current season. Rolling a season copies every live row into the
+        // archive (tagged with the season number), drops the live collection (a clean wipe), and bumps the season
+        // counter. Past seasons are read back from the archive; the current season reads live.
+
+        private const int SeasonMetaId = 1;
+
+        public static int GetCurrentSeason()
+        {
+            try { using var db = VaultDatabase.Open(); return ReadSeasonMeta(db); }
+            catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} GetCurrentSeason failed: {ex.Message}"); return 1; }
+        }
+
+        private static int ReadSeasonMeta(LiteDatabase db)
+        {
+            var doc = db.GetCollection(VaultDatabase.LeaderboardMetaCollection).FindById(SeasonMetaId);
+            return doc != null && doc.ContainsKey("Season") ? doc["Season"].AsInt32 : 1;
+        }
+
+        private static void WriteSeasonMeta(LiteDatabase db, int season)
+            => db.GetCollection(VaultDatabase.LeaderboardMetaCollection)
+                 .Upsert(new BsonDocument { ["_id"] = SeasonMetaId, ["Season"] = season });
+
+        /// <summary>Archive every live row under the current season, wipe the live board, advance the season.
+        /// Returns the season number that was just archived, or -1 on failure.</summary>
+        public static int RollSeason()
+        {
+            try
+            {
+                using var db = VaultDatabase.Open();
+                int current = ReadSeasonMeta(db);
+                var live = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId);
+                var archive = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardArchiveCollection, BsonAutoId.ObjectId);
+                archive.EnsureIndex(x => x.Season);
+                foreach (var row in live.FindAll().ToList())
+                {
+                    row._id = 0;            // let the archive assign a fresh id
+                    row.Season = current;
+                    archive.Insert(row);
+                }
+                db.DropCollection(VaultDatabase.LeaderboardCollection);
+                WriteSeasonMeta(db, current + 1);
+                FiresLogger.LogInfo($"{LogPrefix} Rolled season {current} → {current + 1} (archived the live board).");
+                return current;
+            }
+            catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} RollSeason failed: {ex.Message}"); return -1; }
+        }
+
+        /// <summary>Hard-wipe the leaderboard: drop the live board, the season archive, and the season counter.
+        /// Unlike <see cref="RollSeason"/> (which archives), this destroys all history and resets the season to 1
+        /// (the meta doc is gone, so <see cref="GetCurrentSeason"/> falls back to its default of 1). SERVER-only;
+        /// for a fresh-install / new-season-1 reset. Other vault collections (Bank/Marketplace/Mail/Guild/
+        /// PlayerIdentity/PlayerAppearance) are untouched.</summary>
+        public static void WipeAll()
+        {
+            try
+            {
+                using var db = VaultDatabase.Open();
+                db.DropCollection(VaultDatabase.LeaderboardCollection);
+                db.DropCollection(VaultDatabase.LeaderboardArchiveCollection);
+                db.DropCollection(VaultDatabase.LeaderboardMetaCollection);
+                FiresLogger.LogInfo($"{LogPrefix} WipeAll — dropped live board, archive, and season meta (reset to season 1).");
+            }
+            catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} WipeAll failed: {ex.Message}"); }
+        }
+
+        /// <summary>Distinct archived season numbers, ascending (does not include the current/live season).</summary>
+        public static List<int> GetArchivedSeasons()
+        {
+            try
+            {
+                using var db = VaultDatabase.Open();
+                return db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardArchiveCollection, BsonAutoId.ObjectId)
+                    .FindAll().Select(e => e.Season).Distinct().OrderBy(s => s).ToList();
+            }
+            catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} GetArchivedSeasons failed: {ex.Message}"); return new List<int>(); }
+        }
+
+        /// <summary>Rows for a given season: a negative season = the all-time OVERALL aggregate (every season
+        /// summed per player); the live board if it's the current season (or newer); else the archive.</summary>
+        public static Dictionary<string, LeaderboardEntry> GetSeasonEntries(int season)
+        {
+            if (season < 0) return GetOverallEntries();
+            var all = new Dictionary<string, LeaderboardEntry>();
+            try
+            {
+                using var db = VaultDatabase.Open();
+                int current = ReadSeasonMeta(db);
+                if (season >= current)
+                {
+                    foreach (var e in db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId).FindAll())
+                        all[e.Owner] = e;
+                }
+                else
+                {
+                    foreach (var e in db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardArchiveCollection, BsonAutoId.ObjectId).Find(x => x.Season == season))
+                        all[e.Owner] = e;
+                }
+            }
+            catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} GetSeasonEntries failed: {ex.Message}"); }
+            return all;
+        }
+
+        /// <summary>All-time aggregate per player across the live board AND every archived season: additive
+        /// counters summed; MapExplored and skill levels taken as the max (the same world isn't re-explorable, and
+        /// a skill level is a high-water mark, not a per-season sum). Favorite weapon / top skills then read off
+        /// the merged dictionaries exactly like a single season.</summary>
+        public static Dictionary<string, LeaderboardEntry> GetOverallEntries()
+        {
+            var agg = new Dictionary<string, LeaderboardEntry>();
+            try
+            {
+                using var db = VaultDatabase.Open();
+                var live = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId).FindAll();
+                var archived = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardArchiveCollection, BsonAutoId.ObjectId).FindAll();
+                foreach (var e in live.Concat(archived))
+                {
+                    if (e == null || string.IsNullOrEmpty(e.Owner)) continue;
+                    if (!agg.TryGetValue(e.Owner, out var acc))
+                    {
+                        acc = new LeaderboardEntry { Owner = e.Owner, PlayerName = e.PlayerName };
+                        agg[e.Owner] = acc;
+                    }
+                    if (!string.IsNullOrEmpty(e.PlayerName)) acc.PlayerName = e.PlayerName;
+                    MergeInto(acc, e);
+                }
+            }
+            catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} GetOverallEntries failed: {ex.Message}"); }
+            return agg;
+        }
+
+        private static void MergeInto(LeaderboardEntry acc, LeaderboardEntry e)
+        {
+            MergeDict(acc.KilledCreatures, e.KilledCreatures);
+            MergeDict(acc.BuiltStructures, e.BuiltStructures);
+            MergeDict(acc.ItemsCrafted, e.ItemsCrafted);
+            MergeDict(acc.KilledBy, e.KilledBy);
+            MergeDict(acc.Harvested, e.Harvested);
+            MergeDict(acc.WeaponKills, e.WeaponKills);
+            MergeDict(acc.BiomesReached, e.BiomesReached);
+            acc.DeathAmount += e.DeathAmount;
+            acc.Tamed += e.Tamed;
+            acc.Terraformed += e.Terraformed;
+            acc.Cultivated += e.Cultivated;
+            if (e.MapExplored > acc.MapExplored) acc.MapExplored = e.MapExplored;
+            if (e.Skills != null)
+                foreach (var kv in e.Skills)
+                    if (!acc.Skills.TryGetValue(kv.Key, out var cur) || kv.Value > cur) acc.Skills[kv.Key] = kv.Value;
+        }
+
+        private static void MergeDict(Dictionary<string, int> into, Dictionary<string, int> from)
+        {
+            if (into == null || from == null) return;
+            foreach (var kv in from) { into.TryGetValue(kv.Key, out int cur); into[kv.Key] = cur + kv.Value; }
         }
 
         private static void Mutate(string ownerKey, string playerName, Action<LeaderboardEntry> mutate)

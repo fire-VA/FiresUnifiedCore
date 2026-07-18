@@ -38,7 +38,7 @@ namespace FiresCore.Npc
         /// Cached companion lookup ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â avoids GetComponent on every Character every frame.
         /// Returns null for non-companions (cached negative result).
         /// </summary>
-        private static CompanionController GetCachedCompanion(Character instance)
+        internal static CompanionController GetCachedCompanion(Character instance)
         {
             int id = instance.GetInstanceID();
             if (!_companionLookupCache.TryGetValue(id, out var cached))
@@ -2075,6 +2075,21 @@ namespace FiresCore.Npc
                     }
                 }
 
+                // EQUIPPED-GEAR MITIGATION: companions track gear in CompanionEquipmentData, not on Humanoid
+                // slots, so vanilla GetBodyArmor/GetDamageModifiers never sees it (and the old m_armorSkin
+                // write was a no-op, leaving companions with ZERO armor). Apply gear resistances then armor
+                // here - vanilla HitData order (resistance before armor) - so equipped gear actually mitigates.
+                if (hit != null && hit.GetTotalDamage() > 0f)
+                {
+                    var equip = __instance.GetComponent<CompanionEquipmentData>();
+                    if (equip != null)
+                    {
+                        hit.ApplyResistance(equip.BuildDamageModifiers(), out _);
+                        float armor = equip.GetEffectiveArmor();
+                        if (armor > 0f) hit.ApplyArmor(armor);
+                    }
+                }
+
                 // IMPORTANT: Notify NpcModule that this NPC was directly attacked
                 // This allows stationed NPCs to enter alert/combat state
                 var npcModule = __instance.GetComponent<CompanionNpcModule>();
@@ -3027,7 +3042,11 @@ namespace FiresCore.Npc
 
                 // Guard m_nview ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the original method does m_nview.GetZDO().GetInt()
                 // which NREs on freshly spawned companions before Start() runs.
-                var nview = __instance.m_nview;
+                // m_nview is PRIVATE in the live assembly — a direct read compiles against the
+                // publicized DLL but throws FieldAccessException at runtime (silently swallowed by
+                // the catch below, which forced __result=0 for every one of our NPCs: females
+                // animated male). Resolve it the way vanilla Awake does, from public members only.
+                var nview = ResolveVisNview(__instance);
                 if (nview == null || !nview.IsValid() || nview.GetZDO() == null)
                 {
                     __result = 0;
@@ -3039,6 +3058,12 @@ namespace FiresCore.Npc
                     __result = 0;
                     return false;
                 }
+
+                // NEVER run the original for our NPCs: NpcVisEquipment's init gate nulls vanilla's
+                // private m_nview for a window, and the original does m_nview.IsValid() unguarded.
+                // Compute what vanilla would return (the ZDO model index) from the resolved nview.
+                __result = nview.GetZDO().GetInt(ZDOVars.s_modelIndex, 0);
+                return false;
             }
             catch
             {
@@ -3062,11 +3087,98 @@ namespace FiresCore.Npc
             return GuardVisualUpdate(__instance);
         }
 
+        // Vanilla VisEquipment resolves its private m_nview in Awake as "m_nViewOverride ?? own
+        // ZNetView". Reading the private field directly compiles against the publicized DLL but
+        // throws FieldAccessException at runtime (the trap that silently disabled DiagBaseModel and
+        // IsIncompatibleBaseModel — every read landed in their catch blocks). Re-derive it from
+        // public members instead; for our NPCs NpcVisEquipment sets m_nViewOverride during init.
+        private static ZNetView ResolveVisNview(VisEquipment ve)
+        {
+            if (ve == null) return null;
+            return ve.m_nViewOverride != null ? ve.m_nViewOverride : ve.GetComponent<ZNetView>();
+        }
+
+        // Same rule for the private m_modelIndex: the ZDO model index is what vanilla UpdateBaseModel
+        // actually uses, so read that; 0 matches vanilla's default when there is no ZDO value.
+        private static int ResolveVisModelIndex(VisEquipment ve)
+        {
+            var nview = ResolveVisNview(ve);
+            if (nview != null && nview.IsValid() && nview.GetZDO() != null)
+                return nview.GetZDO().GetInt(ZDOVars.s_modelIndex, 0);
+            return 0;
+        }
+
+        // One-shot per (npc, target mesh): log the actual numbers at the vanilla assignment site so a
+        // body-mesh mismatch (bones vs bindposes vs vertex layout, or the guard not engaging) is pinned
+        // from one session's log instead of guessed at.
+        private static readonly HashSet<string> _baseModelDiagLogged = new HashSet<string>();
+        private static void DiagBaseModel(VisEquipment ve)
+        {
+            try
+            {
+                if (ve == null || !IsOurPrefab(ve.gameObject)) return;
+                var smr = ve.m_bodyModel;
+                var models = ve.m_models;
+                if (smr == null || models == null || models.Length == 0) return;
+                int idx = ResolveVisModelIndex(ve);
+                if (idx < 0 || idx >= models.Length) return;
+                var target = models[idx].m_mesh;
+                var current = smr.sharedMesh;
+                if (target == null || target == current) return;   // vanilla no-ops on same reference
+                string key = ve.gameObject.name + "|" + target.name + "|" + idx;
+                if (!_baseModelDiagLogged.Add(key)) return;
+                Debug.Log($"[BodyMeshDiag] {ve.gameObject.name} idx={idx} smrBones={(smr.bones != null ? smr.bones.Length : -1)} " +
+                          $"current='{(current != null ? current.name : "null")}' curBind={(current != null && current.bindposes != null ? current.bindposes.Length : -1)} curVerts={(current != null ? current.vertexCount : -1)} " +
+                          $"target='{target.name}' tgtBind={(target.bindposes != null ? target.bindposes.Length : -1)} tgtVerts={target.vertexCount} " +
+                          $"guardFires={IsIncompatibleBaseModel(ve)}");
+            }
+            catch { }
+        }
+
         [HarmonyPatch(typeof(VisEquipment), "UpdateBaseModel")]
         [HarmonyPrefix]
         public static bool VisEquipment_UpdateBaseModel_Prefix(VisEquipment __instance)
         {
-            return GuardVisualUpdate(__instance);
+            if (!GuardVisualUpdate(__instance)) return false;   // shared readiness gate
+
+            DiagBaseModel(__instance);
+
+            // Female migrated NPCs (model index 1 → vanilla 'bodyfem') whose baked companion rig can't skin
+            // the player body mesh trigger Unity's "does not match the expected mesh data size and vertex
+            // stride" and STOP rendering the body (invisible NPC + error spam). Vanilla UpdateBaseModel
+            // assigns m_models[idx].m_mesh every frame, bypassing NpcVisEquipment's own guarded swap. For OUR
+            // bodies only, skip that assignment when the renderer's skeleton can't skin the target mesh (bone
+            // count ≠ bindposes) — the body keeps its last compatible (baked) mesh and stays visible. Players
+            // and creatures are already gated out by GuardVisualUpdate's IsOurPrefab check.
+            if (IsIncompatibleBaseModel(__instance)) return false;
+
+            return true;
+        }
+
+        /// <summary>True when this is one of OUR NPC bodies AND the vanilla body mesh selected by the current
+        /// model index cannot be skinned by the renderer's baked skeleton (bone count ≠ bindpose count). Lets
+        /// the UpdateBaseModel prefix skip vanilla's unconditional body-mesh assignment and avoid the
+        /// vertex-stride render-stop on companion rigs. Never true for players/creatures.</summary>
+        private static bool IsIncompatibleBaseModel(VisEquipment ve)
+        {
+            try
+            {
+                if (ve == null || !IsOurPrefab(ve.gameObject)) return false;
+                var smr = ve.m_bodyModel;
+                var models = ve.m_models;
+                if (smr == null || models == null || models.Length == 0) return false;
+                int idx = ResolveVisModelIndex(ve);
+                if (idx < 0 || idx >= models.Length) return false;
+                var mesh = models[idx].m_mesh;
+                if (mesh == null) return false;
+                // Incompatible = the skeleton can't skin it (bindpose count) OR Unity already rejected
+                // this exact pairing at skin time this session (NpcBodyMeshGuard tripwire). The second
+                // check is what keeps vanilla UpdateBaseModel from re-assigning a rejected mesh every
+                // frame after the guard healed the renderer — vanilla re-assigns whenever
+                // sharedMesh != m_models[idx].m_mesh, so without it the heal would be fought forever.
+                return !NpcBodyMeshGuard.IsAssignable(mesh, smr);
+            }
+            catch { return false; }
         }
 
         [HarmonyPatch(typeof(VisEquipment), "UpdateEquipmentVisuals")]
@@ -3186,6 +3298,15 @@ namespace FiresCore.Npc
 
         public static bool AreCompanionTeleportsSuppressed()
         {
+            // A dedicated server has NO local player by design. Everything below is a CLIENT guard —
+            // it protects the local player's zone stream during THEIR respawn/loading by watching for
+            // m_localPlayer == null. On a dedi m_localPlayer is ALWAYS null, so that branch returns true
+            // forever and silently blocks every server-side companion SaveToZDO (identity/inventory/
+            // equipment/skills/stats) — the cause of companions respawning naked and un-persisted on a
+            // dedicated server. Never suppress here; the server has no loading screen to protect.
+            if (ZNet.instance != null && ZNet.instance.IsDedicated())
+                return false;
+
             // Hard window from the long-jump trigger.
             if (Time.unscaledTime < SuppressCompanionTeleportsUntil)
                 return true;
@@ -3370,7 +3491,11 @@ namespace FiresCore.Npc
             try
             {
                 if (__instance.GetComponent<CompanionController>() == null) return;
-                if (!__instance.IsCrouching()) return;
+                // Character.IsCrouching() is virtual-false for every non-player — the replicated
+                // "crouching" animator bool (set by CompanionAI.SetCompanionCrouch through
+                // ZSyncAnimation) is the companion's real crouch state on every machine.
+                var animator = __instance.m_animator;
+                if (animator == null || !animator.GetBool(CompanionAI.CrouchingAnimHash)) return;
 
                 float lightFactor = StealthSystem.instance != null
                     ? StealthSystem.instance.GetLightFactor(__instance.GetCenterPoint())

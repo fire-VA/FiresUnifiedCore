@@ -20,6 +20,14 @@ namespace FiresCore.Bridge
         /// <summary>Died and is waiting out its respawn timer. Auto-recalls once
         /// <see cref="DormantNpcEntry.RecallDeadlineUtcTicks"/> has elapsed.</summary>
         DeadPendingRespawn = 2,
+
+        /// <summary>Currently ALIVE in the world (owned + spawned). Not dormant — this entry exists
+        /// purely so the kennel is the authoritative persistent store for the companion's identity
+        /// (name / loadout / appearance / stats) exactly like the old vault was, so a live companion
+        /// whose world ZDO reloads incomplete can restore itself. Never auto-spawned by the restore
+        /// engine (the live world ZDO owns the runtime instance); a server-side reconciler keeps it
+        /// current, and death/logout/dismiss flip it to the matching dormant kind.</summary>
+        Alive = 3,
     }
 
     /// <summary>
@@ -48,10 +56,13 @@ namespace FiresCore.Bridge
         /// stamped by the store on every upsert.</summary>
         public long LastUpdatedUtcTicks;
 
-        /// <summary>True when this entry is eligible to auto-spawn now: not Dismissed and its
-        /// deadline (if any) has elapsed.</summary>
+        /// <summary>True when this entry is eligible to auto-spawn now: a dormant kind (never
+        /// <see cref="DormancyKind.Alive"/> — those already have a live world instance — and never
+        /// <see cref="DormancyKind.Dismissed"/>) whose deadline (if any) has elapsed.</summary>
         public bool IsRecallReady(long nowUtcTicks)
-            => Kind != DormancyKind.Dismissed && nowUtcTicks >= RecallDeadlineUtcTicks;
+            => Kind != DormancyKind.Dismissed
+               && Kind != DormancyKind.Alive
+               && nowUtcTicks >= RecallDeadlineUtcTicks;
     }
 
     /// <summary>

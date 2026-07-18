@@ -227,7 +227,7 @@ namespace FiresCore.Npc.WildSpawn
                       $"at {transform.position.ToString("F0")}. m_faction = {character?.m_faction}");
         }
 
-        // FactionWeights = [Neutral, Bandit, Cultist]; StarWeights = [0,1,2]; GearTier indexes CompanionGearTables.
+        // FactionWeights = [Neutral, Bandit, Cultist]; StarWeights = [0,1,2]; GearTier = biome gear tier for the loadout roll.
         private struct BiomeFactionProfile
         {
             public int[] FactionWeights; // [Neutral, Bandit, Cultist]

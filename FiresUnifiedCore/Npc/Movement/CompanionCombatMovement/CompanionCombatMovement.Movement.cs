@@ -161,14 +161,12 @@ namespace FiresCore.Npc
         {
             if (_character == null) return;
 
-            if (!_movementModeSet || walk != _lastWalkState || run != _lastRunState)
-            {
-                _character.SetWalk(walk);
-                _character.SetRun(run);
-                _lastWalkState = walk;
-                _lastRunState = run;
-                _movementModeSet = true;
-            }
+            // Write the live flags unconditionally — SetWalk/SetRun are one-line field setters and the
+            // follow gait writes them directly too, so a private walk/run shadow cache went stale across
+            // state hops: the skipped combat run request left a walk-flagged companion fighting at
+            // m_walkSpeed (vanilla UpdateWalking gives m_walk priority over run).
+            _character.SetWalk(walk);
+            _character.SetRun(run);
         }
 
         /// <summary>

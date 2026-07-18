@@ -273,10 +273,12 @@ namespace FiresCore.UI
         private static CtrlKind ResolveKind(Type t, bool hasRange, string[] options)
         {
             if (t == typeof(bool)) return CtrlKind.Bool;
+            // KeyBind BEFORE the enum check — KeyCode IS an enum, and classifying it as Enum gives the
+            // cycle-one-value-per-click widget instead of the click-Set-then-press-a-key recorder.
+            if (t == typeof(KeyboardShortcut) || t == typeof(KeyCode)) return CtrlKind.KeyBind;
             if (t.IsEnum) return CtrlKind.Enum;
             if (options != null && options.Length > 0) return CtrlKind.ValueList;
             if (t == typeof(Color)) return CtrlKind.Color;
-            if (t == typeof(KeyboardShortcut) || t == typeof(KeyCode)) return CtrlKind.KeyBind;
             if (IsInteger(t)) return hasRange ? CtrlKind.IntRange : CtrlKind.IntField;
             if (IsFloating(t)) return hasRange ? CtrlKind.FloatRange : CtrlKind.FloatField;
             if (t == typeof(string)) return CtrlKind.String;

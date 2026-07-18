@@ -12,15 +12,21 @@ namespace FiresCore.Npc.IdleBehaviors
     /// </summary>
     public class PatrolBehavior : IdleSubBehavior
     {
-        // The route is a GUIDE, not a rail: a generous reach distance lets the NPC cut corners / pass near
-        // waypoints instead of pivoting onto each exact point (chokepoints are still traversed because the
-        // NPC must path through them to reach the NEXT waypoint), and the deviation adds organic offset.
-        public const float ReachDistance = 3.5f;
+        // The route is a GUIDE, not a rail: the per-route ArrivalRadius (the editor's "checkpoint precision")
+        // lets the NPC cut corners / pass near waypoints instead of pivoting onto each exact point — small hugs
+        // the line, large rounds corners. A must-hit node overrides it with a tight reach so a doorway/bridge is
+        // actually entered. The look-ahead ("carrot") distance and curve smoothing are per-route too (see below).
         public const float WaitSeconds = 4.0f;
         public const float DeviationRadius = 1.2f;
         public const float ChatPauseRange = 3.5f;  // stop and let a player interact when this close
         public const float TeleportTimeout = 60f;  // seconds spent trying to reach a waypoint before snapping to it
-        public const float LookAheadDistance = 5.0f; // aim this far ahead ALONG the route so MoveTo never brakes at a marker
+        public const float MustHitReach = 0.9f;     // a must-hit node must be reached this tightly before the cursor advances past it
+
+        private float ArrivalRadius => Mathf.Clamp(_route != null ? _route.ArrivalRadius : PatrolRoute.DefaultArrivalRadius, 0.4f, 12f);
+        private float LookAheadDistance => Mathf.Clamp(_route != null ? _route.LookAhead : PatrolRoute.DefaultLookAhead, 0.5f, 30f);
+        private float Smoothing => _route != null ? Mathf.Clamp01(_route.Smoothing) : 0f;
+        // The reach for the CURRENT cursor node: tight if it's flagged must-hit, else the route's arrival radius.
+        private float ReachFor(int index) => (_route != null && _route.MustHit.Contains(index)) ? Mathf.Min(ArrivalRadius, MustHitReach) : ArrivalRadius;
 
         // Player-built pieces (bridges/floors) live on these layers; a downward probe at the route surface that
         // hits one carrying a Piece component means it's NOT on the terrain navmesh, so we drive direct there.
@@ -34,6 +40,14 @@ namespace FiresCore.Npc.IdleBehaviors
         private Vector3 _deviation;
         private int _lastIndex = -1;
         private float _targetSince;
+
+        // DBSM speed model. _preset is null for the Default assignment (flat base walk, legacy behaviour);
+        // _cum is the cumulative arc-length along the route so a section span maps to progress u∈[0,1].
+        // _currentSpeedMul / _runTier are recomputed each frame and drive the tier + published speed.
+        private FiresCore.Npc.Patrol.SpeedPreset _preset;
+        private float[] _cum;
+        private float _currentSpeedMul = 1f;
+        private bool _runTier;
 
         // Stuck recovery — escalates re-path → skip-node before the long TeleportTimeout backstop. Movement
         // works now, so a stall is almost always a stale path or a waypoint behind geometry, both recoverable
@@ -72,6 +86,11 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private PatrolAssignment Assignment => HostGameObject != null ? HostGameObject.GetComponent<PatrolAssignment>() : null;
 
+        private Character _character;
+        private Character Char =>
+            _character != null ? _character
+            : (_character = HostGameObject != null ? HostGameObject.GetComponent<Character>() : null);
+
         public override bool CanStart()
         {
             var a = Assignment;
@@ -85,7 +104,10 @@ namespace FiresCore.Npc.IdleBehaviors
             base.Start();
             MaxDuration = float.MaxValue;   // patrol runs continuously until cancelled
             _route = PatrolRouteManager.GetRoute(Assignment?.RouteName);
-            Debug.Log($"[PatrolBehavior] started for {HostGameObject?.name} — route '{Assignment?.RouteName}' ({_route?.Points.Count ?? 0} pts)");
+            _preset = _route?.GetPreset(Assignment?.PresetName);   // null = Default (flat base walk)
+            BuildArcLengths();
+            Debug.Log($"[PatrolBehavior] started for {HostGameObject?.name} — route '{Assignment?.RouteName}' ({_route?.Points.Count ?? 0} pts)"
+                      + (_preset != null ? $", preset '{_preset.Name}'" : ""));
             _direction = 1;
             _waiting = false;
             _index = NearestPointIndex();
@@ -110,6 +132,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // only a defensive no-op hold for any stray tick on the transition frame.
                 _targetSince = Time.time;
                 ResetStuckTracking();
+                FiresCore.Npc.Patrol.PatrolSpeedState.Clear(Char); // let combat/other movers own the speed
                 return false;
             }
 
@@ -120,18 +143,20 @@ namespace FiresCore.Npc.IdleBehaviors
             // the inventory pins them in place). Resumes from the same waypoint once they leave.
             if (Player.GetClosestPlayer(Transform.position, ChatPauseRange) != null)
             {
-                StopMovement();
+                HoldStill();
                 _targetSince = Time.time;
                 ResetStuckTracking();
+                FiresCore.Npc.Patrol.PatrolSpeedState.Clear(Char);
                 return false;
             }
 
             if (_waiting)
             {
-                StopMovement();
+                HoldStill();
+                FiresCore.Npc.Patrol.PatrolSpeedState.Clear(Char);
                 if (Time.time < _waitUntil) return false;
                 _waiting = false;
-                _index = Mathf.Clamp(_index + _direction, 0, _route.Points.Count - 1);
+                AdvanceIndex();   // step off the endpoint / stop node, wrapping for loops
             }
 
             // Look-ahead: advance the cursor through every waypoint we're already within reach of BEFORE issuing
@@ -143,17 +168,21 @@ namespace FiresCore.Npc.IdleBehaviors
             // route instead of taking the ground path under it. Open-route endpoint sets _waiting and breaks out.
             int guard = 0;
             while (!_waiting && guard++ < _route.Points.Count
-                   && Vector3.Distance(Transform.position, _route.Points[_index]) <= ReachDistance)
+                   && Vector3.Distance(Transform.position, _route.Points[_index]) <= ReachFor(_index))
             {
                 OnArrived();
             }
-            if (_waiting) { StopMovement(); return false; }
+            if (_waiting) { HoldStill(); FiresCore.Npc.Patrol.PatrolSpeedState.Clear(Char); return false; }
 
             // Restart the per-waypoint join timer (and the stuck baseline) whenever the look-ahead loop advanced
             // us onto a genuinely new waypoint. A recovery skip claims its own index change (see
             // SkipCurrentWaypoint) so it does NOT reset the join timer — the TeleportTimeout backstop below must
             // keep counting across skips so a fully off-route NPC still snaps on.
             if (_index != _lastIndex) { _lastIndex = _index; _targetSince = Time.time; ResetStuckTracking(); }
+
+            // DBSM: resolve the active section's speed multiplier + tier for THIS index (arc-length progress).
+            // Sets _currentSpeedMul/_runTier; identity (1.0, walk) for the Default preset or outside all sections.
+            ComputeSpeed();
 
             // Aim at a point well AHEAD along the route (not the current marker) so MoveTo never brakes for
             // arrival and the heading turns gradually — the NPC flows through the whole route as one path
@@ -181,18 +210,25 @@ namespace FiresCore.Npc.IdleBehaviors
             // never reach), re-path then skip the node — long before the 60s teleport. A skip changes the cursor.
             if (RecoverIfStuck(_route.Points[_index])) return false;
 
-            // Force vanilla WALK speed. The pathfinding chain only ever calls SetRun(false), leaving m_walk
-            // false → the NPC would use the jog tier (m_speed=10, ~2× walk). Setting m_walk every patrol frame
-            // selects m_walkSpeed; other behaviors (combat/follow) re-assert their own mode so this won't stick.
-            HostGameObject?.GetComponent<Character>()?.SetWalk(true);
-            // If the route surface here is a player-built PIECE (bridge/floor) that the terrain navmesh doesn't
-            // include, drive movement DIRECTLY — physics walks the NPC across the piece. FindPath would snap the
-            // target off the piece and route the NPC under it (the classic "creatures path under bridges" bug).
-            // Terrain still uses vanilla FindPath for full obstacle avoidance.
-            if (onPiece)
-                TryMoveDirectToPosition(target, run: false);
+            // Tier + speed. Vanilla speed selection: m_walk true → m_walkSpeed; else m_run true (moving) →
+            // m_runSpeed. The pathfinding chain only sets m_run (via the move's run flag), never m_walk, so we
+            // own m_walk: walk tier forces it true (selects m_walkSpeed), run tier clears it (selects m_runSpeed
+            // + run animation). The published multiplier is applied to the active field by CompanionSpeedRamp —
+            // we never touch SetMoveDir. The Default preset keeps the exact legacy path (force walk, no publish).
+            var ch = Char;
+            if (_preset == null)
+            {
+                ch?.SetWalk(true);
+                if (onPiece) TryMoveDirectToPosition(target, run: false);
+                else         TryMoveToPosition(target, walk: true);
+            }
             else
-                TryMoveToPosition(target, walk: true);
+            {
+                ch?.SetWalk(!_runTier);
+                FiresCore.Npc.Patrol.PatrolSpeedState.Set(ch, _currentSpeedMul, _runTier);
+                if (onPiece) TryMoveDirectToPosition(target, run: _runTier);
+                else         TryMoveToPosition(target, walk: !_runTier, run: _runTier);
+            }
 
             return false;   // never completes on its own
         }
@@ -207,9 +243,29 @@ namespace FiresCore.Npc.IdleBehaviors
             if (rb != null) { rb.position = point; rb.linearVelocity = Vector3.zero; }
         }
 
-        // A point LookAheadDistance ahead of the current cursor ALONG the route polyline (in _direction). A loop
+        // Stop AND clamp residual horizontal velocity. A bare StopMovement (SetMoveDir(0)) leaves a non-kinematic
+        // NPC coasting under gravity, so it slides down slopes "like ice" while it waits/chats — the combat
+        // mover's velocity-clamp is parked while patrol owns the body (IsInSubBehavior). Keep vel.y so gravity
+        // still settles it onto the surface. Only runs on the idle frames patrol holds, never while walking.
+        private void HoldStill()
+        {
+            StopMovement();
+            var rb = HostGameObject != null ? HostGameObject.GetComponent<Rigidbody>() : null;
+            if (rb != null && !rb.isKinematic)
+            {
+                var v = rb.linearVelocity;
+                rb.linearVelocity = new Vector3(0f, v.y, 0f);
+            }
+        }
+
+        // A point LookAheadDistance ahead of the current cursor ALONG the route path (in _direction). A loop
         // wraps; an open route clamps at the far endpoint. Aiming here instead of at the discrete marker is what
         // keeps the NPC walking the route as one continuous path rather than braking/turning at every point.
+        //
+        // Two per-route shaping steps: (1) the carrot NEVER aims past a must-hit node — it stops exactly on it so
+        // the NPC steers through the doorway/bridge instead of cutting the corner and skipping it; (2) with
+        // Smoothing > 0 the landing point is bent from the straight chord onto the Catmull-Rom curve, so the NPC
+        // follows a rounded path (matching the drawn line) instead of jerking point-to-point.
         private Vector3 CarrotAhead()
         {
             var pts = _route.Points;
@@ -224,13 +280,31 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (!_route.IsLoop && (nxt < 0 || nxt >= n)) return here;   // open-route end → clamp the carrot
                 Vector3 to = pts[nxt];
                 float len = Vector3.Distance(here, to);
+
+                // Must-hit clamp: don't let the carrot cross a mandatory node — pin it at (or before) that node.
+                if (_route.MustHit.Contains(nxt))
+                    return len >= remain ? OnCurve(cur, nxt, remain / len) : to;
+
                 if (len < 0.001f) { cur = nxt; here = to; continue; }
-                if (len >= remain) return Vector3.Lerp(here, to, remain / len);
+                if (len >= remain) return OnCurve(cur, nxt, remain / len);
                 remain -= len;
                 cur = nxt;
                 here = to;
             }
             return here;
+        }
+
+        // The point a fraction f along the cur→nxt segment, bent onto the smoothed curve. At Smoothing 0 this is
+        // the exact straight-chord point (unchanged legacy behaviour). PatrolSpline segments run in index order
+        // (i → i+1), so travelling forward the segment is `cur` and travelling back it's `nxt` (this also handles
+        // the loop wrap seam, where cur/nxt straddle 0 and Min() would pick the wrong segment).
+        private Vector3 OnCurve(int cur, int nxt, float f)
+        {
+            float sm = Smoothing;
+            if (sm <= 0.0001f) return Vector3.Lerp(_route.Points[cur], _route.Points[nxt], f);
+            int seg = _direction > 0 ? cur : nxt;
+            float local = _direction > 0 ? f : 1f - f;
+            return PatrolSpline.Point(_route.Points, _route.IsLoop, seg, local, sm);
         }
 
         // True when the route surface under <paramref name="point"/> is a player-built Piece (bridge, floor,
@@ -247,6 +321,21 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (writeCheckpoint) WriteCheckpoint();
             int last = _route.Points.Count - 1;
+
+            // DBSM stop point flagged on this node → hold here for its duration, then resume. We keep _index
+            // ON the stop node and set _waiting; the top-of-Update wait branch calls AdvanceIndex() on wake,
+            // which steps off the node (so we don't re-arm the same stop until the route brings us back). The
+            // section curve's Floor near the stop provides the ease-in; HoldStill zeroes velocity while paused.
+            var stop = _preset?.StopAt(_index);
+            if (stop != null)
+            {
+                _waiting = true;
+                _waitUntil = Time.time + Mathf.Max(0f, stop.Duration);
+                // If this stop is also an open-route endpoint, flip direction now so AdvanceIndex heads back.
+                if (!_route.IsLoop && ((_direction == 1 && _index >= last) || (_direction == -1 && _index <= 0)))
+                    _direction = -_direction;
+                return;
+            }
 
             if (_route.IsLoop)
             {
@@ -265,6 +354,17 @@ namespace FiresCore.Npc.IdleBehaviors
             _index = Mathf.Clamp(_index + _direction, 0, last);
         }
 
+        // Advance the cursor one node in the travel direction, wrapping for loops and clamping for open routes.
+        // Used on wake from any wait (endpoint or stop point). Matches the old open-route clamp exactly; the loop
+        // wrap only matters for a stop flagged near the loop seam.
+        private void AdvanceIndex()
+        {
+            int n = _route.Points.Count;
+            if (n == 0) return;
+            _index = _route.IsLoop ? (((_index + _direction) % n) + n) % n
+                                   : Mathf.Clamp(_index + _direction, 0, n - 1);
+        }
+
         // Escalating stuck recovery, sampled each frame we issue a move. _stuckBestDist is the closest we've
         // gotten to the current waypoint; while it keeps improving we're fine. If it stalls for StuckRecoverDelay
         // we first force a fresh path (a stale m_path is the usual cause now that the motor works); if that still
@@ -273,8 +373,16 @@ namespace FiresCore.Npc.IdleBehaviors
         // was skipped, so the caller re-evaluates next tick.
         private bool RecoverIfStuck(Vector3 target)
         {
+            // Scale the stuck thresholds by the DBSM speed multiplier: in a slow (Floor) zone the NPC covers
+            // less ground per second, so require proportionally less closing distance to count as progress and
+            // grant proportionally more patience before escalating — otherwise a deliberately slow span reads as
+            // "stuck" and false-skips its nodes. Fast zones tighten symmetrically (they close distance quickly).
+            float mul = Mathf.Clamp(_currentSpeedMul, 0.1f, 3f);
+            float minProgress = StuckMinProgress * mul;
+            float recoverDelay = StuckRecoverDelay / mul;
+
             float dist = Vector3.Distance(Transform.position, target);   // 3D: climbing toward an elevated marker counts as progress
-            if (dist < _stuckBestDist - StuckMinProgress)
+            if (dist < _stuckBestDist - minProgress)
             {
                 _stuckBestDist = dist;
                 _stuckSampleTime = Time.time;
@@ -282,7 +390,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            if (Time.time - _stuckSampleTime < StuckRecoverDelay) return false;
+            if (Time.time - _stuckSampleTime < recoverDelay) return false;
             _stuckSampleTime = Time.time;
 
             if (!_stuckRepathed)
@@ -295,9 +403,10 @@ namespace FiresCore.Npc.IdleBehaviors
             // Re-path didn't free us. If the waypoint is genuinely OFF the navmesh — e.g. a marker on a
             // player-built BRIDGE (Valheim bakes its terrain navmesh WITHOUT runtime pieces, so pathing tries
             // to route UNDER the bridge and never reaches it) — snap across it now instead of grinding the full
-            // 60s TeleportTimeout. (Walking the bridge proper needs navmesh links; this keeps a bridged route
-            // moving in seconds.) A reachable-but-stuck marker is just skipped, as before.
-            if (!IsReachable(target))
+            // 60s TeleportTimeout. A must-hit node is likewise snapped onto rather than skipped: it's flagged
+            // mandatory (doorway/bridge) precisely because the drawn path is the only correct one there. A plain
+            // reachable-but-stuck marker is just skipped, as before.
+            if (!IsReachable(target) || _route.MustHit.Contains(_index))
             {
                 TeleportTo(target);
                 OnArrived();
@@ -343,6 +452,47 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var c = Random.insideUnitCircle * DeviationRadius;
             _deviation = new Vector3(c.x, 0f, c.y);
+        }
+
+        // Cumulative arc-length along the route polyline: _cum[i] = distance from Points[0] to Points[i]. Lets
+        // a section span [Low..High] map the current node index to progress u∈[0,1] the same way outbound and
+        // inbound (arc-length is direction-agnostic), so a section reads symmetrically on an open route's return.
+        private void BuildArcLengths()
+        {
+            _cum = null;
+            var pts = _route?.Points;
+            if (pts == null || pts.Count == 0) return;
+            _cum = new float[pts.Count];
+            _cum[0] = 0f;
+            for (int i = 1; i < pts.Count; i++)
+                _cum[i] = _cum[i - 1] + Vector3.Distance(pts[i - 1], pts[i]);
+        }
+
+        // Resolve the DBSM speed multiplier + tier for the current node index. Identity (1.0, walk tier) for the
+        // Default preset or when outside every section; inside a section, u is arc-length progress across its span.
+        private void ComputeSpeed()
+        {
+            _currentSpeedMul = 1f;
+            _runTier = false;
+            if (_preset == null || _cum == null) return;
+
+            var sec = _preset.SectionAt(_index);
+            if (sec != null)
+            {
+                int lo = Mathf.Clamp(sec.Low, 0, _cum.Length - 1);
+                int hi = Mathf.Clamp(sec.High, 0, _cum.Length - 1);
+                float len = _cum[hi] - _cum[lo];
+                float here = _cum[Mathf.Clamp(_index, lo, hi)] - _cum[lo];
+                float u = len > 1e-3f ? here / len : 0f;
+                _currentSpeedMul = Mathf.Max(0.05f, sec.Sample(u));
+            }
+            _runTier = _currentSpeedMul > _preset.RunThreshold;
+        }
+
+        public override void Cancel()
+        {
+            FiresCore.Npc.Patrol.PatrolSpeedState.Clear(Char); // drop the speed override when patrol is cancelled
+            base.Cancel();
         }
 
         // Persists the last reached waypoint (base point, not the deviated target) to the NPC's ZDO so a

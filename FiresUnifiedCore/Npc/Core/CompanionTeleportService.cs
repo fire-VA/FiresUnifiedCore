@@ -68,11 +68,23 @@ namespace FiresCore.Npc.Core
         private const string LogPrefix = "[CompanionTeleportService]";
         private const string RPC_Reconcile = "FiresRPGmaker_CompanionTeleport_v2";
 
-        // Distance gate. Companions farther than this from the player at
-        // reconcile time get teleported; closer ones are left alone. 30m
-        // is comfortably outside the normal follow distance (12m default)
-        // but tight enough that nothing teleports unnecessarily.
-        private const float ReconcileDistanceThreshold = 30f;
+        // All distance gates + the snap predicate live in the single source of truth CompanionLeash. Arrival
+        // reconcile reels in past CompanionLeash.ArrivalReelInDistance; the heartbeat uses CompanionLeash.SnapDistance.
+
+        // ── Server-authoritative "leash" heartbeat ───────────────────────────────────────────────
+        // The client-side CompanionController.CheckFollowTeleport can only reel a companion in when the
+        // peer running its AI can actually SEE the owner (owner's character loaded in that peer's scene).
+        // Two cases break that: (a) on a DEDICATED SERVER the companion is frequently owned by the server
+        // itself once the owner walks out of the companion's zone, and CheckFollowTeleport has NO local
+        // player to resolve — it bails; (b) a bystander client owns the companion ZDO but doesn't have the
+        // owner in its scene. In both, a stranded follower would sit forever. This heartbeat runs ON THE
+        // SERVER, which keeps every connected player's zone loaded, so it can resolve each player's position
+        // directly and reel in any of their FOLLOWING companions (dormant ZDO or live) that drifted too far.
+        // It is the single authority that can always see everyone — the real leash.
+        private const float HeartbeatIntervalSeconds = 5f;
+        // The heartbeat reels in followers past CompanionLeash.SnapDistance (the SAME 80m ceiling the client-side
+        // run-back snaps at) — the safety net for followers the client path can't manage (dormant / blind peer).
+        private static float _lastHeartbeat;
 
         // Companion prefab names this service scans. Mirrors the list in
         // CompanionPatches and CompanionRestoreService â€” kept local so we
@@ -185,62 +197,120 @@ namespace FiresCore.Npc.Core
 
                 Debug.Log($"{LogPrefix} Reconcile received: playerId={playerId}, ownerPos={ownerPos} (sender={sender})");
 
-                int teleported = 0;
-                int alreadyClose = 0;
-                int notFollowing = 0;
-                var temp = new List<ZDO>();
-
-                foreach (var prefabName in _companionPrefabNames)
-                {
-                    temp.Clear();
-                    int idx = 0;
-                    while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(prefabName, temp, ref idx)) { }
-
-                    foreach (var zdo in temp)
-                    {
-                        if (zdo == null || !zdo.IsValid()) continue;
-
-                        long zdoOwner = zdo.GetLong("companion_owner", 0L);
-                        if (zdoOwner != playerId) continue;
-
-                        // Stationed NPCs are world fixtures â€” never teleport them.
-                        if (zdo.GetBool("npc_stationed", false)) continue;
-
-                        // Authoritative follow flag is on the companion ZDO
-                        // (companion_wasfollowing). Stay-mode companions
-                        // stay where they are even on owner login/teleport;
-                        // only followers reel in.
-                        if (!zdo.GetBool("companion_wasfollowing", false))
-                        {
-                            notFollowing++;
-                            continue;
-                        }
-
-                        Vector3 zdoPos = zdo.GetPosition();
-                        if (Vector3.Distance(zdoPos, ownerPos) < ReconcileDistanceThreshold)
-                        {
-                            alreadyClose++;
-                            continue;
-                        }
-
-                        // Server claims ownership BEFORE the position write
-                        // so the write doesn't lose to closest-peer
-                        // ownership flap mid-teleport.
-                        zdo.SetOwner(ZDOMan.GetSessionID());
-
-                        zdo.SetPosition(ownerPos);
-                        zdo.DataRevision++;
-                        ZDOMan.instance.ForceSendZDO(zdo.m_uid);
-                        teleported++;
-                    }
-                }
-
-                Debug.Log($"{LogPrefix} Reconcile complete for player {playerId}: teleported={teleported}, alreadyClose={alreadyClose}, notFollowing={notFollowing}");
+                int teleported = ReconcileFollowersFor(playerId, ownerPos, CompanionLeash.ArrivalReelInDistance);
+                Debug.Log($"{LogPrefix} Reconcile complete for player {playerId}: teleported={teleported}");
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"{LogPrefix} OnReconcileRequest threw: {ex.Message}\n{ex.StackTrace}");
             }
+        }
+
+        /// <summary>
+        /// Server-side: reel in every FOLLOWING companion owned by <paramref name="playerId"/> that has drifted
+        /// farther than <paramref name="threshold"/> from <paramref name="ownerPos"/>. Operates directly on ZDOs
+        /// (works for dormant companions too). Returns how many were moved. MUST run on the server.
+        /// </summary>
+        private static int ReconcileFollowersFor(long playerId, Vector3 ownerPos, float threshold)
+        {
+            if (ZDOMan.instance == null || playerId == 0L) return 0;
+
+            int teleported = 0;
+            var temp = new List<ZDO>();
+            foreach (var prefabName in _companionPrefabNames)
+            {
+                temp.Clear();
+                int idx = 0;
+                while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(prefabName, temp, ref idx)) { }
+
+                foreach (var zdo in temp)
+                {
+                    if (zdo == null || !zdo.IsValid()) continue;
+                    if (zdo.GetLong("companion_owner", 0L) != playerId) continue;
+                    if (TryReelIn(zdo, ownerPos, threshold)) teleported++;
+                }
+            }
+            return teleported;
+        }
+
+        /// <summary>
+        /// Server-side single-companion reel-in with all the safety gates in ONE place:
+        ///   • Stationed NPCs are world fixtures — never moved.
+        ///   • Stay-mode companions (companion_wasfollowing=false) are left where they are — the follow flag is
+        ///     owner-command-only and SACRED; this service never reels in a companion the owner told to stay.
+        ///   • Already within <paramref name="threshold"/> — nothing to do.
+        /// When it does move a follower it claims ZDO ownership first so the write can't lose to closest-peer
+        /// ownership flap. Returns true if the companion was moved.
+        /// </summary>
+        private static bool TryReelIn(ZDO zdo, Vector3 ownerPos, float threshold)
+        {
+            if (zdo == null || !zdo.IsValid()) return false;
+            if (zdo.GetBool("npc_stationed", false)) return false;
+            if (!zdo.GetBool("companion_wasfollowing", false)) return false;
+            if (Vector3.Distance(zdo.GetPosition(), ownerPos) < threshold) return false;
+
+            zdo.SetOwner(ZDOMan.GetSessionID());
+            zdo.SetPosition(ownerPos);
+            zdo.DataRevision++;
+            ZDOMan.instance.ForceSendZDO(zdo.m_uid);
+            return true;
+        }
+
+        // ── Server leash heartbeat ───────────────────────────────────────────────────────────────
+        // Runs off Game.Update (ticks on the dedicated server too). Throttled to HeartbeatIntervalSeconds.
+        // The single authority that always sees every connected player, so it can reel in stranded followers
+        // no matter which peer owns the companion ZDO or whether that peer can see the owner.
+        [HarmonyPatch(typeof(Game), "Update")]
+        [HarmonyPostfix]
+        public static void Game_Update_Heartbeat()
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (ZDOMan.instance == null) return;
+            if (Time.unscaledTime - _lastHeartbeat < HeartbeatIntervalSeconds) return;
+            _lastHeartbeat = Time.unscaledTime;
+
+            try { ServerHeartbeat(); }
+            catch (Exception ex) { Debug.LogWarning($"{LogPrefix} heartbeat threw: {ex.Message}"); }
+        }
+
+        private static void ServerHeartbeat()
+        {
+            // The server keeps every connected player's zone loaded, so their character is in GetAllPlayers()
+            // here even though a remote client's scene would not contain a different player. Skip players who
+            // are mid-teleport or dead so we don't reel a follower onto a loading screen or a corpse.
+            var ownerPositions = new Dictionary<long, Vector3>();
+            foreach (var p in Player.GetAllPlayers())
+            {
+                if (p == null) continue;
+                // Shared guard: skip dead / mid-teleport / in-bed owners so we never yank followers onto a
+                // loading screen or a corpse (the "guard against player teleport/death" rule, server-side).
+                if (!CompanionLeash.IsOwnerReelTarget(p)) continue;
+                long id = p.GetPlayerID();
+                if (id != 0L) ownerPositions[id] = p.transform.position;
+            }
+            if (ownerPositions.Count == 0) return;
+
+            // ONE ZDO scan for all players; look each companion's owner up in the map.
+            int reeled = 0;
+            var temp = new List<ZDO>();
+            foreach (var prefabName in _companionPrefabNames)
+            {
+                temp.Clear();
+                int idx = 0;
+                while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(prefabName, temp, ref idx)) { }
+
+                foreach (var zdo in temp)
+                {
+                    if (zdo == null || !zdo.IsValid()) continue;
+                    long zdoOwner = zdo.GetLong("companion_owner", 0L);
+                    if (zdoOwner == 0L) continue;
+                    if (!ownerPositions.TryGetValue(zdoOwner, out var pos)) continue; // owner not connected/loaded
+                    if (TryReelIn(zdo, pos, CompanionLeash.SnapDistance)) reeled++;
+                }
+            }
+
+            if (reeled > 0)
+                Debug.Log($"{LogPrefix} leash heartbeat reeled in {reeled} stranded follower(s)");
         }
 
         // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

@@ -74,6 +74,7 @@ namespace FiresCore.Npc
         private void Awake()
         {
             _nview = GetComponent<ZNetView>();
+            NpcBodyMeshGuard.EnsureInstalled();
             
             // CRITICAL: If there's already a VisEquipment, we need to prevent it from trying to
             // attach equipment before the skeleton/joints are ready.
@@ -92,6 +93,11 @@ namespace FiresCore.Npc
             _visEquipment = GetComponent<VisEquipment>();
             if (_visEquipment != null)
             {
+                // Prefab-default body mesh, captured before any swap can run — the last-resort
+                // replacement when every model-table candidate has been rejected at skin time.
+                if (_nativeBodyMesh == null && _visEquipment.m_bodyModel != null)
+                    _nativeBodyMesh = _visEquipment.m_bodyModel.sharedMesh;
+
                 // CRITICAL: Disable the component to prevent MonoUpdaters from calling
                 // UpdateEquipmentVisuals() and GetModelIndex() before we're ready.
                 // This is the ONLY reliable way to prevent NullReferenceExceptions when m_models is null.
@@ -720,7 +726,16 @@ namespace FiresCore.Npc
             // the general ShaderReplacement pass ï¿½ which won't fix a "Standard" shader because
             // it only targets "InternalErrorShader" and "Custom/" prefixed shaders.
             // Fix it here at runtime by copying the material from the Player prefab.
-            if (_visEquipment.m_bodyModel != null)
+            //
+            // Headless dedi: no GPU → no shaders load (everything resolves to
+            // Hidden/InternalErrorShader), so the donor copy can never succeed — every
+            // NPC spawn burned a failed fix attempt plus two warnings (~2k log lines per
+            // server session). Skip entirely: Initialize() keeps VisEquipment disabled
+            // there exactly as before, and each rendering client repairs its own body
+            // shader locally. Appearance is data-driven via ZDO, so the server needs none
+            // of this.
+            if (_visEquipment.m_bodyModel != null
+                && SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
             {
                 string currentShader = _visEquipment.m_bodyModel.sharedMaterial?.shader?.name ?? "null";
                 if (!IsPlayerCompatibleShader(currentShader))
@@ -1339,13 +1354,128 @@ namespace FiresCore.Npc
             // UpdateEquipmentVisuals() (hair/beard) does NOT require m_isPlayer=true.
             _visEquipment.SetModel(modelIndex); // stores index in ZDO
             var model = _visEquipment.m_models[modelIndex];
-            if (model != null && model.m_mesh != null && _visEquipment.m_bodyModel != null)
-                _visEquipment.m_bodyModel.sharedMesh = model.m_mesh;
+            if (model != null && model.m_mesh != null)
+                TryAssignBodyMesh(model.m_mesh, modelIndex);
             _lastSetModelIndex = modelIndex;
             if (VerboseLogging)
                 Debug.Log($"[NpcVisEquipment] Set model index to {modelIndex}");
         }
         
+        /// <summary>
+        /// Swaps the body renderer's mesh, but only onto a skeleton that can actually skin it and only
+        /// when Unity hasn't already rejected that exact (mesh, rig) pairing this session
+        /// ("does not match the expected mesh data size and vertex stride" → render-stop, invisible NPC).
+        ///
+        /// Candidate order matters: the prefab's OWN model-table mesh first. On baked bundles the rig,
+        /// body and bodyfem are rip-consistent (53 bones/bindposes) and are the only meshes guaranteed
+        /// to skin on that rig. The LIVE Player prefab's mesh is a fallback for legacy tables only: the
+        /// live game's bodyfem has drifted from the ripped rig — same bindpose COUNT, different vertex
+        /// layout — so Unity rejects it at skin time, which the count check cannot predict (that layout
+        /// rejection is caught post-hoc by NpcBodyMeshGuard and blacklisted). An earlier pass preferred
+        /// the live mesh here based on a misdiagnosis: the model tables had been silently overwritten
+        /// with the live Player's array at prefab-load time, so the stride failures blamed on the baked
+        /// meshes were live-mesh failures all along. Returns true when a mesh was assigned.
+        /// </summary>
+        private static readonly HashSet<string> _meshAssignLogged = new HashSet<string>();
+        private Mesh _nativeBodyMesh;
+
+        private bool TryAssignBodyMesh(Mesh mesh, int modelIndex = -1)
+        {
+            var smr = _visEquipment != null ? _visEquipment.m_bodyModel : null;
+            if (smr == null) return false;
+
+            Mesh live = null;
+            if (modelIndex >= 0)
+            {
+                try
+                {
+                    var pp = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab("Player") : null;
+                    var pv = pp != null ? pp.GetComponent<VisEquipment>() : null;
+                    if (pv != null && pv.m_models != null && modelIndex < pv.m_models.Length)
+                        live = pv.m_models[modelIndex].m_mesh;
+                }
+                catch { }
+            }
+
+            Mesh chosen = null;
+            string source = "none";
+            if (NpcBodyMeshGuard.IsAssignable(mesh, smr)) { chosen = mesh; source = ReferenceEquals(mesh, live) ? "table(live)" : "table"; }
+            else if (live != null && !ReferenceEquals(live, mesh) && NpcBodyMeshGuard.IsAssignable(live, smr)) { chosen = live; source = "vanilla-player"; }
+
+            var probe = chosen ?? mesh;
+            if (probe != null && _meshAssignLogged.Add($"{gameObject.name}|{probe.name}|{modelIndex}"))
+            {
+                int boneCount = smr.bones != null ? smr.bones.Length : 0;
+                var bindposes = probe.bindposes;
+                Debug.Log($"[NpcVisEquipment] body mesh '{probe.name}' (idx={modelIndex}, src={source}) on {gameObject.name}: " +
+                          $"smrBones={boneCount} bindposes={(bindposes != null ? bindposes.Length : 0)} verts={probe.vertexCount} → {(chosen != null ? "assign" : "SKIP (no skinnable candidate)")}");
+            }
+
+            if (chosen == null) return false;
+            if (!ReferenceEquals(smr.sharedMesh, chosen)) smr.sharedMesh = chosen;
+            return true;
+        }
+
+        /// <summary>
+        /// Called by NpcBodyMeshGuard when Unity reports the skin-time rejection for a mesh named
+        /// <paramref name="meshName"/> on a renderer GameObject named <paramref name="goName"/>. If this
+        /// NPC's body renderer is the one holding that mesh, blacklist the pairing and swap to the best
+        /// remaining candidate (own model-table mesh → live Player mesh → the prefab's original body
+        /// mesh) so the body renders again instead of staying invisible. Also works on undressed
+        /// ghost/preview clones — no ZDO or Initialize() required. Returns true when this instance was
+        /// healed.
+        /// </summary>
+        internal bool HealRejectedBodyMesh(string meshName, string goName)
+        {
+            try
+            {
+                var ve = _visEquipment != null ? _visEquipment : GetComponent<VisEquipment>();
+                var smr = ve != null ? ve.m_bodyModel : null;
+                if (smr == null) smr = GetComponentInChildren<SkinnedMeshRenderer>(true);
+                if (smr == null || smr.sharedMesh == null) return false;
+                if (smr.gameObject.name != goName || smr.sharedMesh.name != meshName) return false;
+
+                var bad = smr.sharedMesh;
+                NpcBodyMeshGuard.MarkRejected(bad, smr);
+
+                // The table/live entries the rejected mesh was standing in for, matched by name so
+                // ghost clones (no ZDO model index) resolve too.
+                Mesh table = FindModelMeshByName(ve != null ? ve.m_models : null, meshName);
+                Mesh live = null;
+                try
+                {
+                    var pp = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab("Player") : null;
+                    var pv = pp != null ? pp.GetComponent<VisEquipment>() : null;
+                    live = FindModelMeshByName(pv != null ? pv.m_models : null, meshName);
+                }
+                catch { }
+
+                Mesh replacement = null;
+                string source = null;
+                if (table != null && !ReferenceEquals(table, bad) && NpcBodyMeshGuard.IsAssignable(table, smr)) { replacement = table; source = "table"; }
+                else if (live != null && !ReferenceEquals(live, bad) && NpcBodyMeshGuard.IsAssignable(live, smr)) { replacement = live; source = "vanilla-player"; }
+                else if (_nativeBodyMesh != null && !ReferenceEquals(_nativeBodyMesh, bad) && NpcBodyMeshGuard.IsAssignable(_nativeBodyMesh, smr)) { replacement = _nativeBodyMesh; source = "native-default"; }
+
+                if (replacement == null) return false;
+                smr.sharedMesh = replacement;
+                NpcBodyMeshGuard.LogOnce(
+                    $"heal|{GetInstanceID()}|{meshName}",
+                    $"[NpcBodyMeshGuard] '{meshName}' rejected by Unity at skin time on {gameObject.name} — swapped body to '{replacement.name}' ({source}); pairing blacklisted for this session.");
+                return true;
+            }
+            catch { return false; }
+        }
+
+        private static Mesh FindModelMeshByName(VisEquipment.PlayerModel[] models, string meshName)
+        {
+            if (models == null) return null;
+            foreach (var pm in models)
+            {
+                if (pm != null && pm.m_mesh != null && pm.m_mesh.name == meshName) return pm.m_mesh;
+            }
+            return null;
+        }
+
         private void ReattachEyeOverlay()
         {
             // Destroy old overlay and material instance
@@ -1608,6 +1738,10 @@ namespace FiresCore.Npc
         /// </summary>
         private void AttachEyeOverlay()
         {
+            // Eye overlay is a client-only visual effect: a graphics-less (dedicated) server never renders it
+            // and never captures the emission texture, so attempting it there only produces broken-shader noise.
+            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null) return;
+
             // Comprehensive null checks
             if (_visEquipment == null) return;
             if (_visEquipment.m_bodyModel == null) return;
@@ -1620,7 +1754,8 @@ namespace FiresCore.Npc
             
             if (eyeEmissionTexture == null)
             {
-                Debug.Log($"[NpcVisEquipment] No eye emission texture available - eye color will not be visible");
+                if (VerboseLogging)
+                    Debug.Log($"[NpcVisEquipment] No eye emission texture available - eye color will not be visible");
                 return;
             }
             
@@ -1988,9 +2123,10 @@ namespace FiresCore.Npc
             if (modelIndex >= 0 && _visEquipment.m_models != null && _visEquipment.m_models.Length > modelIndex)
             {
                 _visEquipment.SetModel(modelIndex); // stores index in ZDO
-                var model = _visEquipment.m_models[Mathf.Clamp(modelIndex, 0, _visEquipment.m_models.Length - 1)];
-                if (model != null && model.m_mesh != null && _visEquipment.m_bodyModel != null)
-                    _visEquipment.m_bodyModel.sharedMesh = model.m_mesh;
+                int clampedIndex = Mathf.Clamp(modelIndex, 0, _visEquipment.m_models.Length - 1);
+                var model = _visEquipment.m_models[clampedIndex];
+                if (model != null && model.m_mesh != null)
+                    TryAssignBodyMesh(model.m_mesh, clampedIndex);
                 // Switching the body model resets m_bodyModel.material from the model's base material, which wipes
                 // the armor body-underlay textures vanilla wrote onto it (_ChestTex/_LegsTex — the chest/legs
                 // "skin" the user saw missing on static NPCs). Clear vanilla's APPLIED hashes (not the desired
@@ -2051,18 +2187,117 @@ namespace FiresCore.Npc
         /// The Player's body material has the real Custom/Player shader with working bytecode,
         /// which is required for VisEquipment armor overlays (_ChestTex, _LegsTex, etc.).
         /// </summary>
+        /// <summary>
+        /// Finds a player-compatible body donor material. The Player PREFAB's VisEquipment model
+        /// table (m_models[*].m_baseMaterial) is checked FIRST — prefab-side materials are immune to
+        /// live shader swaps (FiresTossinShade, or a foreign pack hijacking the live body material,
+        /// e.g. the observed 'Lux Lit Particles/ Bumped'), which used to poison every fallback donor
+        /// and leave all static NPC bodies on the broken bundle Standard material (invisible/grey).
+        /// </summary>
+        internal static Material FindPlayerBodyDonor()
+        {
+            var playerPrefab = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab("Player") : null;
+            var playerVis = playerPrefab != null ? playerPrefab.GetComponent<VisEquipment>() : null;
+
+            if (playerVis != null && playerVis.m_models != null)
+            {
+                for (int i = 0; i < playerVis.m_models.Length; i++)
+                {
+                    var mat = playerVis.m_models[i] != null ? playerVis.m_models[i].m_baseMaterial : null;
+                    if (mat != null && mat.shader != null && IsPlayerCompatibleShader(mat.shader.name))
+                        return mat;
+                }
+            }
+            if (playerVis != null && playerVis.m_bodyModel != null)
+            {
+                var mat = playerVis.m_bodyModel.sharedMaterial;
+                if (mat != null && mat.shader != null && IsPlayerCompatibleShader(mat.shader.name))
+                    return mat;
+            }
+            if (Player.m_localPlayer != null)
+            {
+                var liveVis = Player.m_localPlayer.GetComponent<VisEquipment>();
+                var mat = liveVis != null && liveVis.m_bodyModel != null ? liveVis.m_bodyModel.sharedMaterial : null;
+                if (mat != null && mat.shader != null && IsPlayerCompatibleShader(mat.shader.name))
+                    return mat;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// PREFAB-level body-material repair (client-side): points the prefab's body renderer AND its
+        /// VisEquipment model table at a clone of the Player donor material when they carry a broken
+        /// shader. Run once at load — placement GHOSTS clone the prefab directly, so without this the
+        /// hammer ghost rendered the broken bundle Standard material (invisible NPC ghost) even though
+        /// live instances got runtime-fixed.
+        /// </summary>
+        public static bool FixBodyMaterialOnPrefab(GameObject prefab)
+        {
+            if (prefab == null || SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+                return false;
+            try
+            {
+                var vis = prefab.GetComponent<VisEquipment>();
+                var body = vis != null ? vis.m_bodyModel : null;
+                if (body == null)
+                {
+                    foreach (var smr in prefab.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                        if (smr.name == "body") { body = smr; break; }
+                }
+                if (body == null) return false;
+
+                string current = body.sharedMaterial?.shader?.name ?? "null";
+                bool bodyBroken = !IsPlayerCompatibleShader(current);
+                bool modelsBroken = false;
+                if (vis != null && vis.m_models != null)
+                    foreach (var m in vis.m_models)
+                        if (m != null && (m.m_baseMaterial == null || m.m_baseMaterial.shader == null
+                            || !IsPlayerCompatibleShader(m.m_baseMaterial.shader.name)))
+                        { modelsBroken = true; break; }
+                if (!bodyBroken && !modelsBroken) return true;
+
+                var donor = FindPlayerBodyDonor();
+                if (donor == null)
+                {
+                    Debug.LogWarning($"[NpcVisEquipment] prefab body fix: no player-compatible donor material found for {prefab.name}");
+                    return false;
+                }
+
+                if (bodyBroken) body.sharedMaterial = new Material(donor);
+                if (vis != null && vis.m_models != null)
+                {
+                    for (int i = 0; i < vis.m_models.Length; i++)
+                    {
+                        var m = vis.m_models[i];
+                        if (m == null) continue;
+                        if (m.m_baseMaterial == null || m.m_baseMaterial.shader == null
+                            || !IsPlayerCompatibleShader(m.m_baseMaterial.shader.name))
+                            m.m_baseMaterial = new Material(donor);
+                    }
+                }
+                Debug.Log($"[NpcVisEquipment] prefab body material repaired for {prefab.name} (donor '{donor.shader.name}')");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[NpcVisEquipment] FixBodyMaterialOnPrefab failed for {prefab?.name}: {ex.Message}");
+                return false;
+            }
+        }
+
         private void TryFixBodyShader(SkinnedMeshRenderer bodyRenderer)
         {
             if (bodyRenderer == null) return;
 
             try
             {
-                // Find the Player prefab's body material
-                Material playerBodyMaterial = null;
+                // Find the Player prefab's body material — prefab model table FIRST (poison-proof),
+                // then the legacy fallbacks.
+                Material playerBodyMaterial = FindPlayerBodyDonor();
 
-                // Try from Player prefab in ZNetScene
+                // Legacy fallback chain (kept for odd deployments where the donor helper found nothing).
                 var playerPrefab = ZNetScene.instance?.GetPrefab("Player");
-                if (playerPrefab != null)
+                if (playerBodyMaterial == null && playerPrefab != null)
                 {
                     var playerVisEquip = playerPrefab.GetComponent<VisEquipment>();
                     if (playerVisEquip?.m_bodyModel != null)
@@ -2137,6 +2372,31 @@ namespace FiresCore.Npc
                 }
 
                 bodyRenderer.sharedMaterial = newMaterial;
+
+                // ALSO repair the VisEquipment model table. Vanilla SetModel/UpdateVisuals re-applies
+                // m_models[index].m_baseMaterial whenever the visual path re-runs (model index sync,
+                // wander-start re-enables, gear changes) — fixing only the live renderer meant the NPC
+                // looked right at spawn and went flat-gray (broken Standard material) the moment the
+                // companion visual path re-ran. Point every broken base material at the repaired one.
+                if (_visEquipment != null && _visEquipment.m_models != null)
+                {
+                    for (int i = 0; i < _visEquipment.m_models.Length; i++)
+                    {
+                        var m = _visEquipment.m_models[i];
+                        if (m == null) continue;
+                        var baseMat = m.m_baseMaterial;
+                        if (baseMat == null || baseMat.shader == null || !IsPlayerCompatibleShader(baseMat.shader.name))
+                        {
+                            var repaired = new Material(newMaterial);
+                            if (baseMat != null && baseMat.HasProperty("_MainTex"))
+                            {
+                                var tex = baseMat.GetTexture("_MainTex");
+                                if (tex != null) repaired.SetTexture("_MainTex", tex);
+                            }
+                            m.m_baseMaterial = repaired;
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {

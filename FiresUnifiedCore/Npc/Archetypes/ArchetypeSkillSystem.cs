@@ -887,6 +887,58 @@ namespace FiresCore.Npc.Archetypes
             }
         }
         
+        /// <summary>
+        /// Serialize archetype skills for a portable snapshot (kennel/vault). Same "skill:level:xp,..."
+        /// format as the ZDO string. The kennel needs this because SaveToZDO is owner-gated and never
+        /// fires server-side for a client-owned companion, so archetype XP was otherwise absent from the
+        /// snapshot and lost on any kennel-driven respawn.
+        /// </summary>
+        public string GetSkillsDataForVault()
+        {
+            try
+            {
+                var parts = new List<string>();
+                foreach (var kvp in _skills)
+                    if (kvp.Value.Level > 1 || kvp.Value.CurrentXP > 0)
+                        parts.Add($"{kvp.Key}:{kvp.Value.Level}:{kvp.Value.CurrentXP:F1}");
+                return string.Join(",", parts);
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>
+        /// Restore archetype skills from a portable snapshot string and persist to the ZDO. Writes the
+        /// ZDO string directly (not via the owner-gated SaveToZDO) so it survives + replicates even when
+        /// the component's own save can't run; the ZDO is the source of truth that LoadFromZDO re-reads.
+        /// </summary>
+        public void RestoreSkillsFromVault(string data)
+        {
+            if (string.IsNullOrEmpty(data)) return;
+            try
+            {
+                foreach (var part in data.Split(','))
+                {
+                    var values = part.Split(':');
+                    if (values.Length >= 3
+                        && Enum.TryParse<ArchetypeSkill>(values[0], out var skill)
+                        && int.TryParse(values[1], out int level)
+                        && float.TryParse(values[2], out float xp)
+                        && _skills.TryGetValue(skill, out var sd))
+                    {
+                        sd.Level = Mathf.Clamp(level, 1, MAX_LEVEL);
+                        sd.CurrentXP = Mathf.Max(0f, xp);
+                    }
+                }
+                if (_nview != null && _nview.IsValid())
+                    _nview.GetZDO()?.Set(ZDO_KEY_SKILLS, data);
+                _isDirty = false;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[ArchetypeSkillSystem] RestoreSkillsFromVault failed: {ex.Message}");
+            }
+        }
+
         private void OnDestroy()
         {
             // Save on destroy

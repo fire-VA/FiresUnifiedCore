@@ -45,6 +45,8 @@ namespace FiresCore.Sync
             new Dictionary<string, FolderRegistration>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, HashProviderRegistration> _hashProviders =
             new Dictionary<string, HashProviderRegistration>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, Func<Dictionary<string, string>>> _manifestProviders =
+            new Dictionary<string, Func<Dictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<ManifestKey, Dictionary<string, string>> _peerManifests =
             new Dictionary<ManifestKey, Dictionary<string, string>>();
 
@@ -81,6 +83,19 @@ namespace FiresCore.Sync
             lock (_lock)
             {
                 _hashProviders[namespaceKey] = new HashProviderRegistration { HashProvider = hashProvider };
+            }
+        }
+
+        /// <summary>Registers a full-manifest provider (relativePath -> sha256) consulted BEFORE the
+        /// folder/hash registrations for the same namespace. Returning null falls through to those —
+        /// this lets one namespace answer from an in-memory store on pure clients (which keep no
+        /// config files on disk) while the server keeps answering from its on-disk folder.</summary>
+        public static void RegisterManifestProvider(string namespaceKey, Func<Dictionary<string, string>> manifestProvider)
+        {
+            if (string.IsNullOrEmpty(namespaceKey) || manifestProvider == null) return;
+            lock (_lock)
+            {
+                _manifestProviders[namespaceKey] = manifestProvider;
             }
         }
 
@@ -201,10 +216,20 @@ namespace FiresCore.Sync
 
             HashProviderRegistration hashReg;
             FolderRegistration folderReg;
+            Func<Dictionary<string, string>> manifestProvider;
             lock (_lock)
             {
                 _hashProviders.TryGetValue(namespaceKey, out hashReg);
                 _registered.TryGetValue(namespaceKey, out folderReg);
+                _manifestProviders.TryGetValue(namespaceKey, out manifestProvider);
+            }
+
+            if (manifestProvider != null)
+            {
+                Dictionary<string, string> provided = null;
+                try { provided = manifestProvider(); }
+                catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} manifest provider for '{namespaceKey}' threw: {ex.Message}"); }
+                if (provided != null) return provided;
             }
 
             if (hashReg?.HashProvider != null)
