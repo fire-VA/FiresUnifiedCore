@@ -527,6 +527,7 @@
     <Compile Include="UI\ContextMenu\FiresContextMenuDriver.cs" />
     <Compile Include="UI\ContextMenu\ContextMenuConfig.cs" />
     <Compile Include="Input\FiresInputBlock.cs" />
+    <Compile Include="Input\FiresPlaceGate.cs" />
     <Compile Include="UI\UIBuilderHost.cs" />
     <Compile Include="UI\FiresConfigUI.cs" />
     <Compile Include="UI\CfgDiscovery.cs" />
@@ -626,6 +627,8 @@
     <Compile Include="Services\MoonPhase.cs" />
     <Compile Include="Sync\AdminSyncing.cs" />
     <Compile Include="Sync\ConfigPushService.cs" />
+    <Compile Include="Sync\ConfigPullService.cs" />
+    <Compile Include="Sync\ConfigDeleteService.cs" />
     <Compile Include="Sync\ConfigSync.cs" />
     <Compile Include="Sync\FiresServerScope.cs" />
     <Compile Include="Sync\ManifestDiffSync.cs" />

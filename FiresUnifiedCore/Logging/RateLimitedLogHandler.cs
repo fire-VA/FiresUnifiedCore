@@ -38,6 +38,11 @@ namespace FiresCore.Logging
         // floods the relay thousands of times per session. Matched on its throw-site frame (works through the
         // TargetInvocationException the routed-RPC dispatch wraps it in).
         private const string ExpandWorldPrefabDestroyFragment = "ExpandWorld.Prefab.Manager.Handle";
+        // ExpandWorldData throws an unhandled NRE from Terrain.FindCompiler while leveling/painting a location's
+        // terrain during bulk zone spawning (pregen / world reset): hm.GetAndCreateTerrainCompiler().m_nview is
+        // null before the compiler's ZNetView finishes init. Third-party, not ours (Core only relays it); on
+        // normal single-zone play the compiler is ready and it doesn't fire. Suppress the pregen flood.
+        private const string ExpandWorldTerrainCompilerFragment = "ExpandWorldData.Terrain.FindCompiler";
 
         private const double LimitExceededThrottleSeconds   = 30.0;
         private const int    NreSummaryEmitInterval         = 50;
@@ -240,6 +245,7 @@ namespace FiresCore.Logging
                 if (stack.Contains(ShieldGeneratorStackFragment)) return true;
                 if (stack.Contains(ArcheryTargetStackFragment)) return true;
                 if (stack.Contains(ExpandWorldPrefabDestroyFragment)) return true;
+                if (stack.Contains(ExpandWorldTerrainCompilerFragment)) return true;
             }
             return false;
         }
@@ -248,7 +254,7 @@ namespace FiresCore.Logging
         {
             if (_suppressedValheimNreBugs != 1 && _suppressedValheimNreBugs % NreSummaryEmitInterval != 0) return;
             _inner.LogFormat(LogType.Log, null,
-                $"{LogPrefix} Suppressed {{0}} known no-fix NRE floods (vanilla ShieldGenerator/ArcheryTarget + ExpandWorld prefab-destroy) - set verbose to surface.",
+                $"{LogPrefix} Suppressed {{0}} known no-fix NRE floods (vanilla ShieldGenerator/ArcheryTarget + ExpandWorld prefab-destroy + ExpandWorld terrain-compiler-during-pregen) - set verbose to surface.",
                 _suppressedValheimNreBugs);
         }
 

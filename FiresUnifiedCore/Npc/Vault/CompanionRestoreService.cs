@@ -356,7 +356,15 @@ namespace FiresCore.Npc.Vault
         private static int RestoreDormantViaSeam(long playerId, Vector3 ownerPos)
         {
             var entries = NpcDormancyBridge.List(playerId);
-            if (entries == null || entries.Count == 0) return 0;
+            if (entries == null || entries.Count == 0)
+            {
+                // Load-bearing diagnostic: an empty store here is the difference between "the save
+                // never happened" and "the restore didn't fire" — the two failure modes look identical
+                // in-game (companion simply absent), so keep this visible without verbose.
+                Debug.Log($"{LogPrefix} Dormant restore for player {playerId}: NO entries in the dormant store — nothing to restore.");
+                return 0;
+            }
+            Debug.Log($"{LogPrefix} Dormant restore for player {playerId}: {entries.Count} dormant entr{(entries.Count == 1 ? "y" : "ies")} found.");
 
             long nowTicks = DateTime.UtcNow.Ticks;
             int spawned = 0;
@@ -382,6 +390,7 @@ namespace FiresCore.Npc.Vault
                 // else: leave the entry for a retry on the next announce (I3).
             }
 
+            Debug.Log($"{LogPrefix} Dormant restore for player {playerId}: spawned {spawned} of {entries.Count}.");
             return spawned;
         }
 

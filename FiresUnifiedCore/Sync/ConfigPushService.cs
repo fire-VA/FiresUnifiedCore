@@ -138,6 +138,8 @@ namespace FiresCore.Sync
 
             Reply($"[ConfigPush] Pushing {matches.Count} file(s) to the server:");
             foreach (var m in matches) Reply("   " + m.rel);
+            // Route the server's per-file merge outcomes back to this console.
+            ConfigPullService.SetReplyTerminal(args.Context);
 
             var host = FiresCoreRoot.Instance;
             if (host == null) { Reply("[ConfigPush] core host not ready."); return; }
@@ -175,7 +177,9 @@ namespace FiresCore.Sync
         //  Pattern → matched files
         // ──────────────────────────────────────────────────────────────
 
-        private static List<(string rel, string abs)> ResolveMatches(string pattern)
+        // internal: ConfigPullService resolves the SAME pattern semantics against the
+        // server's config tree, so both commands behave identically.
+        internal static List<(string rel, string abs)> ResolveMatches(string pattern)
         {
             var root = Paths.ConfigPath;
             var results = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // rel → abs
@@ -286,7 +290,7 @@ namespace FiresCore.Sync
         // Tab-completion: top-level config folders (bare + prefix*) and top-level
         // config files, plus one level deep for folders whose files sit directly
         // inside (e.g. expand_world/). Bounded so a huge config tree can't lag.
-        private static List<string> BuildCompletionOptions()
+        internal static List<string> BuildCompletionOptions()
         {
             var opts = new List<string>();
             try
@@ -372,8 +376,9 @@ namespace FiresCore.Sync
                     pos += asm.Chunks[i].Length;
                 }
 
-                WriteConfigAtomic(relPath, full);
-                FiresLogger.LogInfo($"[ConfigPush] admin {sender} pushed '{relPath}' ({total} bytes). Owning mod's watcher will reload it.");
+                string outcome = ApplyIncoming(relPath, full);
+                FiresLogger.LogInfo($"[ConfigPush] admin {sender} pushed '{relPath}' ({total} bytes) → {outcome}.");
+                ConfigPullService.SendMsg(sender, $"   {relPath} → {outcome}");
             }
             catch (Exception ex)
             {
@@ -383,7 +388,7 @@ namespace FiresCore.Sync
 
         // relPath must be config-root-relative, forward-slash, no traversal, no
         // rooting, config extension only.
-        private static bool IsSafeRelPath(string relPath)
+        internal static bool IsSafeRelPath(string relPath)
         {
             if (string.IsNullOrEmpty(relPath)) return false;
             if (relPath.IndexOf("..", StringComparison.Ordinal) >= 0) return false;
@@ -398,7 +403,172 @@ namespace FiresCore.Sync
             return full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
         }
 
-        private static void WriteConfigAtomic(string relPath, byte[] bytes)
+        // ──────────────────────────────────────────────────────────────
+        //  Applying an incoming push: merge / skip-identical / replace
+        // ──────────────────────────────────────────────────────────────
+        //
+        // "As if the admin edited the server directly" — so a push must never blow away
+        // server-side entries the admin didn't touch, and must never rewrite a file whose
+        // content didn't actually change (an identical write still trips the owning mod's
+        // FileSystemWatcher and causes a pointless reload — exactly the cascade we avoid).
+        //
+        //   .cfg/.ini  → real entry-level MERGE: the admin's values overwrite matching
+        //                section/key entries, missing ones are inserted, and every
+        //                server-only key/section/comment is preserved untouched.
+        //   other      → whole-file replace. A structural merge of yaml/json/xml can't be
+        //                done safely without per-file identity rules (guessing one would
+        //                risk corrupting ExpandWorld data), so those stay whole-file —
+        //                pull → edit → push keeps them honest.
+        private static string ApplyIncoming(string relPath, byte[] incoming)
+        {
+            string abs = Path.Combine(Paths.ConfigPath, relPath.Replace('/', Path.DirectorySeparatorChar));
+
+            if (!File.Exists(abs))
+            {
+                WriteConfigAtomic(relPath, incoming);
+                return "created";
+            }
+
+            byte[] existing;
+            try { existing = File.ReadAllBytes(abs); }
+            catch { WriteConfigAtomic(relPath, incoming); return "replaced"; }
+
+            if (BytesEqual(existing, incoming)) return "unchanged — skipped (no reload triggered)";
+
+            string ext = Path.GetExtension(relPath);
+            bool isKeyValue = string.Equals(ext, ".cfg", StringComparison.OrdinalIgnoreCase)
+                           || string.Equals(ext, ".ini", StringComparison.OrdinalIgnoreCase);
+            if (isKeyValue)
+            {
+                try
+                {
+                    string merged = MergeCfg(ReadText(existing), ReadText(incoming), out int added, out int updated);
+                    if (merged == null) return "unchanged — skipped (no reload triggered)";
+                    WriteConfigAtomic(relPath, new UTF8Encoding(false).GetBytes(merged));
+                    return $"merged (+{added} added, ~{updated} updated, server-only keys kept)";
+                }
+                catch (Exception ex)
+                {
+                    FiresLogger.LogWarning($"[ConfigPush] cfg merge failed for '{relPath}' ({ex.Message}) — falling back to whole-file write.");
+                    WriteConfigAtomic(relPath, incoming);
+                    return "replaced (merge failed)";
+                }
+            }
+
+            WriteConfigAtomic(relPath, incoming);
+            return "replaced (whole file)";
+        }
+
+        private static bool BytesEqual(byte[] a, byte[] b)
+        {
+            if (a == null || b == null) return false;
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
+            return true;
+        }
+
+        private static string ReadText(byte[] bytes)
+        {
+            using (var ms = new MemoryStream(bytes))
+            using (var sr = new StreamReader(ms, new UTF8Encoding(false), detectEncodingFromByteOrderMarks: true))
+                return sr.ReadToEnd();
+        }
+
+        private static List<(string section, string key, string value)> ParseCfg(string text)
+        {
+            var res = new List<(string, string, string)>();
+            string cur = "";
+            foreach (var raw in text.Replace("\r\n", "\n").Split('\n'))
+            {
+                string t = raw.Trim();
+                if (t.Length == 0 || t.StartsWith("#", StringComparison.Ordinal)) continue;
+                if (t.StartsWith("[", StringComparison.Ordinal) && t.EndsWith("]", StringComparison.Ordinal))
+                { cur = t.Substring(1, t.Length - 2).Trim(); continue; }
+                int eq = t.IndexOf('=');
+                if (eq <= 0) continue;
+                res.Add((cur, t.Substring(0, eq).Trim(), t.Substring(eq + 1).Trim()));
+            }
+            return res;
+        }
+
+        // Applies the admin's entries onto the SERVER's file text, preserving the server's
+        // layout, comments and any key it doesn't mention. Returns null when nothing changed.
+        private static string MergeCfg(string serverText, string adminText, out int added, out int updated)
+        {
+            added = 0; updated = 0;
+            var adminEntries = ParseCfg(adminText);
+            if (adminEntries.Count == 0) return null;
+
+            bool crlf = serverText.Contains("\r\n");
+            var lines = new List<string>(serverText.Replace("\r\n", "\n").Split('\n'));
+
+            // Index the server file: (sectionkey) → line, section → last line of that section.
+            var keyLine = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var sectionEnd = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            string cur = "";
+            sectionEnd[""] = -1;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                string t = lines[i].Trim();
+                if (t.StartsWith("[", StringComparison.Ordinal) && t.EndsWith("]", StringComparison.Ordinal))
+                { cur = t.Substring(1, t.Length - 2).Trim(); sectionEnd[cur] = i; continue; }
+                if (t.Length == 0 || t.StartsWith("#", StringComparison.Ordinal)) continue;
+                int eq = t.IndexOf('=');
+                if (eq <= 0) continue;
+                keyLine[cur + "" + t.Substring(0, eq).Trim()] = i;
+                sectionEnd[cur] = i;
+            }
+
+            bool changed = false;
+            var pendingInserts = new Dictionary<int, List<string>>();   // insert-after line → new lines
+            var newSections = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var e in adminEntries)
+            {
+                string line = e.key + " = " + e.value;
+                if (keyLine.TryGetValue(e.section + "" + e.key, out int idx))
+                {
+                    int eq = lines[idx].IndexOf('=');
+                    string keyText = eq > 0 ? lines[idx].Substring(0, eq).TrimEnd() : e.key;
+                    string newLine = keyText + " = " + e.value;
+                    if (!string.Equals(lines[idx], newLine, StringComparison.Ordinal))
+                    { lines[idx] = newLine; updated++; changed = true; }
+                }
+                else if (sectionEnd.TryGetValue(e.section, out int endIdx))
+                {
+                    if (!pendingInserts.TryGetValue(endIdx, out var list)) pendingInserts[endIdx] = list = new List<string>();
+                    list.Add(line);
+                    added++; changed = true;
+                }
+                else
+                {
+                    if (!newSections.TryGetValue(e.section, out var list)) newSections[e.section] = list = new List<string>();
+                    list.Add(line);
+                    added++; changed = true;
+                }
+            }
+
+            if (!changed) return null;
+
+            // Insert into existing sections back-to-front so earlier indices stay valid.
+            var insertAt = new List<int>(pendingInserts.Keys);
+            insertAt.Sort();
+            insertAt.Reverse();
+            foreach (var at in insertAt)
+                lines.InsertRange(Math.Min(at + 1, lines.Count), pendingInserts[at]);
+
+            foreach (var kv in newSections)
+            {
+                lines.Add("");
+                if (!string.IsNullOrEmpty(kv.Key)) lines.Add("[" + kv.Key + "]");
+                lines.AddRange(kv.Value);
+            }
+
+            string joined = string.Join("\n", lines.ToArray());
+            return crlf ? joined.Replace("\n", "\r\n") : joined;
+        }
+
+        internal static void WriteConfigAtomic(string relPath, byte[] bytes)
         {
             string abs = Path.Combine(Paths.ConfigPath, relPath.Replace('/', Path.DirectorySeparatorChar));
             string dir = Path.GetDirectoryName(abs);
