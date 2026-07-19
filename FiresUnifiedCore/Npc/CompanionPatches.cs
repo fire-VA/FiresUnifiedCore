@@ -1584,8 +1584,12 @@ namespace FiresCore.Npc
                     // FOLLOWING companions to the dormant store before release/destroy. In persistent
                     // mode the live ZDO also survives and the login adopt-pass wins (then clears this
                     // entry); in legacy mode this is the sole restore source. Null-safe, harmless either way.
-                    if (companion.ShouldBeFollowing)
-                        companion.StoreDormant(playerId, FiresCore.Bridge.DormancyKind.LoggedOutFollower, 0L);
+                    // Capture EVERY owned companion, not just followers. A stay/guard companion was
+                    // previously never written to the dormant store on logout, so if its world ZDO
+                    // didn't survive there was no fallback and it was gone permanently. The snapshot
+                    // carries follow/stay/stationed + home, so restore puts it back in the right mode.
+                    bool storedDormant = companion.StoreDormant(playerId, FiresCore.Bridge.DormancyKind.LoggedOutFollower, 0L);
+                    Debug.Log($"[CompanionPatches] Logout capture: '{companion.companionName}' (id={companion.companionId}, following={companion.ShouldBeFollowing}) -> dormant store {(storedDormant ? "OK" : "FAILED")}");
 
                     var nview = companion.GetComponent<ZNetView>();
 

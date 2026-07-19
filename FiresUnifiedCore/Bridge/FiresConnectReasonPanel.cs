@@ -127,6 +127,7 @@ namespace FiresCore.Bridge
 
             var card = UIBuilderHelper.CreatePanel(_root.transform, "Card",
                 new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Color(0.10f, 0.09f, 0.08f, 0.98f));
+            RoundedChrome(card, FiresRoundedSkin.RoundedSprite(10, FiresPopupTheme.PanelBg, FiresPopupTheme.PanelEdge, 1));
             _cardRt = card.GetComponent<RectTransform>();
             _cardRt.sizeDelta = new Vector2(980f, 720f);
             UIBuilderHelper.AddVerticalLayout(card, new RectOffset(24, 24, 20, 20), 10f,
@@ -165,6 +166,7 @@ namespace FiresCore.Bridge
             MakeCell(_colHeader.transform, "Status", hcol, width: 140f);
 
             var scroll = UIBuilderHelper.CreateScrollArea(card.transform, "Table", Vector2.zero, Vector2.one, new Color(0f, 0f, 0f, 0.30f));
+            RoundedChrome(scroll.Root, FiresRoundedSkin.RoundedSprite(8, FiresPopupTheme.ListBg, FiresPopupTheme.PanelEdge, 1));
             UIBuilderHelper.AddLayoutElement(scroll.Root, flexibleHeight: 1f);
             UIBuilderHelper.AddVerticalLayout(scroll.Content.gameObject, new RectOffset(4, 4, 4, 4), 2f,
                 childControlWidth: true, childControlHeight: true, childForceExpandWidth: true, childForceExpandHeight: false);
@@ -181,10 +183,36 @@ namespace FiresCore.Bridge
             UIBuilderHelper.AddLayoutElement(footer, minHeight: 44f, preferredHeight: 48f);
 
             var okBtn = UIBuilderHelper.CreateButton(footer.transform, "OK", Vector2.zero, Vector2.one, Hide);
+            // White rounded sprite + palette tint states, the same way FiresPopupTheme styles a button
+            // (the Button's ColorTint multiplies the image, so the sprite itself must stay white).
+            RoundedChrome(okBtn.gameObject, FiresRoundedSkin.RoundedSprite(7, Color.white));
+            var okColors = okBtn.colors;
+            okColors.normalColor = FiresPopupTheme.BtnNormal;
+            okColors.highlightedColor = FiresPopupTheme.BtnHover;
+            okColors.pressedColor = FiresPopupTheme.BtnPressed;
+            okColors.selectedColor = FiresPopupTheme.BtnNormal;
+            okColors.fadeDuration = 0.08f;
+            okBtn.colors = okColors;
+            foreach (var okLabel in okBtn.GetComponentsInChildren<TMP_Text>(true))
+                okLabel.color = FiresPopupTheme.TextLight;
             UIBuilderHelper.AddLayoutElement(okBtn.gameObject, minWidth: 150f, preferredWidth: 160f,
                 minHeight: 38f, preferredHeight: 40f, flexibleWidth: 0f, flexibleHeight: 0f);
 
             _root.SetActive(false);
+        }
+
+        // Fires rounded chrome (FiresRoundedSkin + the FiresPopupTheme palette) so the panel reads as part
+        // of the same popup family instead of hard-edged boxes. Applied to CHROME ONLY - deliberately not
+        // FiresPopupTheme.Reskin(), whose text pass forces every label >=18f to gold bold, which would erase
+        // the status colour coding (BANNED red / OK green / admin-only purple) and the mod-name tint, and
+        // those colours carry the meaning of the table. Sliced so the corner radius survives any size.
+        private static void RoundedChrome(GameObject go, Sprite sprite)
+        {
+            var img = go != null ? go.GetComponent<Image>() : null;
+            if (img == null) return;
+            img.sprite = sprite;
+            img.type = Image.Type.Sliced;
+            img.color = Color.white;
         }
 
         private static void AddRow(Transform parent, string mod, string you, string server, string statusText, Color statusColor)
