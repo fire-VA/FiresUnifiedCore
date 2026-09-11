@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -7,6 +8,13 @@ namespace FiresCore.Help
     // The content-building API handed to each registered help section. A section appends elements to the
     // panel's scroll content by calling these methods; the renderer owns the parent transform. Lifted from
     // the original VerdantAscentHelpPanel Add* helpers so output is identical.
+    //
+    // COLLAPSIBLE GROUPS: SubHeader and AdminHeader are clickable — each starts a group that swallows every
+    // element written after it (paragraphs, bullets, code, dividers) until the next header. Clicking the
+    // header collapses/expands the group ([-] / [+] prefix; ASCII on purpose — Unicode arrows render as
+    // tofu in the game fonts). Collapse state is remembered per section+header for the session so
+    // reopening the panel keeps your layout. Content authors need no changes — grouping is inferred from
+    // the existing Header/SubHeader call order.
     public sealed class HelpContentWriter
     {
         private const float HeaderFontSize = 16f;
@@ -20,22 +28,42 @@ namespace FiresCore.Help
         private const float DividerHeight = 1f;
         private const float AdminDividerHeight = 2f;
 
-        private readonly Transform _content;
+        private const string ExpandedPrefix = "[-] ";
+        private const string CollapsedPrefix = "[+] ";
 
-        public HelpContentWriter(Transform content) => _content = content;
+        // Session-persistent collapse memory, keyed "<modId>|<sectionTitle>|<headerText>". Static so it
+        // survives panel rebuilds (the content area is destroyed and rebuilt on every NavigateTo).
+        private static readonly Dictionary<string, bool> s_collapsed = new Dictionary<string, bool>();
+
+        private readonly Transform _content;
+        private readonly string _stateKey;
+        private Transform _group;   // active collapsible group container, or null when writing to the root
+
+        public HelpContentWriter(Transform content, string stateKey = null)
+        {
+            _content = content;
+            _stateKey = stateKey ?? "";
+        }
+
+        // Elements land in the open collapsible group when one is active, else at the section root.
+        private Transform Target => _group != null ? _group : _content;
 
         public void Header(string text)
         {
-            var tmp = NewText("Header", text, HeaderFontSize, HelpTheme.HeaderColor, TextAlignmentOptions.MidlineLeft);
+            _group = null;   // top-level headers never collapse and always end any open group
+            var tmp = NewText("Header", text, HeaderFontSize, HelpTheme.HeaderColor, TextAlignmentOptions.MidlineLeft, _content);
             tmp.fontStyle = FontStyles.Bold;
             tmp.gameObject.AddComponent<LayoutElement>().minHeight = HeaderMinHeight;
         }
 
         public void SubHeader(string text)
         {
-            var tmp = NewText("SubHeader", text, SubHeaderFontSize, HelpTheme.TextGold, TextAlignmentOptions.MidlineLeft);
-            tmp.fontStyle = FontStyles.Bold;
-            tmp.gameObject.AddComponent<LayoutElement>().minHeight = SubHeaderMinHeight;
+            BeginCollapsibleGroup("SubHeader", text, SubHeaderFontSize, HelpTheme.TextGold, SubHeaderMinHeight, adminStyle: false);
+        }
+
+        public void AdminHeader(string text)
+        {
+            BeginCollapsibleGroup("AdminHeader", text, AdminHeaderFontSize, HelpTheme.AdminHeaderColor, AdminHeaderMinHeight, adminStyle: true);
         }
 
         public void Paragraph(string text) => WrappedText("Paragraph", text);
@@ -44,7 +72,7 @@ namespace FiresCore.Help
 
         public void CodeBlock(string text)
         {
-            var box = NewChild("Code", _content);
+            var box = NewChild("Code", Target);
             var bg = box.AddComponent<Image>();
             bg.color = HelpTheme.CodeBg;
             bg.raycastTarget = false;
@@ -73,34 +101,104 @@ namespace FiresCore.Help
 
         public void AdminDivider() => Bar("AdminDivider", AdminDividerHeight, HelpTheme.AdminDivider);
 
-        public void AdminHeader(string text)
+        // ── collapsible group machinery ─────────────────────────────────────
+
+        private void BeginCollapsibleGroup(string name, string text, float fontSize, Color textColor,
+            float minHeight, bool adminStyle)
         {
-            var box = NewChild("AdminHeader", _content);
+            _group = null;   // consecutive headers never nest
 
-            var bg = NewChild("AdminBg", box.transform);
-            var bgRect = bg.AddComponent<RectTransform>();
-            bgRect.anchorMin = Vector2.zero;
-            bgRect.anchorMax = Vector2.one;
-            bgRect.offsetMin = new Vector2(-4, -2);
-            bgRect.offsetMax = new Vector2(4, 2);
-            var bgImg = bg.AddComponent<Image>();
-            bgImg.color = HelpTheme.AdminBg;
-            bgImg.raycastTarget = false;
+            string stateId = _stateKey + "|" + text;
+            bool collapsed = s_collapsed.TryGetValue(stateId, out var c) && c;
 
-            box.AddComponent<LayoutElement>().minHeight = AdminHeaderMinHeight;
-            var tmp = box.AddComponent<TextMeshProUGUI>();
-            tmp.text = text;
-            tmp.fontSize = AdminHeaderFontSize;
+            // Header row — always visible at the section root, click to toggle.
+            var row = NewChild(name, _content);
+            row.AddComponent<LayoutElement>().minHeight = minHeight;
+
+            Image target;
+            if (adminStyle)
+            {
+                // Preserve the AdminHeader look: an inset tinted backplate behind the text.
+                var bgGo = NewChild("AdminBg", row.transform);
+                var bgRect = bgGo.AddComponent<RectTransform>();
+                bgRect.anchorMin = Vector2.zero;
+                bgRect.anchorMax = Vector2.one;
+                bgRect.offsetMin = new Vector2(-4, -2);
+                bgRect.offsetMax = new Vector2(4, 2);
+                target = bgGo.AddComponent<Image>();
+                target.color = HelpTheme.AdminBg;
+            }
+            else
+            {
+                // Invisible full-row hit target so the whole line is clickable and can tint on hover.
+                target = row.AddComponent<Image>();
+                target.color = new Color(1f, 1f, 1f, 0f);
+            }
+            target.raycastTarget = true;
+
+            var textGo = NewChild("Text", row.transform);
+            var tr = textGo.AddComponent<RectTransform>();
+            tr.anchorMin = Vector2.zero;
+            tr.anchorMax = Vector2.one;
+            tr.offsetMin = Vector2.zero;
+            tr.offsetMax = Vector2.zero;
+            var tmp = textGo.AddComponent<TextMeshProUGUI>();
+            tmp.text = (collapsed ? CollapsedPrefix : ExpandedPrefix) + text;
+            tmp.fontSize = fontSize;
             tmp.fontStyle = FontStyles.Bold;
-            tmp.color = HelpTheme.AdminHeaderColor;
+            tmp.color = textColor;
             tmp.alignment = TextAlignmentOptions.MidlineLeft;
             tmp.raycastTarget = false;
             HelpPanel.ApplyFont(tmp);
+
+            // Group container — everything until the next header parents here; SetActive drives collapse.
+            var groupGo = NewChild(name + "Group", _content);
+            var vlg = groupGo.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = 6;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            groupGo.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            groupGo.SetActive(!collapsed);
+            _group = groupGo.transform;
+
+            var btn = row.AddComponent<Button>();
+            btn.targetGraphic = target;
+            var colors = btn.colors;
+            if (adminStyle)
+            {
+                colors.normalColor = Color.white;
+                colors.highlightedColor = new Color(1.25f, 1.25f, 1.25f, 1f);
+                colors.pressedColor = new Color(1.5f, 1.5f, 1.5f, 1f);
+                colors.selectedColor = Color.white;
+            }
+            else
+            {
+                colors.normalColor = new Color(1f, 1f, 1f, 0f);
+                colors.highlightedColor = new Color(1f, 1f, 1f, 0.06f);
+                colors.pressedColor = new Color(1f, 1f, 1f, 0.12f);
+                colors.selectedColor = new Color(1f, 1f, 1f, 0f);
+            }
+            btn.colors = colors;
+
+            var contentRect = _content as RectTransform;
+            btn.onClick.AddListener(() =>
+            {
+                bool nowCollapsed = groupGo.activeSelf;   // currently expanded → this click collapses
+                groupGo.SetActive(!nowCollapsed);
+                s_collapsed[stateId] = nowCollapsed;
+                tmp.text = (nowCollapsed ? CollapsedPrefix : ExpandedPrefix) + text;
+                if (contentRect != null) LayoutRebuilder.ForceRebuildLayoutImmediate(contentRect);
+            });
         }
 
-        private TextMeshProUGUI NewText(string name, string text, float fontSize, Color color, TextAlignmentOptions align)
+        // ── primitives ──────────────────────────────────────────────────────
+
+        private TextMeshProUGUI NewText(string name, string text, float fontSize, Color color,
+            TextAlignmentOptions align, Transform parent)
         {
-            var go = NewChild(name, _content);
+            var go = NewChild(name, parent);
             var tmp = go.AddComponent<TextMeshProUGUI>();
             tmp.text = text;
             tmp.fontSize = fontSize;
@@ -113,7 +211,7 @@ namespace FiresCore.Help
 
         private void WrappedText(string name, string text)
         {
-            var go = NewChild(name, _content);
+            var go = NewChild(name, Target);
             var tmp = go.AddComponent<TextMeshProUGUI>();
             tmp.text = text;
             tmp.fontSize = BodyFontSize;
@@ -128,7 +226,7 @@ namespace FiresCore.Help
 
         private void Bar(string name, float height, Color color)
         {
-            var go = NewChild(name, _content);
+            var go = NewChild(name, Target);
             var le = go.AddComponent<LayoutElement>();
             le.minHeight = height;
             le.preferredHeight = height;

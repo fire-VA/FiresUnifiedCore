@@ -82,6 +82,7 @@ namespace FiresCore.UI
 
         var bg = panelGO.AddComponent<Image>();
         bg.color = backgroundColor ?? UIFontConfig.Colors.PanelBackground;
+        FiresRoundedSprite.Apply(bg);   // soft corners on every codegen panel
 
        return panelGO;
         }
@@ -121,6 +122,7 @@ namespace FiresCore.UI
    var buttonImg = buttonGO.AddComponent<Image>();
          buttonImg.color = UIFontConfig.Colors.ButtonNormal;
          buttonImg.raycastTarget = true;
+         FiresRoundedSprite.Apply(buttonImg);   // soft corners on every codegen button
 
          var button = buttonGO.AddComponent<Button>();
       button.targetGraphic = buttonImg;
@@ -223,6 +225,7 @@ UIFontConfig.ApplyStyle(buttonText, UIFontConfig.ButtonText);
             var img = inputGO.AddComponent<Image>();
             img.color = UIFontConfig.Colors.ParchmentField;
             img.raycastTarget = true;
+            FiresRoundedSprite.Apply(img);   // soft corners on every codegen input field
 
             var viewportGO = new GameObject("Viewport");
             viewportGO.transform.SetParent(inputGO.transform, false);

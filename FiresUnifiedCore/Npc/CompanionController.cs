@@ -1211,7 +1211,39 @@ if (isTamed && ownerPlayerId == 0 &&
 
         public void CommandFollow(Player player)
         {
-            if (_companionAI == null || player == null) return;
+            if (player == null) return;
+
+            // PERSISTENT INTENT FIRST — this is a ZDO/registry write that needs only the player, NOT the
+            // AI. CommandFollow runs at tame time when _companionAI may not be wired yet; the old
+            // `_companionAI == null` early-return skipped this entirely, leaving companion_wasfollowing
+            // FALSE forever. That single flag gates the server leash reel-in (TryReelIn) AND the login
+            // follow-restore (LoadFromZDO), so a companion that looked like it was following was silently
+            // never reeled in after a teleport and never re-followed after a relog.
+            SetPersistentFollowIntent(true);
+            SaveFollowStateToVault(true);
+
+            // Roster mirror + stale-dormant clear also need only the player, so they must not sit behind
+            // the AI guard either.
+            try
+            {
+                CompanionRosterWriter.OnFollowCommand(player, this);
+                // CORE DORMANT STORE: the companion is live again, so clear any stale dormant copy.
+                FiresCore.Bridge.NpcDormancyBridge.Remove(player.GetPlayerID(), companionId);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CompanionController] Roster write failed for CommandFollow (non-fatal): {ex.Message}");
+            }
+
+            if (_companionAI == null)
+            {
+                // AI not wired yet (tame-time race). The intent is recorded, so the server leash and the
+                // next load will both honour it; arm the deferred watcher so runtime follow engages as
+                // soon as the AI and owner exist.
+                _pendingDeferredFollowRestore = true;
+                Debug.Log($"[CompanionController] CommandFollow: persistent follow intent recorded for {companionName} before AI was wired — deferred watcher will engage follow.");
+                return;
+            }
 
             // CRITICAL: Release any movement locks from interaction or other sources
             // This fixes the bug where companions commanded via Shift+E interaction stay frozen
@@ -1232,27 +1264,6 @@ if (isTamed && ownerPlayerId == 0 &&
             if (idleBehavior != null)
             {
                 idleBehavior.ClearHomePosition();
-            }
-
-            // Owner explicitly chose follow — write persistent intent.
-            SetPersistentFollowIntent(true);
-
-            SaveFollowStateToVault(true);
-
-            // ROSTER MIRROR (Phase 3): persistent intent = Following.
-            try
-            {
-                if (player != null)
-                {
-                    CompanionRosterWriter.OnFollowCommand(player, this);
-                    // CORE DORMANT STORE (replaces KennelLifecycle.OnFollowCommand): the companion is
-                    // live again, so clear any stale dormant copy. Idempotent + null-safe.
-                    FiresCore.Bridge.NpcDormancyBridge.Remove(player.GetPlayerID(), companionId);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[CompanionController] Roster write failed for CommandFollow (non-fatal): {ex.Message}");
             }
 
             MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center,
@@ -1283,7 +1294,18 @@ if (isTamed && ownerPlayerId == 0 &&
         /// </summary>
         public void CommandStay(Vector3 stayPosition)
         {
-            if (_companionAI == null) return;
+            // PERSISTENT INTENT FIRST — a ZDO/registry write that needs only this companion, not the AI.
+            // Same failure mode as CommandFollow: the old `_companionAI == null` early-return could skip
+            // the intent write entirely, leaving companion_wasfollowing TRUE on a companion the owner had
+            // told to stay — so the server leash heartbeat would keep yanking it back to the player.
+            SetPersistentFollowIntent(false);
+            SaveFollowStateToVault(false);
+
+            if (_companionAI == null)
+            {
+                Debug.Log($"[CompanionController] CommandStay: persistent stay intent recorded for {companionName} before AI was wired.");
+                return;
+            }
 
             // CRITICAL: Release any movement locks from interaction or other sources
             // This fixes the bug where companions commanded via Shift+E interaction stay frozen
@@ -1316,11 +1338,6 @@ if (isTamed && ownerPlayerId == 0 &&
                 idleBehavior.SetHomePosition(stayPosition);
                 Debug.Log($"[CompanionController] Set home position on IdleBehavior for {companionName} at {stayPosition}");
             }
-
-            // Owner explicitly chose stay — write persistent intent.
-            SetPersistentFollowIntent(false);
-
-            SaveFollowStateToVault(false);
 
             // ROSTER MIRROR (Phase 3): persistent intent = Staying. Capture
             // happens here AFTER home position is set on the movement

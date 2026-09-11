@@ -22,7 +22,7 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.1.79";
+        public const string PluginVersion = "0.2.5";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -62,7 +62,7 @@ namespace FiresCore
         {
             Log = Logger;
             FiresCoreBanner.PrintBig();
-            Debug.Log($"[{PluginName}] Awake() â€” version {PluginVersion}");
+            Debug.Log($"[{PluginName}] Awake() Ã¢â‚¬â€ version {PluginVersion}");
 
             // Consolidate + group the whole Fires-family config folder before anything reads it this session.
             FiresCore.Storage.FiresConfigPaths.Migrate();
@@ -70,7 +70,7 @@ namespace FiresCore
             InstallLogFilter();
             InitializeConfigAndSync();
 
-            // The Diagnostics guards attach EXPLICITLY with read-back verification â€” the
+            // The Diagnostics guards attach EXPLICITLY with read-back verification Ã¢â‚¬â€ the
             // attribute-based versions compiled into 0.1.60-0.1.65 but never attached in the
             // field (EnemyHud.TestShow NRE persisted with zero guard log lines). The client
             // gate mirrors the DedicatedServerSkipPatchTypes rationale: patching the
@@ -86,7 +86,7 @@ namespace FiresCore
 
             // Auto-engage the shared text-capture gate whenever a UI text field is focused, so typing into any
             // Fires field stops leaking keystrokes to vanilla / other-mod hotkeys (e.g. a 'g' firing another
-            // mod's [G] toggle). Client-only â€” a headless server has no EventSystem or typing UI.
+            // mod's [G] toggle). Client-only Ã¢â‚¬â€ a headless server has no EventSystem or typing UI.
             if (!Application.isBatchMode)
             {
                 FiresCore.Input.FiresInputBlockDriver.Ensure();
@@ -95,6 +95,11 @@ namespace FiresCore
                 // providers. Bind the (client-local) enable + rebindable-modifier config before starting the driver.
                 FiresCore.UI.ContextMenu.ContextMenuConfig.Initialize(Config);
                 FiresCore.UI.ContextMenu.FiresContextMenuDriver.Ensure();
+
+                // Core's own sections for the shared help panel (registration only â€” the
+                // panel is created by whichever mod calls HelpPanel.Initialize).
+                try { FiresCore.Help.FiresCoreHelpContent.Register(); }
+                catch (System.Exception ex) { Debug.LogWarning($"[{PluginName}] Help content registration failed: {ex.Message}"); }
             }
         }
 
@@ -154,7 +159,7 @@ namespace FiresCore
 
             // BalrondCompat: server-locked toggles for our neutralization patches against specific
             // BalrondAmazingNature behaviors. Patches auto-activate through Harmony.PatchAll and
-            // each one self-gates on its config entry â€” default-on so a fresh install gets the
+            // each one self-gates on its config entry Ã¢â‚¬â€ default-on so a fresh install gets the
             // fixes (e.g. Mistlands locations stay in Mistlands, not spilling mist into DeepNorth).
             FiresCore.Compat.Balrond.BalrondCompatConfig.Initialize(Config);
             FiresCore.Compat.Balrond.BalrondCompatConfig.BindToSync(configSync);
@@ -168,7 +173,7 @@ namespace FiresCore
             FiresCore.Bridge.GroupHudBridge.IsBlockingUiOpen = FiresCore.Bridge.ModUiRegistry.IsAnyOpen;
             FiresCore.Npc.CompanionGroupHudProvider.Register();
 
-            // HuntList: server-synced, admin-editable list of passive "hunt-only" prey (deer/boar/â€¦)
+            // HuntList: server-synced, admin-editable list of passive "hunt-only" prey (deer/boar/Ã¢â‚¬Â¦)
             // that companions ignore unless Hunt is toggled on or the creature attacks first.
             FiresCore.Npc.HuntListConfig.Initialize(Config);
             FiresCore.Npc.HuntListConfig.BindToSync(configSync);
@@ -195,3 +200,4 @@ namespace FiresCore
         }
     }
 }
+

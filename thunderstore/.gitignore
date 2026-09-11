@@ -13,3 +13,6 @@ packages/
 # OS noise
 Thumbs.db
 desktop.ini
+
+# Thunderstore upload zips
+*.zip

@@ -60,7 +60,10 @@
     <Reference Include="assembly_guiutils">
       <HintPath>..\libs\assembly_guiutils_publicized.dll</HintPath>
     </Reference>
-    <Reference Include="assembly_utils">
+    <Reference Include="MagicaClothV2">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\MagicaClothV2.dll</HintPath>
+      <Private>False</Private>
+    </Reference>    <Reference Include="assembly_utils">
       <HintPath>..\..\assembly_valheim\lib\assembly_utils.dll</HintPath>
       <Private>True</Private>
     </Reference>
@@ -173,6 +176,10 @@
     <Compile Include="Bridge\BoneEditingBridge.cs" />
     <Compile Include="Bridge\GroupHudBridge.cs" />
     <Compile Include="Bridge\ModUiRegistry.cs" />
+    <Compile Include="Bridge\BiomeSectorAccess.cs" />
+    <Compile Include="Bridge\PieceTableAccess.cs" />
+    <Compile Include="Bridge\SimulationDistanceAccess.cs" />
+    <Compile Include="Bridge\ZdoExtraDataAccess.cs" />
     <Compile Include="Bridge\NpcCompanionBridge.cs" />
     <Compile Include="Bridge\CompanionBridge.cs" />
     <Compile Include="Bridge\DiscordSink.cs" />
@@ -214,6 +221,7 @@
     <Compile Include="ClientLogRelay\Interactions\LogRequestContext.cs" />
     <Compile Include="ClientLogRelay\Interactions\LogRequestRegistry.cs" />
     <Compile Include="ClientLogRelay\Interactions\DisconnectLogRegistry.cs" />
+    <Compile Include="Items\AdminRecipeGate.cs" />
     <Compile Include="Items\ItemDataHelper.cs" />
     <Compile Include="Npc\NpcPrefabSetup.cs" />
     <Compile Include="Audio\FiresCustomAudioStore.cs" />
@@ -502,6 +510,7 @@
     <Compile Include="Help\HelpContentWriter.cs" />
     <Compile Include="Help\HelpRegistry.cs" />
     <Compile Include="Help\HelpPanel.cs" />
+    <Compile Include="Help\FiresCoreHelpContent.cs" />
     <Compile Include="Help\CompendiumEntry.cs" />
     <Compile Include="Help\Compendium.cs" />
     <Compile Include="UI\FiresModIcons.cs" />
@@ -527,6 +536,7 @@
     <Compile Include="UI\ContextMenu\FiresContextMenuDriver.cs" />
     <Compile Include="UI\ContextMenu\ContextMenuConfig.cs" />
     <Compile Include="Input\FiresInputBlock.cs" />
+    <Compile Include="Input\Chord.cs" />
     <Compile Include="Input\FiresPlaceGate.cs" />
     <Compile Include="UI\UIBuilderHost.cs" />
     <Compile Include="UI\FiresConfigUI.cs" />
@@ -538,6 +548,7 @@
     <Compile Include="UI\NpcPhotoManager.cs" />
     <Compile Include="UI\PreviewStage.cs" />
     <Compile Include="UI\UIBuilder\BundledLayoutExtractor.cs" />
+    <Compile Include="UI\UIBuilder\FiresRoundedSprite.cs" />
     <Compile Include="UI\UIBuilder\UIBuilderAssetCache.cs" />
     <Compile Include="UI\UIBuilder\UIBuilderAutoDiscovery.cs" />
     <Compile Include="UI\UIBuilder\UIBuilderElementTag.cs" />
@@ -596,6 +607,7 @@
     <Compile Include="Diagnostics\FrameTimer.cs" />
     <Compile Include="Diagnostics\VisEquipmentDropPrefabHeal.cs" />
     <Compile Include="Diagnostics\CharacterListLeakGuard.cs" />
+    <Compile Include="Diagnostics\ClothAuthoringProbe.cs" />
     <Compile Include="Input\KeyBinding.cs" />
     <Compile Include="Input\WheelBinding.cs" />
     <Compile Include="Lifecycle\AdminCheck.cs" />

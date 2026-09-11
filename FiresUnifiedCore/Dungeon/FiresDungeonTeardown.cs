@@ -33,7 +33,7 @@ namespace FiresCore.Dungeon
             if (znet == null || zman == null) return 0;
 
             float yOffset = spec != null && spec.InteriorYOffset > 0f ? spec.InteriorYOffset : DefaultInteriorYOffset;
-            Vector2i zone = ZoneSystem.GetZone(surfacePos);
+            Vector2s zone = ZoneSystem.GetZone(surfacePos);
             Vector3 zoneCentre = ZoneSystem.GetZonePos(zone);
             Vector3 interiorCenter = new Vector3(zoneCentre.x, surfacePos.y + yOffset, zoneCentre.z);
 
@@ -67,7 +67,7 @@ namespace FiresCore.Dungeon
             // 2) orphan / not-currently-instantiated ZDOs in the surrounding sectors. ZNetScene.Destroy above resets
             // each destroyed object's ZDO, so nothing double-hits; FindInstance skips anything still live.
             var sectorZdos = new List<ZDO>();
-            zman.FindSectorObjects(zone, SectorSweepArea, 0, sectorZdos);
+            zman.FindSectorObjects(zone, new SimulationDistance(SectorSweepArea, 0), sectorZdos);
             foreach (var z in sectorZdos)
             {
                 if (z == null || !z.IsValid()) continue;
@@ -102,7 +102,7 @@ namespace FiresCore.Dungeon
             return false;
         }
 
-        private static void RemoveLocationInstance(DungeonSpec spec, Vector2i zone)
+        private static void RemoveLocationInstance(DungeonSpec spec, Vector2s zone)
         {
             try
             {

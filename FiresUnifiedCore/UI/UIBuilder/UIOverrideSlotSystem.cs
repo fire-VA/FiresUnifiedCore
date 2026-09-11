@@ -13,7 +13,7 @@ namespace FiresCore.UI
     /// a unified slot abstraction for the override UI to mirror.
     ///
     /// Discovery strategy (in priority order):
-    /// 1. Reflect into the live VAInventory Slots class if loaded — reads real
+    /// 1. Reflect into the live VAInventory Slots class if loaded ï¿½ reads real
     ///    slot IDs, grid positions, active states and InventoryHeightPlayer.
     /// 2. Fallback: scan items at grid positions beyond the vanilla visible
     ///    height and guess slot types from item data.
@@ -193,7 +193,7 @@ namespace FiresCore.UI
                     _mi_slotGetShortcutText = slotInnerType.GetMethod("GetShortcutText");
                 }
 
-                Debug.Log($"[UIOverrideSlotSystem] Reflected VAInventory Slots class — " +
+                Debug.Log($"[UIOverrideSlotSystem] Reflected VAInventory Slots class ï¿½ " +
                     $"slotsArray={_fi_slotsArray != null}, hotbar={_fi_toolHotbarSlots != null}, " +
                     $"heightPlayer={_pi_heightPlayer != null}");
 
@@ -580,7 +580,7 @@ namespace FiresCore.UI
         private static void DiscoverFromHeuristics(Inventory inv)
         {
             int width = inv.GetWidth();
-            // Use vanilla visible height (4) — NOT inv.GetHeight() which may
+            // Use vanilla visible height (4) ï¿½ NOT inv.GetHeight() which may
             // include hidden equipment rows added by inventory mods
             int visibleHeight = InventoryHeight;
 
@@ -626,35 +626,31 @@ namespace FiresCore.UI
                         if (elements != null)
                         {
                             int visibleCount = width * visibleHeight;
-                            var elementType = typeof(InventoryGrid).GetNestedType("Element",
-                                BindingFlags.NonPublic);
-                            var fi_pos = elementType != null
-                                ? AccessTools.Field(elementType, "m_pos") : null;
-
-                            if (fi_pos != null)
+                            // Valheim 1.0 promoted the private nested InventoryGrid.Element to the
+                            // public top-level InventoryElement, and its m_pos field to a public
+                            // Position property. GetNestedType("Element") now returns null, which
+                            // silently skipped this whole discovery pass.
+                            for (int i = visibleCount; i < elements.Count; i++)
                             {
-                                for (int i = visibleCount; i < elements.Count; i++)
+                                var elem = elements[i] as InventoryElement;
+                                if (elem == null) continue;
+                                var pos = elem.Position;
+                                if (GetSlotInGrid(pos) == null)
                                 {
-                                    var elem = elements[i];
-                                    if (elem == null) continue;
-                                    var pos = (Vector2i)fi_pos.GetValue(elem);
-                                    if (GetSlotInGrid(pos) == null)
+                                    string id = $"Slot_{pos.x}_{pos.y}";
+                                    string key = $"{id}_{pos.x}_{pos.y}";
+                                    if (!slots.ContainsKey(key))
                                     {
-                                        string id = $"Slot_{pos.x}_{pos.y}";
-                                        string key = $"{id}_{pos.x}_{pos.y}";
-                                        if (!slots.ContainsKey(key))
+                                        slots[key] = new Slot
                                         {
-                                            slots[key] = new Slot
-                                            {
-                                                ID = id,
-                                                GridPosition = pos,
-                                                Name = id,
-                                                IsActive = true,
-                                                IsEquipmentSlot = true,
-                                                IsHotbarSlot = false,
-                                                ItemFits = item => true
-                                            };
-                                        }
+                                            ID = id,
+                                            GridPosition = pos,
+                                            Name = id,
+                                            IsActive = true,
+                                            IsEquipmentSlot = true,
+                                            IsHotbarSlot = false,
+                                            ItemFits = item => true
+                                        };
                                     }
                                 }
                             }

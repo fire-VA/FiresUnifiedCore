@@ -1992,7 +1992,7 @@ namespace FiresCore.UI
                 {
                     var inst = InventoryGui.instance;
                     if (inst == null) return null;
-                    return inst.m_splitPanel != null ? inst.m_splitPanel.gameObject : null;
+                    return inst.m_splitDialog != null ? inst.m_splitDialog.gameObject : null;
                 },
                 TagHints = new Dictionary<string, string>
                 {
@@ -2483,7 +2483,7 @@ namespace FiresCore.UI
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "Container",         // m_container � hidden until chest opened
-                "SplitPanel",        // m_splitPanel � hidden until stack split
+                "SplitPanel",        // m_splitDialog � hidden until stack split
                 "TrophiesPanel",     // m_trophiesPanel � hidden by default
                 "VariantDialog",     // m_variantDialog � hidden by default
                 "SkillsDialog",      // m_skillsDialog � hidden by default

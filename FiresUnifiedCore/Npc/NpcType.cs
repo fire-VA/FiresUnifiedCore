@@ -21,5 +21,8 @@ namespace FiresCore.Npc
         // No role: decorative NPC (dress-up / hammer templates). Placed NPCs start here until an
         // admin assigns a role in the book. Appended value — stored ints must never be reordered.
         None = 13,
+        // kg Feedback NPC: [E] opens a text prompt that posts to the server's feedback webhook
+        // (same sink as the /feedback command). Appended value — never reorder.
+        Feedback = 14,
     }
 }
