@@ -488,7 +488,7 @@ namespace FiresCore.Help
             for (int i = _contentArea.childCount - 1; i >= 0; i--)
                 Destroy(_contentArea.GetChild(i).gameObject);
 
-            try { section.Build(new HelpContentWriter(_contentArea)); }
+            try { section.Build(new HelpContentWriter(_contentArea, section.ModId + "|" + section.Title)); }
             catch (Exception ex) { Logging.FiresLogger.LogWarning($"[HelpPanel] section '{section.Title}' build threw: {ex.Message}"); }
 
             if (_contentScroll != null) _contentScroll.verticalNormalizedPosition = 1f;

@@ -263,7 +263,7 @@ namespace FiresCore.Npc
                 vis.m_backAtgeir = FindRecursive(visual, "BackAtgeir_attach");
 
             if (vis.m_clothColliders == null)
-                vis.m_clothColliders = Array.Empty<CapsuleCollider>();
+                vis.m_clothColliders = new List<MagicaCloth2.ColliderComponent>();
         }
 
         private static void EnsureModels(VisEquipment vis)

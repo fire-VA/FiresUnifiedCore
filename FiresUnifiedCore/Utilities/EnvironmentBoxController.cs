@@ -1821,6 +1821,10 @@ namespace FiresCore.Utilities
         #region Hoverable / Interactable
 
         // Minimal hover — the state + all configuration live in the EnvironmentBoxPanel popup (Shift+Alt+RMB).
+        // Valheim 1.0 added GetHoverOffset to the Hoverable interface; it is ADDED to
+        // Player.m_maxInteractDistance, so 0 preserves the previous interact range exactly.
+        public float GetHoverOffset() => 0f;
+
         public string GetHoverText()
         {
             // Non-admins see nothing — both hover label and full panel are hidden.

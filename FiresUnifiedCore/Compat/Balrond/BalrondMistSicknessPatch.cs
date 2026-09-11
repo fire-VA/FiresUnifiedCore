@@ -24,7 +24,7 @@ namespace FiresCore.Compat.Balrond
                                            && BalrondCompatConfig.NegateMistSicknessDebuff.Value;
 
         [HarmonyPatch(typeof(SEMan), nameof(SEMan.AddStatusEffect),
-            new Type[] { typeof(int), typeof(bool), typeof(int), typeof(float) })]
+            new Type[] { typeof(int), typeof(bool), typeof(int), typeof(float), typeof(short) })]
         private static class AddByHash
         {
             private static bool Prefix(int nameHash, ref StatusEffect __result)
@@ -39,7 +39,7 @@ namespace FiresCore.Compat.Balrond
         }
 
         [HarmonyPatch(typeof(SEMan), nameof(SEMan.AddStatusEffect),
-            new Type[] { typeof(StatusEffect), typeof(bool), typeof(int), typeof(float) })]
+            new Type[] { typeof(StatusEffect), typeof(bool), typeof(int), typeof(float), typeof(short) })]
         private static class AddByInstance
         {
             private static bool Prefix(StatusEffect statusEffect, ref StatusEffect __result)

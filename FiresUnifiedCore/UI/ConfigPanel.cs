@@ -67,6 +67,16 @@ namespace FiresCore.UI
 
         private bool _capturing;
         private ConfigEntryBase _captureTarget;
+        // Record-then-apply capture: keys accumulate while recording (modifiers collect, the last
+        // non-modifier becomes the main key) and NOTHING commits until Apply is clicked. This is
+        // what makes multi-key chords like L + LeftAlt settable at all — the old flow committed on
+        // the first keydown, so the modifier itself ended the capture.
+        private KeyCode _capMain = KeyCode.None;
+        private readonly List<KeyCode> _capMods = new List<KeyCode>();
+        private Rect _capButtonsScreenRect;          // Apply/X screen rect — mouse presses here aren't recorded
+        private string _capNotice;                   // transient per-commit feedback ("modifiers ignored…")
+        private string _capNoticeId;
+        private float _capNoticeUntil;
 
         private static readonly KeyCode[] s_modifiers =
         {
@@ -426,34 +436,58 @@ namespace FiresCore.UI
                 }
                 case CtrlKind.KeyBind:
                 {
-                    // shudnal-ConfigurationManager layout: editable INPUT (type "F5" or "H + LeftAlt",
-                    // commits on focus loss) + "Set" button right beside it (click → record the next
-                    // key/mouse press; click again or Esc cancels) + "X" to clear the bind.
+                    // shudnal-ConfigurationManager parity: the VALUE BOX ITSELF is the capture
+                    // control. Click the box → recording starts (live chord shows in gold);
+                    // click the box (or Apply) again → commit. Esc / X cancels keeping the old
+                    // value; X when idle clears the bind. Keys accumulate while recording —
+                    // modifiers collect, the last non-modifier is the main key — so chords like
+                    // L + LeftAlt are recordable. Nothing commits until the second click.
                     bool capturingThis = _capturing && _captureTarget == d.Entry;
+                    string boxLabel;
                     if (capturingThis)
                     {
-                        GUILayout.Label("<b><color=#FFCC66>press a key or mouse button…</color></b>",
-                            FiresRoundedSkin.Button, GUILayout.Width(200f));
+                        string chord = FormatChord();
+                        boxLabel = chord.Length == 0
+                            ? "<b><color=#FFCC66>press keys…</color></b>"
+                            : "<b><color=#FFCC66>" + chord + "</color></b>";
                     }
                     else
                     {
                         string live = val?.ToString();
-                        if (string.IsNullOrEmpty(live)) live = "None";
-                        BufferedField(d, live, 200f);
+                        boxLabel = string.IsNullOrEmpty(live) || live == "None"
+                            ? "<color=#997F55>None</color>" : live;
+                    }
+                    if (GUILayout.Button(boxLabel, FiresRoundedSkin.Button, GUILayout.Width(200f)))
+                    {
+                        if (capturingThis) CommitCapture(d);
+                        else BeginCapture(d.Entry);
+                    }
+                    if (capturingThis && Event.current.type == EventType.Repaint)
+                    {
+                        // Remember the box + Apply + X area in SCREEN space so PollKeyCapture
+                        // (which runs in Update, outside GUI) can ignore mouse presses that are
+                        // really commit/cancel clicks rather than binds.
+                        var r = GUILayoutUtility.GetLastRect();
+                        var tl = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
+                        _capButtonsScreenRect = new Rect(tl.x - 4f, tl.y - 4f, r.width + 56f + 26f + 20f, r.height + 8f);
                     }
                     var prevBg = GUI.backgroundColor;
-                    if (capturingThis) GUI.backgroundColor = new Color(0.90f, 0.55f, 0.20f);
-                    if (GUILayout.Button(capturingThis ? "press…" : "Set", FiresRoundedSkin.ButtonSmall, GUILayout.Width(56f)))
+                    if (capturingThis) GUI.backgroundColor = new Color(0.35f, 0.75f, 0.30f);
+                    if (GUILayout.Button(capturingThis ? "Apply" : "Set", FiresRoundedSkin.ButtonSmall, GUILayout.Width(56f)))
                     {
-                        if (capturingThis) { _capturing = false; _captureTarget = null; }
+                        if (capturingThis) CommitCapture(d);
                         else BeginCapture(d.Entry);
                     }
                     GUI.backgroundColor = prevBg;
                     if (GUILayout.Button("X", FiresRoundedSkin.ButtonSmall, GUILayout.Width(26f)))
                     {
-                        if (capturingThis) { _capturing = false; _captureTarget = null; }
-                        Set(d, d.Type == typeof(KeyboardShortcut) ? (object)KeyboardShortcut.Empty : (object)KeyCode.None);
-                        _editBuf.Remove(IdOf(d));
+                        if (capturingThis) { CancelCapture(); }
+                        else Set(d, d.Type == typeof(KeyboardShortcut) ? (object)KeyboardShortcut.Empty : (object)KeyCode.None);
+                    }
+                    if (_capNotice != null && _capNoticeId == IdOf(d))
+                    {
+                        if (Time.unscaledTime > _capNoticeUntil) { _capNotice = null; _capNoticeId = null; }
+                        else GUILayout.Label("<color=#CC9944>" + _capNotice + "</color>", FiresRoundedSkin.Hint);
                     }
                     break;
                 }
@@ -491,34 +525,6 @@ namespace FiresCore.UI
             _editBuf.Remove(prev);
             if (!_byId.TryGetValue(prev, out var d)) return;
             if (d.Kind == CtrlKind.String && buf != (string)(d.BoxedValue as string)) Set(d, buf ?? "");
-            if (d.Kind == CtrlKind.KeyBind) TryCommitKeybindText(d, buf);
-        }
-
-        // Typed keybind text: "F5" / "Mouse3" for KeyCode entries, "H + LeftAlt" (BepInEx
-        // serialized form) for shortcuts, "None"/empty to clear. Garbage leaves the value alone.
-        private void TryCommitKeybindText(CfgDescriptor d, string text)
-        {
-            if (text == null) return;
-            text = text.Trim();
-            try
-            {
-                bool wantsClear = text.Length == 0 || text.Equals("None", StringComparison.OrdinalIgnoreCase);
-                if (d.Type == typeof(KeyboardShortcut))
-                {
-                    if (wantsClear) { Set(d, KeyboardShortcut.Empty); return; }
-                    var shortcut = KeyboardShortcut.Deserialize(text);
-                    if (!shortcut.Equals(KeyboardShortcut.Empty)) Set(d, shortcut);
-                }
-                else if (d.Type == typeof(KeyCode))
-                {
-                    if (wantsClear) { Set(d, KeyCode.None); return; }
-                    if (Enum.TryParse(text, true, out KeyCode kc)) Set(d, kc);
-                }
-            }
-            catch (Exception ex)
-            {
-                FiresConfigUI.Log.LogWarning($"keybind text '{text}' not understood: {ex.Message}");
-            }
         }
 
         // ---------------------------------------------------------------- write-back
@@ -544,35 +550,99 @@ namespace FiresCore.UI
         {
             _capturing = true;
             _captureTarget = entry;
+            _capMain = KeyCode.None;
+            _capMods.Clear();
+            _capButtonsScreenRect = default;
             GUIUtility.keyboardControl = 0;
         }
 
+        private void CancelCapture()
+        {
+            _capturing = false;
+            _captureTarget = null;
+            _capMain = KeyCode.None;
+            _capMods.Clear();
+        }
+
+        // Record-only poll: keys accumulate here; CommitCapture (the Apply click) does the write.
         private void PollKeyCapture()
         {
             if (_captureTarget == null) { _capturing = false; return; }
-            if (UnityEngine.Input.GetKeyDown(KeyCode.Escape)) { _capturing = false; _captureTarget = null; return; }
-            bool wantsShortcut = _captureTarget.SettingType == typeof(KeyboardShortcut);
+            if (UnityEngine.Input.GetKeyDown(KeyCode.Escape)) { CancelCapture(); return; }
+
             foreach (KeyCode kc in Enum.GetValues(typeof(KeyCode)))
             {
                 if (!UnityEngine.Input.GetKeyDown(kc)) continue;
-                // Shortcuts fold held modifiers in, so a bare modifier press keeps waiting for the main key;
-                // a plain KeyCode bind records ANY key — Shift itself is a valid pad button (NES Select default).
-                if (wantsShortcut && Array.IndexOf(s_modifiers, kc) >= 0) continue;
-                try
+
+                // A mouse press over the Apply/X buttons is a CLICK, not a bind — recording it would
+                // overwrite the chord on the way to committing it. (GUI screen space: y grows down.)
+                if (kc >= KeyCode.Mouse0 && kc <= KeyCode.Mouse6)
                 {
-                    if (_captureTarget.SettingType == typeof(KeyboardShortcut))
-                    {
-                        var mods = new List<KeyCode>();
-                        foreach (var m in s_modifiers) if (UnityEngine.Input.GetKey(m)) mods.Add(m);
-                        _captureTarget.BoxedValue = new KeyboardShortcut(kc, mods.ToArray());
-                    }
-                    else _captureTarget.BoxedValue = kc;
+                    var mouseGui = new Vector2(UnityEngine.Input.mousePosition.x,
+                        Screen.height - UnityEngine.Input.mousePosition.y);
+                    if (_capButtonsScreenRect.Contains(mouseGui)) continue;
                 }
-                catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind capture failed: " + ex.Message); }
-                _capturing = false;
-                _captureTarget = null;
-                return;
+
+                if (Array.IndexOf(s_modifiers, kc) >= 0)
+                {
+                    if (!_capMods.Contains(kc)) _capMods.Add(kc);
+                }
+                else
+                {
+                    _capMain = kc;   // last non-modifier wins; keep recording until Apply
+                }
             }
+        }
+
+        private void CommitCapture(CfgDescriptor d)
+        {
+            bool wantsShortcut = _captureTarget != null && _captureTarget.SettingType == typeof(KeyboardShortcut);
+            KeyCode main = _capMain;
+            var mods = new List<KeyCode>(_capMods);
+
+            // Nothing recorded → behave like cancel.
+            if (main == KeyCode.None && mods.Count == 0) { CancelCapture(); return; }
+
+            try
+            {
+                if (wantsShortcut)
+                {
+                    // A lone modifier is a legal shortcut main key (e.g. bind to LeftAlt itself).
+                    if (main == KeyCode.None)
+                    {
+                        main = mods[0];
+                        mods.RemoveAt(0);
+                    }
+                    _captureTarget.BoxedValue = new KeyboardShortcut(main, mods.ToArray());
+                }
+                else
+                {
+                    // Plain KeyCode entries hold ONE key. A lone modifier is valid (NES Select =
+                    // LeftShift); a chord stores its main key and says so instead of silently
+                    // dropping the modifiers.
+                    if (main == KeyCode.None) main = mods[0];
+                    else if (mods.Count > 0) Notice(d, $"single-key setting — stored {main}, modifiers ignored");
+                    _captureTarget.BoxedValue = main;
+                }
+            }
+            catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind capture failed: " + ex.Message); }
+
+            CancelCapture();
+        }
+
+        private void Notice(CfgDescriptor d, string text)
+        {
+            _capNotice = text;
+            _capNoticeId = IdOf(d);
+            _capNoticeUntil = Time.unscaledTime + 5f;
+        }
+
+        private string FormatChord()
+        {
+            var parts = new List<string>();
+            foreach (var m in _capMods) parts.Add(m.ToString());
+            if (_capMain != KeyCode.None) parts.Add(_capMain.ToString());
+            return string.Join(" + ", parts);
         }
 
         // ---------------------------------------------------------------- resize grip

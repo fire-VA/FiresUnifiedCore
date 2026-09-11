@@ -1081,6 +1081,10 @@ namespace FiresCore.Npc.NpcMode
 
         #region Hoverable Interface
 
+        // Valheim 1.0 added GetHoverOffset to the Hoverable interface; it is ADDED to
+        // Player.m_maxInteractDistance, so 0 preserves the previous interact range exactly.
+        public float GetHoverOffset() => 0f;
+
         public string GetHoverText()
         {
             if (FiresCore.Bridge.ModUiRegistry.IsAnyOpen())

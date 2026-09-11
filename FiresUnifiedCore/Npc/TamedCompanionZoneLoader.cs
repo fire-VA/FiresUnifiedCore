@@ -421,23 +421,16 @@ namespace FiresCore.Npc
             if (_tempPositions.Count == 0) return;
 
             _companionZDOs.Clear();
-            int activeArea = ZoneSystem.instance != null
-                ? ZoneSystem.instance.m_activeArea : 1;
-            int distantArea = ZoneSystem.instance != null
-                ? ZoneSystem.instance.m_activeDistantArea : 1;
+            // Valheim 1.0 replaced the m_activeArea / m_activeDistantArea radii with the
+            // server-synced SimulationDistance struct that FindSectorObjects now takes.
+            SimulationDistance simDistance = ZNet.instance != null
+                ? ZNet.instance.GetSyncedSimulationDistance()
+                : new SimulationDistance(1, 1, true);
 
             for (int i = 0; i < _tempPositions.Count; i++)
             {
-                // Public test renamed zone coordinates from Vector2i to Vector2s
-                // on ZoneSystem.GetZone and ZDOMan.FindSectorObjects in unison.
-                // Branch by build flag and pass the matching type to vanilla.
-#if PUBLIC_TEST
                 Vector2s camZone = ZoneSystem.GetZone(_tempPositions[i]);
-#else
-                Vector2i camZone = ZoneSystem.GetZone(_tempPositions[i]);
-#endif
-                ZDOMan.instance.FindSectorObjects(
-                    camZone, activeArea, distantArea, _companionZDOs);
+                ZDOMan.instance.FindSectorObjects(camZone, simDistance, _companionZDOs);
             }
 
             if (_companionZDOs.Count > 0)

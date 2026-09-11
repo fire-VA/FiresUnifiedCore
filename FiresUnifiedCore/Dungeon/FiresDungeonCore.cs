@@ -131,7 +131,16 @@ namespace FiresCore.Dungeon
             {
                 if (__instance == null) return;
                 var spec = FiresDungeonRegistry.MatchForDg(__instance.gameObject.name);
-                if (spec == null) return;
+                if (spec == null)
+                {
+                    // NOT one of our dungeons. Our rooms deliberately carry a NAMED vanilla theme (EWD drops rooms
+                    // whose theme value has no name), so vanilla's theme filter pulls them into ANY same-theme
+                    // dungeon — e.g. mausoleum rooms stitched into a real ForestCrypt. InjectOurRooms only guards the
+                    // other direction (vanilla rooms out of OUR dungeon); this is the missing half.
+                    try { StripOurRoomsFromForeignDg(__instance); }
+                    catch (Exception ex) { Debug.LogError($"[FiresCore] foreign-DG room strip failed: {ex}"); }
+                    return;
+                }
                 try { InjectOurRooms(__instance, spec); }
                 catch (Exception ex) { Debug.LogError($"{spec.LogTag} room injection failed: {ex}"); }
             }
@@ -414,6 +423,35 @@ namespace FiresCore.Dungeon
                 if (sqr <= bestSqr) { bestSqr = sqr; best = b; }
             }
             return best;
+        }
+
+        /// <summary>
+        /// Remove EVERY registered Fires dungeon room from a FOREIGN generator's available list (vanilla or another
+        /// mod's dungeon). Our rooms share a named vanilla theme for EWD compatibility, so vanilla's theme filter
+        /// includes them in same-theme dungeons — that's how mausoleum rooms end up welded into real forest crypts.
+        /// Ours must ONLY ever generate inside their own dungeon, so we strip them back out here. Idempotent and
+        /// cheap (a name-set pass over the already-built list); logs only when it actually removed something.
+        /// </summary>
+        private static void StripOurRoomsFromForeignDg(DungeonGenerator dg)
+        {
+            var available = DungeonGenerator.m_availableRooms;
+            if (available == null || available.Count == 0) return;
+
+            var ours = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var spec in FiresDungeonRegistry.All)
+            {
+                if (spec?.RoomPrefabNames == null) continue;
+                foreach (string n in spec.RoomPrefabNames)
+                    if (!string.IsNullOrEmpty(n)) ours.Add(n);
+            }
+            if (ours.Count == 0) return;
+
+            int before = available.Count;
+            available.RemoveAll(rd => rd != null && rd.m_prefab.IsValid && ours.Contains(rd.m_prefab.Name));
+            int removed = before - available.Count;
+            if (removed > 0)
+                Debug.Log($"[FiresCore] stripped {removed} Fires room(s) from foreign dungeon '{dg.gameObject.name}' " +
+                          $"(available {before} -> {available.Count}) — our rooms only generate in our own dungeons.");
         }
 
         private static void InjectOurRooms(DungeonGenerator dg, DungeonSpec spec)

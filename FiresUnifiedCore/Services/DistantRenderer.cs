@@ -290,62 +290,23 @@ namespace FiresCore.Services
             }
         }
 
-        // Cross-version target: the upcoming Valheim build retypes the
-        // first parameter of FindSectorObjects from Vector2i to Vector2s.
-        // Resolve at runtime — prefer the new signature, fall back to the
-        // legacy one. typeof(Vector2s) can't appear at compile time on the
-        // current live build, so we look it up by name through AppDomain.
+        // Valheim 1.0 signature:
+        //   FindSectorObjects(Vector2s sector, SimulationDistance simulationDistance,
+        //                     List<ZDO> sectorObjects, List<ZDO> distantSectorObjects = null)
+        // The previous cross-version probe looked for a five-parameter
+        // (zone, int near, int far, List, List) shape under BOTH Vector2i and Vector2s.
+        // 1.0 collapsed the two int radii into SimulationDistance, so neither probe matched,
+        // TargetMethod returned null and Harmony threw a patching exception on attach.
         [HarmonyPatch]
         private static class FindSectorObjectsPatch
         {
-            private const BindingFlags InstanceMethodFlags =
-                BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
-
-            private const string FindSectorObjectsMethod = "FindSectorObjects";
-            private const string Vector2sTypeName = "Vector2s";
-
             static MethodBase TargetMethod()
             {
-                var zdoMan = typeof(ZDOMan);
-
-                var vector2sType = FindTypeQuietly(Vector2sTypeName);
-                if (vector2sType != null)
+                return AccessTools.Method(typeof(ZDOMan), "FindSectorObjects", new Type[]
                 {
-                    var newSig = new Type[]
-                    {
-                        vector2sType, typeof(int), typeof(int),
-                        typeof(List<ZDO>), typeof(List<ZDO>)
-                    };
-                    var newMethod = zdoMan.GetMethod(FindSectorObjectsMethod,
-                        InstanceMethodFlags, binder: null, types: newSig, modifiers: null);
-                    if (newMethod != null) return newMethod;
-                }
-
-                var oldSig = new Type[]
-                {
-                    typeof(Vector2i), typeof(int), typeof(int),
+                    typeof(Vector2s), typeof(SimulationDistance),
                     typeof(List<ZDO>), typeof(List<ZDO>)
-                };
-                return zdoMan.GetMethod(FindSectorObjectsMethod,
-                    InstanceMethodFlags, binder: null, types: oldSig, modifiers: null);
-            }
-
-            // Quiet equivalent of AccessTools.TypeByName — no HarmonyX
-            // "could not find type" warning on misses (the WHOLE point of
-            // probing both signatures is that one will be missing).
-            private static Type FindTypeQuietly(string fullName)
-            {
-                if (string.IsNullOrEmpty(fullName)) return null;
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    try
-                    {
-                        var t = asm.GetType(fullName, throwOnError: false);
-                        if (t != null) return t;
-                    }
-                    catch { /* unloadable assembly — skip */ }
-                }
-                return null;
+                });
             }
 
             public static void Postfix(List<ZDO> distantSectorObjects)

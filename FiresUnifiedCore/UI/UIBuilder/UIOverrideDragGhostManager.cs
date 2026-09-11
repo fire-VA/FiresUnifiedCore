@@ -174,7 +174,7 @@ namespace FiresCore.UI
             if (_ghostGO == null || _canvasRect == null) return;
 
             var rect = _ghostGO.GetComponent<RectTransform>();
-            Vector2 mousePos = ZInput.mousePosition;
+            Vector2 mousePos = ZInput.pointerPosition;
 
             // Convert screen position to canvas local position
             Vector2 localPos;

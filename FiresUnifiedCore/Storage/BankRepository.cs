@@ -13,7 +13,10 @@ namespace FiresCore.Storage
     {
         private const string LogPrefix = "[VaultBank]";
 
-        public static void Deposit(string ownerUserId, int prefabHash, int amount)
+        // Returns true only if the amount was actually persisted. The caller (ServerDeposit) MUST refund the
+        // player when this is false — otherwise a swallowed storage failure (e.g. VaultDatabase never
+        // Configure()d because a server-init step threw before it) silently eats the deposited coins.
+        public static bool Deposit(string ownerUserId, int prefabHash, int amount)
         {
             try
             {
@@ -25,13 +28,20 @@ namespace FiresCore.Storage
                 if (existing == null)
                 {
                     bank.Insert(new BankSlot { Owner = ownerUserId, Prefab = prefabHash, Amount = amount });
-                    return;
+                    return true;
                 }
 
                 existing.Amount += amount;
                 bank.Update(existing);
+                return true;
             }
-            catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} Deposit failed: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                // LOUD (Error, not Warning) + config state, so a persistence failure is never invisible.
+                FiresLogger.LogError($"{LogPrefix} Deposit FAILED owner='{ownerUserId}' amount={amount} " +
+                    $"(VaultDatabase.IsConfigured={VaultDatabase.IsConfigured}, path='{VaultDatabase.DatabasePath}'): {ex.Message}");
+                return false;
+            }
         }
 
         public static int Withdraw(string ownerUserId, int prefabHash, int amount)
@@ -65,7 +75,10 @@ namespace FiresCore.Storage
             }
             catch (Exception ex)
             {
-                FiresLogger.LogWarning($"{LogPrefix} GetItems failed: {ex.Message}");
+                // A GetItems failure reads back as a zero balance in the banker UI, so make it loud + include
+                // whether the vault was ever configured (the usual root cause when the whole DB path is dead).
+                FiresLogger.LogError($"{LogPrefix} GetItems FAILED owner='{ownerUserId}' " +
+                    $"(VaultDatabase.IsConfigured={VaultDatabase.IsConfigured}, path='{VaultDatabase.DatabasePath}'): {ex.Message}");
                 return new Dictionary<int, int>();
             }
         }

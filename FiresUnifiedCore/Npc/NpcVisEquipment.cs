@@ -707,16 +707,17 @@ namespace FiresCore.Npc
                 _visEquipment.m_backAtgeir = FindTransformRecursive(visual, "BackAtgeir_attach");
 
             // Find cloth colliders
-            if (_visEquipment.m_clothColliders == null || _visEquipment.m_clothColliders.Length == 0)
+            if (_visEquipment.m_clothColliders == null || _visEquipment.m_clothColliders.Count == 0)
             {
                 var clothColliderTransform = FindTransformRecursive(visual, "ClothCollider");
                 if (clothColliderTransform != null)
                 {
-                    _visEquipment.m_clothColliders = clothColliderTransform.GetComponentsInChildren<CapsuleCollider>(true);
+                    _visEquipment.m_clothColliders = new List<MagicaCloth2.ColliderComponent>(
+                        clothColliderTransform.GetComponentsInChildren<MagicaCloth2.ColliderComponent>(true));
                 }
                 else
                 {
-                    _visEquipment.m_clothColliders = Array.Empty<CapsuleCollider>();
+                    _visEquipment.m_clothColliders = new List<MagicaCloth2.ColliderComponent>();
                 }
             }
 
@@ -777,7 +778,7 @@ namespace FiresCore.Npc
                 $"rightHand: {_visEquipment.m_rightHand?.name ?? "null"}, " +
                 $"leftHand: {_visEquipment.m_leftHand?.name ?? "null"}, " +
                 $"helmet: {_visEquipment.m_helmet?.name ?? "null"}, " +
-                $"clothColliders: {_visEquipment.m_clothColliders?.Length ?? 0}, " +
+                $"clothColliders: {_visEquipment.m_clothColliders?.Count ?? 0}, " +
                 $"models: {_visEquipment.m_models?.Length ?? 0}, " +
                 $"m_isPlayer: {_visEquipment.m_isPlayer}, " +
                 $"bodyMaterials: {_visEquipment.m_bodyModel?.materials?.Length ?? 0}");

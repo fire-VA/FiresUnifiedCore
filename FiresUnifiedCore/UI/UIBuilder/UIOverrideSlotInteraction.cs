@@ -17,7 +17,7 @@ namespace FiresCore.UI
     ///
     /// <b>Design principle:</b> This class does NOT modify inventory state directly.
     /// All inventory mutations go through InventoryGui.OnSelectedItem, BeginDragItem,
-    /// or Player.EquipItem/UnequipItem — the same code paths that vanilla uses.
+    /// or Player.EquipItem/UnequipItem ï¿½ the same code paths that vanilla uses.
     ///
     /// Attach alongside <see cref="UIOverrideSlotMirror"/> when Interactive=true.
     /// The slot mirror handles visuals; this class handles input forwarding.
@@ -26,7 +26,7 @@ namespace FiresCore.UI
         IPointerClickHandler, IPointerDownHandler, IBeginDragHandler, IDragHandler, IEndDragHandler
     {
         // ???????????????????????????????????????
-        //  Configuration — set by the wiring code
+        //  Configuration ï¿½ set by the wiring code
         // ???????????????????????????????????????
 
         /// <summary>Slot ID to interact with. Must match a registered UIOverrideSlotSystem.Slot.</summary>
@@ -50,10 +50,11 @@ namespace FiresCore.UI
 
         private static readonly MethodInfo mi_onSelectedItem =
             AccessTools.Method(typeof(InventoryGui), "OnSelectedItem");
-        private static readonly MethodInfo mi_beginDragItem =
-            AccessTools.Method(typeof(InventoryGui), "BeginDragItem");
-        private static readonly MethodInfo mi_endDragItem =
-            AccessTools.Method(typeof(InventoryGui), "EndDragItem");
+        // Valheim 1.0 removed BeginDragItem/EndDragItem; the whole drag lifecycle now runs
+        // through SetupDragItem(item, inventory, amount) â€” a real item begins a drag, and
+        // (null, null, 1) ends one, which is exactly what vanilla does internally.
+        private static readonly MethodInfo mi_setupDragItem =
+            AccessTools.Method(typeof(InventoryGui), "SetupDragItem");
 
         // ???????????????????????????????????????
         //  Slot resolution (shared with SlotMirror)
@@ -86,7 +87,7 @@ namespace FiresCore.UI
         }
 
         // ???????????????????????????????????????
-        //  Left-click — pickup / place via OnSelectedItem
+        //  Left-click ï¿½ pickup / place via OnSelectedItem
         // ???????????????????????????????????????
 
         public void OnPointerClick(PointerEventData eventData)
@@ -112,13 +113,13 @@ namespace FiresCore.UI
 
             var itemAt = inv.GetItemAt(pos.x, pos.y);
 
-            // Check if there's an active drag item — if so, attempt placement
+            // Check if there's an active drag item ï¿½ if so, attempt placement
             var dragItem = fi_dragItem.GetValue(InventoryGui.instance) as ItemDrop.ItemData;
             if (dragItem != null)
             {
                 // Validate placement
                 if (!slot.IsActive || (!slot.IsFree && itemAt != dragItem))
-                    return; // Can't place here — slot occupied by different item
+                    return; // Can't place here ï¿½ slot occupied by different item
                 if (!slot.ItemFits(dragItem))
                     return; // Item doesn't fit this slot type
             }
@@ -145,7 +146,7 @@ namespace FiresCore.UI
         }
 
         // ???????????????????????????????????????
-        //  Right-click — equip/unequip or move to inventory
+        //  Right-click ï¿½ equip/unequip or move to inventory
         // ???????????????????????????????????????
 
         private void HandleRightClick()
@@ -189,7 +190,7 @@ namespace FiresCore.UI
         }
 
         // ???????????????????????????????????????
-        //  Drag — begin/end via InventoryGui reflection
+        //  Drag ï¿½ begin/end via InventoryGui reflection
         // ???????????????????????????????????????
 
         public void OnPointerDown(PointerEventData eventData)
@@ -216,12 +217,12 @@ namespace FiresCore.UI
 
             try
             {
-                mi_beginDragItem?.Invoke(InventoryGui.instance,
-                    new object[] { grid, itemAt, pos });
+                mi_setupDragItem?.Invoke(InventoryGui.instance,
+                    new object[] { itemAt, inv, itemAt.m_stack });
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[UIOverrideSlotInteraction] BeginDragItem failed: {ex.Message}");
+                Debug.LogWarning($"[UIOverrideSlotInteraction] SetupDragItem (begin) failed: {ex.Message}");
             }
         }
 
@@ -236,11 +237,12 @@ namespace FiresCore.UI
 
             try
             {
-                mi_endDragItem?.Invoke(InventoryGui.instance, null);
+                mi_setupDragItem?.Invoke(InventoryGui.instance,
+                    new object[] { null, null, 1 });
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[UIOverrideSlotInteraction] EndDragItem failed: {ex.Message}");
+                Debug.LogWarning($"[UIOverrideSlotInteraction] SetupDragItem (end) failed: {ex.Message}");
             }
 
             UIOverrideEquipmentPanel.MarkDirty();
