@@ -327,12 +327,14 @@ namespace FiresCore.Sync
             flags = package.ReadByte();
         }
 
-        // Holds SaveOnConfigSet=false across the batch so a single Save()
-        // call writes all changes at once instead of per-entry I/O.
+        // Holds SaveOnConfigSet=false across the batch so one Save() writes every
+        // change at once, and skips that write when nothing changed (a file watcher
+        // cannot tell a no-op rewrite from an admin's edit).
         private void ApplyParsedConfigsAndCustomValues(ParsedConfigs parsed)
         {
             ConfigFile configFile = null;
             bool saveOnSet = false;
+            bool anyValueChanged = false;
 
             foreach (var kv in parsed.configValues)
             {
@@ -346,13 +348,15 @@ namespace FiresCore.Sync
                     configFile.SaveOnConfigSet = false;
                 }
 
+                object previousValue = kv.Key.BaseConfig.BoxedValue;
                 kv.Key.BaseConfig.BoxedValue = kv.Value;
+                anyValueChanged |= !Equals(previousValue, kv.Key.BaseConfig.BoxedValue);
             }
 
             if (configFile != null)
             {
                 configFile.SaveOnConfigSet = saveOnSet;
-                configFile.Save();
+                if (anyValueChanged) configFile.Save();
             }
 
             foreach (var kv in parsed.customValues)
@@ -399,6 +403,7 @@ namespace FiresCore.Sync
         {
             ConfigFile configFile = null;
             bool saveOnSet = false;
+            bool anyValueChanged = false;
 
             foreach (var config in allConfigs.Where(c => c.LocalBaseValue != null))
             {
@@ -409,14 +414,16 @@ namespace FiresCore.Sync
                     configFile.SaveOnConfigSet = false;
                 }
 
+                object previousValue = config.BaseConfig.BoxedValue;
                 config.BaseConfig.BoxedValue = config.LocalBaseValue;
+                anyValueChanged |= !Equals(previousValue, config.BaseConfig.BoxedValue);
                 config.LocalBaseValue = null;
             }
 
             if (configFile != null)
             {
                 configFile.SaveOnConfigSet = saveOnSet;
-                configFile.Save();
+                if (anyValueChanged) configFile.Save();
             }
 
             foreach (var customValue in allCustomValues.Where(c => c.LocalBaseValue != null))
