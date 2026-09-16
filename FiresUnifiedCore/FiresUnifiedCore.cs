@@ -22,7 +22,7 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.2.5";
+        public const string PluginVersion = "0.2.8";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -62,7 +62,7 @@ namespace FiresCore
         {
             Log = Logger;
             FiresCoreBanner.PrintBig();
-            Debug.Log($"[{PluginName}] Awake() Ã¢â‚¬â€ version {PluginVersion}");
+            Debug.Log($"[{PluginName}] Awake() - version {PluginVersion}");
 
             // Consolidate + group the whole Fires-family config folder before anything reads it this session.
             FiresCore.Storage.FiresConfigPaths.Migrate();
@@ -70,7 +70,7 @@ namespace FiresCore
             InstallLogFilter();
             InitializeConfigAndSync();
 
-            // The Diagnostics guards attach EXPLICITLY with read-back verification Ã¢â‚¬â€ the
+            // The Diagnostics guards attach EXPLICITLY with read-back verification - the
             // attribute-based versions compiled into 0.1.60-0.1.65 but never attached in the
             // field (EnemyHud.TestShow NRE persisted with zero guard log lines). The client
             // gate mirrors the DedicatedServerSkipPatchTypes rationale: patching the
@@ -86,7 +86,7 @@ namespace FiresCore
 
             // Auto-engage the shared text-capture gate whenever a UI text field is focused, so typing into any
             // Fires field stops leaking keystrokes to vanilla / other-mod hotkeys (e.g. a 'g' firing another
-            // mod's [G] toggle). Client-only Ã¢â‚¬â€ a headless server has no EventSystem or typing UI.
+            // mod's [G] toggle). Client-only - a headless server has no EventSystem or typing UI.
             if (!Application.isBatchMode)
             {
                 FiresCore.Input.FiresInputBlockDriver.Ensure();
@@ -96,7 +96,7 @@ namespace FiresCore
                 FiresCore.UI.ContextMenu.ContextMenuConfig.Initialize(Config);
                 FiresCore.UI.ContextMenu.FiresContextMenuDriver.Ensure();
 
-                // Core's own sections for the shared help panel (registration only â€” the
+                // Core's own sections for the shared help panel (registration only — the
                 // panel is created by whichever mod calls HelpPanel.Initialize).
                 try { FiresCore.Help.FiresCoreHelpContent.Register(); }
                 catch (System.Exception ex) { Debug.LogWarning($"[{PluginName}] Help content registration failed: {ex.Message}"); }
@@ -110,6 +110,7 @@ namespace FiresCore
         protected override void WorldStart()
         {
             FiresCoreBanner.Print();
+            FiresCore.Npc.CompanionGroupHudProvider.RegisterIfCompanionHostLoaded();
 
             // Re-enumerate config now that every mod has bound (some bind after Core.Setup). The window also
             // rebuilds on open, but this primes the cache so va_config_dump is accurate before first open.
@@ -159,21 +160,17 @@ namespace FiresCore
 
             // BalrondCompat: server-locked toggles for our neutralization patches against specific
             // BalrondAmazingNature behaviors. Patches auto-activate through Harmony.PatchAll and
-            // each one self-gates on its config entry Ã¢â‚¬â€ default-on so a fresh install gets the
+            // each one self-gates on its config entry - default-on so a fresh install gets the
             // fixes (e.g. Mistlands locations stay in Mistlands, not spilling mist into DeepNorth).
             FiresCore.Compat.Balrond.BalrondCompatConfig.Initialize(Config);
             FiresCore.Compat.Balrond.BalrondCompatConfig.BindToSync(configSync);
 
-            // GroupHud: the shared below-minimap member panel. Client-only HUD, but the bindings
-            // here are harmless on a dedicated server (the panel is created from a Hud.Awake postfix,
-            // which never runs headless). Bind its per-client layout config, gate visibility behind
-            // any open Fires panel (ModUiRegistry), and register the companion row provider so the
-            // player's following companions populate the HUD wherever Core is loaded.
+            // GroupHud: the shared below-minimap member panel. It stays hidden until a mod that feeds it
+            // registers rows, and it also hides while any Fires panel is open.
             FiresCore.UI.GroupHud.GroupHudConfig.Initialize(Config);
             FiresCore.Bridge.GroupHudBridge.IsBlockingUiOpen = FiresCore.Bridge.ModUiRegistry.IsAnyOpen;
-            FiresCore.Npc.CompanionGroupHudProvider.Register();
 
-            // HuntList: server-synced, admin-editable list of passive "hunt-only" prey (deer/boar/Ã¢â‚¬Â¦)
+            // HuntList: server-synced, admin-editable list of passive "hunt-only" prey (deer/boar/…)
             // that companions ignore unless Hunt is toggled on or the creature attacks first.
             FiresCore.Npc.HuntListConfig.Initialize(Config);
             FiresCore.Npc.HuntListConfig.BindToSync(configSync);

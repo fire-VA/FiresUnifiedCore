@@ -83,15 +83,15 @@ namespace FiresCore.Npc.Patrol
         /// <summary>Deep copy (points + presets + follow tuning + must-hit) — used by node edits that must not hold a live reference.</summary>
         public PatrolRoute Clone()
         {
-            var c = new PatrolRoute
+            var copy = new PatrolRoute
             {
                 Name = Name, IsLoop = IsLoop,
                 ArrivalRadius = ArrivalRadius, LookAhead = LookAhead, Smoothing = Smoothing,
             };
-            c.Points.AddRange(Points);
-            foreach (var p in Presets) c.Presets.Add(p.Clone());
-            foreach (var i in MustHit) c.MustHit.Add(i);
-            return c;
+            copy.Points.AddRange(Points);
+            foreach (var preset in Presets) copy.Presets.Add(preset.Clone());
+            foreach (var i in MustHit) copy.MustHit.Add(i);
+            return copy;
         }
 
         /// <summary>Resolves a preset by name (case-insensitive). Null/empty/"Default" → null = identity (base walk).</summary>
@@ -183,26 +183,26 @@ namespace FiresCore.Npc.Patrol
         /// <summary>A node was inserted at <paramref name="newIndex"/> — shift later section/stop indices up so they still point at the same physical nodes.</summary>
         public void ShiftForInsert(int newIndex)
         {
-            foreach (var s in Sections)
+            foreach (var section in Sections)
             {
-                if (s.StartIndex >= newIndex) s.StartIndex++;
-                if (s.EndIndex >= newIndex) s.EndIndex++;
+                if (section.StartIndex >= newIndex) section.StartIndex++;
+                if (section.EndIndex >= newIndex) section.EndIndex++;
             }
-            foreach (var sp in StopPoints)
-                if (sp.Index >= newIndex) sp.Index++;
+            foreach (var stop in StopPoints)
+                if (stop.Index >= newIndex) stop.Index++;
         }
 
         /// <summary>The node at <paramref name="removedIndex"/> was deleted — drop any stop on it and shift later indices down.</summary>
         public void ShiftForDelete(int removedIndex)
         {
             StopPoints.RemoveAll(sp => sp.Index == removedIndex);
-            foreach (var s in Sections)
+            foreach (var section in Sections)
             {
-                if (s.StartIndex > removedIndex) s.StartIndex--;
-                if (s.EndIndex > removedIndex) s.EndIndex--;
+                if (section.StartIndex > removedIndex) section.StartIndex--;
+                if (section.EndIndex > removedIndex) section.EndIndex--;
             }
-            foreach (var sp in StopPoints)
-                if (sp.Index > removedIndex) sp.Index--;
+            foreach (var stop in StopPoints)
+                if (stop.Index > removedIndex) stop.Index--;
         }
 
         /// <summary>Clamps section/stop indices into [0, count-1] and de-duplicates stops sharing a node. Call after any node-count change.</summary>
@@ -210,10 +210,10 @@ namespace FiresCore.Npc.Patrol
         {
             if (count <= 0) { Sections.Clear(); StopPoints.Clear(); return; }
             int max = count - 1;
-            foreach (var s in Sections)
+            foreach (var section in Sections)
             {
-                s.StartIndex = Mathf.Clamp(s.StartIndex, 0, max);
-                s.EndIndex = Mathf.Clamp(s.EndIndex, 0, max);
+                section.StartIndex = Mathf.Clamp(section.StartIndex, 0, max);
+                section.EndIndex = Mathf.Clamp(section.EndIndex, 0, max);
             }
             var seen = new HashSet<int>();
             for (int i = StopPoints.Count - 1; i >= 0; i--)
@@ -225,10 +225,10 @@ namespace FiresCore.Npc.Patrol
 
         public SpeedPreset Clone()
         {
-            var p = new SpeedPreset { Name = Name, RunThreshold = RunThreshold };
-            foreach (var s in Sections) p.Sections.Add(s.Clone());
-            foreach (var sp in StopPoints) p.StopPoints.Add(new StopPoint { Index = sp.Index, Duration = sp.Duration });
-            return p;
+            var copy = new SpeedPreset { Name = Name, RunThreshold = RunThreshold };
+            foreach (var section in Sections) copy.Sections.Add(section.Clone());
+            foreach (var stop in StopPoints) copy.StopPoints.Add(new StopPoint { Index = stop.Index, Duration = stop.Duration });
+            return copy;
         }
     }
 }

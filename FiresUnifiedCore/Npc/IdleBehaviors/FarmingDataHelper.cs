@@ -312,11 +312,11 @@ namespace FiresCore.Npc.IdleBehaviors
             var result = new List<Beehive>();
             
             var colliders = Physics.OverlapSphere(position, radius);
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var beehive = col.GetComponent<Beehive>() ?? col.GetComponentInParent<Beehive>();
+                var beehive = collider.GetComponent<Beehive>() ?? collider.GetComponentInParent<Beehive>();
                 if (beehive != null && HasHoneyReady(beehive))
                 {
                     if (!result.Contains(beehive))
@@ -335,11 +335,11 @@ namespace FiresCore.Npc.IdleBehaviors
             var result = new List<Pickable>();
             
             var colliders = Physics.OverlapSphere(position, radius);
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var pickable = col.GetComponent<Pickable>() ?? col.GetComponentInParent<Pickable>();
+                var pickable = collider.GetComponent<Pickable>() ?? collider.GetComponentInParent<Pickable>();
                 if (pickable != null && IsHarvestableCrop(pickable) && IsPickableReady(pickable))
                 {
                     if (!result.Contains(pickable))
@@ -405,17 +405,17 @@ namespace FiresCore.Npc.IdleBehaviors
             int spaceMask = LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "piece_nonsolid");
             var overlaps = Physics.OverlapSphere(position, spacing, spaceMask);
             
-            foreach (var col in overlaps)
+            foreach (var collider in overlaps)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
                 // Check for Plant component
-                var plant = col.GetComponent<Plant>() ?? col.GetComponentInParent<Plant>();
+                var plant = collider.GetComponent<Plant>() ?? collider.GetComponentInParent<Plant>();
                 if (plant != null)
                     return true;
                 
                 // Check for Pickable (mature crops)
-                var pickable = col.GetComponent<Pickable>() ?? col.GetComponentInParent<Pickable>();
+                var pickable = collider.GetComponent<Pickable>() ?? collider.GetComponentInParent<Pickable>();
                 if (pickable != null && IsHarvestableCrop(pickable))
                     return true;
             }

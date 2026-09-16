@@ -4,22 +4,8 @@ using FiresCore.Npc.AI;
 namespace FiresCore.Npc.Movement
 {
     /// <summary>
-    /// Handles player command movement for companions.
-    /// 
-    /// RESPONSIBILITIES:
-    /// - Move-to-position commands
-    /// - Attack target commands  
-    /// - Priority target tracking
-    /// - Command priority system
-    /// 
-    /// DESIGN:
-    /// This is a helper class, not a MonoBehaviour. It's instantiated and owned
-    /// by CompanionCombatMovement which calls its methods as needed.
-    /// 
-    /// COMMAND PRIORITY:
-    /// Player commands have ABSOLUTE priority over AI decisions.
-    /// When a player tells their companion to do something, it MUST happen.
-    /// Move and Attack commands interrupt EVERYTHING including combat.
+    /// Movement for player commands (move to a position, attack a target, track a priority target), owned by
+    /// CompanionCombatMovement. Commands outrank every AI decision, combat included.
     /// </summary>
     public class CommandMovementHandler
     {

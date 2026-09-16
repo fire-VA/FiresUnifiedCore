@@ -5,26 +5,9 @@ using FiresCore.Npc.AI;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Combat behavior for bows - implements proper kiting archer gameplay.
-    /// 
-    /// KITING PHILOSOPHY (How real players use bows in Valheim):
-    /// 1. KITE - Run away while enemies chase
-    /// 2. CREATE DISTANCE - Get to ~12-15m (optimal bow range)
-    /// 3. QUICK STOP & SHOOT - Plant feet, quick draw (50-80%), release
-    /// 4. IMMEDIATELY MOVE - Don't stand still after shooting
-    /// 5. RETREAT if threatened - backpedal to create distance
-    /// 
-    /// NO DODGE/ROLL:
-    /// Bow companions should NOT roll/dodge - this wastes stamina.
-    /// Instead, they kite by running away and backpedaling.
-    /// DodgeBehavior handles dodging separately if needed.
-    /// 
-    /// DISTANCE ZONES:
-    /// - DANGER (0-5m): Retreat while quick-shooting
-    /// - CLOSE (5-10m): Quick shot while backpedaling
-    /// - OPTIMAL (10-15m): Plant feet, full draw for max damage
-    /// - FAR (15-25m): Close distance slightly, full draw
-    /// - OUT OF RANGE (25m+): Chase to get in range
+    /// Bow combat that kites like a player: create distance, plant and draw at optimal range, keep moving after
+    /// each shot, and backpedal or quick-shoot when an enemy closes in. Archers never roll, because dodging wastes
+    /// the stamina kiting needs.
     /// </summary>
     public class BowBehavior : WeaponBehavior
     {
@@ -56,25 +39,25 @@ namespace FiresCore.Npc.Combat
 #region Constants
         
 // Distance zones
-  private const float DANGER_RANGE = 5f;
-    private const float CLOSE_RANGE = 10f;
-        private const float OPTIMAL_MIN = 10f;
-        private const float OPTIMAL_MAX = 15f;
-        private const float MAX_RANGE = 25f;
+  private const float DangerRange = 5f;
+    private const float CloseRange = 10f;
+        private const float OptimalMin = 10f;
+        private const float OptimalMax = 15f;
+        private const float MaxRange = 25f;
 
         // Draw timing
-        private const float QUICK_DRAW_PERCENT = 0.4f;  // Emergency minimum
-    private const float FAST_DRAW_PERCENT = 0.6f;   // Quick shot when pressured
-        private const float FULL_DRAW_PERCENT = 1.0f;   // Optimal damage
+        private const float QuickDrawPercent = 0.4f;  // Emergency minimum
+    private const float FastDrawPercent = 0.6f;   // Quick shot when pressured
+        private const float FullDrawPercent = 1.0f;   // Optimal damage
         
         // Timing
-      private const float MIN_SHOT_INTERVAL = 0.3f;
-        private const float REPOSITION_DURATION = 1.0f;
-      private const float PLANT_DURATION = 0.1f; // Very quick plant
-  private const float THREAT_CHECK_INTERVAL = 0.15f;
+      private const float MinShotInterval = 0.3f;
+        private const float RepositionDuration = 1.0f;
+      private const float PlantDuration = 0.1f; // Very quick plant
+  private const float ThreatCheckInterval = 0.15f;
         // How long a bow companion will run away trying to open distance before it gives up and plants to fire
         // anyway. Prevents the "run in place forever against a same-speed enemy, never firing" loop up close.
-        private const float RETREAT_GIVEUP_TIME = 1.2f;
+        private const float RetreatGiveupTime = 1.2f;
 
         #endregion
         
@@ -94,7 +77,7 @@ namespace FiresCore.Npc.Combat
         private float _phaseStartTime;
     private float _lastThreatCheck;
         private float _lastShotTime;
-        private float _targetDrawPercent = FULL_DRAW_PERCENT;
+        private float _targetDrawPercent = FullDrawPercent;
         
         // Tracking
         private float _lastKnownTargetDistance;
@@ -150,7 +133,7 @@ namespace FiresCore.Npc.Combat
         public override void ConfigureAI()
         {
             // CompanionAI handles combat behavior directly - no MonsterAI settings needed
-            float attackRange = Context.AIAttackRange > 5f ? Context.AIAttackRange : MAX_RANGE;
+            float attackRange = Context.AIAttackRange > 5f ? Context.AIAttackRange : MaxRange;
             Context.AttackRange = attackRange;
             
             if (CompanionCombat.VerboseLogging)
@@ -235,7 +218,7 @@ namespace FiresCore.Npc.Combat
             UpdateTargetTracking(target);
       
             // Check for threats frequently
-            if (Time.time - _lastThreatCheck >= THREAT_CHECK_INTERVAL)
+            if (Time.time - _lastThreatCheck >= ThreatCheckInterval)
             {
                 _lastThreatCheck = Time.time;
                 CheckThreatLevel(target);
@@ -265,19 +248,19 @@ namespace FiresCore.Npc.Combat
         private void CheckThreatLevel(Character target)
         {
             // DANGER ZONE - retreat while shooting
-            if (_lastKnownTargetDistance < DANGER_RANGE)
+            if (_lastKnownTargetDistance < DangerRange)
             {
                 HandleDangerZone(target);
                 return;
             }
  
             // Close range with approaching enemy
-            if (_lastKnownTargetDistance < CLOSE_RANGE && _targetIsApproaching)
+            if (_lastKnownTargetDistance < CloseRange && _targetIsApproaching)
             {
                 if (_isBowDrawing)
                 {
                     float drawProgress = GetCurrentDrawPercent();
-                    if (drawProgress >= QUICK_DRAW_PERCENT)
+                    if (drawProgress >= QuickDrawPercent)
                     {
                         // Fire and then retreat (backpedal) - NO dodge, just movement
                         _retreatAfterShot = true;
@@ -302,17 +285,17 @@ namespace FiresCore.Npc.Combat
             {
                 // Already drawing: release as soon as possible. Drop the draw target to the emergency floor and
                 // fire the instant we reach it. NEVER cancel a live draw for proximity.
-                _targetDrawPercent = QUICK_DRAW_PERCENT;
+                _targetDrawPercent = QuickDrawPercent;
                 float drawProgress = GetCurrentDrawPercent();
-                if (drawProgress >= QUICK_DRAW_PERCENT)
+                if (drawProgress >= QuickDrawPercent)
                     CompleteBowShot(drawProgress);
-                // else keep drawing — UpdateBowDraw fires the moment we hit QUICK_DRAW_PERCENT.
+                // else keep drawing — UpdateBowDraw fires the moment we hit QuickDrawPercent.
                 return;
             }
 
             // Not drawing yet: plant and quick-draw right here rather than fleeing. A brief backpedal is fine,
             // but we are committing to get the shot off.
-            _targetDrawPercent = QUICK_DRAW_PERCENT;
+            _targetDrawPercent = QuickDrawPercent;
             if (_currentPhase != RangedCombatPhase.Planting && _currentPhase != RangedCombatPhase.Drawing)
             {
                 SetPhase(RangedCombatPhase.Planting);
@@ -339,7 +322,7 @@ namespace FiresCore.Npc.Combat
                     break;
           
                 case RangedCombatPhase.Planting:
-                    if (timeSincePhaseStart >= PLANT_DURATION)
+                    if (timeSincePhaseStart >= PlantDuration)
                     {
                         StartBowDraw(target);
                         SetPhase(RangedCombatPhase.Drawing);
@@ -368,30 +351,30 @@ namespace FiresCore.Npc.Combat
         
         #region Combat Decisions
         
-        // ?? Line-of-sight reposition tracking ?????????????????????????????
+        // Line-of-sight reposition tracking
         // When the active target has no LOS we attempt to reposition for up to
-        // LOS_REPOSITION_TIMEOUT seconds before blacklisting the target so
+        // LosRepositionTimeout seconds before blacklisting the target so
         // CompanionAI re-acquires a different enemy.  This is the "either
         // reposition to be able to shoot or target a new enemy" behavior.
-        private const float LOS_REPOSITION_TIMEOUT = 4f;
+        private const float LosRepositionTimeout = 4f;
         private Character _losTarget;
         private float _losBlockedSinceTime = -1f;
 
 private void DecideNextAction(Character target)
         {
-            if (Time.time - _lastShotTime < MIN_SHOT_INTERVAL)
+            if (Time.time - _lastShotTime < MinShotInterval)
             {
       return;
             }
 
-            // ?? LINE-OF-SIGHT GATE ??????????????????????????????????????????
+            // LINE-OF-SIGHT GATE
             // Active-target LOS is checked here, ONCE per engagement decision,
             // not on every potential target in IsValidTarget.  Cost: one
-            // raycast per ~MIN_SHOT_INTERVAL seconds while engaged.
+            // raycast per ~MinShotInterval seconds while engaged.
             //
-            // No LOS ? don't plant/draw.  Instead, transition to Approaching
+            // No LOS - don't plant/draw.  Instead, transition to Approaching
             // so pathfinding tries to route around the obstacle.  After
-            // LOS_REPOSITION_TIMEOUT seconds of failed LOS we tell the AI to
+            // LosRepositionTimeout seconds of failed LOS we tell the AI to
             // blacklist this target temporarily so it picks something else.
             if (Context.CompanionAI != null && !Context.CompanionAI.HasClearShotTo(target))
             {
@@ -402,11 +385,11 @@ private void DecideNextAction(Character target)
                 }
 
                 float blockedFor = Time.time - _losBlockedSinceTime;
-                if (blockedFor >= LOS_REPOSITION_TIMEOUT)
+                if (blockedFor >= LosRepositionTimeout)
                 {
                     if (CompanionCombat.VerboseLogging)
                     {
-                        Debug.Log($"[BowBehavior] No LOS to {target.m_name} for {blockedFor:F1}s ï¿½ blacklisting and re-acquiring");
+                        Debug.Log($"[BowBehavior] No LOS to {target.m_name} for {blockedFor:F1}s - blacklisting and re-acquiring");
                     }
                     Context.CompanionAI.BlacklistTargetForLineOfSight(target);
                     SetPhase(RangedCombatPhase.Idle);
@@ -424,7 +407,7 @@ private void DecideNextAction(Character target)
                 return;
             }
 
-            // LOS is clear ï¿½ reset the failure tracker.
+            // LOS is clear - reset the failure tracker.
             if (_losTarget != null)
             {
                 _losTarget = null;
@@ -436,37 +419,37 @@ private void DecideNextAction(Character target)
        return;
      }
          
-            if (_lastKnownTargetDistance > MAX_RANGE)
+            if (_lastKnownTargetDistance > MaxRange)
           {
           SetPhase(RangedCombatPhase.Approaching);
       RequestMovement(MovementRequest.Approach, GetDirectionToTarget(target));
             }
-     else if (_lastKnownTargetDistance < DANGER_RANGE)
+     else if (_lastKnownTargetDistance < DangerRange)
             {
               HandleDangerZone(target);
      }
-   else if (_lastKnownTargetDistance < CLOSE_RANGE)
+   else if (_lastKnownTargetDistance < CloseRange)
    {
-                _targetDrawPercent = FAST_DRAW_PERCENT;
+                _targetDrawPercent = FastDrawPercent;
      SetPhase(RangedCombatPhase.Planting);
          RequestMovement(MovementRequest.Stop, Vector3.zero);
       }
-     else if (_lastKnownTargetDistance >= OPTIMAL_MIN && _lastKnownTargetDistance <= OPTIMAL_MAX)
+     else if (_lastKnownTargetDistance >= OptimalMin && _lastKnownTargetDistance <= OptimalMax)
         {
-  _targetDrawPercent = FULL_DRAW_PERCENT;
+  _targetDrawPercent = FullDrawPercent;
      SetPhase(RangedCombatPhase.Planting);
      RequestMovement(MovementRequest.Stop, Vector3.zero);
          }
-        else if (_lastKnownTargetDistance > OPTIMAL_MAX)
+        else if (_lastKnownTargetDistance > OptimalMax)
       {
-                if (_lastKnownTargetDistance > OPTIMAL_MAX + 3f)
+                if (_lastKnownTargetDistance > OptimalMax + 3f)
 {
        SetPhase(RangedCombatPhase.Approaching);
    RequestMovement(MovementRequest.Approach, GetDirectionToTarget(target));
        }
                 else
        {
-             _targetDrawPercent = FULL_DRAW_PERCENT;
+             _targetDrawPercent = FullDrawPercent;
      SetPhase(RangedCombatPhase.Planting);
         RequestMovement(MovementRequest.Stop, Vector3.zero);
               }
@@ -475,9 +458,9 @@ private void DecideNextAction(Character target)
   
         private void UpdateApproaching(Character target)
         {
-            if (_lastKnownTargetDistance <= OPTIMAL_MAX)
+            if (_lastKnownTargetDistance <= OptimalMax)
    {
-      _targetDrawPercent = FULL_DRAW_PERCENT;
+      _targetDrawPercent = FullDrawPercent;
             SetPhase(RangedCombatPhase.Planting);
          RequestMovement(MovementRequest.Stop, Vector3.zero);
       return;
@@ -489,9 +472,9 @@ private void DecideNextAction(Character target)
         private void UpdateRetreating(Character target)
         {
             // Opened enough distance -> plant and shoot.
-            if (_lastKnownTargetDistance >= OPTIMAL_MIN)
+            if (_lastKnownTargetDistance >= OptimalMin)
             {
-                _targetDrawPercent = _lastKnownTargetDistance < CLOSE_RANGE ? FAST_DRAW_PERCENT : FULL_DRAW_PERCENT;
+                _targetDrawPercent = _lastKnownTargetDistance < CloseRange ? FastDrawPercent : FullDrawPercent;
                 SetPhase(RangedCombatPhase.Planting);
                 RequestMovement(MovementRequest.Stop, Vector3.zero);
                 return;
@@ -500,9 +483,9 @@ private void DecideNextAction(Character target)
             // Can't open the gap (enemy matches our speed) -> don't run in place forever. After a short attempt,
             // plant and quick-draw anyway: take the hit, get the shot off. This is what stops a cornered bow
             // companion from endlessly retreating without firing.
-            if (Time.time - _phaseStartTime >= RETREAT_GIVEUP_TIME)
+            if (Time.time - _phaseStartTime >= RetreatGiveupTime)
             {
-                _targetDrawPercent = QUICK_DRAW_PERCENT;
+                _targetDrawPercent = QuickDrawPercent;
                 SetPhase(RangedCombatPhase.Planting);
                 RequestMovement(MovementRequest.Backpedal, -GetDirectionToTarget(target));
                 return;
@@ -517,14 +500,14 @@ private void DecideNextAction(Character target)
             // If we're safe at optimal range with no approaching enemy, stay put and keep shooting!
             
             // Must retreat - enemy is too close
-            if (_lastKnownTargetDistance < CLOSE_RANGE)
+            if (_lastKnownTargetDistance < CloseRange)
             {
                 RequestMovement(MovementRequest.RunAway, -GetDirectionToTarget(target));
                 return;
             }
             
             // Enemy approaching fast - back up while shooting
-            if (_targetIsApproaching && _lastKnownTargetDistance < OPTIMAL_MAX)
+            if (_targetIsApproaching && _lastKnownTargetDistance < OptimalMax)
             {
                 RequestMovement(MovementRequest.Backpedal, -GetDirectionToTarget(target));
                 return;
@@ -543,7 +526,7 @@ private void DecideNextAction(Character target)
         private void DecidePostShotAction(Character target)
         {
             // DANGER - must retreat immediately
-            if (_lastKnownTargetDistance < DANGER_RANGE)
+            if (_lastKnownTargetDistance < DangerRange)
             {
                 SetPhase(RangedCombatPhase.Retreating);
                 RequestMovement(MovementRequest.RunAway, -GetDirectionToTarget(target));
@@ -552,7 +535,7 @@ private void DecideNextAction(Character target)
             
             // Close range AND enemy is RAPIDLY approaching - retreat
             // Only retreat if enemy is actually moving fast toward us
-            if (_lastKnownTargetDistance < CLOSE_RANGE && _targetIsApproaching)
+            if (_lastKnownTargetDistance < CloseRange && _targetIsApproaching)
             {
                 float approachSpeed = Vector3.Dot(_lastKnownTargetVelocity, 
                     (Context.Transform.position - target.transform.position).normalized);
@@ -568,7 +551,7 @@ private void DecideNextAction(Character target)
             
             // Enemy approaching but slowly - just sidestep slightly, don't full retreat
             // This prevents the "backing up forever" issue
-            if (_targetIsApproaching && _lastKnownTargetDistance < OPTIMAL_MAX)
+            if (_targetIsApproaching && _lastKnownTargetDistance < OptimalMax)
             {
                 float approachSpeed = Vector3.Dot(_lastKnownTargetVelocity, 
                     (Context.Transform.position - target.transform.position).normalized);
@@ -592,7 +575,7 @@ private void DecideNextAction(Character target)
             
             // We're safe - fire again immediately!
             // This is the key: don't move if we don't need to
-            _targetDrawPercent = FULL_DRAW_PERCENT;
+            _targetDrawPercent = FullDrawPercent;
             SetPhase(RangedCombatPhase.Planting);
             RequestMovement(MovementRequest.Stop, Vector3.zero);
             
@@ -606,14 +589,14 @@ private void DecideNextAction(Character target)
         {
             // MUCH shorter reposition time - just a brief sidestep, not prolonged retreat
             // Reduced from 0.5s to 0.3s
-            if (timeSinceStart >= REPOSITION_DURATION * 0.3f)
+            if (timeSinceStart >= RepositionDuration * 0.3f)
             {
                 // After very brief repositioning, fire again
                 // Don't keep retreating unless we're actually in danger
-                if (_lastKnownTargetDistance >= DANGER_RANGE)
+                if (_lastKnownTargetDistance >= DangerRange)
                 {
                     // We're safe enough, stop moving and shoot
-                    _targetDrawPercent = _lastKnownTargetDistance < CLOSE_RANGE ? FAST_DRAW_PERCENT : FULL_DRAW_PERCENT;
+                    _targetDrawPercent = _lastKnownTargetDistance < CloseRange ? FastDrawPercent : FullDrawPercent;
                     SetPhase(RangedCombatPhase.Planting);
                     RequestMovement(MovementRequest.Stop, Vector3.zero);
                 }
@@ -627,7 +610,7 @@ private void DecideNextAction(Character target)
             }
               
             // Emergency check - only switch to retreat if enemy is REALLY close
-            if (_lastKnownTargetDistance < DANGER_RANGE)
+            if (_lastKnownTargetDistance < DangerRange)
             {
                 SetPhase(RangedCombatPhase.Retreating);
                 RequestMovement(MovementRequest.RunAway, -GetDirectionToTarget(target));
@@ -647,7 +630,7 @@ private void DecideNextAction(Character target)
         {
         if (_currentPhase == RangedCombatPhase.Idle)
             {
-                _targetDrawPercent = FULL_DRAW_PERCENT;
+                _targetDrawPercent = FullDrawPercent;
      SetPhase(RangedCombatPhase.Planting);
         RequestMovement(MovementRequest.Stop, Vector3.zero);
      }
@@ -713,16 +696,16 @@ Context.Animator.SetFloat("drawpercent", 0f);
            // drawing, abandon the shot instead of firing into the obstacle.
            // The targeting filter (CompanionAI.IsValidTarget) prevents engaging
            // unsightable enemies in the first place, but a target can move into
-           // cover after engagement begins ï¿½ this catches that case so we don't
+           // cover after engagement begins - this catches that case so we don't
            // waste arrows into walls in dungeons.
            // Only abort-and-reposition for a blocked shot at RANGE (obstacle between us in a dungeon, etc). At
            // point-blank the target is right in our face — LOS is effectively clear and canceling would just feed
            // the useless-up-close loop, so we commit and fire regardless.
-           if (Context.CompanionAI != null && _lastKnownTargetDistance > CLOSE_RANGE && !Context.CompanionAI.HasClearShotToCurrentTarget())
+           if (Context.CompanionAI != null && _lastKnownTargetDistance > CloseRange && !Context.CompanionAI.HasClearShotToCurrentTarget())
            {
                if (CompanionCombat.VerboseLogging)
                {
-                   Debug.Log($"[BowBehavior] Aborting draw ï¿½ target {_bowTarget.m_name} no longer has line-of-sight");
+                   Debug.Log($"[BowBehavior] Aborting draw - target {_bowTarget.m_name} no longer has line-of-sight");
                }
                CancelBowDraw();
                SetPhase(RangedCombatPhase.Idle);
@@ -881,10 +864,10 @@ Context.Animator.SetFloat("drawpercent", 0f);
             }
             else
             {
-                var col = target.GetComponent<Collider>();
-                if (col != null)
+                var targetCollider = target.GetComponent<Collider>();
+                if (targetCollider != null)
                 {
-                    aimHeight = col.bounds.center.y - target.transform.position.y;
+                    aimHeight = targetCollider.bounds.center.y - target.transform.position.y;
                 }
             }
             // Clamp to reasonable range
@@ -1106,7 +1089,7 @@ Context.Animator.SetFloat("drawpercent", 0f);
  
             float drawProgress = GetCurrentDrawPercent();
       
-            if (drawProgress >= QUICK_DRAW_PERCENT)
+            if (drawProgress >= QuickDrawPercent)
             {
                 _retreatAfterShot = true;
                 _retreatThreat = threat;
@@ -1136,7 +1119,7 @@ Context.Animator.SetFloat("drawpercent", 0f);
             if (_isBowDrawing)
             {
                 float drawProgress = GetCurrentDrawPercent();
-                if (drawProgress >= QUICK_DRAW_PERCENT)
+                if (drawProgress >= QuickDrawPercent)
                 {
                     _retreatAfterShot = true;
                     CompleteBowShot(drawProgress);

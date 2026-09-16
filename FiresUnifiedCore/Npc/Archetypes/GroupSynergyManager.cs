@@ -7,19 +7,8 @@ using FiresCore.Npc.Archetypes.StatusEffects;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Manages ability combos and synergies between group members.
-    /// When companions use abilities in specific sequences or combinations,
-    /// bonus effects are triggered for the whole group.
-    /// 
-    /// COMBO TYPES:
-    /// 1. Sequential Combos - Abilities used within a time window trigger a combined effect
-    /// 2. Presence Synergies - Passive bonuses for having certain archetypes in the group
-    /// 3. Chain Reactions - One ability enhances or triggers another
-    /// 
-    /// DESIGN PHILOSOPHY:
-    /// - Combos should feel rewarding but not mandatory
-    /// - Visual feedback should clearly indicate when combos occur
-    /// - Players should be able to strategically position archetypes for synergies
+    /// Group-wide bonus effects when companions' abilities combine: sequential combos within a time window, passive
+    /// synergies from the archetypes present, and chain reactions where one ability enhances another.
     /// </summary>
     public class GroupSynergyManager : MonoBehaviour
     {
@@ -31,14 +20,43 @@ namespace FiresCore.Npc.Archetypes
         #region Combo Configuration
         
         /// <summary>Time window (seconds) for sequential combos.</summary>
-        private const float COMBO_WINDOW = 5f;
+        private const float ComboWindow = 5f;
         
         /// <summary>Minimum interval between the same combo triggering.</summary>
-        private const float COMBO_COOLDOWN = 30f;
+        private const float ComboCooldown = 30f;
         
         /// <summary>Range for synergy effects.</summary>
-        private const float SYNERGY_RANGE = 20f;
-        
+        private const float SynergyRange = 20f;
+
+        private const int PresenceSynergyCheckFrameInterval = 60;
+        private const int MaxRecentAbilitiesForCombo = 5;
+        private const float CoordinatedAssaultDamageReduction = 0.85f;
+        private const float HolyBastionInvulnerableSeconds = 3f;
+        private const float HolyBastionHealAmount = 30f;
+        private const float PrimalStormFireShare = 0.33f;
+        private const float PrimalStormFrostShare = 0.33f;
+        private const float PrimalStormLightningShare = 0.34f;
+        private const float ArcaneConvergenceShieldHealth = 50f;
+        private const float DivineHarmonyHealAmount = 75f;
+        private const float ChiResonanceHealAmount = 40f;
+        private const float ChiResonanceStaminaAmount = 30f;
+        private const float ComboTextHeightOffset = 2.5f;
+        private const float CoordinatedAssaultEffectDuration = 10f;
+        private const float HolyBastionEffectDuration = 8f;
+        private const float PrimalStormEffectDuration = 5f;
+        private const float ShadowDanceEffectDuration = 8f;
+        private const float NaturesFuryEffectDuration = 12f;
+        private const float ArcaneConvergenceEffectDuration = 15f;
+        private const float DivineHarmonyEffectDuration = 10f;
+        private const float ChiResonanceEffectDuration = 10f;
+        private const float BalancedPartyDamageBonus = 1.05f;
+        private const float BalancedPartyDefenseBonus = 1.05f;
+        private const float HolyVanguardDefenseBonus = 1.1f;
+        private const float FuryUnleashedCritBonus = 0.1f;
+        private const float ArcaneBrotherhoodEitrRegenBonus = 1.15f;
+        private const float MartialMasteryAttackSpeedBonus = 1.1f;
+        private const float DivineCrusadeHealingBonus = 1.2f;
+
         #endregion
         
         #region Tracking
@@ -100,15 +118,15 @@ namespace FiresCore.Npc.Archetypes
         private void Update()
         {
             // Suppress combo / presence-synergy work during the local player's
-            // respawn window â€” UpdatePresenceSynergies can trigger ability RPCs.
+            // respawn window — UpdatePresenceSynergies can trigger ability RPCs.
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
 
             // Clean up old ability uses
-            float cutoff = Time.time - COMBO_WINDOW;
+            float cutoff = Time.time - ComboWindow;
             _recentAbilities.RemoveAll(a => a.Timestamp < cutoff);
 
             // Check presence synergies periodically
-            if (Time.frameCount % 60 == 0) // Every ~1 second at 60fps
+            if (Time.frameCount % PresenceSynergyCheckFrameInterval == 0) // Every ~1 second at 60fps
             {
                 UpdatePresenceSynergies();
             }
@@ -217,7 +235,7 @@ namespace FiresCore.Npc.Archetypes
             var recentGroupAbilities = _recentAbilities
                 .Where(a => a.OwnerPlayerId == newUse.OwnerPlayerId && a != newUse)
                 .OrderByDescending(a => a.Timestamp)
-                .Take(5)
+                .Take(MaxRecentAbilitiesForCombo)
                 .ToList();
             
             if (recentGroupAbilities.Count == 0) return;
@@ -308,10 +326,10 @@ namespace FiresCore.Npc.Archetypes
         private void TriggerCombo(ComboDefinition combo, AbilityUse triggerUse)
         {
             // Set cooldown
-            _comboCooldowns[combo.Name] = Time.time + COMBO_COOLDOWN;
+            _comboCooldowns[combo.Name] = Time.time + ComboCooldown;
             
             // Find all allies in range
-            var allies = GetAlliesInRange(triggerUse.Character, SYNERGY_RANGE);
+            var allies = GetAlliesInRange(triggerUse.Character, SynergyRange);
             
             // Announce combo
             AnnounceCombo(combo, triggerUse);
@@ -387,7 +405,7 @@ namespace FiresCore.Npc.Archetypes
             {
                 // Apply warcry + fortify combo
                 StatusEffectManager.ApplyWarcry(ally, 0f, duration);
-                StatusEffectManager.ApplyFortify(ally, duration / 2f, 0.85f);
+                StatusEffectManager.ApplyFortify(ally, duration / 2f, CoordinatedAssaultDamageReduction);
             }
             
             AbilityFXManager.SpawnEffect("fx_eikthyr_stomp", allies[0].transform.position, null, 2f);
@@ -400,8 +418,8 @@ namespace FiresCore.Npc.Archetypes
         {
             foreach (var ally in allies)
             {
-                StatusEffectManager.ApplyInvulnerable(ally, 3f);
-                ally.Heal(30f, true);
+                StatusEffectManager.ApplyInvulnerable(ally, HolyBastionInvulnerableSeconds);
+                ally.Heal(HolyBastionHealAmount, true);
             }
             
             AbilityFXManager.SpawnEffect("fx_shield_start", allies[0].transform.position, null, 2.5f);
@@ -429,7 +447,7 @@ namespace FiresCore.Npc.Archetypes
                 {
                     var hit = new HitData
                     {
-                        m_damage = { m_fire = damage * 0.33f, m_frost = damage * 0.33f, m_lightning = damage * 0.34f },
+                        m_damage = { m_fire = damage * PrimalStormFireShare, m_frost = damage * PrimalStormFrostShare, m_lightning = damage * PrimalStormLightningShare },
                         m_attacker = source.GetZDOID(),
                         m_point = character.transform.position
                     };
@@ -477,7 +495,7 @@ namespace FiresCore.Npc.Archetypes
             foreach (var ally in allies)
             {
                 StatusEffectManager.ApplyElementalInfusion(ally, duration);
-                StatusEffectManager.ApplyArcaneShield(ally, duration, 50f);
+                StatusEffectManager.ApplyArcaneShield(ally, duration, ArcaneConvergenceShieldHealth);
             }
             
             AbilityFXManager.SpawnEffect("vfx_StaffShield", allies[0].transform.position, null, 2f);
@@ -490,7 +508,7 @@ namespace FiresCore.Npc.Archetypes
         {
             foreach (var ally in allies)
             {
-                ally.Heal(75f, true);
+                ally.Heal(DivineHarmonyHealAmount, true);
                 StatusEffectManager.ApplySanctuary(ally, 0f, duration);
                 StatusEffectManager.ApplyDivineProtection(ally, 0f, duration);
             }
@@ -506,11 +524,11 @@ namespace FiresCore.Npc.Archetypes
             foreach (var ally in allies)
             {
                 StatusEffectManager.ApplyInnerPeace(ally, duration);
-                ally.Heal(40f, true);
-                
+                ally.Heal(ChiResonanceHealAmount, true);
+
                 if (ally is Player player)
                 {
-                    player.AddStamina(30f);
+                    player.AddStamina(ChiResonanceStaminaAmount);
                 }
             }
             
@@ -634,7 +652,7 @@ namespace FiresCore.Npc.Archetypes
             // This is much less intrusive than center-screen text
             if (DamageText.instance != null && trigger.Character != null)
             {
-                Vector3 textPos = trigger.Character.transform.position + Vector3.up * 2.5f;
+                Vector3 textPos = trigger.Character.transform.position + Vector3.up * ComboTextHeightOffset;
                 DamageText.instance.ShowText(
                     DamageText.TextType.Heal, // Use Heal type for gold-ish color
                     textPos,
@@ -719,9 +737,9 @@ namespace FiresCore.Npc.Archetypes
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Tank, RequiredAbilityType = AbilityType.Defensive },
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Berserker, RequiredAbilityType = AbilityType.Offensive }
                     },
-                    EffectDuration = 10f
+                    EffectDuration = CoordinatedAssaultEffectDuration
                 },
-                
+
                 // Tank + Paladin: Holy Bastion
                 new ComboDefinition
                 {
@@ -733,9 +751,9 @@ namespace FiresCore.Npc.Archetypes
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Tank },
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Paladin }
                     },
-                    EffectDuration = 8f
+                    EffectDuration = HolyBastionEffectDuration
                 },
-                
+
                 // Berserker + Mage: Primal Storm
                 new ComboDefinition
                 {
@@ -747,9 +765,9 @@ namespace FiresCore.Npc.Archetypes
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Berserker },
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Mage }
                     },
-                    EffectDuration = 5f
+                    EffectDuration = PrimalStormEffectDuration
                 },
-                
+
                 // Rogue + Monk: Shadow Dance
                 new ComboDefinition
                 {
@@ -761,9 +779,9 @@ namespace FiresCore.Npc.Archetypes
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Rogue },
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Monk }
                     },
-                    EffectDuration = 8f
+                    EffectDuration = ShadowDanceEffectDuration
                 },
-                
+
                 // Ranger + Healer: Nature's Fury
                 new ComboDefinition
                 {
@@ -775,9 +793,9 @@ namespace FiresCore.Npc.Archetypes
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Ranger },
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Healer }
                     },
-                    EffectDuration = 12f
+                    EffectDuration = NaturesFuryEffectDuration
                 },
-                
+
                 // Mage + Mage (double mage): Arcane Convergence
                 new ComboDefinition
                 {
@@ -789,9 +807,9 @@ namespace FiresCore.Npc.Archetypes
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Mage },
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Mage }
                     },
-                    EffectDuration = 15f
+                    EffectDuration = ArcaneConvergenceEffectDuration
                 },
-                
+
                 // Paladin + Healer: Divine Harmony
                 new ComboDefinition
                 {
@@ -803,9 +821,9 @@ namespace FiresCore.Npc.Archetypes
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Paladin },
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Healer }
                     },
-                    EffectDuration = 10f
+                    EffectDuration = DivineHarmonyEffectDuration
                 },
-                
+
                 // Monk + Healer: Chi Resonance
                 new ComboDefinition
                 {
@@ -817,10 +835,10 @@ namespace FiresCore.Npc.Archetypes
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Monk },
                         new ComboRequirement { RequiredArchetype = ArchetypeClass.Healer }
                     },
-                    EffectDuration = 10f
+                    EffectDuration = ChiResonanceEffectDuration
                 }
             };
-            
+
             return _allCombos;
         }
         
@@ -837,8 +855,8 @@ namespace FiresCore.Npc.Archetypes
                     DisplayName = "Balanced Party",
                     Description = "Having Tank, DPS, and Support archetypes grants all companions +5% damage and defense.",
                     RequiredArchetypes = new List<ArchetypeClass> { ArchetypeClass.Tank, ArchetypeClass.Healer },
-                    DamageBonus = 1.05f,
-                    DefenseBonus = 1.05f
+                    DamageBonus = BalancedPartyDamageBonus,
+                    DefenseBonus = BalancedPartyDefenseBonus
                 },
                 
                 // Holy Vanguard: Tank + Paladin
@@ -848,9 +866,9 @@ namespace FiresCore.Npc.Archetypes
                     DisplayName = "Holy Vanguard",
                     Description = "Tank and Paladin together grant +10% defense to the group.",
                     RequiredArchetypes = new List<ArchetypeClass> { ArchetypeClass.Tank, ArchetypeClass.Paladin },
-                    DefenseBonus = 1.1f
+                    DefenseBonus = HolyVanguardDefenseBonus
                 },
-                
+
                 // Fury Unleashed: Berserker + Rogue
                 new SynergyBonus
                 {
@@ -858,7 +876,7 @@ namespace FiresCore.Npc.Archetypes
                     DisplayName = "Fury Unleashed",
                     Description = "Berserker and Rogue together grant +10% critical chance.",
                     RequiredArchetypes = new List<ArchetypeClass> { ArchetypeClass.Berserker, ArchetypeClass.Rogue },
-                    CritBonus = 0.1f
+                    CritBonus = FuryUnleashedCritBonus
                 },
                 
                 // Arcane Brotherhood: Mage + Healer
@@ -868,7 +886,7 @@ namespace FiresCore.Npc.Archetypes
                     DisplayName = "Arcane Brotherhood",
                     Description = "Mage and Healer together grant +15% eitr regeneration.",
                     RequiredArchetypes = new List<ArchetypeClass> { ArchetypeClass.Mage, ArchetypeClass.Healer },
-                    EitrRegenBonus = 1.15f
+                    EitrRegenBonus = ArcaneBrotherhoodEitrRegenBonus
                 },
                 
                 // Martial Mastery: Monk + Ranger
@@ -878,7 +896,7 @@ namespace FiresCore.Npc.Archetypes
                     DisplayName = "Martial Mastery",
                     Description = "Monk and Ranger together grant +10% attack speed.",
                     RequiredArchetypes = new List<ArchetypeClass> { ArchetypeClass.Monk, ArchetypeClass.Ranger },
-                    AttackSpeedBonus = 1.1f
+                    AttackSpeedBonus = MartialMasteryAttackSpeedBonus
                 },
                 
                 // Divine Crusade: Paladin + Healer
@@ -888,7 +906,7 @@ namespace FiresCore.Npc.Archetypes
                     DisplayName = "Divine Crusade",
                     Description = "Paladin and Healer together grant +20% healing received.",
                     RequiredArchetypes = new List<ArchetypeClass> { ArchetypeClass.Paladin, ArchetypeClass.Healer },
-                    HealingBonus = 1.2f
+                    HealingBonus = DivineCrusadeHealingBonus
                 }
             };
             

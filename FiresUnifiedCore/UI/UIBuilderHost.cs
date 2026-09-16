@@ -4,20 +4,9 @@ using UnityEngine;
 
 namespace FiresCore.UI
 {
-    // Parameterization seam for the shared UIBuilder SDK. The SDK lives in Core and must not reference any
-    // single consuming mod, so the few mod-specific things it needs (the mod's asset bundle, its persistent
-    // root object, a MonoBehaviour to run coroutines on, where its bundled-layout JSON resources live, and an
-    // input-blocking entry point) are supplied here by the consuming mod at startup.
-    //
-    // A mod wires this once (e.g. in its plugin Setup) before using the SDK:
-    //   UIBuilderHost.AssetBundle            = MyPlugin.assetBundle;
-    //   UIBuilderHost.RootObject             = MyPlugin.RootObject;
-    //   UIBuilderHost.CoroutineHost          = MyPlugin.Instance;
-    //   UIBuilderHost.LayoutResourceAssembly = typeof(MyPlugin).Assembly;
-    //   UIBuilderHost.LayoutResourcePrefix   = "MyPlugin.BundledLayouts.";
-    //   UIBuilderHost.ModAssemblyName        = "MyPlugin.dll";
-    //   UIBuilderHost.ModName                = "MyPlugin";
-    //   UIBuilderHost.InputBlocker           = MyPlugin.SetInputBlocked;
+    // The mod-specific inputs the shared UIBuilder SDK needs, so Core never references a consuming mod. Set once at
+    // startup, before using the SDK: AssetBundle, RootObject, CoroutineHost, LayoutResourceAssembly,
+    // LayoutResourcePrefix, ModAssemblyName, ModName and InputBlocker.
     public static class UIBuilderHost
     {
         // The consuming mod's asset bundle (the SDK skips it when scanning loaded bundles for captured assets).

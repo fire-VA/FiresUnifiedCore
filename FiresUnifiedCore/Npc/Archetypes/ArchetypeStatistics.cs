@@ -463,11 +463,11 @@ namespace FiresCore.Npc.Archetypes
             var parts = data.Split('|');
             foreach (var part in parts)
             {
-                var kv = part.Split('=');
-                if (kv.Length != 2) continue;
+                var pair = part.Split('=');
+                if (pair.Length != 2) continue;
                 
-                string key = kv[0];
-                string value = kv[1];
+                string key = pair[0];
+                string value = pair[1];
                 
                 try
                 {

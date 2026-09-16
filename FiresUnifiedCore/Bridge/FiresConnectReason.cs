@@ -7,22 +7,16 @@ using UnityEngine;
 namespace FiresCore.Bridge
 {
     /// <summary>
-    /// Cross-mod connection-rejection diagnostics. When a Fires server mod refuses a peer at (or near)
-    /// connect time, it calls <see cref="Send"/> with a human-readable reason BEFORE invoking the vanilla
-    /// kick (<c>rpc.Invoke("Error", ...)</c> / disconnect). The reason rides a dedicated per-peer RPC to
-    /// the client, which caches it; the client-side <see cref="FiresConnectReasonPanel"/> then renders it
-    /// into the vanilla connection-failed dialog instead of the generic "Failed to connect" /
-    /// "Incompatible version". A vanilla (or non-Fires) client simply never registers the receiver, so the
-    /// server's extra RPC is ignored and the player just sees the normal generic error - graceful.
-    ///
-    /// This carries SERVER-DECIDED reasons (version/mod gate, anti-cheat). It cannot explain a pure
-    /// transport failure (Steam timeout / unreachable), because in that case nothing reaches the server
-    /// and no reason is ever sent - the client shows the vanilla "Failed to connect", which is correct.
+    /// Tells a rejected client why. A Fires server mod calls <see cref="Send"/> with a readable reason before kicking a
+    /// peer; the client caches it and <see cref="FiresConnectReasonPanel"/> shows it in the connection-failed dialog
+    /// instead of the generic message. Vanilla clients ignore the RPC, and pure transport failures still show vanilla's
+    /// "Failed to connect" since no reason can reach them.
     /// </summary>
     [HarmonyPatch]
     public static class FiresConnectReason
     {
         private const string RpcName = "FVA_ConnectReason";
+        private const float NoReasonTime = -999f;
 
         // A reason is valid for display for a window long enough that a mid-session kick survives the
         // in-world -> main-menu teardown + reload (which can run tens of seconds on a large world) before
@@ -31,7 +25,7 @@ namespace FiresCore.Bridge
         private const float ReasonTtlSeconds = 120f;
 
         private static string _reasonText;
-        private static float _reasonTime = -999f;
+        private static float _reasonTime = NoReasonTime;
 
         /// <summary>Client side only: register the receiver on the server peer so the server can push a reason.</summary>
         [HarmonyPatch(typeof(ZNet), "OnNewConnection")]
@@ -42,7 +36,7 @@ namespace FiresCore.Bridge
             // Clear any stale reason from a prior attempt so it can't paint onto THIS connection's error
             // dialog; if the server kicks, it re-sends a fresh reason later in the handshake.
             _reasonText = null;
-            _reasonTime = -999f;
+            _reasonTime = NoReasonTime;
             peer?.m_rpc?.Register<ZPackage>(RpcName, RPC_ReceiveReason);
         }
 

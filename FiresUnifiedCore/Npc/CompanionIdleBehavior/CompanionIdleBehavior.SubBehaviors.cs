@@ -229,16 +229,16 @@ namespace FiresCore.Npc
             // TASK VARIETY BIAS: penalize behaviors that nearby companions are already
             // running. This stops the whole pack from picking the same task at once
             // (e.g., everyone trying to operate the kiln).  We compute an effective
-            // priority score = InventoryPriority - (nearby_count * POPULARITY_PENALTY),
+            // priority score = InventoryPriority - (nearby_count * PopularityPenalty),
             // then sort by that.  Same priority is randomly shuffled for variety.
-            const float POPULARITY_RADIUS = 30f;
-            const int   POPULARITY_PENALTY = 25; // each nearby companion subtracts 25 from priority
+            const float PopularityRadius = 30f;
+            const int   PopularityPenalty = 25; // each nearby companion subtracts 25 from priority
             var scored = new List<(IdleSubBehavior beh, int score)>(availableBehaviors.Count);
-            foreach (var b in availableBehaviors)
+            foreach (var candidate in availableBehaviors)
             {
-                int popularity = CountNearbyCompanionsRunningBehavior(b.BehaviorName, POPULARITY_RADIUS);
-                int score = b.InventoryPriority - popularity * POPULARITY_PENALTY;
-                scored.Add((b, score));
+                int popularity = CountNearbyCompanionsRunningBehavior(candidate.BehaviorName, PopularityRadius);
+                int score = candidate.InventoryPriority - popularity * PopularityPenalty;
+                scored.Add((candidate, score));
             }
             scored.Sort((a, b) => b.score.CompareTo(a.score));
 
@@ -264,7 +264,6 @@ namespace FiresCore.Npc
             // Start the highest effective-score (or randomly selected among same score) behavior
             var selectedBehavior = scored[0].beh;
             _isRotating = false;      // sub-behavior owns rotation; stop any look-around that would fight it
-            _isLookingAround = false;
             _activeSubBehavior = selectedBehavior;
             _activeSubBehavior.Start();
             SetIdleState(IdleState.SubBehavior);
@@ -308,8 +307,8 @@ namespace FiresCore.Npc
         // True if this NPC carries a PatrolAssignment that resolves to a real (>=2 point) saved route.
         private bool HasPatrolRoute()
         {
-            var a = GetComponent<FiresCore.Npc.Patrol.PatrolAssignment>();
-            return a != null && a.HasRoute;
+            var assignment = GetComponent<FiresCore.Npc.Patrol.PatrolAssignment>();
+            return assignment != null && assignment.HasRoute;
         }
 
         // Force-starts PatrolBehavior (as a command, so it owns AI authority) whenever the NPC has a

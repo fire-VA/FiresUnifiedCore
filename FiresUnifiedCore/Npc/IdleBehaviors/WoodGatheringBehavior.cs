@@ -9,18 +9,8 @@ using FiresCore.Npc.Events;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Dedicated behavior for wood gathering (trees, logs, stumps).
-    /// Handles proper tool equipping, chest retrieval, attack animations, and damage application.
-    /// 
-    /// Flow:
-    /// 1. Check inventory/equipment for axe
-    /// 2. If no axe, check nearby chests
-    /// 3. If axe in chest, walk to chest and retrieve it
-    /// 4. Equip the axe
-    /// 5. Walk to tree
-    /// 6. Attack tree with proper animation and damage
-    /// 7. Handle logs/stumps after tree falls
-    /// 8. Collect drops
+    /// Wood gathering: gets an axe from inventory or a nearby chest, equips it, chops trees with the proper attack
+    /// animation and damage, works through the logs and stumps left behind, and collects the drops.
     /// </summary>
     public class WoodGatheringBehavior : IdleSubBehavior
     {
@@ -32,25 +22,25 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #region Constants
 
-        private const float TREE_SEARCH_RADIUS = 20f;
-        private const float ATTACK_RANGE = 2.5f;
-        private const float ATTACK_INTERVAL = 1.8f;
-        private const float DAMAGE_DELAY = 0.6f;
-        private const float MAX_GATHER_TIME = 120f;
-        private const float LOG_CHECK_WAIT = 3f;
-        private const float LOG_SEARCH_RADIUS = 15f;
-        private const float CHEST_INTERACTION_DISTANCE = 1.5f;
-        private const int MAX_NO_COLLIDER_HITS = 3;
-        private const float AOE_DAMAGE_RADIUS = 3f;
+        private const float TreeSearchRadius = 20f;
+        private const float AttackRange = 2.5f;
+        private const float AttackInterval = 1.8f;
+        private const float DamageDelay = 0.6f;
+        private const float MaxGatherTime = 120f;
+        private const float LogCheckWait = 3f;
+        private const float LogSearchRadius = 15f;
+        private const float ChestInteractionDistance = 1.5f;
+        private const int MaxNoColliderHits = 3;
+        private const float AoeDamageRadius = 3f;
         // Consecutive hits where the tool tier is too low before we act.
-        private const int INEFFECTIVE_HIT_THRESHOLD = 3;
+        private const int IneffectiveHitThreshold = 3;
 
         // Tool crafting
-        private const string AXE_PREFAB_STONE = "AxeStone";
-        private const string AXE_PREFAB_FLINT = "AxeFlint";
-        private const float WORKBENCH_SEARCH_RADIUS = 30f;
-        private const float WORKBENCH_INTERACTION_DISTANCE = 2f;
-        private const float CRAFT_DURATION = 3f;
+        private const string AxePrefabStone = "AxeStone";
+        private const string AxePrefabFlint = "AxeFlint";
+        private const float WorkbenchSearchRadius = 30f;
+        private const float WorkbenchInteractionDistance = 2f;
+        private const float CraftDuration = 3f;
 
         #endregion
 
@@ -130,7 +120,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _autoPickup = companion.GetComponent<CompanionAutoPickup>();
             _rigidbody = companion.GetComponent<Rigidbody>();
 
-            MaxDuration = MAX_GATHER_TIME + 30f;
+            MaxDuration = MaxGatherTime + 30f;
         }
 
         public void SetCommandedTarget(GameObject target)
@@ -241,7 +231,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         {
                             SetPhase(GatherPhase.MovingToChestForTool);
                             Vector3 chestInteractionPoint = InteractionPointHelper.GetContainerInteractionPoint(
-                                _toolChest, Transform.position, CHEST_INTERACTION_DISTANCE);
+                                _toolChest, Transform.position, ChestInteractionDistance);
                             MoveToPosition(chestInteractionPoint);
                             CompanionChatHelper.ShowWorkingStatus(Companion, "Getting axe from chest...");
                             LogVerbose($"Need to get axe from chest first");
@@ -389,7 +379,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             Vector3 interactionPoint = InteractionPointHelper.GetContainerInteractionPoint(
-                _toolChest, Transform.position, CHEST_INTERACTION_DISTANCE);
+                _toolChest, Transform.position, ChestInteractionDistance);
             float dist = Vector3.Distance(Transform.position, interactionPoint);
 
             if (dist <= InteractionPointHelper.ARRIVAL_THRESHOLD)
@@ -476,7 +466,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             float dist = Vector3.Distance(Transform.position, _craftWorkbench.transform.position);
-            if (dist <= WORKBENCH_INTERACTION_DISTANCE)
+            if (dist <= WorkbenchInteractionDistance)
             {
                 StopMovement();
                 FaceTarget(_craftWorkbench.transform.position);
@@ -502,7 +492,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_craftWorkbench != null)
                 FaceTarget(_craftWorkbench.transform.position);
 
-            if (Time.time - _phaseStartTime < CRAFT_DURATION)
+            if (Time.time - _phaseStartTime < CraftDuration)
                 return false;
 
             _zanim?.SetBool("crafting", false);
@@ -539,7 +529,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _targetPosition = _targetResource.InteractionPosition;
             float dist = Vector3.Distance(Transform.position, _targetPosition);
 
-            if (dist < ATTACK_RANGE)
+            if (dist < AttackRange)
             {
                 StopMovement();
                 SetPhase(GatherPhase.ChoppingTree);
@@ -552,7 +542,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Time.time - _phaseStartTime > maxMoveTime)
             {
                 LogVerbose($"Couldn't reach tree (dist: {dist:F1}m)");
-                if (dist < ATTACK_RANGE * 2f)
+                if (dist < AttackRange * 2f)
                 {
                     SetPhase(GatherPhase.ChoppingTree);
                 }
@@ -628,7 +618,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // Reposition if stuck
-            if (_consecutiveNoColliderHits >= MAX_NO_COLLIDER_HITS)
+            if (_consecutiveNoColliderHits >= MaxNoColliderHits)
             {
                 LogVerbose($"Repositioning after {_consecutiveNoColliderHits} missed hits");
                 _consecutiveNoColliderHits = 0;
@@ -641,7 +631,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (!isAttacking)
             {
                 float dist = Vector3.Distance(Transform.position, _targetResource.InteractionPosition);
-                if (dist > ATTACK_RANGE)
+                if (dist > AttackRange)
                 {
                     MoveToPosition(_targetResource.InteractionPosition);
                 }
@@ -657,7 +647,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // Attack
-            if (Time.time - _lastAttackTime >= ATTACK_INTERVAL)
+            if (Time.time - _lastAttackTime >= AttackInterval)
             {
                 AttackTree();
                 _lastAttackTime = Time.time;
@@ -675,7 +665,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool UpdateWaitingForLogs()
         {
-            _combatMovement?.LockMovement("WaitingForLogs", LOG_CHECK_WAIT + 2f);
+            _combatMovement?.LockMovement("WaitingForLogs", LogCheckWait + 2f);
             StopMovement();
 
             if (_rigidbody != null && !_rigidbody.isKinematic)
@@ -686,7 +676,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             FaceTarget(_lastTreePosition);
 
-            if (Time.time - _phaseStartTime < LOG_CHECK_WAIT)
+            if (Time.time - _phaseStartTime < LogCheckWait)
             {
                 return false;
             }
@@ -723,7 +713,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // Check for stumps
-            var stump = FindNearbyStump(_lastTreePosition, LOG_SEARCH_RADIUS);
+            var stump = FindNearbyStump(_lastTreePosition, LogSearchRadius);
             if (stump != null)
             {
                 var stumpData = ResourceDataHelper.GetResourceData(stump);
@@ -786,13 +776,13 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // Before swinging, check whether our axe tier is sufficient.
-            // If not, count the failure and act after INEFFECTIVE_HIT_THRESHOLD.
+            // If not, count the failure and act after IneffectiveHitThreshold.
             if (weapon != null && !ResourceDataHelper.IsToolAppropriate(
                     weapon, ResourceDataHelper.ToolRequirement.Axe, _targetResource.MinToolTier))
             {
                 _ineffectiveHitCount++;
-                LogVerbose($"Tool tier too low for {_targetResource.Name} (hit {_ineffectiveHitCount}/{INEFFECTIVE_HIT_THRESHOLD})");
-                if (_ineffectiveHitCount >= INEFFECTIVE_HIT_THRESHOLD)
+                LogVerbose($"Tool tier too low for {_targetResource.Name} (hit {_ineffectiveHitCount}/{IneffectiveHitThreshold})");
+                if (_ineffectiveHitCount >= IneffectiveHitThreshold)
                 {
                     _ineffectiveHitCount = 0;
                     HandleIneffectiveTool();
@@ -802,7 +792,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             _ineffectiveHitCount = 0;
             PlayAxeSwingAnimation();
-            Companion.StartCoroutine(ApplyDamageDelayed(weapon, DAMAGE_DELAY));
+            Companion.StartCoroutine(ApplyDamageDelayed(weapon, DamageDelay));
         }
 
         private IEnumerator ApplyDamageDelayed(ItemDrop.ItemData weapon, float delay)
@@ -853,14 +843,14 @@ namespace FiresCore.Npc.IdleBehaviors
             if (hitCollider == null)
             {
                 Collider[] colliders = Physics.OverlapSphere(_targetResource.InteractionPosition, 0.5f, hitMask);
-                foreach (var col in colliders)
+                foreach (var collider in colliders)
                 {
-                    if (col.transform == _targetResource.GameObject.transform ||
-                        col.transform.IsChildOf(_targetResource.GameObject.transform) ||
-                        _targetResource.GameObject.transform.IsChildOf(col.transform))
+                    if (collider.transform == _targetResource.GameObject.transform ||
+                        collider.transform.IsChildOf(_targetResource.GameObject.transform) ||
+                        _targetResource.GameObject.transform.IsChildOf(collider.transform))
                     {
-                        hitCollider = col;
-                        hitPoint = col.bounds.center;
+                        hitCollider = collider;
+                        hitPoint = collider.bounds.center;
                         break;
                     }
                 }
@@ -948,7 +938,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             float angle = Random.Range(90f, 120f) * (Random.value > 0.5f ? 1f : -1f);
             Vector3 newDir = Quaternion.Euler(0, angle, 0) * currentDir;
-            Vector3 newPosition = resourceCenter + newDir * ATTACK_RANGE * 0.8f;
+            Vector3 newPosition = resourceCenter + newDir * AttackRange * 0.8f;
 
             if (ZoneSystem.instance != null)
             {
@@ -973,7 +963,7 @@ namespace FiresCore.Npc.IdleBehaviors
         }
 
         /// <summary>
-        /// Called after INEFFECTIVE_HIT_THRESHOLD consecutive swings dealt no damage
+        /// Called after IneffectiveHitThreshold consecutive swings dealt no damage
         /// because the equipped axe tier is below the tree's requirement.
         /// Priority order:
         ///   1. Fetch a better axe from a nearby chest.
@@ -985,14 +975,14 @@ namespace FiresCore.Npc.IdleBehaviors
             int currentTier = GetEquippedAxe()?.m_shared?.m_toolTier ?? 0;
             int requiredTier = _targetResource?.MinToolTier ?? 1;
 
-            Debug.Log($"[WoodGathering] {Companion?.companionName} tool tier {currentTier} < required {requiredTier} ï¿½ looking for upgrade or easier target");
+            Debug.Log($"[WoodGathering] {Companion?.companionName} tool tier {currentTier} < required {requiredTier} - looking for upgrade or easier target");
 
             // 1. Try to find a better axe in nearby chests.
             if (TryFindBetterAxeInChests(requiredTier))
             {
                 SetPhase(GatherPhase.MovingToChestForTool);
                 Vector3 chestPoint = InteractionPointHelper.GetContainerInteractionPoint(
-                    _toolChest, Transform.position, CHEST_INTERACTION_DISTANCE);
+                    _toolChest, Transform.position, ChestInteractionDistance);
                 MoveToPosition(chestPoint);
                 CompanionChatHelper.ShowWorkingStatus(Companion, "Getting a better axe...");
                 return;
@@ -1024,8 +1014,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            // 4. Nothing we can do â€” finish up.
-            Debug.Log($"[WoodGathering] {Companion?.companionName} no upgrade or easier tree found ï¿½ stopping");
+            // 4. Nothing we can do — finish up.
+            Debug.Log($"[WoodGathering] {Companion?.companionName} no upgrade or easier tree found - stopping");
             SetPhase(GatherPhase.Complete);
         }
 
@@ -1471,15 +1461,15 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private CraftingStation FindNearestWorkbench()
         {
-            var colliders = Physics.OverlapSphere(Transform.position, WORKBENCH_SEARCH_RADIUS);
+            var colliders = Physics.OverlapSphere(Transform.position, WorkbenchSearchRadius);
             CraftingStation nearest = null;
             float nearestDist = float.MaxValue;
             var processed = new HashSet<CraftingStation>();
 
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
-                var station = col.GetComponent<CraftingStation>() ?? col.GetComponentInParent<CraftingStation>();
+                if (collider == null) continue;
+                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
                 if (station == null || processed.Contains(station)) continue;
                 processed.Add(station);
 
@@ -1511,13 +1501,13 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 ConsumeItems(storage, "Wood", 6);
                 ConsumeItems(storage, "Flint", 4);
-                return AddCraftedItem(storage, AXE_PREFAB_FLINT);
+                return AddCraftedItem(storage, AxePrefabFlint);
             }
             if (wood >= 4 && stone >= 1)
             {
                 ConsumeItems(storage, "Wood", 4);
                 ConsumeItems(storage, "Stone", 1);
-                return AddCraftedItem(storage, AXE_PREFAB_STONE);
+                return AddCraftedItem(storage, AxePrefabStone);
             }
 
             return false;
@@ -1586,12 +1576,12 @@ namespace FiresCore.Npc.IdleBehaviors
             GameObject closest = null;
             var processed = new HashSet<GameObject>();
 
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
 
-                var treeBase = col.GetComponent<TreeBase>() ?? col.GetComponentInParent<TreeBase>();
-                var treeLog = col.GetComponent<TreeLog>() ?? col.GetComponentInParent<TreeLog>();
+                var treeBase = collider.GetComponent<TreeBase>() ?? collider.GetComponentInParent<TreeBase>();
+                var treeLog = collider.GetComponent<TreeLog>() ?? collider.GetComponentInParent<TreeLog>();
 
                 GameObject target = null;
                 if (treeBase != null && !processed.Contains(treeBase.gameObject))
@@ -1631,11 +1621,11 @@ namespace FiresCore.Npc.IdleBehaviors
             GameObject closest = null;
             var processed = new HashSet<GameObject>();
 
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
 
-                var destructible = col.GetComponent<Destructible>() ?? col.GetComponentInParent<Destructible>();
+                var destructible = collider.GetComponent<Destructible>() ?? collider.GetComponentInParent<Destructible>();
                 if (destructible != null && !processed.Contains(destructible.gameObject))
                 {
                     string name = destructible.name.ToLowerInvariant();
@@ -1663,13 +1653,13 @@ namespace FiresCore.Npc.IdleBehaviors
             var results = new List<ResourceDataHelper.ResourceData>();
             var processed = new HashSet<GameObject>();
 
-            Collider[] colliders = Physics.OverlapSphere(position, LOG_SEARCH_RADIUS);
+            Collider[] colliders = Physics.OverlapSphere(position, LogSearchRadius);
 
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
 
-                var treeLog = col.GetComponent<TreeLog>() ?? col.GetComponentInParent<TreeLog>();
+                var treeLog = collider.GetComponent<TreeLog>() ?? collider.GetComponentInParent<TreeLog>();
                 if (treeLog != null && !processed.Contains(treeLog.gameObject))
                 {
                     processed.Add(treeLog.gameObject);

@@ -4,25 +4,14 @@ using System;
 namespace FiresCore.Npc.Archetypes.StatusEffects
 {
     /// <summary>
-    /// Base class for all companion-related status effects.
-    /// Provides common functionality like icons, logging, and duration management.
-    /// 
-    /// HUD DISPLAY:
-    /// Status effects from companions will display in the player's HUD with:
-    /// - A colored icon (fallback colored square if no sprite provided)
-    /// - Duration countdown
-    /// - Tooltip showing effect name and description
-    /// 
-    /// ORGANIZATION:
-    /// Status effects are organized by archetype in subfolders:
-    /// - Tank/        - Taunt, Fortify, etc.
-    /// - Berserker/   - Berserk, Immunity, etc.
-    /// - Rogue/       - Caltrops (slowdown), Stealth, etc.
-    /// - Healer/      - Purify, Regen, etc.
-    /// - Common/      - Shared effects used by multiple archetypes
+    /// Base class for companion status effects, providing the HUD icon (a colored square when no sprite is set),
+    /// duration countdown, tooltip and logging. Concrete effects live in folders by archetype.
     /// </summary>
     public abstract class CompanionStatusEffectBase : StatusEffect
     {
+        private const int CompanionPrefixLength = 9;
+        private const float InnerBorderBrightenAmount = 0.3f;
+
         /// <summary>Duration of the effect in seconds.</summary>
         public float Duration { get; set; } = 10f;
         
@@ -99,9 +88,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
             
             Color borderColor = new Color(0.1f, 0.1f, 0.1f, 1f); // Dark border
             Color innerBorderColor = new Color(
-                Mathf.Min(fillColor.r + 0.3f, 1f),
-                Mathf.Min(fillColor.g + 0.3f, 1f),
-                Mathf.Min(fillColor.b + 0.3f, 1f),
+                Mathf.Min(fillColor.r + InnerBorderBrightenAmount, 1f),
+                Mathf.Min(fillColor.g + InnerBorderBrightenAmount, 1f),
+                Mathf.Min(fillColor.b + InnerBorderBrightenAmount, 1f),
                 1f
             ); // Lighter inner border
             
@@ -217,7 +206,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
             // Remove "Companion" prefix
             if (effectName.StartsWith("Companion"))
             {
-                effectName = effectName.Substring(9);
+                effectName = effectName.Substring(CompanionPrefixLength);
             }
             
             // Add spaces before capital letters

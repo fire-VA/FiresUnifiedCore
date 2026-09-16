@@ -17,6 +17,10 @@ namespace FiresCore.Dungeon
     /// </summary>
     public sealed class FiresDungeonService : MonoBehaviour
     {
+        private const int MaxReadinessPolls = 20;
+        private const float ReadinessPollIntervalSeconds = 0.25f;
+        private const int MinRoomDataLength = 4;
+
         private static FiresDungeonService _instance;
 
         /// <summary>Create the server-side singleton. Safe to call repeatedly; no-op off the server.</summary>
@@ -44,7 +48,7 @@ namespace FiresCore.Dungeon
             _instance.StartCoroutine(_instance.RegenerateRoutine(dg, spec));
         }
 
-        private IEnumerator RegenerateRoutine(DungeonGenerator dg, DungeonSpec spec)
+        private IEnumerator RegenerateRoutine(DungeonGenerator generator, DungeonSpec spec)
         {
             // ALWAYS defer at least one frame before doing anything. This is scheduled from DungeonGenerator.Awake,
             // and on a FRESH ZoneSystem.SpawnLocation(Full) the vanilla pipeline calls dg.Generate SYNCHRONOUSLY right
@@ -57,20 +61,20 @@ namespace FiresCore.Dungeon
             yield return null;
 
             // wait until the dungeon DB + zone system are live (Generate reads both).
-            for (int i = 0; i < 20 && (ZoneSystem.instance == null || DungeonDB.instance == null); i++)
-                yield return new WaitForSeconds(0.25f);
-            if (dg == null) yield break;
+            for (int i = 0; i < MaxReadinessPolls && (ZoneSystem.instance == null || DungeonDB.instance == null); i++)
+                yield return new WaitForSeconds(ReadinessPollIntervalSeconds);
+            if (generator == null) yield break;
 
             // re-check: another path may have generated it in the meantime.
-            var nv = dg.GetComponent<ZNetView>();
-            ZDO zdo = (nv != null && nv.IsValid()) ? nv.GetZDO() : null;
-            if (zdo != null && zdo.GetByteArray(ZDOVars.s_roomData, out byte[] data) && data != null && data.Length >= 4)
+            var netView = generator.GetComponent<ZNetView>();
+            ZDO zdo = (netView != null && netView.IsValid()) ? netView.GetZDO() : null;
+            if (zdo != null && zdo.GetByteArray(ZDOVars.s_roomData, out byte[] data) && data != null && data.Length >= MinRoomDataLength)
                 yield break;
 
             bool ok = false;
-            try { dg.Generate(ZoneSystem.SpawnMode.Full); ok = true; }
+            try { generator.Generate(ZoneSystem.SpawnMode.Full); ok = true; }
             catch (Exception ex) { Debug.LogError($"{spec.LogTag} stale-dungeon regenerate threw: {ex.Message}"); }
-            if (ok) Debug.Log($"{spec.LogTag} regenerated stale dungeon DG at {dg.transform.position}.");
+            if (ok) Debug.Log($"{spec.LogTag} regenerated stale dungeon DG at {generator.transform.position}.");
 
             spec.OnDungeonGenerated?.Invoke();
         }
@@ -92,20 +96,20 @@ namespace FiresCore.Dungeon
             _instance.StartCoroutine(_instance.ResizeRegenerateRoutine(dg, spec, maxRooms));
         }
 
-        private IEnumerator ResizeRegenerateRoutine(DungeonGenerator dg, DungeonSpec spec, int maxRooms)
+        private IEnumerator ResizeRegenerateRoutine(DungeonGenerator generator, DungeonSpec spec, int maxRooms)
         {
             yield return null;
-            for (int i = 0; i < 20 && (ZoneSystem.instance == null || DungeonDB.instance == null); i++)
-                yield return new WaitForSeconds(0.25f);
-            if (dg == null) yield break;
+            for (int i = 0; i < MaxReadinessPolls && (ZoneSystem.instance == null || DungeonDB.instance == null); i++)
+                yield return new WaitForSeconds(ReadinessPollIntervalSeconds);
+            if (generator == null) yield break;
 
-            dg.m_maxRooms = maxRooms;
-            if (dg.m_minRooms > maxRooms) dg.m_minRooms = maxRooms; // vanilla defaults have min > max; keep min <= max
+            generator.m_maxRooms = maxRooms;
+            if (generator.m_minRooms > maxRooms) generator.m_minRooms = maxRooms; // vanilla defaults have min > max; keep min <= max
 
             bool ok = false;
-            try { dg.Generate(ZoneSystem.SpawnMode.Full); ok = true; }
+            try { generator.Generate(ZoneSystem.SpawnMode.Full); ok = true; }
             catch (Exception ex) { Debug.LogError($"{spec.LogTag} resize-regenerate threw: {ex.Message}"); }
-            if (ok) Debug.Log($"{spec.LogTag} resized to maxRooms={dg.m_maxRooms} and regenerated at {dg.transform.position}.");
+            if (ok) Debug.Log($"{spec.LogTag} resized to maxRooms={generator.m_maxRooms} and regenerated at {generator.transform.position}.");
 
             spec.OnDungeonGenerated?.Invoke();
         }

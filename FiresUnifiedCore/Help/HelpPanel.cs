@@ -251,9 +251,9 @@ namespace FiresCore.Help
             backdrop.color = HelpTheme.Backdrop;
             var backdropBtn = _root.AddComponent<Button>();
             backdropBtn.targetGraphic = backdrop;
-            var bc = backdropBtn.colors;
-            bc.normalColor = bc.highlightedColor = bc.pressedColor = HelpTheme.Backdrop;
-            backdropBtn.colors = bc;
+            var backdropColors = backdropBtn.colors;
+            backdropColors.normalColor = backdropColors.highlightedColor = backdropColors.pressedColor = HelpTheme.Backdrop;
+            backdropBtn.colors = backdropColors;
             backdropBtn.onClick.AddListener(Hide);
 
             var dialogGo = new GameObject("Dialog", typeof(RectTransform));
@@ -316,18 +316,18 @@ namespace FiresCore.Help
 
             var closeTxt = new GameObject("X");
             closeTxt.transform.SetParent(closeBtnGo.transform, false);
-            var cxr = closeTxt.AddComponent<RectTransform>();
-            cxr.anchorMin = Vector2.zero;
-            cxr.anchorMax = Vector2.one;
-            cxr.offsetMin = cxr.offsetMax = Vector2.zero;
-            var cx = closeTxt.AddComponent<TextMeshProUGUI>();
-            cx.text = "X";
-            cx.fontSize = 12f;
-            cx.fontStyle = FontStyles.Bold;
-            cx.color = HelpTheme.TextGold;
-            cx.alignment = TextAlignmentOptions.Center;
-            cx.raycastTarget = false;
-            ApplyFont(cx);
+            var closeTextRect = closeTxt.AddComponent<RectTransform>();
+            closeTextRect.anchorMin = Vector2.zero;
+            closeTextRect.anchorMax = Vector2.one;
+            closeTextRect.offsetMin = closeTextRect.offsetMax = Vector2.zero;
+            var label = closeTxt.AddComponent<TextMeshProUGUI>();
+            label.text = "X";
+            label.fontSize = 12f;
+            label.fontStyle = FontStyles.Bold;
+            label.color = HelpTheme.TextGold;
+            label.alignment = TextAlignmentOptions.Center;
+            label.raycastTarget = false;
+            ApplyFont(label);
         }
 
         private void CreateSidebarContainer(Transform dialog)
@@ -345,43 +345,43 @@ namespace FiresCore.Help
 
             var sideScrollGo = new GameObject("SideScroll");
             sideScrollGo.transform.SetParent(sidebarGo.transform, false);
-            var ssr = sideScrollGo.AddComponent<RectTransform>();
-            ssr.anchorMin = Vector2.zero;
-            ssr.anchorMax = Vector2.one;
-            ssr.offsetMin = ssr.offsetMax = Vector2.zero;
+            var sideScrollRect = sideScrollGo.AddComponent<RectTransform>();
+            sideScrollRect.anchorMin = Vector2.zero;
+            sideScrollRect.anchorMax = Vector2.one;
+            sideScrollRect.offsetMin = sideScrollRect.offsetMax = Vector2.zero;
 
             var sideVp = new GameObject("Viewport");
             sideVp.transform.SetParent(sideScrollGo.transform, false);
-            var svr = sideVp.AddComponent<RectTransform>();
-            svr.anchorMin = Vector2.zero;
-            svr.anchorMax = Vector2.one;
-            svr.offsetMin = svr.offsetMax = Vector2.zero;
+            var sideViewportRect = sideVp.AddComponent<RectTransform>();
+            sideViewportRect.anchorMin = Vector2.zero;
+            sideViewportRect.anchorMax = Vector2.one;
+            sideViewportRect.offsetMin = sideViewportRect.offsetMax = Vector2.zero;
             sideVp.AddComponent<RectMask2D>();
             sideVp.AddComponent<Image>().color = Color.clear;
 
             var sideContentGo = new GameObject("Content");
             sideContentGo.transform.SetParent(sideVp.transform, false);
-            var scr = sideContentGo.AddComponent<RectTransform>();
-            scr.anchorMin = new Vector2(0, 1);
-            scr.anchorMax = new Vector2(1, 1);
-            scr.pivot = new Vector2(0, 1);
-            scr.anchoredPosition = Vector2.zero;
-            scr.sizeDelta = Vector2.zero;
-            var svlg = sideContentGo.AddComponent<VerticalLayoutGroup>();
-            svlg.padding = new RectOffset(4, 4, 8, 8);
-            svlg.spacing = 2;
-            svlg.childControlWidth = true;
-            svlg.childControlHeight = true;
-            svlg.childForceExpandWidth = true;
-            svlg.childForceExpandHeight = false;
+            var sideContentRect = sideContentGo.AddComponent<RectTransform>();
+            sideContentRect.anchorMin = new Vector2(0, 1);
+            sideContentRect.anchorMax = new Vector2(1, 1);
+            sideContentRect.pivot = new Vector2(0, 1);
+            sideContentRect.anchoredPosition = Vector2.zero;
+            sideContentRect.sizeDelta = Vector2.zero;
+            var sidebarLayout = sideContentGo.AddComponent<VerticalLayoutGroup>();
+            sidebarLayout.padding = new RectOffset(4, 4, 8, 8);
+            sidebarLayout.spacing = 2;
+            sidebarLayout.childControlWidth = true;
+            sidebarLayout.childControlHeight = true;
+            sidebarLayout.childForceExpandWidth = true;
+            sidebarLayout.childForceExpandHeight = false;
             sideContentGo.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             _sideContent = sideContentGo.transform;
 
             var sideScroll = sideScrollGo.AddComponent<ScrollRect>();
             sideScroll.horizontal = false;
             sideScroll.vertical = true;
-            sideScroll.viewport = svr;
-            sideScroll.content = scr;
+            sideScroll.viewport = sideViewportRect;
+            sideScroll.content = sideContentRect;
             sideScroll.movementType = ScrollRect.MovementType.Clamped;
             sideScroll.scrollSensitivity = 80f;
         }
@@ -428,11 +428,11 @@ namespace FiresCore.Help
 
             var textGo = new GameObject("Text");
             textGo.transform.SetParent(go.transform, false);
-            var tr = textGo.AddComponent<RectTransform>();
-            tr.anchorMin = Vector2.zero;
-            tr.anchorMax = Vector2.one;
-            tr.offsetMin = new Vector2(10, 0);
-            tr.offsetMax = new Vector2(-4, 0);
+            var rect = textGo.AddComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(10, 0);
+            rect.offsetMax = new Vector2(-4, 0);
             var tmp = textGo.AddComponent<TextMeshProUGUI>();
             tmp.text = text;
             tmp.fontSize = 9.5f;
@@ -448,16 +448,16 @@ namespace FiresCore.Help
             var go = new GameObject("Nav");
             go.transform.SetParent(_sideContent, false);
             go.AddComponent<LayoutElement>().minHeight = NavButtonHeight;
-            var bg = go.AddComponent<Image>();
-            bg.color = HelpTheme.NavNormal;
+            var image = go.AddComponent<Image>();
+            image.color = HelpTheme.NavNormal;
 
             var textGo = new GameObject("Text");
             textGo.transform.SetParent(go.transform, false);
-            var tr = textGo.AddComponent<RectTransform>();
-            tr.anchorMin = Vector2.zero;
-            tr.anchorMax = Vector2.one;
-            tr.offsetMin = new Vector2(10, 0);
-            tr.offsetMax = new Vector2(-4, 0);
+            var rect = textGo.AddComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(10, 0);
+            rect.offsetMax = new Vector2(-4, 0);
             var tmp = textGo.AddComponent<TextMeshProUGUI>();
             tmp.text = section.Title;
             tmp.fontSize = 11f;
@@ -467,13 +467,13 @@ namespace FiresCore.Help
             ApplyFont(tmp);
 
             var btn = go.AddComponent<Button>();
-            btn.targetGraphic = bg;
-            var nc = btn.colors;
-            nc.normalColor = HelpTheme.NavNormal;
-            nc.highlightedColor = HelpTheme.NavHover;
-            nc.pressedColor = HelpTheme.NavActive;
-            nc.selectedColor = HelpTheme.NavNormal;
-            btn.colors = nc;
+            btn.targetGraphic = image;
+            var colors = btn.colors;
+            colors.normalColor = HelpTheme.NavNormal;
+            colors.highlightedColor = HelpTheme.NavHover;
+            colors.pressedColor = HelpTheme.NavActive;
+            colors.selectedColor = HelpTheme.NavNormal;
+            btn.colors = colors;
             var captured = section;
             btn.onClick.AddListener(() => NavigateTo(captured));
 
@@ -499,8 +499,8 @@ namespace FiresCore.Help
             foreach (var entry in _navEntries)
             {
                 bool active = entry.Section == _current;
-                var bg = entry.Go.GetComponent<Image>();
-                if (bg != null) bg.color = active ? HelpTheme.NavActive : HelpTheme.NavNormal;
+                var image = entry.Go.GetComponent<Image>();
+                if (image != null) image.color = active ? HelpTheme.NavActive : HelpTheme.NavNormal;
                 var tmp = entry.Go.GetComponentInChildren<TextMeshProUGUI>();
                 if (tmp != null) tmp.color = active ? HelpTheme.TextGold : HelpTheme.TextLight;
             }
@@ -519,72 +519,72 @@ namespace FiresCore.Help
 
             var scrollGo = new GameObject("Scroll");
             scrollGo.transform.SetParent(contentGo.transform, false);
-            var sgr = scrollGo.AddComponent<RectTransform>();
-            sgr.anchorMin = Vector2.zero;
-            sgr.anchorMax = Vector2.one;
-            sgr.offsetMin = new Vector2(8, 8);
-            sgr.offsetMax = new Vector2(-8, -8);
+            var scrollAreaRect = scrollGo.AddComponent<RectTransform>();
+            scrollAreaRect.anchorMin = Vector2.zero;
+            scrollAreaRect.anchorMax = Vector2.one;
+            scrollAreaRect.offsetMin = new Vector2(8, 8);
+            scrollAreaRect.offsetMax = new Vector2(-8, -8);
 
-            var vpGo = new GameObject("Viewport");
-            vpGo.transform.SetParent(scrollGo.transform, false);
-            var vpr = vpGo.AddComponent<RectTransform>();
-            vpr.anchorMin = Vector2.zero;
-            vpr.anchorMax = Vector2.one;
-            vpr.offsetMin = Vector2.zero;
-            vpr.offsetMax = new Vector2(-10, 0);
-            vpGo.AddComponent<RectMask2D>();
-            vpGo.AddComponent<Image>().color = Color.clear;
+            var viewportGo = new GameObject("Viewport");
+            viewportGo.transform.SetParent(scrollGo.transform, false);
+            var viewportRect = viewportGo.AddComponent<RectTransform>();
+            viewportRect.anchorMin = Vector2.zero;
+            viewportRect.anchorMax = Vector2.one;
+            viewportRect.offsetMin = Vector2.zero;
+            viewportRect.offsetMax = new Vector2(-10, 0);
+            viewportGo.AddComponent<RectMask2D>();
+            viewportGo.AddComponent<Image>().color = Color.clear;
 
             var contentInner = new GameObject("Content");
-            contentInner.transform.SetParent(vpGo.transform, false);
+            contentInner.transform.SetParent(viewportGo.transform, false);
             _contentArea = contentInner.AddComponent<RectTransform>();
             _contentArea.anchorMin = new Vector2(0, 1);
             _contentArea.anchorMax = new Vector2(1, 1);
             _contentArea.pivot = new Vector2(0, 1);
             _contentArea.anchoredPosition = Vector2.zero;
             _contentArea.sizeDelta = Vector2.zero;
-            var vlg = contentInner.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(8, 8, 8, 16);
-            vlg.spacing = 6;
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
+            var verticalLayout = contentInner.AddComponent<VerticalLayoutGroup>();
+            verticalLayout.padding = new RectOffset(8, 8, 8, 16);
+            verticalLayout.spacing = 6;
+            verticalLayout.childControlWidth = true;
+            verticalLayout.childControlHeight = true;
+            verticalLayout.childForceExpandWidth = true;
+            verticalLayout.childForceExpandHeight = false;
             contentInner.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             _contentScroll = scrollGo.AddComponent<ScrollRect>();
             _contentScroll.horizontal = false;
             _contentScroll.vertical = true;
-            _contentScroll.viewport = vpr;
+            _contentScroll.viewport = viewportRect;
             _contentScroll.content = _contentArea;
             _contentScroll.movementType = ScrollRect.MovementType.Clamped;
             _contentScroll.scrollSensitivity = 120f;
 
-            var sbGo = new GameObject("Scrollbar");
-            sbGo.transform.SetParent(scrollGo.transform, false);
-            var sbr = sbGo.AddComponent<RectTransform>();
-            sbr.anchorMin = new Vector2(1, 0);
-            sbr.anchorMax = new Vector2(1, 1);
-            sbr.pivot = new Vector2(1, 0.5f);
-            sbr.anchoredPosition = Vector2.zero;
-            sbr.sizeDelta = new Vector2(8, 0);
-            sbGo.AddComponent<Image>().color = HelpTheme.ScrollbarTrack;
+            var scrollbarGo = new GameObject("Scrollbar");
+            scrollbarGo.transform.SetParent(scrollGo.transform, false);
+            var scrollbarRect = scrollbarGo.AddComponent<RectTransform>();
+            scrollbarRect.anchorMin = new Vector2(1, 0);
+            scrollbarRect.anchorMax = new Vector2(1, 1);
+            scrollbarRect.pivot = new Vector2(1, 0.5f);
+            scrollbarRect.anchoredPosition = Vector2.zero;
+            scrollbarRect.sizeDelta = new Vector2(8, 0);
+            scrollbarGo.AddComponent<Image>().color = HelpTheme.ScrollbarTrack;
 
             var handleGo = new GameObject("Handle");
-            handleGo.transform.SetParent(sbGo.transform, false);
-            var hr = handleGo.AddComponent<RectTransform>();
-            hr.anchorMin = Vector2.zero;
-            hr.anchorMax = Vector2.one;
-            hr.offsetMin = new Vector2(1, 0);
-            hr.offsetMax = new Vector2(-1, 0);
+            handleGo.transform.SetParent(scrollbarGo.transform, false);
+            var rect = handleGo.AddComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(1, 0);
+            rect.offsetMax = new Vector2(-1, 0);
             var handleImg = handleGo.AddComponent<Image>();
             handleImg.color = HelpTheme.ScrollbarHandle;
 
-            var sb = sbGo.AddComponent<Scrollbar>();
-            sb.direction = Scrollbar.Direction.BottomToTop;
-            sb.handleRect = hr;
-            sb.targetGraphic = handleImg;
-            _contentScroll.verticalScrollbar = sb;
+            var scrollbar = scrollbarGo.AddComponent<Scrollbar>();
+            scrollbar.direction = Scrollbar.Direction.BottomToTop;
+            scrollbar.handleRect = rect;
+            scrollbar.targetGraphic = handleImg;
+            _contentScroll.verticalScrollbar = scrollbar;
             _contentScroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
         }
     }

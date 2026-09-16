@@ -6,9 +6,17 @@ namespace FiresCore.Npc.IdleBehaviors
 {
     public partial class FarmingBehavior
     {
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        private const float PhaseEntryWindow = 0.1f;
+        private const float InteractPauseDuration = 0.5f;
+        private const float CraftingPauseDuration = 1.5f;
+        private const float BeehiveResampleInterval = 5f;
+        private const float DropCollectionRadius = 5f;
+        private const float PickupDistance = 1.5f;
+        private const float DropCollectionTimeout = 10f;
+
+        // -
         // Cultivator acquisition phases
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
 
         #region Cultivator Acquisition
 
@@ -28,28 +36,28 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_cultivatorChest != null && IsReachable(_cultivatorChest.transform.position))
             {
                 _targetPosition = InteractionPointHelper.GetContainerInteractionPoint(
-                    _cultivatorChest, Transform.position, INTERACTION_DISTANCE);
+                    _cultivatorChest, Transform.position, InteractionDistance);
                 SetPhase(FarmPhase.MovingToCultivatorChest);
                 TryMoveToPosition(_targetPosition);
                 return false;
             }
 
-            // No cultivator in chests â€” try crafting at a Forge.
+            // No cultivator in chests — try crafting at a Forge.
             if (CanCraftCultivator())
             {
                 _targetForge = FindNearestForge();
                 if (_targetForge != null && IsReachable(_targetForge.transform.position))
                 {
                     _targetPosition = InteractionPointHelper.GetInteractionPoint(
-                        _targetForge.gameObject, Transform.position, INTERACTION_DISTANCE);
+                        _targetForge.gameObject, Transform.position, InteractionDistance);
                     SetPhase(FarmPhase.MovingToForge);
                     TryMoveToPosition(_targetPosition);
                     return false;
                 }
             }
 
-            // Cannot acquire a cultivator this session â€” skip planting entirely.
-            Debug.Log($"[Farming] {Companion?.companionName} cannot acquire cultivator â€” planting skipped");
+            // Cannot acquire a cultivator this session — skip planting entirely.
+            Debug.Log($"[Farming] {Companion?.companionName} cannot acquire cultivator — planting skipped");
             return true; // signal Complete
         }
 
@@ -60,7 +68,7 @@ namespace FiresCore.Npc.IdleBehaviors
             TryMoveToPosition(_targetPosition);
 
             float dist = Vector3.Distance(Transform.position, _targetPosition);
-            if (dist <= ARRIVAL_DISTANCE)
+            if (dist <= ArrivalDistance)
             {
                 StopMovement();
                 TakeFromChestByName(_cultivatorChest, "cultivator", out bool took);
@@ -91,7 +99,7 @@ namespace FiresCore.Npc.IdleBehaviors
             TryMoveToPosition(_targetPosition);
 
             float dist = Vector3.Distance(Transform.position, _targetPosition);
-            if (dist <= ARRIVAL_DISTANCE)
+            if (dist <= ArrivalDistance)
             {
                 StopMovement();
                 SetPhase(FarmPhase.CraftingCultivator);
@@ -112,16 +120,16 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
 
             // Brief pause so the companion looks busy.
-            if (Time.time - _phaseStartTime < 0.1f) { PlayInteractAnimation(); return false; }
-            if (Time.time - _phaseStartTime < 1.5f) return false;
+            if (Time.time - _phaseStartTime < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
+            if (Time.time - _phaseStartTime < CraftingPauseDuration) return false;
 
             var storage = _inventory?.GetStorageInventory();
             if (storage != null && CanCraftCultivator())
             {
-                RemoveItems(storage, RECIPE_COREWOOD, RECIPE_COREWOOD_COUNT);
-                RemoveItems(storage, RECIPE_BRONZE,   RECIPE_BRONZE_COUNT);
+                RemoveItems(storage, RecipeCorewood, RecipeCorewoodCount);
+                RemoveItems(storage, RecipeBronze,   RecipeBronzeCount);
 
-                var prefab = ZNetScene.instance?.GetPrefab(CULTIVATOR_PREFAB);
+                var prefab = ZNetScene.instance?.GetPrefab(CultivatorPrefab);
                 var drop   = prefab?.GetComponent<ItemDrop>();
                 if (drop != null && storage.AddItem(drop.m_itemData.Clone()))
                 {
@@ -131,7 +139,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 else
                 {
-                    Debug.LogWarning($"[Farming] {Companion?.companionName} crafting failed â€” prefab '{CULTIVATOR_PREFAB}' not found or no inventory space");
+                    Debug.LogWarning($"[Farming] {Companion?.companionName} crafting failed — prefab '{CultivatorPrefab}' not found or no inventory space");
                 }
             }
 
@@ -167,9 +175,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #endregion
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
         // Seed retrieval phases
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
 
         #region Seed Retrieval
 
@@ -183,14 +191,14 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_seedChest != null && IsReachable(_seedChest.transform.position))
             {
                 _targetPosition = InteractionPointHelper.GetContainerInteractionPoint(
-                    _seedChest, Transform.position, INTERACTION_DISTANCE);
+                    _seedChest, Transform.position, InteractionDistance);
                 SetPhase(FarmPhase.MovingToSeedChest);
                 TryMoveToPosition(_targetPosition);
                 return false;
             }
 
-            // No reachable chest with seeds â€” nothing to plant this session.
-            Debug.Log($"[Farming] {Companion?.companionName} cannot find seeds in any chest â€” planting skipped");
+            // No reachable chest with seeds — nothing to plant this session.
+            Debug.Log($"[Farming] {Companion?.companionName} cannot find seeds in any chest — planting skipped");
             return true; // signal Complete
         }
 
@@ -201,7 +209,7 @@ namespace FiresCore.Npc.IdleBehaviors
             TryMoveToPosition(_targetPosition);
 
             float dist = Vector3.Distance(Transform.position, _targetPosition);
-            if (dist <= ARRIVAL_DISTANCE)
+            if (dist <= ArrivalDistance)
             {
                 StopMovement();
                 TakeAllSeedsFromChest(_seedChest);
@@ -246,9 +254,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #endregion
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
         // Beehive phases
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
 
         #region Beehive
 
@@ -261,11 +269,11 @@ namespace FiresCore.Npc.IdleBehaviors
             // Periodically re-sample the interaction point in case the initial
             // sample landed inside geometry (e.g. beehive on a wall).
             float age = Time.time - _phaseStartTime;
-            if (age > 5f && age % 5f < 0.1f)
+            if (age > BeehiveResampleInterval && age % BeehiveResampleInterval < 0.1f)
                 _targetPosition = InteractionPointHelper.GetInteractionPoint(
-                    _targetBeehive.gameObject, Transform.position, INTERACTION_DISTANCE);
+                    _targetBeehive.gameObject, Transform.position, InteractionDistance);
 
-            if (Vector3.Distance(Transform.position, _targetPosition) <= ARRIVAL_DISTANCE)
+            if (Vector3.Distance(Transform.position, _targetPosition) <= ArrivalDistance)
             {
                 StopMovement();
                 SetPhase(FarmPhase.HarvestingBeehive);
@@ -289,8 +297,8 @@ namespace FiresCore.Npc.IdleBehaviors
             FaceTarget(_targetBeehive.transform.position);
 
             float age = Time.time - _phaseStartTime;
-            if (age < 0.1f) { PlayInteractAnimation(); return false; }
-            if (age < 0.5f) return false;
+            if (age < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
+            if (age < InteractPauseDuration) return false;
 
             if (FarmingDataHelper.HasHoneyReady(_targetBeehive) && _humanoid != null)
             {
@@ -306,9 +314,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #endregion
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
         // Crop phases
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
 
         #region Crops
 
@@ -318,7 +326,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             TryMoveToPosition(_targetPosition);
 
-            if (Vector3.Distance(Transform.position, _targetPosition) <= ARRIVAL_DISTANCE)
+            if (Vector3.Distance(Transform.position, _targetPosition) <= ArrivalDistance)
             {
                 StopMovement();
                 SetPhase(FarmPhase.HarvestingCrop);
@@ -342,8 +350,8 @@ namespace FiresCore.Npc.IdleBehaviors
             FaceTarget(_targetCrop.transform.position);
 
             float age = Time.time - _phaseStartTime;
-            if (age < 0.1f) { PlayInteractAnimation(); return false; }
-            if (age < 0.5f) return false;
+            if (age < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
+            if (age < InteractPauseDuration) return false;
 
             if (FarmingDataHelper.IsPickableReady(_targetCrop) && _humanoid != null)
             {
@@ -359,9 +367,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #endregion
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
         // Planting phases
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
 
         #region Planting
 
@@ -371,7 +379,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             TryMoveToPosition(_targetPosition);
 
-            if (Vector3.Distance(Transform.position, _plantPosition) <= ARRIVAL_DISTANCE)
+            if (Vector3.Distance(Transform.position, _plantPosition) <= ArrivalDistance)
             {
                 StopMovement();
                 SetPhase(FarmPhase.Planting);
@@ -395,13 +403,13 @@ namespace FiresCore.Npc.IdleBehaviors
             FaceTarget(_plantPosition);
 
             float age = Time.time - _phaseStartTime;
-            if (age < 0.1f) { PlayInteractAnimation(); return false; }
-            if (age < 0.5f) return false;
+            if (age < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
+            if (age < InteractPauseDuration) return false;
 
             // Position may no longer be valid if something else planted there.
-            if (!FarmingDataHelper.IsValidPlantingPosition(_plantPosition, _seedToPlant, PLANT_SPACING))
+            if (!FarmingDataHelper.IsValidPlantingPosition(_plantPosition, _seedToPlant, PlantSpacing))
             {
-                Debug.Log($"[Farming] {Companion?.companionName} plant position no longer valid â€” re-scanning");
+                Debug.Log($"[Farming] {Companion?.companionName} plant position no longer valid — re-scanning");
                 _seedToPlant = null;
                 SetPhase(FarmPhase.Idle);
                 return false;
@@ -434,9 +442,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #endregion
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
         // Drop collection phases
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
 
         #region Drop Collection
 
@@ -448,12 +456,12 @@ namespace FiresCore.Npc.IdleBehaviors
             // Populate pickup list if not already built.
             if (_pendingPickups.Count == 0 && _currentPickupTarget == null)
             {
-                var cols = Physics.OverlapSphere(Transform.position, 5f);
+                var cols = Physics.OverlapSphere(Transform.position, DropCollectionRadius);
                 _pendingPickups.Clear();
-                foreach (var col in cols)
+                foreach (var collider in cols)
                 {
-                    if (col == null) continue;
-                    var drop = col.GetComponent<ItemDrop>();
+                    if (collider == null) continue;
+                    var drop = collider.GetComponent<ItemDrop>();
                     if (drop != null && drop.CanPickup(true)) _pendingPickups.Add(drop);
                 }
 
@@ -474,7 +482,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             float dist = Vector3.Distance(Transform.position, _currentPickupTarget.transform.position);
-            if (dist > 1.5f)
+            if (dist > PickupDistance)
             {
                 TryMoveToPosition(_currentPickupTarget.transform.position);
             }
@@ -486,7 +494,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (_pendingPickups.Count == 0) SetPhase(FarmPhase.Idle);
             }
 
-            if (Time.time - _phaseStartTime > 10f)
+            if (Time.time - _phaseStartTime > DropCollectionTimeout)
             {
                 Debug.LogWarning($"[Farming] {Companion?.companionName} timeout collecting drops");
                 _pendingPickups.Clear();
@@ -514,9 +522,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #endregion
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
         // Deposit phases
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // -
 
         #region Deposit
 
@@ -526,7 +534,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             TryMoveToPosition(_targetPosition);
 
-            if (Vector3.Distance(Transform.position, _targetPosition) <= ARRIVAL_DISTANCE)
+            if (Vector3.Distance(Transform.position, _targetPosition) <= ArrivalDistance)
             {
                 StopMovement();
                 SetPhase(FarmPhase.Depositing);
@@ -550,8 +558,8 @@ namespace FiresCore.Npc.IdleBehaviors
             FaceTarget(_targetChest.transform.position);
 
             float age = Time.time - _phaseStartTime;
-            if (age < 0.1f) { PlayInteractAnimation(); return false; }
-            if (age < 0.5f) return false;
+            if (age < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
+            if (age < InteractPauseDuration) return false;
 
             var storage  = _inventory.GetStorageInventory();
             var chestInv = _targetChest.GetInventory();

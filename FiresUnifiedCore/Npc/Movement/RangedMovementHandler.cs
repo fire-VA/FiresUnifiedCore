@@ -27,13 +27,13 @@ namespace FiresCore.Npc.Movement
         private bool _hasRangedMovementRequest;
         private Vector3 _rangedRequestedDirection;
         private float _rangedRequestTime;
-        private const float RANGED_REQUEST_TIMEOUT = 0.5f;
+        private const float RangedRequestTimeout = 0.5f;
         
         public static bool VerboseLogging = false;
         
         // Properties
         public bool HasRangedMovementRequest => _hasRangedMovementRequest && 
-            Time.time - _rangedRequestTime <= RANGED_REQUEST_TIMEOUT;
+            Time.time - _rangedRequestTime <= RangedRequestTimeout;
         public Vector3 RequestedDirection => _rangedRequestedDirection;
         
         public RangedMovementHandler(
@@ -57,7 +57,7 @@ namespace FiresCore.Npc.Movement
         /// <summary>Clears expired requests. Call every frame.</summary>
         public void Update()
         {
-            if (_hasRangedMovementRequest && Time.time - _rangedRequestTime > RANGED_REQUEST_TIMEOUT)
+            if (_hasRangedMovementRequest && Time.time - _rangedRequestTime > RangedRequestTimeout)
                 _hasRangedMovementRequest = false;
         }
         

@@ -25,7 +25,7 @@ namespace FiresCore.UI
                 Version = 1
             };
 
-            // Root panel � centered, 520x480
+            // Root panel - centered, 520x480
             var root = new UIElementNode
             {
                 Id = "root",

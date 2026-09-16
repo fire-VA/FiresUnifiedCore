@@ -6,20 +6,10 @@ using FiresCore.Npc.Archetypes;
 namespace FiresCore.Npc.Formation
 {
     /// <summary>
-    /// Centralized formation coordinator for all companions belonging to a player.
-    /// Manages formation slot assignment, offset computation, and mode transitions.
-    /// 
-    /// PERFORMANCE:
-    /// - Offsets are pre-computed every UPDATE_INTERVAL (0.5s), not per-frame
-    /// - Companion lists are cached and only refreshed on add/remove events
-    /// - Early exit when group has only 1 companion (no formation needed)
-    /// - Formation offsets only recomputed when player direction changes significantly
-    /// 
-    /// FORMATION MODES:
-    /// - Following: V-pattern behind/beside the player during travel
-    /// - IdleSpread: Random spread ±3m around stopped player, with minimum separation
-    /// - Combat: Role-based positioning (tank front, ranged/healer back)
-    /// - None: Companion not in formation (Stay mode, working, etc.)
+    /// Assigns formation slots for a player's companions and computes their offsets on an interval rather than per
+    /// frame: a V behind the player while traveling, a spread with minimum separation when the player stops, and
+    /// role positions in combat (tanks in front, ranged and healers behind). Companions staying or working are left
+    /// out, and single-companion groups exit early.
     /// </summary>
     public class GroupFormationManager
     {
@@ -233,11 +223,11 @@ namespace FiresCore.Npc.Formation
 
                 // Find the player
                 Player player = null;
-                foreach (var comp in group.Companions)
+                foreach (var companion in group.Companions)
                 {
-                    if (comp != null)
+                    if (companion != null)
                     {
-                        player = comp.GetOwner();
+                        player = companion.GetOwner();
                         if (player != null) break;
                     }
                 }
@@ -276,27 +266,25 @@ namespace FiresCore.Npc.Formation
         {
             bool anyInCombat = false;
             bool anyFollowing = false;
-            bool allIdle = true;
 
-            foreach (var comp in group.Companions)
+            foreach (var companion in group.Companions)
             {
-                if (comp == null) continue;
+                if (companion == null) continue;
 
-                if (comp.IsInCombat)
+                if (companion.IsInCombat)
                 {
                     anyInCombat = true;
-                    allIdle = false;
                 }
-                else if (comp.ShouldBeFollowing)
+                else if (companion.ShouldBeFollowing)
                 {
                     anyFollowing = true;
                 }
 
                 // If companion is not following (Stay mode, working), it's excluded from formation
-                if (!comp.ShouldBeFollowing)
+                if (!companion.ShouldBeFollowing)
                 {
                     // Mark this companion's slot as None
-                    var slot = GetSlot(comp.companionId);
+                    var slot = GetSlot(companion.companionId);
                     if (slot != null) slot.Mode = FormationMode.None;
                 }
             }
@@ -307,11 +295,11 @@ namespace FiresCore.Npc.Formation
             {
                 // Check if the player is idle
                 Player player = null;
-                foreach (var comp in group.Companions)
+                foreach (var companion in group.Companions)
                 {
-                    if (comp != null)
+                    if (companion != null)
                     {
-                        player = comp.GetOwner();
+                        player = companion.GetOwner();
                         if (player != null) break;
                     }
                 }
@@ -373,8 +361,8 @@ namespace FiresCore.Npc.Formation
             int followingIndex = 0;
             for (int i = 0; i < group.Companions.Count; i++)
             {
-                var comp = group.Companions[i];
-                if (comp == null || !comp.ShouldBeFollowing) continue;
+                var companion = group.Companions[i];
+                if (companion == null || !companion.ShouldBeFollowing) continue;
 
                 var slot = (i < group.Slots.Count) ? group.Slots[i] : null;
                 if (slot == null) continue;
@@ -410,8 +398,8 @@ namespace FiresCore.Npc.Formation
             int followingIndex = 0;
             for (int i = 0; i < group.Companions.Count; i++)
             {
-                var comp = group.Companions[i];
-                if (comp == null || !comp.ShouldBeFollowing) continue;
+                var companion = group.Companions[i];
+                if (companion == null || !companion.ShouldBeFollowing) continue;
 
                 var slot = (i < group.Slots.Count) ? group.Slots[i] : null;
                 if (slot == null || slot.Mode != FormationMode.Following) continue;
@@ -452,8 +440,8 @@ namespace FiresCore.Npc.Formation
 
             for (int i = 0; i < group.Companions.Count; i++)
             {
-                var comp = group.Companions[i];
-                if (comp == null || !comp.ShouldBeFollowing) continue;
+                var companion = group.Companions[i];
+                if (companion == null || !companion.ShouldBeFollowing) continue;
 
                 var slot = (i < group.Slots.Count) ? group.Slots[i] : null;
                 if (slot == null) continue;
@@ -554,19 +542,19 @@ namespace FiresCore.Npc.Formation
 
             for (int i = 0; i < group.Companions.Count; i++)
             {
-                var comp = group.Companions[i];
-                if (comp == null) continue;
+                var companion = group.Companions[i];
+                if (companion == null) continue;
 
                 var slot = new FormationSlot
                 {
-                    CompanionId = comp.companionId,
+                    CompanionId = companion.companionId,
                     SlotIndex = i,
                     Mode = group.CurrentMode
                 };
                 group.Slots.Add(slot);
 
-                if (!string.IsNullOrEmpty(comp.companionId))
-                    _slotsByCompanionId[comp.companionId] = slot;
+                if (!string.IsNullOrEmpty(companion.companionId))
+                    _slotsByCompanionId[companion.companionId] = slot;
             }
         }
 

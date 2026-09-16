@@ -5,34 +5,10 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Combat behavior for staves (magic weapons).
-    /// Handles projectile spawning for magic attacks.
-    /// 
-    /// KITING BEHAVIOR:
-    /// Staves behave like ranged weapons - companions maintain distance from enemies.
-    /// Healers especially should stay AWAY from enemies and focus on buffing allies.
-    /// This behavior mirrors BowBehavior's kiting system.
-    /// 
-    /// DISTANCE ZONES (for offensive staves):
-    /// - DANGER (0-4m): Retreat immediately while casting if possible
-    /// - CLOSE (4-8m): Quick cast while backpedaling
-    /// - OPTIMAL (8-15m): Plant feet, full cast for accuracy
-    /// - FAR (15-18m): Close distance slightly
-    /// - OUT OF RANGE (18m+): Chase to get in range
-    /// 
-    /// SUPPORT STAVES:
-    /// Protection/buff staves (StaffShield, StaffGreenRoots, etc.) target FRIENDLY units:
-    /// - Owner player
-    /// - Other companions owned by the same player
-    /// - Other tamed creatures belonging to the same owner
-    /// They should NEVER buff enemies!
-    /// 
-    /// HEALER POSITIONING:
-    /// Healers should:
-    /// - Stay near the tank/group center
-    /// - Maintain 10-15m from enemies
-    /// - Actively retreat if enemies approach
-    /// - Prioritize survival over damage
+    /// Staff combat. Offensive staves kite like BowBehavior: retreat from the danger range, backpedal while
+    /// casting when close, plant and cast at optimal range, and close the gap when too far. Support staves
+    /// (shield, roots and similar) only target the owner, the owner's other companions and their tamed
+    /// creatures, with healers holding near the group and away from enemies.
     /// </summary>
     public class StaffBehavior : WeaponBehavior
     {
@@ -64,29 +40,42 @@ namespace FiresCore.Npc.Combat
         #region Constants
         
         // Staff-specific distance zones
-        private const float DANGER_RANGE = 4f;           // Too close! Retreat!
-        private const float CLOSE_RANGE = 8f;            // Uncomfortable - back up while casting
-        private const float OPTIMAL_MIN = 8f;            // Good range starts here
-        private const float OPTIMAL_RANGE = 12f;         // Preferred distance from target
-        private const float OPTIMAL_MAX = 15f;           // Good range ends here  
-        private const float MAX_RANGE = 18f;             // Don't cast if further than this
-        private const float SUPPORT_STAFF_RANGE = 15f;   // Range for buff staves
+        private const float DangerRange = 4f;           // Too close! Retreat!
+        private const float CloseRange = 8f;            // Uncomfortable - back up while casting
+        private const float OptimalMin = 8f;            // Good range starts here
+        private const float OptimalRange = 12f;         // Preferred distance from target
+        private const float OptimalMax = 15f;           // Good range ends here  
+        private const float MaxRange = 18f;             // Don't cast if further than this
+        private const float SupportStaffRange = 15f;   // Range for buff staves
         
         // Legacy compatibility (used by ShouldAttack)
-        private const float MIN_RANGE = DANGER_RANGE;    // Alias for DANGER_RANGE
-        private const float REPOSITION_THRESHOLD = 2f;   // How close to min before repositioning
+        private const float MinRange = DangerRange;    // Alias for DangerRange
+        private const float RepositionThreshold = 2f;   // How close to min before repositioning
         
         // Healer-specific - stay even further back
-        private const float HEALER_DANGER_RANGE = 6f;    // Healers flee earlier
-        private const float HEALER_OPTIMAL_MIN = 10f;    // Healers prefer more distance
-        private const float HEALER_OPTIMAL_MAX = 15f;
+        private const float HealerDangerRange = 6f;    // Healers flee earlier
+        private const float HealerOptimalMin = 10f;    // Healers prefer more distance
+        private const float HealerOptimalMax = 15f;
         
         // Timing
-        private const float CAST_PLANT_DURATION = 0.15f; // Quick stop before casting
-        private const float REPOSITION_DURATION = 1.0f;
-        private const float THREAT_CHECK_INTERVAL = 0.2f;
-        private const float MIN_CAST_INTERVAL = 0.5f;
-        
+        private const float CastPlantDuration = 0.15f; // Quick stop before casting
+        private const float RepositionDuration = 1.0f;
+        private const float ThreatCheckInterval = 0.2f;
+
+        private const float ApproachingDotThreshold = 0.3f;
+        private const float ApproachMarginBeyondOptimal = 3f;
+        private const float OwnerShieldPriorityBase = 200f;
+        private const float OwnerShieldHealthWeight = 100f;
+        private const float SelfShieldPriorityBase = 50f;
+        private const float OtherCompanionShieldPriorityBase = 30f;
+        private const float CompanionShieldHealthWeight = 80f;
+        private const float OwnerBuffPriorityBase = 100f;
+        private const float OwnerBuffHealthWeight = 50f;
+        private const float FriendlyBuffHealthWeight = 80f;
+        private const float CompanionBuffPriorityBonus = 20f;
+        private const float EyeHeight = 1.5f;
+        private const float ProjectileSpawnHeight = 1.5f;
+
         #endregion
         
         #region State
@@ -94,7 +83,7 @@ namespace FiresCore.Npc.Combat
         // Support staff state
         private bool _isSupportStaff;
         private float _lastFriendlyScan;
-        private const float FRIENDLY_SCAN_INTERVAL = 0.5f;
+        private const float FriendlyScanInterval = 0.5f;
         private Character _friendlyTarget;
         
         // Kiting state (mirrors BowBehavior)
@@ -102,7 +91,6 @@ namespace FiresCore.Npc.Combat
         private MovementRequest _currentMovementRequest = MovementRequest.None;
         private float _phaseStartTime;
         private float _lastThreatCheck;
-        private float _lastCastTime;
         
         // Target tracking
         private float _lastKnownTargetDistance;
@@ -113,13 +101,13 @@ namespace FiresCore.Npc.Combat
         // Group awareness
         private Vector3 _groupCenterPosition;
         private float _lastGroupCenterUpdate;
-        private const float GROUP_CENTER_UPDATE_INTERVAL = 1f;
-        private const float MAX_DISTANCE_FROM_GROUP = 25f;
+        private const float GroupCenterUpdateInterval = 1f;
+        private const float MaxDistanceFromGroup = 25f;
         
         // Shield re-application during combat
         private float _lastShieldCheck;
-        private const float SHIELD_CHECK_INTERVAL = 3f;
-        private const float SHIELD_REAPPLY_COOLDOWN = 8f;
+        private const float ShieldCheckInterval = 3f;
+        private const float ShieldReapplyCooldown = 8f;
         private float _lastShieldApplication;
         private string _cachedShieldEffectName;
         private int _cachedShieldEffectHash;
@@ -157,7 +145,7 @@ namespace FiresCore.Npc.Combat
         public override void ConfigureAI()
         {
             // Staves are ranged weapons - configure like bows
-            Context.AttackRange = MAX_RANGE;
+            Context.AttackRange = MaxRange;
             
             // Detect if this is a support/protection staff
             _isSupportStaff = IsProtectionOrBuffStaff();
@@ -170,8 +158,8 @@ namespace FiresCore.Npc.Combat
             
             if (CompanionCombat.VerboseLogging)
             {
-                Debug.Log($"[StaffBehavior] Configured for STAFF combat: attackRange={MAX_RANGE}, " +
-                    $"optimalRange={OPTIMAL_RANGE}, isSupportStaff={_isSupportStaff}, " +
+                Debug.Log($"[StaffBehavior] Configured for STAFF combat: attackRange={MaxRange}, " +
+                    $"optimalRange={OptimalRange}, isSupportStaff={_isSupportStaff}, " +
                     $"shieldEffect={_cachedShieldEffectName ?? "none"}");
             }
         }
@@ -220,7 +208,7 @@ namespace FiresCore.Npc.Combat
             UpdateTargetTracking(target);
             
             // Check for threats frequently
-            if (Time.time - _lastThreatCheck >= THREAT_CHECK_INTERVAL)
+            if (Time.time - _lastThreatCheck >= ThreatCheckInterval)
             {
                 _lastThreatCheck = Time.time;
                 CheckThreatLevel(target);
@@ -238,12 +226,12 @@ namespace FiresCore.Npc.Combat
             _lastKnownTargetDistance = Vector3.Distance(Context.Transform.position, currentPos);
             
             Vector3 toUs = (Context.Transform.position - currentPos).normalized;
-            _targetIsApproaching = Vector3.Dot(_lastKnownTargetVelocity.normalized, toUs) > 0.3f;
+            _targetIsApproaching = Vector3.Dot(_lastKnownTargetVelocity.normalized, toUs) > ApproachingDotThreshold;
         }
         
         private void UpdateGroupCenter()
         {
-            if (Time.time - _lastGroupCenterUpdate < GROUP_CENTER_UPDATE_INTERVAL) return;
+            if (Time.time - _lastGroupCenterUpdate < GroupCenterUpdateInterval) return;
             _lastGroupCenterUpdate = Time.time;
             
             var companion = Context.Companion;
@@ -281,7 +269,7 @@ namespace FiresCore.Npc.Combat
             if (_groupCenterPosition != Vector3.zero)
             {
                 float distFromGroup = Vector3.Distance(Context.Transform.position, _groupCenterPosition);
-                if (distFromGroup > MAX_DISTANCE_FROM_GROUP)
+                if (distFromGroup > MaxDistanceFromGroup)
                 {
                     // Return to group
                     RequestMovement(MovementRequest.MoveToAllies, (_groupCenterPosition - Context.Transform.position).normalized);
@@ -324,7 +312,7 @@ namespace FiresCore.Npc.Combat
                     break;
                     
                 case StaffCombatPhase.Planting:
-                    if (timeSincePhaseStart >= CAST_PLANT_DURATION)
+                    if (timeSincePhaseStart >= CastPlantDuration)
                     {
                         // Ready to cast - handled by ShouldAttack
                         SetPhase(StaffCombatPhase.Casting);
@@ -347,7 +335,6 @@ namespace FiresCore.Npc.Combat
         
         private void DecideNextAction(Character target)
         {
-            if (Time.time - _lastCastTime < MIN_CAST_INTERVAL) return;
             if (Context != null && Context.IsAnimationLocked) return;
             
             float dangerRange = GetEffectiveDangerRange();
@@ -355,7 +342,7 @@ namespace FiresCore.Npc.Combat
             float optimalMin = GetEffectiveOptimalMin();
             float optimalMax = GetEffectiveOptimalMax();
             
-            if (_lastKnownTargetDistance > MAX_RANGE)
+            if (_lastKnownTargetDistance > MaxRange)
             {
                 // Too far - approach
                 SetPhase(StaffCombatPhase.Approaching);
@@ -381,7 +368,7 @@ namespace FiresCore.Npc.Combat
             else if (_lastKnownTargetDistance > optimalMax)
             {
                 // A bit far but castable - approach slightly or just cast
-                if (_lastKnownTargetDistance > optimalMax + 3f)
+                if (_lastKnownTargetDistance > optimalMax + ApproachMarginBeyondOptimal)
                 {
                     SetPhase(StaffCombatPhase.Approaching);
                     RequestMovement(MovementRequest.Approach, GetDirectionToTarget(target));
@@ -404,7 +391,7 @@ namespace FiresCore.Npc.Combat
             }
             
             // Check if approaching enemy - maybe reconsider
-            if (_targetIsApproaching && _lastKnownTargetDistance < MAX_RANGE)
+            if (_targetIsApproaching && _lastKnownTargetDistance < MaxRange)
             {
                 // Enemy is coming to us - just stop and cast
                 SetPhase(StaffCombatPhase.Planting);
@@ -457,7 +444,7 @@ namespace FiresCore.Npc.Combat
         
         private void UpdateRepositioning(Character target, float timeSinceStart, float optimalMin)
         {
-            if (timeSinceStart >= REPOSITION_DURATION * 0.5f)
+            if (timeSinceStart >= RepositionDuration * 0.5f)
             {
                 if (_lastKnownTargetDistance >= optimalMin)
                 {
@@ -488,7 +475,7 @@ namespace FiresCore.Npc.Combat
             if (nearestEnemy != null)
             {
                 float distToEnemy = Vector3.Distance(Context.Transform.position, nearestEnemy.transform.position);
-                float healerDanger = HEALER_DANGER_RANGE;
+                float healerDanger = HealerDangerRange;
                 
                 if (distToEnemy < healerDanger)
                 {
@@ -517,7 +504,7 @@ namespace FiresCore.Npc.Combat
                     RequestMovement(MovementRequest.RunAway, retreatDir);
                     return;
                 }
-                else if (distToEnemy < HEALER_OPTIMAL_MIN)
+                else if (distToEnemy < HealerOptimalMin)
                 {
                     // Enemy approaching - back up while buffing
                     SetPhase(StaffCombatPhase.Repositioning);
@@ -529,7 +516,7 @@ namespace FiresCore.Npc.Combat
             if (_currentPhase != StaffCombatPhase.Retreating)
             {
                 // Find friendly to buff
-                if (Time.time - _lastFriendlyScan > FRIENDLY_SCAN_INTERVAL)
+                if (Time.time - _lastFriendlyScan > FriendlyScanInterval)
                 {
                     _lastFriendlyScan = Time.time;
                     _friendlyTarget = FindBestFriendlyTarget();
@@ -539,7 +526,7 @@ namespace FiresCore.Npc.Combat
                 if (_friendlyTarget != null && !_friendlyTarget.IsDead())
                 {
                     float distToFriendly = Vector3.Distance(Context.Transform.position, _friendlyTarget.transform.position);
-                    if (distToFriendly > SUPPORT_STAFF_RANGE)
+                    if (distToFriendly > SupportStaffRange)
                     {
                         RequestMovement(MovementRequest.MoveToAllies, (_friendlyTarget.transform.position - Context.Transform.position).normalized);
                     }
@@ -581,42 +568,42 @@ namespace FiresCore.Npc.Combat
         /// <summary>Gets effective danger range based on archetype (healers flee earlier).</summary>
         private float GetEffectiveDangerRange()
         {
-            if (_isSupportStaff) return HEALER_DANGER_RANGE;
-            return DANGER_RANGE;
+            if (_isSupportStaff) return HealerDangerRange;
+            return DangerRange;
         }
         
         /// <summary>Gets effective close range based on archetype.</summary>
         private float GetEffectiveCloseRange()
         {
-            if (_isSupportStaff) return HEALER_OPTIMAL_MIN;
-            return CLOSE_RANGE;
+            if (_isSupportStaff) return HealerOptimalMin;
+            return CloseRange;
         }
         
         /// <summary>Gets effective optimal minimum range.</summary>
         private float GetEffectiveOptimalMin()
         {
-            if (_isSupportStaff) return HEALER_OPTIMAL_MIN;
-            return OPTIMAL_MIN;
+            if (_isSupportStaff) return HealerOptimalMin;
+            return OptimalMin;
         }
         
         /// <summary>Gets effective optimal maximum range.</summary>
         private float GetEffectiveOptimalMax()
         {
-            if (_isSupportStaff) return HEALER_OPTIMAL_MAX;
-            return OPTIMAL_MAX;
+            if (_isSupportStaff) return HealerOptimalMax;
+            return OptimalMax;
         }
         
         /// <summary>Called by CompanionCombatMovement to get the preferred combat distance.</summary>
         public float GetPreferredRange()
         {
-            if (_isSupportStaff) return (HEALER_OPTIMAL_MIN + HEALER_OPTIMAL_MAX) / 2f;
-            return OPTIMAL_RANGE;
+            if (_isSupportStaff) return (HealerOptimalMin + HealerOptimalMax) / 2f;
+            return OptimalRange;
         }
         
         /// <summary>Called by CompanionCombatMovement to check if we're too close and need to back up.</summary>
         public bool ShouldBackUp(float distanceToTarget)
         {
-            float minRange = _isSupportStaff ? HEALER_DANGER_RANGE : DANGER_RANGE;
+            float minRange = _isSupportStaff ? HealerDangerRange : DangerRange;
             return distanceToTarget < minRange;
         }
         
@@ -766,10 +753,10 @@ namespace FiresCore.Npc.Combat
             float distance = Vector3.Distance(Context.Transform.position, target.transform.position);
             
             // Don't attack if too far
-            if (distance > MAX_RANGE) return false;
+            if (distance > MaxRange) return false;
             
             // Don't attack if too close - we should be repositioning
-            if (distance < MIN_RANGE - REPOSITION_THRESHOLD) return false;
+            if (distance < MinRange - RepositionThreshold) return false;
             
             // Check line of sight
             if (!HasLineOfSight(target)) return false;
@@ -792,7 +779,7 @@ namespace FiresCore.Npc.Combat
             }
             
             // Check if we need to re-apply shields (every few seconds during combat)
-            if (Time.time - _lastShieldCheck > SHIELD_CHECK_INTERVAL)
+            if (Time.time - _lastShieldCheck > ShieldCheckInterval)
             {
                 _lastShieldCheck = Time.time;
                 
@@ -800,7 +787,7 @@ namespace FiresCore.Npc.Combat
                 if (PartyNeedsShields())
                 {
                     // Respect the cooldown to prevent spam
-                    if (Time.time - _lastShieldApplication >= SHIELD_REAPPLY_COOLDOWN)
+                    if (Time.time - _lastShieldApplication >= ShieldReapplyCooldown)
                     {
                         _friendlyTarget = FindPartyMemberNeedingShield();
                         
@@ -817,7 +804,7 @@ namespace FiresCore.Npc.Combat
             }
             
             // Standard friendly scan for initial application
-            if (Time.time - _lastFriendlyScan > FRIENDLY_SCAN_INTERVAL)
+            if (Time.time - _lastFriendlyScan > FriendlyScanInterval)
             {
                 _lastFriendlyScan = Time.time;
                 _friendlyTarget = FindBestFriendlyTarget();
@@ -830,7 +817,7 @@ namespace FiresCore.Npc.Combat
             }
             
             float distance = Vector3.Distance(Context.Transform.position, _friendlyTarget.transform.position);
-            if (distance > SUPPORT_STAFF_RANGE) return false;
+            if (distance > SupportStaffRange) return false;
             
             // Check line of sight to friendly
             if (!HasLineOfSight(_friendlyTarget)) return false;
@@ -873,7 +860,7 @@ namespace FiresCore.Npc.Combat
                 if (character.IsTamed() || character.IsPlayer()) continue;
                 
                 float dist = Vector3.Distance(myPos, character.transform.position);
-                if (dist <= SUPPORT_STAFF_RANGE)
+                if (dist <= SupportStaffRange)
                 {
                     // There's an enemy nearby - we're in combat
                     return true;
@@ -901,7 +888,7 @@ namespace FiresCore.Npc.Combat
             if (owner != null && !owner.IsDead())
             {
                 float dist = Vector3.Distance(myPos, owner.transform.position);
-                if (dist <= SUPPORT_STAFF_RANGE && !HasShieldBuff(owner))
+                if (dist <= SupportStaffRange && !HasShieldBuff(owner))
                 {
                     return true;
                 }
@@ -925,7 +912,7 @@ namespace FiresCore.Npc.Combat
                 if (otherCompanion != null && otherCompanion.ownerPlayerId == ownerId)
                 {
                     float dist = Vector3.Distance(myPos, character.transform.position);
-                    if (dist <= SUPPORT_STAFF_RANGE && !HasShieldBuff(character))
+                    if (dist <= SupportStaffRange && !HasShieldBuff(character))
                     {
                         return true;
                     }
@@ -957,10 +944,10 @@ namespace FiresCore.Npc.Combat
             if (owner != null && !owner.IsDead())
             {
                 float dist = Vector3.Distance(myPos, owner.transform.position);
-                if (dist <= SUPPORT_STAFF_RANGE && !HasShieldBuff(owner))
+                if (dist <= SupportStaffRange && !HasShieldBuff(owner))
                 {
                     float healthMissing = 1f - owner.GetHealthPercentage();
-                    float score = 200f + (healthMissing * 100f); // Owner gets huge priority
+                    float score = OwnerShieldPriorityBase + (healthMissing * OwnerShieldHealthWeight); // Owner gets huge priority
                     
                     if (score > bestScore)
                     {
@@ -974,7 +961,7 @@ namespace FiresCore.Npc.Combat
             if (Context.Character != null && !Context.Character.IsDead() && !HasShieldBuff(Context.Character))
             {
                 float healthMissing = 1f - Context.Character.GetHealthPercentage();
-                float score = 50f + (healthMissing * 80f);
+                float score = SelfShieldPriorityBase + (healthMissing * CompanionShieldHealthWeight);
                 
                 if (score > bestScore)
                 {
@@ -995,10 +982,10 @@ namespace FiresCore.Npc.Combat
                 if (otherCompanion != null && otherCompanion.ownerPlayerId == ownerId)
                 {
                     float dist = Vector3.Distance(myPos, character.transform.position);
-                    if (dist <= SUPPORT_STAFF_RANGE && !HasShieldBuff(character))
+                    if (dist <= SupportStaffRange && !HasShieldBuff(character))
                     {
                         float healthMissing = 1f - character.GetHealthPercentage();
-                        float score = 30f + (healthMissing * 80f);
+                        float score = OtherCompanionShieldPriorityBase + (healthMissing * CompanionShieldHealthWeight);
                         
                         if (score > bestScore)
                         {
@@ -1045,11 +1032,11 @@ namespace FiresCore.Npc.Combat
             if (owner != null && !owner.IsDead())
             {
                 float dist = Vector3.Distance(myPos, owner.transform.position);
-                if (dist <= SUPPORT_STAFF_RANGE)
+                if (dist <= SupportStaffRange)
                 {
                     // Owner always gets high priority, especially if damaged
                     float healthMissing = 1f - owner.GetHealthPercentage();
-                    float score = 100f + (healthMissing * 50f) - (dist * 0.5f);
+                    float score = OwnerBuffPriorityBase + (healthMissing * OwnerBuffHealthWeight) - (dist * 0.5f);
                     
                     if (score > bestScore)
                     {
@@ -1070,17 +1057,17 @@ namespace FiresCore.Npc.Combat
                 if (!IsFriendlyTarget(character, ownerId)) continue;
                 
                 float dist = Vector3.Distance(myPos, character.transform.position);
-                if (dist > SUPPORT_STAFF_RANGE) continue;
+                if (dist > SupportStaffRange) continue;
                 
                 // Score based on health missing and distance
                 float healthMissing = 1f - character.GetHealthPercentage();
-                float score = (healthMissing * 80f) - (dist * 0.5f);
+                float score = (healthMissing * FriendlyBuffHealthWeight) - (dist * 0.5f);
                 
                 // Bonus for other companions
                 var otherCompanion = character.GetComponent<CompanionController>();
                 if (otherCompanion != null)
                 {
-                    score += 20f;
+                    score += CompanionBuffPriorityBonus;
                 }
                 
                 if (score > bestScore)
@@ -1142,7 +1129,7 @@ namespace FiresCore.Npc.Combat
         {
             if (target == null) return false;
             
-            Vector3 eyePos = Context.Transform.position + Vector3.up * 1.5f;
+            Vector3 eyePos = Context.Transform.position + Vector3.up * EyeHeight;
             Vector3 targetPos = target.transform.position + Vector3.up * 1f;
             Vector3 direction = targetPos - eyePos;
             float distance = direction.magnitude;
@@ -1271,7 +1258,7 @@ private IEnumerator ProjectileAttackCoroutine(Character target, Attack attackTem
         }
       
     // Calculate spawn position (from character's chest/hands area)
-   Vector3 spawnPos = Context.Transform.position + Vector3.up * 1.5f + Context.Transform.forward * 0.5f;
+   Vector3 spawnPos = Context.Transform.position + Vector3.up * ProjectileSpawnHeight + Context.Transform.forward * 0.5f;
      
     // Calculate direction to target
             Vector3 targetPos = target.transform.position + Vector3.up * 1f;
@@ -1411,7 +1398,7 @@ HitData hitData = Context.CreateHitData(target);
             if (owner != null && !owner.IsDead())
             {
                 float dist = Vector3.Distance(myPos, owner.transform.position);
-                if (dist <= SUPPORT_STAFF_RANGE)
+                if (dist <= SupportStaffRange)
                 {
                     ApplyStatusEffectDirectly(owner, effectName);
                     buffedCount++;
@@ -1436,7 +1423,7 @@ HitData hitData = Context.CreateHitData(target);
                 if (otherCompanion != null && otherCompanion.ownerPlayerId == ownerId)
                 {
                     float dist = Vector3.Distance(myPos, character.transform.position);
-                    if (dist <= SUPPORT_STAFF_RANGE)
+                    if (dist <= SupportStaffRange)
                     {
                         ApplyStatusEffectDirectly(character, effectName);
                         buffedCount++;
@@ -1502,11 +1489,11 @@ HitData hitData = Context.CreateHitData(target);
                     // Try finding by iterating through all status effects
                     if (ObjectDB.instance != null)
                     {
-                        foreach (var se in ObjectDB.instance.m_StatusEffects)
+                        foreach (var statusEffect in ObjectDB.instance.m_StatusEffects)
                         {
-                            if (se != null && se.name.Equals(effectName, System.StringComparison.OrdinalIgnoreCase))
+                            if (statusEffect != null && statusEffect.name.Equals(effectName, System.StringComparison.OrdinalIgnoreCase))
                             {
-                                seman.AddStatusEffect(se, true);
+                                seman.AddStatusEffect(statusEffect, true);
                                 if (CompanionCombat.VerboseLogging)
                                 {
                                     Debug.Log($"[StaffBehavior] Applied status effect by name match: {effectName} to {target.m_name}");

@@ -53,20 +53,20 @@ namespace FiresCore.UI
 
             _panel = new GameObject("Panel");
             _panel.transform.SetParent(_canvasGo.transform, false);
-            var prt = _panel.AddComponent<RectTransform>();
-            prt.sizeDelta = new Vector2(560f, 580f);
-            prt.anchorMin = prt.anchorMax = new Vector2(0.5f, 0.5f);
-            prt.anchoredPosition = Vector2.zero;
+            var panelRect = _panel.AddComponent<RectTransform>();
+            panelRect.sizeDelta = new Vector2(560f, 580f);
+            panelRect.anchorMin = panelRect.anchorMax = new Vector2(0.5f, 0.5f);
+            panelRect.anchoredPosition = Vector2.zero;
             _panel.AddComponent<Image>().color = UIFontConfig.Colors.ParchmentPanel;
-            var ol = _panel.AddComponent<Outline>();
-            ol.effectColor = UIFontConfig.Colors.ParchmentOutline;
-            ol.effectDistance = new Vector2(2.5f, -2.5f);
-            _panel.AddComponent<DragMove>().Target = prt;
+            var outline = _panel.AddComponent<Outline>();
+            outline.effectColor = UIFontConfig.Colors.ParchmentOutline;
+            outline.effectDistance = new Vector2(2.5f, -2.5f);
+            _panel.AddComponent<DragMove>().Target = panelRect;
 
             var title = MakeLabel(_panel.transform, "Title", "Configure Environment Box", 24f, UIFontConfig.Colors.ParchmentInk, TextAlignmentOptions.Center);
-            var trt = title.rectTransform;
-            trt.anchorMin = new Vector2(0f, 1f); trt.anchorMax = new Vector2(1f, 1f); trt.pivot = new Vector2(0.5f, 1f);
-            trt.sizeDelta = new Vector2(-24f, 40f); trt.anchoredPosition = new Vector2(0f, -12f);
+            var titleRect = title.rectTransform;
+            titleRect.anchorMin = new Vector2(0f, 1f); titleRect.anchorMax = new Vector2(1f, 1f); titleRect.pivot = new Vector2(0.5f, 1f);
+            titleRect.sizeDelta = new Vector2(-24f, 40f); titleRect.anchoredPosition = new Vector2(0f, -12f);
 
             var contentGo = new GameObject("Content", typeof(RectTransform));
             _content = contentGo.GetComponent<RectTransform>();
@@ -97,40 +97,40 @@ namespace FiresCore.UI
             if (_content == null || _box == null) return;
             for (int i = _content.childCount - 1; i >= 0; i--)
             {
-                var c = _content.GetChild(i);
-                c.gameObject.SetActive(false);
-                UnityEngine.Object.Destroy(c.gameObject);
+                var child = _content.GetChild(i);
+                child.gameObject.SetActive(false);
+                UnityEngine.Object.Destroy(child.gameObject);
             }
 
             int row = 0;
 
             // Environment — the FULL EnvMan list ("" shown as "Nothing").
             var envNames = EnvironmentBoxController.EnvironmentNames;
-            var eOpts = new List<string>(envNames.Length);
-            foreach (var e in envNames) eOpts.Add(string.IsNullOrEmpty(e) ? "Nothing" : e);
-            int eIdx = Array.IndexOf(envNames, _box.EnvironmentName);
-            if (eIdx < 0) eIdx = 0;
-            AddDropdownRow(row++, "Environment", eOpts, eIdx, i =>
+            var envOptions = new List<string>(envNames.Length);
+            foreach (var envName in envNames) envOptions.Add(string.IsNullOrEmpty(envName) ? "Nothing" : envName);
+            int envIndex = Array.IndexOf(envNames, _box.EnvironmentName);
+            if (envIndex < 0) envIndex = 0;
+            AddDropdownRow(row++, "Environment", envOptions, envIndex, i =>
             {
                 if (i >= 0 && i < envNames.Length) _box.SetEnvironment(envNames[i]);
             });
 
             // Biome — the controller's own biome option list.
             var biomes = EnvironmentBoxController.BiomeOptions;
-            var bOpts = new List<string>(biomes.Length);
-            foreach (var b in biomes) bOpts.Add(b == Heightmap.Biome.None ? "None" : b.ToString());
-            int bIdx = Array.IndexOf(biomes, _box.ForcedBiome);
-            if (bIdx < 0) bIdx = 0;
-            AddDropdownRow(row++, "Biome", bOpts, bIdx, i =>
+            var biomeOptions = new List<string>(biomes.Length);
+            foreach (var biome in biomes) biomeOptions.Add(biome == Heightmap.Biome.None ? "None" : biome.ToString());
+            int biomeIndex = Array.IndexOf(biomes, _box.ForcedBiome);
+            if (biomeIndex < 0) biomeIndex = 0;
+            AddDropdownRow(row++, "Biome", biomeOptions, biomeIndex, i =>
             {
                 if (i >= 0 && i < biomes.Length) _box.SetBiome(biomes[i]);
             });
 
             // Skybox / Visibility — enum-populated.
             var skyboxes = (EnvironmentBoxController.SkyboxMode[])Enum.GetValues(typeof(EnvironmentBoxController.SkyboxMode));
-            var sOpts = new List<string>(skyboxes.Length);
-            foreach (var s in skyboxes) sOpts.Add(s.ToString());
-            AddDropdownRow(row++, "Skybox", sOpts, Array.IndexOf(skyboxes, _box.CurrentSkyboxMode), i =>
+            var skyboxOptions = new List<string>(skyboxes.Length);
+            foreach (var skybox in skyboxes) skyboxOptions.Add(skybox.ToString());
+            AddDropdownRow(row++, "Skybox", skyboxOptions, Array.IndexOf(skyboxes, _box.CurrentSkyboxMode), i =>
             {
                 if (i >= 0 && i < skyboxes.Length) _box.SetSkyboxMode(skyboxes[i]);
             });
@@ -143,28 +143,28 @@ namespace FiresCore.UI
                 EnvironmentBoxController.VisibilityMode.EdgesOnly,
                 EnvironmentBoxController.VisibilityMode.Hidden,
             };
-            var vOpts = new List<string> { "Full", "EdgesOnly", "Hidden" };
-            int vIdx = Array.IndexOf(visibilities, _box.CurrentVisibility);
-            if (vIdx < 0) vIdx = 0;
-            Debug.Log($"[EnvBoxPanel] visibility dropdown built with: {string.Join(", ", vOpts)} (current={_box.CurrentVisibility})");
-            AddDropdownRow(row++, "Visibility", vOpts, vIdx, i =>
+            var visibilityOptions = new List<string> { "Full", "EdgesOnly", "Hidden" };
+            int visibilityIndex = Array.IndexOf(visibilities, _box.CurrentVisibility);
+            if (visibilityIndex < 0) visibilityIndex = 0;
+            Debug.Log($"[EnvBoxPanel] visibility dropdown built with: {string.Join(", ", visibilityOptions)} (current={_box.CurrentVisibility})");
+            AddDropdownRow(row++, "Visibility", visibilityOptions, visibilityIndex, i =>
             {
                 if (i >= 0 && i < visibilities.Length) _box.SetVisibility(visibilities[i]);
             });
 
             // Wind / Time — enum-populated with the controller's display names.
             var winds = (EnvironmentBoxController.WindIntensity[])Enum.GetValues(typeof(EnvironmentBoxController.WindIntensity));
-            var wOpts = new List<string>(winds.Length);
-            foreach (var w in winds) wOpts.Add(EnvironmentBoxController.GetWindIntensityName(w));
-            AddDropdownRow(row++, "Wind", wOpts, Array.IndexOf(winds, _box.CurrentWindIntensity), i =>
+            var windOptions = new List<string>(winds.Length);
+            foreach (var wind in winds) windOptions.Add(EnvironmentBoxController.GetWindIntensityName(wind));
+            AddDropdownRow(row++, "Wind", windOptions, Array.IndexOf(winds, _box.CurrentWindIntensity), i =>
             {
                 if (i >= 0 && i < winds.Length) _box.SetWindIntensity(winds[i]);
             });
 
             var times = (EnvironmentBoxController.ForcedTimeOfDay[])Enum.GetValues(typeof(EnvironmentBoxController.ForcedTimeOfDay));
-            var tOpts = new List<string>(times.Length);
-            foreach (var t in times) tOpts.Add(EnvironmentBoxController.GetTimeOfDayName(t));
-            AddDropdownRow(row++, "Time", tOpts, Array.IndexOf(times, _box.CurrentTimeOfDay), i =>
+            var timeOptions = new List<string>(times.Length);
+            foreach (var time in times) timeOptions.Add(EnvironmentBoxController.GetTimeOfDayName(time));
+            AddDropdownRow(row++, "Time", timeOptions, Array.IndexOf(times, _box.CurrentTimeOfDay), i =>
             {
                 if (i >= 0 && i < times.Length) _box.SetTimeOfDay(times[i]);
             });
@@ -188,12 +188,12 @@ namespace FiresCore.UI
         private static RectTransform NewRow(int index)
         {
             var go = new GameObject("Row" + index, typeof(RectTransform));
-            var rt = go.GetComponent<RectTransform>();
-            rt.SetParent(_content, false);
-            rt.anchorMin = new Vector2(0.05f, 1f); rt.anchorMax = new Vector2(0.95f, 1f); rt.pivot = new Vector2(0.5f, 1f);
-            rt.sizeDelta = new Vector2(0f, RowH);
-            rt.anchoredPosition = new Vector2(0f, -index * (RowH + RowGap));
-            return rt;
+            var rect = go.GetComponent<RectTransform>();
+            rect.SetParent(_content, false);
+            rect.anchorMin = new Vector2(0.05f, 1f); rect.anchorMax = new Vector2(0.95f, 1f); rect.pivot = new Vector2(0.5f, 1f);
+            rect.sizeDelta = new Vector2(0f, RowH);
+            rect.anchoredPosition = new Vector2(0f, -index * (RowH + RowGap));
+            return rect;
         }
 
         private static void AddCycle(int index, string label, string value, UnityEngine.Events.UnityAction onClick)
@@ -209,8 +209,8 @@ namespace FiresCore.UI
         {
             var row = NewRow(index);
             var lbl = MakeLabel(row, "Label", "Size (X·Y·Z)", 15f, UIFontConfig.Colors.ParchmentInk, TextAlignmentOptions.MidlineLeft);
-            var lrt = lbl.rectTransform;
-            lrt.anchorMin = new Vector2(0f, 0f); lrt.anchorMax = new Vector2(0.34f, 1f); lrt.offsetMin = lrt.offsetMax = Vector2.zero;
+            var labelRect = lbl.rectTransform;
+            labelRect.anchorMin = new Vector2(0f, 0f); labelRect.anchorMax = new Vector2(0.34f, 1f); labelRect.offsetMin = labelRect.offsetMax = Vector2.zero;
 
             _sizeX = SizeField(row, "X", new Vector2(0.36f, 0.05f), new Vector2(0.56f, 0.95f), _box.BoxSize.x);
             _sizeY = SizeField(row, "Y", new Vector2(0.58f, 0.05f), new Vector2(0.78f, 0.95f), _box.BoxSize.y);
@@ -229,11 +229,11 @@ namespace FiresCore.UI
         private static void ApplySize()
         {
             if (_box == null) return;
-            Vector3 s = _box.BoxSize;
-            if (float.TryParse(_sizeX != null ? _sizeX.text : "", out float x)) s.x = x;
-            if (float.TryParse(_sizeY != null ? _sizeY.text : "", out float y)) s.y = y;
-            if (float.TryParse(_sizeZ != null ? _sizeZ.text : "", out float z)) s.z = z;
-            _box.SetSize(s);
+            Vector3 size = _box.BoxSize;
+            if (float.TryParse(_sizeX != null ? _sizeX.text : "", out float x)) size.x = x;
+            if (float.TryParse(_sizeY != null ? _sizeY.text : "", out float y)) size.y = y;
+            if (float.TryParse(_sizeZ != null ? _sizeZ.text : "", out float z)) size.z = z;
+            _box.SetSize(size);
             RefreshSizeFields();
         }
 
@@ -257,21 +257,21 @@ namespace FiresCore.UI
             var row = NewRow(index);
             float pct = Mathf.Clamp(_box.BoxSize.x / ScaleBase.x * 100f, 0f, 1000f);
             var lbl = MakeLabel(row, "Label", $"Scale: {pct:0}%", 15f, UIFontConfig.Colors.ParchmentInk, TextAlignmentOptions.MidlineLeft);
-            var lrt = lbl.rectTransform;
-            lrt.anchorMin = new Vector2(0f, 0f); lrt.anchorMax = new Vector2(0.34f, 1f); lrt.offsetMin = lrt.offsetMax = Vector2.zero;
+            var labelRect = lbl.rectTransform;
+            labelRect.anchorMin = new Vector2(0f, 0f); labelRect.anchorMax = new Vector2(0.34f, 1f); labelRect.offsetMin = labelRect.offsetMax = Vector2.zero;
 
-            var sgo = new GameObject("ScaleSlider", typeof(RectTransform));
-            sgo.transform.SetParent(row, false);
-            var srt = (RectTransform)sgo.transform;
-            srt.anchorMin = new Vector2(0.36f, 0.30f); srt.anchorMax = new Vector2(1f, 0.70f); srt.offsetMin = srt.offsetMax = Vector2.zero;
-            var bg = sgo.AddComponent<Image>(); bg.color = UIFontConfig.Colors.ParchmentField;
+            var sliderGo = new GameObject("ScaleSlider", typeof(RectTransform));
+            sliderGo.transform.SetParent(row, false);
+            var sliderRect = (RectTransform)sliderGo.transform;
+            sliderRect.anchorMin = new Vector2(0.36f, 0.30f); sliderRect.anchorMax = new Vector2(1f, 0.70f); sliderRect.offsetMin = sliderRect.offsetMax = Vector2.zero;
+            var image = sliderGo.AddComponent<Image>(); image.color = UIFontConfig.Colors.ParchmentField;
 
-            var slider = sgo.AddComponent<Slider>();
+            var slider = sliderGo.AddComponent<Slider>();
 
             var fillArea = new GameObject("Fill Area", typeof(RectTransform));
-            fillArea.transform.SetParent(sgo.transform, false);
-            var faRt = (RectTransform)fillArea.transform;
-            faRt.anchorMin = Vector2.zero; faRt.anchorMax = Vector2.one; faRt.offsetMin = new Vector2(2f, 2f); faRt.offsetMax = new Vector2(-2f, -2f);
+            fillArea.transform.SetParent(sliderGo.transform, false);
+            var fillAreaRect = (RectTransform)fillArea.transform;
+            fillAreaRect.anchorMin = Vector2.zero; fillAreaRect.anchorMax = Vector2.one; fillAreaRect.offsetMin = new Vector2(2f, 2f); fillAreaRect.offsetMax = new Vector2(-2f, -2f);
             var fillGo = new GameObject("Fill", typeof(RectTransform));
             fillGo.transform.SetParent(fillArea.transform, false);
             var fillRt = (RectTransform)fillGo.transform;
@@ -279,17 +279,17 @@ namespace FiresCore.UI
             fillGo.AddComponent<Image>().color = UIFontConfig.Colors.ParchmentButton;
 
             var handleArea = new GameObject("Handle Slide Area", typeof(RectTransform));
-            handleArea.transform.SetParent(sgo.transform, false);
-            var haRt = (RectTransform)handleArea.transform;
-            haRt.anchorMin = Vector2.zero; haRt.anchorMax = Vector2.one; haRt.offsetMin = new Vector2(8f, 0f); haRt.offsetMax = new Vector2(-8f, 0f);
+            handleArea.transform.SetParent(sliderGo.transform, false);
+            var handleAreaRect = (RectTransform)handleArea.transform;
+            handleAreaRect.anchorMin = Vector2.zero; handleAreaRect.anchorMax = Vector2.one; handleAreaRect.offsetMin = new Vector2(8f, 0f); handleAreaRect.offsetMax = new Vector2(-8f, 0f);
             var handleGo = new GameObject("Handle", typeof(RectTransform));
             handleGo.transform.SetParent(handleArea.transform, false);
-            var hRt = (RectTransform)handleGo.transform;
-            hRt.sizeDelta = new Vector2(16f, 0f);
+            var handleRect = (RectTransform)handleGo.transform;
+            handleRect.sizeDelta = new Vector2(16f, 0f);
             var hImg = handleGo.AddComponent<Image>(); hImg.color = UIFontConfig.Colors.ParchmentButtonInk;
 
             slider.fillRect = fillRt;
-            slider.handleRect = hRt;
+            slider.handleRect = handleRect;
             slider.targetGraphic = hImg;
             slider.minValue = 0f; slider.maxValue = 1000f; slider.wholeNumbers = true;
             slider.SetValueWithoutNotify(pct);
@@ -309,8 +309,8 @@ namespace FiresCore.UI
         {
             var row = NewRow(index);
             var lbl = MakeLabel(row, "Label", label, 15f, UIFontConfig.Colors.ParchmentInk, TextAlignmentOptions.MidlineLeft);
-            var lrt = lbl.rectTransform;
-            lrt.anchorMin = new Vector2(0f, 0f); lrt.anchorMax = new Vector2(0.34f, 1f); lrt.offsetMin = lrt.offsetMax = Vector2.zero;
+            var labelRect = lbl.rectTransform;
+            labelRect.anchorMin = new Vector2(0f, 0f); labelRect.anchorMax = new Vector2(0.34f, 1f); labelRect.offsetMin = labelRect.offsetMax = Vector2.zero;
 
             var holder = new GameObject("DDHolder", typeof(RectTransform));
             var hrt = holder.GetComponent<RectTransform>();
@@ -324,92 +324,92 @@ namespace FiresCore.UI
         {
             var go = new GameObject("Dropdown", typeof(RectTransform));
             go.transform.SetParent(parent, false);
-            var rt = go.GetComponent<RectTransform>();
-            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = rt.offsetMax = Vector2.zero;
-            var bg = go.AddComponent<Image>(); bg.color = UIFontConfig.Colors.ParchmentField; bg.raycastTarget = true;
-            var dd = go.AddComponent<TMP_Dropdown>();
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one; rect.offsetMin = rect.offsetMax = Vector2.zero;
+            var image = go.AddComponent<Image>(); image.color = UIFontConfig.Colors.ParchmentField; image.raycastTarget = true;
+            var dropdown = go.AddComponent<TMP_Dropdown>();
 
             var cap = ChildText(go.transform, "Label", 14f, UIFontConfig.Colors.ParchmentInk, TextAlignmentOptions.MidlineLeft);
-            var capRt = cap.rectTransform; capRt.anchorMin = Vector2.zero; capRt.anchorMax = Vector2.one; capRt.offsetMin = new Vector2(8, 2); capRt.offsetMax = new Vector2(-20, -2);
+            var captionRect = cap.rectTransform; captionRect.anchorMin = Vector2.zero; captionRect.anchorMax = Vector2.one; captionRect.offsetMin = new Vector2(8, 2); captionRect.offsetMax = new Vector2(-20, -2);
 
             var arr = ChildText(go.transform, "Arrow", 10f, UIFontConfig.Colors.ParchmentInk, TextAlignmentOptions.Center);
             arr.text = "▼";
-            var arrRt = arr.rectTransform; arrRt.anchorMin = new Vector2(1, 0.5f); arrRt.anchorMax = new Vector2(1, 0.5f); arrRt.pivot = new Vector2(1, 0.5f); arrRt.anchoredPosition = new Vector2(-6, 0); arrRt.sizeDelta = new Vector2(16, 16);
+            var arrowRect = arr.rectTransform; arrowRect.anchorMin = new Vector2(1, 0.5f); arrowRect.anchorMax = new Vector2(1, 0.5f); arrowRect.pivot = new Vector2(1, 0.5f); arrowRect.anchoredPosition = new Vector2(-6, 0); arrowRect.sizeDelta = new Vector2(16, 16);
 
             // CANONICAL uGUI dropdown template — NO layout group / fitter on Content. TMP_Dropdown positions and
             // sizes the item clones ITSELF against this exact structure (Content = one item high; items anchored to
             // the vertical middle). The old hand-rolled VerticalLayoutGroup fought that placement and swallowed the
             // LAST option (the "Hidden is missing" bug — obvious on 3-entry lists, unnoticed on 50-entry ones).
-            var tmpl = new GameObject("Template", typeof(RectTransform)); tmpl.transform.SetParent(go.transform, false);
-            var tRt = tmpl.GetComponent<RectTransform>();
-            tRt.anchorMin = new Vector2(0, 0); tRt.anchorMax = new Vector2(1, 0); tRt.pivot = new Vector2(0.5f, 1); tRt.anchoredPosition = new Vector2(0, 2); tRt.sizeDelta = new Vector2(0, 168);
-            tmpl.AddComponent<Image>().color = UIFontConfig.Colors.ParchmentPanel;
-            var tScroll = tmpl.AddComponent<ScrollRect>();
+            var template = new GameObject("Template", typeof(RectTransform)); template.transform.SetParent(go.transform, false);
+            var templateRect = template.GetComponent<RectTransform>();
+            templateRect.anchorMin = new Vector2(0, 0); templateRect.anchorMax = new Vector2(1, 0); templateRect.pivot = new Vector2(0.5f, 1); templateRect.anchoredPosition = new Vector2(0, 2); templateRect.sizeDelta = new Vector2(0, 168);
+            template.AddComponent<Image>().color = UIFontConfig.Colors.ParchmentPanel;
+            var tScroll = template.AddComponent<ScrollRect>();
 
-            var vp = new GameObject("Viewport", typeof(RectTransform)); vp.transform.SetParent(tmpl.transform, false);
-            var vpRt = vp.GetComponent<RectTransform>();
-            vpRt.anchorMin = Vector2.zero; vpRt.anchorMax = Vector2.one; vpRt.pivot = new Vector2(0f, 1f);
-            vpRt.offsetMin = new Vector2(2, 2); vpRt.offsetMax = new Vector2(-2, -2);
-            vp.AddComponent<RectMask2D>();
+            var viewport = new GameObject("Viewport", typeof(RectTransform)); viewport.transform.SetParent(template.transform, false);
+            var viewportRect = viewport.GetComponent<RectTransform>();
+            viewportRect.anchorMin = Vector2.zero; viewportRect.anchorMax = Vector2.one; viewportRect.pivot = new Vector2(0f, 1f);
+            viewportRect.offsetMin = new Vector2(2, 2); viewportRect.offsetMax = new Vector2(-2, -2);
+            viewport.AddComponent<RectMask2D>();
 
-            var content = new GameObject("Content", typeof(RectTransform)); content.transform.SetParent(vp.transform, false);
-            var cRt = content.GetComponent<RectTransform>();
-            cRt.anchorMin = new Vector2(0f, 1f); cRt.anchorMax = new Vector2(1f, 1f); cRt.pivot = new Vector2(0.5f, 1f);
-            cRt.anchoredPosition = Vector2.zero; cRt.sizeDelta = new Vector2(0, 28);   // ONE item high — the dropdown grows it per option
+            var content = new GameObject("Content", typeof(RectTransform)); content.transform.SetParent(viewport.transform, false);
+            var contentRect = content.GetComponent<RectTransform>();
+            contentRect.anchorMin = new Vector2(0f, 1f); contentRect.anchorMax = new Vector2(1f, 1f); contentRect.pivot = new Vector2(0.5f, 1f);
+            contentRect.anchoredPosition = Vector2.zero; contentRect.sizeDelta = new Vector2(0, 28);   // ONE item high — the dropdown grows it per option
 
-            tScroll.viewport = vpRt; tScroll.content = cRt; tScroll.horizontal = false; tScroll.vertical = true; tScroll.movementType = ScrollRect.MovementType.Clamped; tScroll.scrollSensitivity = 24f;
+            tScroll.viewport = viewportRect; tScroll.content = contentRect; tScroll.horizontal = false; tScroll.vertical = true; tScroll.movementType = ScrollRect.MovementType.Clamped; tScroll.scrollSensitivity = 24f;
 
             var item = new GameObject("Item", typeof(RectTransform), typeof(Toggle));
             item.transform.SetParent(content.transform, false);
-            var iRt = (RectTransform)item.transform;
-            iRt.anchorMin = new Vector2(0f, 0.5f); iRt.anchorMax = new Vector2(1f, 0.5f); iRt.sizeDelta = new Vector2(0, 28);
+            var itemRect = (RectTransform)item.transform;
+            itemRect.anchorMin = new Vector2(0f, 0.5f); itemRect.anchorMax = new Vector2(1f, 0.5f); itemRect.sizeDelta = new Vector2(0, 28);
 
             var itemBgGo = new GameObject("Item Background", typeof(RectTransform), typeof(Image));
             itemBgGo.transform.SetParent(item.transform, false);
-            var ibRt = (RectTransform)itemBgGo.transform; ibRt.anchorMin = Vector2.zero; ibRt.anchorMax = Vector2.one; ibRt.offsetMin = ibRt.offsetMax = Vector2.zero;
+            var itemBackgroundRect = (RectTransform)itemBgGo.transform; itemBackgroundRect.anchorMin = Vector2.zero; itemBackgroundRect.anchorMax = Vector2.one; itemBackgroundRect.offsetMin = itemBackgroundRect.offsetMax = Vector2.zero;
             var itemBg = itemBgGo.GetComponent<Image>(); itemBg.color = UIFontConfig.Colors.ParchmentButton;
 
             var checkGo = new GameObject("Item Checkmark", typeof(RectTransform), typeof(Image));
             checkGo.transform.SetParent(item.transform, false);
-            var ckRt = (RectTransform)checkGo.transform;
-            ckRt.anchorMin = new Vector2(0f, 0.5f); ckRt.anchorMax = new Vector2(0f, 0.5f); ckRt.pivot = new Vector2(0f, 0.5f);
-            ckRt.anchoredPosition = new Vector2(6f, 0f); ckRt.sizeDelta = new Vector2(10f, 10f);
+            var checkRect = (RectTransform)checkGo.transform;
+            checkRect.anchorMin = new Vector2(0f, 0.5f); checkRect.anchorMax = new Vector2(0f, 0.5f); checkRect.pivot = new Vector2(0f, 0.5f);
+            checkRect.anchoredPosition = new Vector2(6f, 0f); checkRect.sizeDelta = new Vector2(10f, 10f);
             var checkImg = checkGo.GetComponent<Image>(); checkImg.color = UIFontConfig.Colors.ParchmentButtonInk;
 
             var itemLbl = ChildText(item.transform, "Item Label", 14f, UIFontConfig.Colors.ParchmentButtonInk, TextAlignmentOptions.MidlineLeft);
-            var ilRt = itemLbl.rectTransform; ilRt.anchorMin = Vector2.zero; ilRt.anchorMax = Vector2.one; ilRt.offsetMin = new Vector2(22, 0); ilRt.offsetMax = new Vector2(-6, 0);
+            var itemLabelRect = itemLbl.rectTransform; itemLabelRect.anchorMin = Vector2.zero; itemLabelRect.anchorMax = Vector2.one; itemLabelRect.offsetMin = new Vector2(22, 0); itemLabelRect.offsetMax = new Vector2(-6, 0);
 
             var toggle = item.GetComponent<Toggle>();
             toggle.targetGraphic = itemBg;
             toggle.graphic = checkImg;
 
-            dd.template = tRt; dd.captionText = cap; dd.itemText = itemLbl;
-            tmpl.SetActive(false);
+            dropdown.template = templateRect; dropdown.captionText = cap; dropdown.itemText = itemLbl;
+            template.SetActive(false);
 
-            dd.ClearOptions();
-            dd.AddOptions(options ?? new List<string>());
-            dd.value = Mathf.Clamp(value, 0, Mathf.Max(0, (options?.Count ?? 1) - 1));
-            dd.RefreshShownValue();
-            dd.onValueChanged.AddListener(onChange);
-            return dd;
+            dropdown.ClearOptions();
+            dropdown.AddOptions(options ?? new List<string>());
+            dropdown.value = Mathf.Clamp(value, 0, Mathf.Max(0, (options?.Count ?? 1) - 1));
+            dropdown.RefreshShownValue();
+            dropdown.onValueChanged.AddListener(onChange);
+            return dropdown;
         }
 
         private static TextMeshProUGUI ChildText(Transform parent, string name, float size, Color color, TextAlignmentOptions align)
         {
             var go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent, false);
-            var t = go.AddComponent<TextMeshProUGUI>();
-            t.fontSize = size; t.color = color; t.alignment = align; t.raycastTarget = false; t.enableWordWrapping = false;
-            return t;
+            var label = go.AddComponent<TextMeshProUGUI>();
+            label.fontSize = size; label.color = color; label.alignment = align; label.raycastTarget = false; label.textWrappingMode = TextWrappingModes.NoWrap;
+            return label;
         }
 
         private static TextMeshProUGUI MakeLabel(Transform parent, string name, string text, float size, Color color, TextAlignmentOptions align)
         {
             var go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent, false);
-            var t = go.AddComponent<TextMeshProUGUI>();
-            t.text = text; t.fontSize = size; t.color = color; t.alignment = align; t.raycastTarget = false;
-            return t;
+            var label = go.AddComponent<TextMeshProUGUI>();
+            label.text = text; label.fontSize = size; label.color = color; label.alignment = align; label.raycastTarget = false;
+            return label;
         }
 
         // Drag-by-panel handler (ConfigPanel's private DragMove replicated — it isn't shared).

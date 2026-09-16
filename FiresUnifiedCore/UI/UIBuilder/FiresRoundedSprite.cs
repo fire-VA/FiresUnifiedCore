@@ -22,18 +22,18 @@ namespace FiresCore.UI
 
             var tex = new Texture2D(Tex, Tex, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
             float half = Tex * 0.5f;
-            float b = half - Radius;
+            float innerHalf = half - Radius;
             var pixels = new Color[Tex * Tex];
             for (int y = 0; y < Tex; y++)
             for (int x = 0; x < Tex; x++)
             {
                 float px = x + 0.5f - half, py = y + 0.5f - half;
-                float qx = Mathf.Abs(px) - b, qy = Mathf.Abs(py) - b;
+                float qx = Mathf.Abs(px) - innerHalf, qy = Mathf.Abs(py) - innerHalf;
                 float outside = Mathf.Sqrt(Mathf.Max(qx, 0f) * Mathf.Max(qx, 0f) + Mathf.Max(qy, 0f) * Mathf.Max(qy, 0f));
                 float inside = Mathf.Min(Mathf.Max(qx, qy), 0f);
                 float dist = outside + inside - Radius;
-                float a = Mathf.Clamp01(0.5f - dist);
-                pixels[y * Tex + x] = new Color(1f, 1f, 1f, a);
+                float alpha = Mathf.Clamp01(0.5f - dist);
+                pixels[y * Tex + x] = new Color(1f, 1f, 1f, alpha);
             }
             tex.SetPixels(pixels);
             tex.Apply(false, false);

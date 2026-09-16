@@ -5,28 +5,28 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Checks terrain and environmental hazards for safe combat positioning.
-    /// Prevents companions from backing into water, fire, cliffs, or poison pools.
-    /// 
-    /// DESIGN PRINCIPLE:
-    /// Good players are always aware of their surroundings.
-    /// This system prevents the AI from making fatal positioning mistakes.
-  /// 
-    /// HAZARDS DETECTED:
-    /// - Water (drowning, stamina drain)
-    /// - Fire/Campfires (damage over time)
-    /// - Cliffs/Drops (fall damage)
-    /// - Poison pools (Mistlands)
-    /// - Tar pits (Plains)
-    /// - Lava (Ashlands)
-    /// 
-    /// OUTPUT:
-    /// - Safe directions to move
-    /// - Hazard warnings for retreat planning
-    /// - Adjusted movement directions
+    /// Keeps combat positioning out of hazards (water, fire, cliffs and drops, Mistlands poison, Plains tar,
+    /// Ashlands lava) by reporting safe directions and adjusting retreat movement.
     /// </summary>
     public class TerrainAwareness : MonoBehaviour
     {
+        private const float SafeDirectionScoreThreshold = 0.7f;
+        private const float AoeEscapeRadiusMultiplier = 1.5f;
+        private const float BasePositionScore = 50f;
+        private const float CombatPositionSampleSpacing = 3f;
+        private const float MaxEnemyDistanceScore = 10f;
+        private const float BlockedDirectionScoreThreshold = 0.3f;
+        private const float WaterDirectionPenalty = 0.4f;
+        private const float ObstacleDirectionPenalty = 0.3f;
+        private const float HazardProbeDistance = 3f;
+        private const float LavaDirectionPenalty = 0.9f;
+        private const float FireDangerRange = 3f;
+        private const float LavaCheckRangeMultiplier = 1.5f;
+        private const float MinLavaDepth = 0.3f;
+        private const float LavaDirectionMaxScore = 0.1f;
+        private const float AoeCheckRangeMultiplier = 1.5f;
+        private const float DefaultAoeRadius = 3f;
+
         #region Settings
 
         [Header("Detection Settings")]
@@ -85,12 +85,11 @@ namespace FiresCore.Npc.Combat
         private bool _isNearFire;
         private bool _isNearLava;
         private bool _isNearAoe;
-      private bool _hasHighGround;
         
         // AOE hazard tracking
         private List<ActiveAoeHazard> _activeAoeHazards = new List<ActiveAoeHazard>();
         private float _lastAoeScanTime;
-        private const float AOE_SCAN_INTERVAL = 0.15f; // Scan AOEs more frequently
+        private const float AoeScanInterval = 0.15f; // Scan AOEs more frequently
         
         public static bool VerboseLogging = false;
 
@@ -231,7 +230,7 @@ Fire,
             
    // Check if desired direction is safe
  int closestIndex = GetClosestDirectionIndex(desiredDirection);
-            if (_directionScores[closestIndex] > 0.7f)
+            if (_directionScores[closestIndex] > SafeDirectionScoreThreshold)
           {
      return desiredDirection; // Original direction is safe
             }
@@ -325,10 +324,10 @@ Fire,
             foreach (var aoe in _activeAoeHazards)
             {
                 float dist = Vector3.Distance(myPos, aoe.Position);
-                if (dist < aoe.Radius * 1.5f) // Also escape from nearby AOEs
+                if (dist < aoe.Radius * AoeEscapeRadiusMultiplier) // Also escape from nearby AOEs
                 {
                     Vector3 awayFromAoe = (myPos - aoe.Position).normalized;
-                    float urgency = 1f - (dist / (aoe.Radius * 1.5f));
+                    float urgency = 1f - (dist / (aoe.Radius * AoeEscapeRadiusMultiplier));
                     escapeDir += awayFromAoe * urgency;
                 }
             }
@@ -349,7 +348,7 @@ Fire,
 var score = new PositionScore
     {
      Position = position,
-        Score = 50f, // Base score
+        Score = BasePositionScore, // Base score
        IsSafe = true
        };
      
@@ -411,7 +410,7 @@ var score = new PositionScore
          // Sample positions around current location
   for (int i = 0; i < directionSamples; i++)
       {
-      for (float dist = 3f; dist <= maxRange; dist += 3f)
+      for (float dist = CombatPositionSampleSpacing; dist <= maxRange; dist += CombatPositionSampleSpacing)
                 {
           Vector3 samplePos = transform.position + _sampleDirections[i] * dist;
    
@@ -431,7 +430,7 @@ var score = new PositionScore
            // Factor in distance to enemy
           float distToEnemy = Vector3.Distance(samplePos, enemy.transform.position);
     float optimalDist = 3f; // Melee range
-float distScore = 10f - Mathf.Abs(distToEnemy - optimalDist);
+float distScore = MaxEnemyDistanceScore - Mathf.Abs(distToEnemy - optimalDist);
            
         float totalScore = posScore.Score + distScore;
 if (totalScore > bestScore)
@@ -494,7 +493,7 @@ if (totalScore > bestScore)
       _isInWater = CheckWaterLevel(myPos) > 0.5f;
             
             // Check for AOE hazards (more frequently than other checks)
-            if (Time.time - _lastAoeScanTime >= AOE_SCAN_INTERVAL)
+            if (Time.time - _lastAoeScanTime >= AoeScanInterval)
             {
                 _lastAoeScanTime = Time.time;
                 CheckForAoeHazards(myPos);
@@ -508,7 +507,7 @@ if (totalScore > bestScore)
             {
   _directionScores[i] = ScoreDirection(_sampleDirections[i], myPos);
            
- if (_directionScores[i] < 0.3f)
+ if (_directionScores[i] < BlockedDirectionScoreThreshold)
     blockedCount++;
     
        if (_directionScores[i] > bestScore)
@@ -562,19 +561,19 @@ if (totalScore > bestScore)
    if (waterLevel > dangerousWaterDepth)
                 {
      float waterPenalty = Mathf.InverseLerp(hazardCheckDistance, 2f, dist);
-         score -= waterPenalty * 0.4f;
+         score -= waterPenalty * WaterDirectionPenalty;
              }
    
         // Obstacle check (can't move there)
       if (Physics.Raycast(fromPos + Vector3.up, direction, dist, LayerMask.GetMask("piece", "static_solid", "terrain")))
         {
-          float obstaclePenalty = Mathf.InverseLerp(hazardCheckDistance, 2f, dist) * 0.3f;
+          float obstaclePenalty = Mathf.InverseLerp(hazardCheckDistance, 2f, dist) * ObstacleDirectionPenalty;
        score -= obstaclePenalty;
           }
  }
        
             // Check for fire/hazard objects
-            var hazard = CheckHazardAtPosition(fromPos + direction * 3f);
+            var hazard = CheckHazardAtPosition(fromPos + direction * HazardProbeDistance);
      if (hazard == HazardType.Fire || hazard == HazardType.Poison || hazard == HazardType.Tar)
        {
          score -= 0.5f;
@@ -582,7 +581,7 @@ if (totalScore > bestScore)
             if (hazard == HazardType.Lava)
             {
                 // Lava is instant death - heavily penalize this direction
-                score -= 0.9f;
+                score -= LavaDirectionPenalty;
             }
             
             // Check for AOE hazards in this direction
@@ -650,16 +649,16 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
             // Check for fire sources
             Collider[] colliders = Physics.OverlapSphere(pos, hazardCheckDistance, LayerMask.GetMask("piece", "Default"));
             
-   foreach (var col in colliders)
+   foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
             
-           string objName = col.gameObject.name.ToLower();
+           string objName = collider.gameObject.name.ToLower();
     bool isFire = objName.Contains("fire") || objName.Contains("campfire") || 
          objName.Contains("bonfire") || objName.Contains("torch");
            
      // Also check for Fireplace component
-       var fireplace = col.GetComponent<Fireplace>();
+       var fireplace = collider.GetComponent<Fireplace>();
           if (fireplace != null && fireplace.IsBurning())
                 {
   isFire = true;
@@ -667,14 +666,14 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
         
          if (isFire)
    {
-               float dist = Vector3.Distance(pos, col.transform.position);
-   if (dist < 3f) // Fire danger range
+               float dist = Vector3.Distance(pos, collider.transform.position);
+   if (dist < FireDangerRange) // Fire danger range
        {
    _currentHazards.FireNearby = true;
         if (dist < _currentHazards.DistanceToFire)
        {
        _currentHazards.DistanceToFire = dist;
-     _currentHazards.NearestFireDirection = (col.transform.position - pos).normalized;
+     _currentHazards.NearestFireDirection = (collider.transform.position - pos).normalized;
    }
               }
          }
@@ -688,16 +687,16 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
         private void CheckForLava(Vector3 pos)
         {
             // Check for lava in the area - use a larger range since lava is so dangerous
-            float lavaCheckRange = hazardCheckDistance * 1.5f;
+            float lavaCheckRange = hazardCheckDistance * LavaCheckRangeMultiplier;
             
             // Method 1: Check for lava by collider name/tag
             Collider[] colliders = Physics.OverlapSphere(pos, lavaCheckRange, LayerMask.GetMask("piece", "Default", "terrain"));
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                string objName = col.gameObject.name.ToLower();
+                string objName = collider.gameObject.name.ToLower();
                 
                 // Ashlands lava detection - check for various lava object names
                 bool isLava = objName.Contains("lava") || 
@@ -709,7 +708,7 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
                 // Also check parent objects
                 if (!isLava)
                 {
-                    Transform parent = col.transform.parent;
+                    Transform parent = collider.transform.parent;
                     if (parent != null)
                     {
                         string parentName = parent.name.ToLower();
@@ -721,11 +720,11 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
                 if (!isLava)
                 {
                     // Check if object or parent has a component with "lava" or "damage" in the name
-                    var components = col.GetComponents<MonoBehaviour>();
-                    foreach (var comp in components)
+                    var components = collider.GetComponents<MonoBehaviour>();
+                    foreach (var behaviour in components)
                     {
-                        if (comp == null) continue;
-                        string compName = comp.GetType().Name.ToLower();
+                        if (behaviour == null) continue;
+                        string compName = behaviour.GetType().Name.ToLower();
                         if (compName.Contains("lava") || compName.Contains("lavadamage"))
                         {
                             isLava = true;
@@ -736,7 +735,7 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
                 
                 if (isLava)
                 {
-                    float dist = Vector3.Distance(pos, col.transform.position);
+                    float dist = Vector3.Distance(pos, collider.transform.position);
                     
                     // Lava is dangerous from further away
                     float lavaDangerRange = 5f;
@@ -746,12 +745,12 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
                         if (dist < _currentHazards.DistanceToLava)
                         {
                             _currentHazards.DistanceToLava = dist;
-                            _currentHazards.NearestLavaDirection = (col.transform.position - pos).normalized;
+                            _currentHazards.NearestLavaDirection = (collider.transform.position - pos).normalized;
                         }
                         
                         if (VerboseLogging)
                         {
-                            Debug.Log($"[TerrainAwareness] Lava detected: {col.gameObject.name} at distance {dist:F1}m");
+                            Debug.Log($"[TerrainAwareness] Lava detected: {collider.gameObject.name} at distance {dist:F1}m");
                         }
                     }
                 }
@@ -809,7 +808,7 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
                                 ZoneSystem.instance.GetGroundHeight(checkPos, out checkGroundHeight);
                             }
                             
-                            if (checkWaterLevel > checkGroundHeight + 0.3f)
+                            if (checkWaterLevel > checkGroundHeight + MinLavaDepth)
                             {
                                 // This direction leads to lava
                                 _currentHazards.LavaNearby = true;
@@ -820,7 +819,7 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
                                 }
                                 
                                 // Heavily penalize this direction
-                                _directionScores[i] = Mathf.Min(_directionScores[i], 0.1f);
+                                _directionScores[i] = Mathf.Min(_directionScores[i], LavaDirectionMaxScore);
                                 break;
                             }
                         }
@@ -881,7 +880,7 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
                         {
                             ZoneSystem.instance.GetGroundHeight(pos, out groundHeight);
                         }
-                        if (waterLevel > groundHeight + 0.3f)
+                        if (waterLevel > groundHeight + MinLavaDepth)
                         {
                             return HazardType.Lava; // In Ashlands, water = lava
                         }
@@ -900,10 +899,10 @@ Vector3 checkPos = pos + _sampleDirections[i] * dist;
      
      // Check for hazard objects
             Collider[] colliders = Physics.OverlapSphere(pos, 2f);
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
         {
-if (col == null) continue;
-      string objName = col.gameObject.name.ToLower();
+if (collider == null) continue;
+      string objName = collider.gameObject.name.ToLower();
       
                 // Check lava FIRST - it's the most dangerous
                 if (objName.Contains("lava") || objName.Contains("magma"))
@@ -981,72 +980,72 @@ if (col == null) continue;
         {
             _activeAoeHazards.Clear();
             
-            float aoeCheckRange = hazardCheckDistance * 1.5f;
+            float aoeCheckRange = hazardCheckDistance * AoeCheckRangeMultiplier;
             
             // Find all potential AOE objects in range
             Collider[] colliders = Physics.OverlapSphere(pos, aoeCheckRange);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
                 // Check for Aoe component (Valheim's built-in AOE system)
-                var aoe = col.GetComponent<Aoe>();
+                var aoe = collider.GetComponent<Aoe>();
                 if (aoe != null)
                 {
-                    ProcessAoeComponent(aoe, col.transform.position);
+                    ProcessAoeComponent(aoe, collider.transform.position);
                     continue;
                 }
                 
                 // Check by object name for common AOE patterns
-                string objName = col.gameObject.name.ToLower();
+                string objName = collider.gameObject.name.ToLower();
                 
                 // Fire AOEs
                 if (IsFireAoeName(objName))
                 {
-                    AddAoeHazard(col.transform.position, GetAoeRadius(col), HazardType.AoeFire, objName);
+                    AddAoeHazard(collider.transform.position, GetAoeRadius(collider), HazardType.AoeFire, objName);
                     continue;
                 }
                 
                 // Poison AOEs
                 if (IsPoisonAoeName(objName))
                 {
-                    AddAoeHazard(col.transform.position, GetAoeRadius(col), HazardType.AoePoison, objName);
+                    AddAoeHazard(collider.transform.position, GetAoeRadius(collider), HazardType.AoePoison, objName);
                     continue;
                 }
                 
                 // Frost AOEs
                 if (IsFrostAoeName(objName))
                 {
-                    AddAoeHazard(col.transform.position, GetAoeRadius(col), HazardType.AoeFrost, objName);
+                    AddAoeHazard(collider.transform.position, GetAoeRadius(collider), HazardType.AoeFrost, objName);
                     continue;
                 }
                 
                 // Lightning AOEs
                 if (IsLightningAoeName(objName))
                 {
-                    AddAoeHazard(col.transform.position, GetAoeRadius(col), HazardType.AoeLightning, objName);
+                    AddAoeHazard(collider.transform.position, GetAoeRadius(collider), HazardType.AoeLightning, objName);
                     continue;
                 }
                 
                 // Generic damage AOEs
                 if (IsGenericAoeName(objName))
                 {
-                    AddAoeHazard(col.transform.position, GetAoeRadius(col), HazardType.AoeEffect, objName);
+                    AddAoeHazard(collider.transform.position, GetAoeRadius(collider), HazardType.AoeEffect, objName);
                     continue;
                 }
                 
                 // Check for StatusEffect or damage-related components by name
-                var components = col.GetComponents<MonoBehaviour>();
-                foreach (var comp in components)
+                var components = collider.GetComponents<MonoBehaviour>();
+                foreach (var behaviour in components)
                 {
-                    if (comp == null) continue;
-                    string compName = comp.GetType().Name.ToLower();
+                    if (behaviour == null) continue;
+                    string compName = behaviour.GetType().Name.ToLower();
                     if (compName.Contains("damage") || compName.Contains("aoe") || 
                         compName.Contains("status") || compName.Contains("effect"))
                     {
                         HazardType hazardType = ClassifyParticleEffect(objName);
-                        AddAoeHazard(col.transform.position, GetAoeRadius(col), hazardType, objName);
+                        AddAoeHazard(collider.transform.position, GetAoeRadius(collider), hazardType, objName);
                         break;
                     }
                 }
@@ -1083,7 +1082,7 @@ if (col == null) continue;
             try
             {
                 // Get AOE radius
-                float radius = 3f; // Default radius
+                float radius = DefaultAoeRadius; // Default radius
                 var radiusField = typeof(Aoe).GetField("m_radius", 
                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 if (radiusField != null)
@@ -1156,34 +1155,34 @@ if (col == null) continue;
         /// <summary>
         /// Gets the radius of an AOE effect from its collider.
         /// </summary>
-        private float GetAoeRadius(Collider col)
+        private float GetAoeRadius(Collider collider)
         {
-            if (col == null) return 3f;
+            if (collider == null) return DefaultAoeRadius;
             
             // Try sphere collider
-            var sphere = col as SphereCollider;
+            var sphere = collider as SphereCollider;
             if (sphere != null)
             {
-                return sphere.radius * col.transform.lossyScale.x;
+                return sphere.radius * collider.transform.lossyScale.x;
             }
             
             // Try capsule collider
-            var capsule = col as CapsuleCollider;
+            var capsule = collider as CapsuleCollider;
             if (capsule != null)
             {
-                return capsule.radius * col.transform.lossyScale.x;
+                return capsule.radius * collider.transform.lossyScale.x;
             }
             
             // Try box collider - use average of x and z
-            var box = col as BoxCollider;
+            var box = collider as BoxCollider;
             if (box != null)
             {
-                Vector3 size = Vector3.Scale(box.size, col.transform.lossyScale);
+                Vector3 size = Vector3.Scale(box.size, collider.transform.lossyScale);
                 return (size.x + size.z) / 4f;
             }
             
             // Default radius
-            return 3f;
+            return DefaultAoeRadius;
         }
         
         /// <summary>

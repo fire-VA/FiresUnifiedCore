@@ -1175,14 +1175,14 @@ ShieldBlockPowerPerLevel = 0f;
 
             var current = new System.Collections.Generic.HashSet<StatusEffect>();
             if (EquipmentStatusEffects != null)
-                foreach (var se in EquipmentStatusEffects) if (se != null) current.Add(se);
+                foreach (var effect in EquipmentStatusEffects) if (effect != null) current.Add(effect);
             if (ActiveSetEffects != null)
-                foreach (var se in ActiveSetEffects) if (se != null) current.Add(se);
+                foreach (var effect in ActiveSetEffects) if (effect != null) current.Add(effect);
 
-            foreach (var se in _appliedGearEffects)
-                if (se != null && !current.Contains(se)) seman.RemoveStatusEffect(se.NameHash());
-            foreach (var se in current)
-                if (!_appliedGearEffects.Contains(se)) seman.AddStatusEffect(se);
+            foreach (var effect in _appliedGearEffects)
+                if (effect != null && !current.Contains(effect)) seman.RemoveStatusEffect(effect.NameHash());
+            foreach (var effect in current)
+                if (!_appliedGearEffects.Contains(effect)) seman.AddStatusEffect(effect);
 
             _appliedGearEffects.Clear();
             _appliedGearEffects.UnionWith(current);

@@ -94,7 +94,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private bool UpdateWaitingForDrops()
         {
-            if (Time.time - _phaseStartTime < POST_DESTROY_WAIT)
+            if (Time.time - _phaseStartTime < PostDestroyWait)
             {
                 return false;
             }
@@ -136,7 +136,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 
                 // Second priority: Find stump to clear (and plant sapling)
-                var stump = FindNearbyStump(_lastTreePosition, STUMP_SEARCH_RADIUS);
+                var stump = FindNearbyStump(_lastTreePosition, StumpSearchRadius);
                 if (stump != null)
                 {
                     var stumpData = ResourceDataHelper.GetResourceData(stump);
@@ -286,7 +286,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float maxWeight = _inventory.GetMaxCarryWeight();
             float currentWeight = storageInv.GetTotalWeight();
-            if (maxWeight > 0 && currentWeight / maxWeight >= INVENTORY_FULL_THRESHOLD)
+            if (maxWeight > 0 && currentWeight / maxWeight >= InventoryFullThreshold)
             {
                 return true;
             }
@@ -294,7 +294,7 @@ namespace FiresCore.Npc.IdleBehaviors
             int totalSlots = storageInv.GetWidth() * storageInv.GetHeight();
             int emptySlots = storageInv.GetEmptySlots();
             int usedSlots = totalSlots - emptySlots;
-            if (totalSlots > 0 && (float)usedSlots / totalSlots >= INVENTORY_FULL_THRESHOLD)
+            if (totalSlots > 0 && (float)usedSlots / totalSlots >= InventoryFullThreshold)
             {
                 return true;
             }

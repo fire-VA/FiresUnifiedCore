@@ -5,32 +5,10 @@ using UnityEngine;
 
 namespace FiresCore.Logging
 {
-    // BepInEx 5.4's UnityLogSource subscribes to
-    // Application.logMessageReceived directly. Specifically: the static
-    // ctor wires UnityLogSource.OnUnityLogMessageReceived as the
-    // Application.LogCallback handler. That callback fires Unity-side
-    // for every Debug.Log/LogWarning regardless of what ILogHandler is
-    // installed on Debug.unityLogger, then routes the message through
-    // BepInEx's LogSource → LogListener fan-out (console + disk).
-    //
-    // Swapping Debug.unityLogger.logHandler - what the old
-    // RateLimitedLogHandler did - only intercepts Unity's own native
-    // console writer, never BepInEx's. That's why 248 shader binary
-    // warnings still landed in LogOutput.log despite the handler being
-    // installed: the suppression path is unreachable.
-    //
-    // Real fix: HarmonyPrefix on UnityLogSource.OnUnityLogMessageReceived.
-    // Returning false skips BepInEx's original handler entirely - no
-    // LogEvent is constructed, no listener (UnityLogSource → ConsoleLogListener
-    // → DiskLogListener) ever sees the suppressed message. Verbose mode
-    // is a top-level pass-through so the user can opt back into seeing
-    // everything.
-    //
-    // Type is resolved by name at PatchAll time because UnityLogSource
-    // lives in BepInEx.dll which we don't have a project reference to.
-    // Reference source confirmed against
-    // valheimRip2/BepInExREF/Logging/UnityLogSource.cs (decompile of
-    // BepInEx 5.4.23.3).
+    // Suppresses known-noise Unity messages by prefixing BepInEx's UnityLogSource.OnUnityLogMessageReceived,
+    // which listens on Application.logMessageReceived directly; replacing Debug.unityLogger's handler never
+    // reached BepInEx's console and disk listeners. The type is resolved by name since Core has no reference to
+    // it. Verbose mode passes everything through.
     [HarmonyPatch]
     internal static class UnityLogSuppressionPatch
     {

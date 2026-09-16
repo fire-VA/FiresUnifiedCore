@@ -7,22 +7,58 @@ using FiresCore.Npc.AI;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Manages intelligent weapon swapping for companions.
-    /// Evaluates combat situations and swaps between melee/ranged weapons as needed.
-    /// 
-    /// SWAP TRIGGERS:
-    /// - Target unreachable (elevation difference, water, obstacles) ? Swap to ranged
-    /// - Target fleeing and out of melee range ? Swap to ranged
-    /// - Target closing in while using ranged ? Swap to melee
-    /// - Out of ammo ? Swap to melee
-    /// - No valid target nearby ? Keep current
-    /// 
-    /// SWAP COOLDOWN:
-    /// Prevents constant weapon swapping with a cooldown period.
-    /// Also considers animation state - won't swap mid-attack.
+    /// Swaps between melee and ranged weapons as the fight demands: ranged when the target is unreachable or fleeing
+    /// out of reach, melee when it closes in or ammo runs out. A cooldown prevents flip-flopping, and it never swaps
+    /// mid-attack.
     /// </summary>
     public class WeaponSwapManager : MonoBehaviour
     {
+        private const float DefaultMeleeRange = 2.5f;
+        private const float DefaultStaffRange = 18f;
+        private const float DefaultRangedWeaponRange = 25f;
+
+        private const float PointBlankDistance = 3f;
+        private const float VeryCloseEnemyRadius = 4f;
+        private const float OpeningMeleeDistance = 4f;
+        private const float PreferenceDistanceMargin = 1.5f;
+        private const int SurroundedEnemyCount = 3;
+        private const float LowTargetHealthFraction = 0.3f;
+        private const float LowStaminaFraction = 0.3f;
+        private const float LowHealthFraction = 0.3f;
+        private const float MinScoreDifferenceToSwap = 0.15f;
+
+        private const float PointBlankMeleeBonus = 0.6f;
+        private const float CloseRangeMeleeBonus = 0.4f;
+        private const float CloseRangeRangedBonus = 0.1f;
+        private const float MediumRangeBlendWeight = 0.3f;
+        private const float LongRangeRangedBonus = 0.5f;
+        private const float VeryLongRangeRangedBonus = 0.2f;
+        private const float CrowdedMeleeBonus = 0.4f;
+        private const float GroupedMeleeBonus = 0.25f;
+        private const float SpreadOutRangedBonus = 0.3f;
+        private const float SurroundedMeleeBonus = 0.3f;
+        private const float ToughTargetRangedBonus = 0.3f;
+        private const float DangerousApproachRangedBonus = 0.25f;
+        private const float TrivialTargetMeleeBonus = 0.2f;
+        private const float WeakTargetRangedBonus = 0.2f;
+        private const float ElevationRangedBonus = 0.5f;
+        private const float ElevationMeleePenalty = 0.3f;
+        private const float UnreachableRangedBonus = 0.6f;
+        private const float UnreachableMeleePenalty = 0.4f;
+        private const float SwimmingRangedBonus = 0.3f;
+        private const float FleeingTargetRangedBonus = 0.4f;
+        private const float ApproachingFarRangedBonus = 0.3f;
+        private const float ApproachingCloseMeleeBonus = 0.2f;
+        private const float LowStaminaRangedBonus = 0.2f;
+        private const float StaminaRecoveryRangedBonus = 0.5f;
+        private const float StaminaRecoveryMeleePenalty = 0.3f;
+        private const float LowHealthRangedBonus = 0.3f;
+        private const float CombatEntryRangedBonus = 0.3f;
+        private const float CurrentWeaponHysteresisBonus = 0.15f;
+        private const float OpeningLongRangeRangedBonus = 0.3f;
+        private const float OpeningApproachRangedBonus = 0.2f;
+        private const float OpeningCloseMeleeBonus = 0.3f;
+
         [Header("Swap Settings")]
   [Tooltip("Minimum time between weapon swaps")]
       public float swapCooldown = 5f;
@@ -72,7 +108,7 @@ public float swapConfidenceThreshold = 0.7f;
         private float _weaponCommitmentExpiry;
         private bool _isCommittedToWeapon;
         private float _lastScanTime = -100f;
-        private const float SCAN_COOLDOWN = 1.5f;
+        private const float ScanCooldown = 1.5f;
         
         // Cached weapon info
         private CachedWeaponInfo _meleeWeapon;
@@ -83,8 +119,8 @@ public float swapConfidenceThreshold = 0.7f;
         
         // Staff swap state
         private float _lastStaffSwapTime = -100f;
-        private const float STAFF_SWAP_COOLDOWN = 5f;  // Don't swap staves too frequently
-        private const float PARTY_BUFF_CHECK_INTERVAL = 3f;
+        private const float StaffSwapCooldown = 5f;  // Don't swap staves too frequently
+        private const float PartyBuffCheckInterval = 3f;
         private float _lastPartyBuffCheck;
 
         public static bool VerboseLogging = false;
@@ -191,7 +227,7 @@ public bool IsRanged;
                     bool currentlyRanged = _combat?.IsRangedWeapon() ?? false;
                     
                     // Low health + melee + target far = emergency swap to ranged
-                    if (!currentlyRanged && dist > meleePreferenceDistance * 1.5f)
+                    if (!currentlyRanged && dist > meleePreferenceDistance * PreferenceDistanceMargin)
                         return true;
                 }
             }
@@ -224,8 +260,8 @@ public bool IsRanged;
         /// <summary>
         /// Evaluates whether the companion should swap between support and offensive staves.
         /// Healers/Mages with both types will intelligently switch based on:
-        /// - Party needs buffing/healing ? Use support staff
-        /// - Everyone buffed and enemies to fight ? Use offensive staff
+        /// - Party needs buffing/healing -> Use support staff
+        /// - Everyone buffed and enemies to fight -> Use offensive staff
         /// </summary>
         private void EvaluateStaffSwap()
         {
@@ -233,7 +269,7 @@ public bool IsRanged;
             if (_supportStaff == null || _offensiveStaff == null) return;
             
             // Check staff swap cooldown
-            if (Time.time - _lastStaffSwapTime < STAFF_SWAP_COOLDOWN) return;
+            if (Time.time - _lastStaffSwapTime < StaffSwapCooldown) return;
             
             // Get current weapon
             var leftHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftHand);
@@ -243,7 +279,7 @@ public bool IsRanged;
             
             // Check if party needs buffs (periodic check)
             bool partyNeedsBuffs = false;
-            if (Time.time - _lastPartyBuffCheck >= PARTY_BUFF_CHECK_INTERVAL)
+            if (Time.time - _lastPartyBuffCheck >= PartyBuffCheckInterval)
             {
                 _lastPartyBuffCheck = Time.time;
                 partyNeedsBuffs = CheckIfPartyNeedsBuffs();
@@ -259,8 +295,8 @@ public bool IsRanged;
             }
             
             // Decision logic:
-            // 1. If party needs buffs and we're using offensive ? swap to support
-            // 2. If party is buffed and there are enemies and we're using support ? swap to offensive
+            // 1. If party needs buffs and we're using offensive - swap to support
+            // 2. If party is buffed and there are enemies and we're using support - swap to offensive
             // 3. If no enemies at all, don't swap (stay in current state)
             
             if (partyNeedsBuffs && !currentlyUsingSupportStaff)
@@ -433,12 +469,12 @@ public bool IsRanged;
         /// <summary>
         /// Scans inventory for available melee and ranged weapons.
         /// Now also scans for support/offensive staves and storage inventory.
-        /// Throttled to avoid excessive scanning - will only re-scan after SCAN_COOLDOWN seconds.
+        /// Throttled to avoid excessive scanning - will only re-scan after ScanCooldown seconds.
         /// </summary>
         public void ScanAvailableWeapons()
         {
             // Throttle scans to prevent excessive inventory iteration
-            if (Time.time - _lastScanTime < SCAN_COOLDOWN && (_meleeWeapon != null || _rangedWeapon != null))
+            if (Time.time - _lastScanTime < ScanCooldown && (_meleeWeapon != null || _rangedWeapon != null))
                 return;
             _lastScanTime = Time.time;
             
@@ -553,7 +589,7 @@ public bool IsRanged;
                         Slot = CompanionInventory.EquipmentSlot.LeftHand, // Target slot for ranged
                         BackSlot = CompanionInventory.EquipmentSlot.LeftBack,
                         IsRanged = true,
-                        Range = item.m_shared.m_aiAttackRange > 0 ? item.m_shared.m_aiAttackRange : 25f,
+                        Range = item.m_shared.m_aiAttackRange > 0 ? item.m_shared.m_aiAttackRange : DefaultRangedWeaponRange,
                         ItemType = item.m_shared.m_itemType,
                         IsInStorage = true,
                         StorageItem = item
@@ -573,7 +609,7 @@ public bool IsRanged;
                         Slot = CompanionInventory.EquipmentSlot.RightHand, // Target slot for melee
                         BackSlot = CompanionInventory.EquipmentSlot.RightBack,
                         IsRanged = false,
-                        Range = item.m_shared.m_attack?.m_attackRange ?? 2.5f,
+                        Range = item.m_shared.m_attack?.m_attackRange ?? DefaultMeleeRange,
                         ItemType = item.m_shared.m_itemType,
                         IsInStorage = true,
                         StorageItem = item
@@ -616,8 +652,8 @@ public bool IsRanged;
                 Slot = slot,
                 BackSlot = backSlot,
                 IsRanged = isRanged,
-                Range = isRanged ? (item.m_shared.m_aiAttackRange > 0 ? item.m_shared.m_aiAttackRange : 18f) : 
-                    (item.m_shared.m_attack?.m_attackRange ?? 2.5f),
+                Range = isRanged ? (item.m_shared.m_aiAttackRange > 0 ? item.m_shared.m_aiAttackRange : DefaultStaffRange) : 
+                    (item.m_shared.m_attack?.m_attackRange ?? DefaultMeleeRange),
                 ItemType = item.m_shared.m_itemType,
                 IsInStorage = false,
                 StorageItem = null
@@ -648,7 +684,7 @@ public bool IsRanged;
                     Slot = slot,
                     BackSlot = backSlot,
                     IsRanged = true,
-                    Range = item.m_shared.m_aiAttackRange > 0 ? item.m_shared.m_aiAttackRange : 18f,
+                    Range = item.m_shared.m_aiAttackRange > 0 ? item.m_shared.m_aiAttackRange : DefaultStaffRange,
                     ItemType = item.m_shared.m_itemType,
                     IsInStorage = false,
                     StorageItem = null
@@ -690,7 +726,7 @@ public bool IsRanged;
                 Slot = slot,
                 BackSlot = backSlot,
                 IsRanged = isRanged,
-                Range = isRanged ? (item.m_shared.m_aiAttackRange > 0 ? item.m_shared.m_aiAttackRange : 25f) : (item.m_shared.m_attack?.m_attackRange ?? 2.5f),
+                Range = isRanged ? (item.m_shared.m_aiAttackRange > 0 ? item.m_shared.m_aiAttackRange : DefaultRangedWeaponRange) : (item.m_shared.m_attack?.m_attackRange ?? DefaultMeleeRange),
                 ItemType = item.m_shared.m_itemType,
                 IsInStorage = false,
                 StorageItem = null
@@ -856,31 +892,31 @@ public bool IsRanged;
             // ==========================================
             
             // Very close (0-3m) - heavily favor melee
-            if (distToTarget <= 3f)
+            if (distToTarget <= PointBlankDistance)
             {
-                meleeScore += 0.6f;
+                meleeScore += PointBlankMeleeBonus;
             }
             // Close range (3-6m) - favor melee but ranged still viable
             else if (distToTarget <= meleePreferenceDistance)
             {
-                meleeScore += 0.4f;
-                rangedScore += 0.1f;
+                meleeScore += CloseRangeMeleeBonus;
+                rangedScore += CloseRangeRangedBonus;
             }
             // Medium range (6-12m) - slight ranged preference
             else if (distToTarget <= rangedPreferenceDistance)
             {
-                float t = Mathf.InverseLerp(meleePreferenceDistance, rangedPreferenceDistance, distToTarget);
-                meleeScore += 0.3f * (1f - t);
-                rangedScore += 0.3f * t;
+                float rangedBlend = Mathf.InverseLerp(meleePreferenceDistance, rangedPreferenceDistance, distToTarget);
+                meleeScore += MediumRangeBlendWeight * (1f - rangedBlend);
+                rangedScore += MediumRangeBlendWeight * rangedBlend;
             }
             // Long range (12m+) - heavily favor ranged
             else
             {
-                rangedScore += 0.5f;
+                rangedScore += LongRangeRangedBonus;
                 // Even more if very far
-                if (distToTarget > rangedPreferenceDistance * 1.5f)
+                if (distToTarget > rangedPreferenceDistance * PreferenceDistanceMargin)
                 {
-                    rangedScore += 0.2f;
+                    rangedScore += VeryLongRangeRangedBonus;
                 }
             }
             
@@ -889,7 +925,7 @@ public bool IsRanged;
             // Multiple close enemies = melee (can hit many), spread out = ranged
             // ==========================================
             
-            int veryCloseEnemies = CountEnemiesInRange(0f, 4f);
+            int veryCloseEnemies = CountEnemiesInRange(0f, VeryCloseEnemyRadius);
             int closeEnemies = CountEnemiesInRange(0f, meleePreferenceDistance);
             int mediumRangeEnemies = CountEnemiesInRange(meleePreferenceDistance, rangedPreferenceDistance);
             int farEnemies = CountEnemiesInRange(rangedPreferenceDistance, rangedPreferenceDistance * 2f);
@@ -897,23 +933,23 @@ public bool IsRanged;
             // Multiple enemies in melee range - melee is efficient (cleave/AOE)
             if (veryCloseEnemies >= 2)
             {
-                meleeScore += 0.4f;
+                meleeScore += CrowdedMeleeBonus;
             }
             else if (closeEnemies >= 2)
             {
-                meleeScore += 0.25f;
+                meleeScore += GroupedMeleeBonus;
             }
             
             // Enemies spread out at range - ranged can pick them off
             if (farEnemies >= 2 && closeEnemies <= 1)
             {
-                rangedScore += 0.3f;
+                rangedScore += SpreadOutRangedBonus;
             }
             
             // Surrounded by many enemies - melee to fight through
-            if (closeEnemies >= 3)
+            if (closeEnemies >= SurroundedEnemyCount)
             {
-                meleeScore += 0.3f;
+                meleeScore += SurroundedMeleeBonus;
             }
             
             // ==========================================
@@ -932,26 +968,26 @@ public bool IsRanged;
                      profile.Classification == ThreatAnalyzer.EnemyClass.Elite) &&
                     distToTarget > meleePreferenceDistance)
                 {
-                    rangedScore += 0.3f;
+                    rangedScore += ToughTargetRangedBonus;
                 }
                 
                 // Dangerous enemy approaching - get shots off before they arrive
                 if (profile.Classification >= ThreatAnalyzer.EnemyClass.Dangerous &&
                     IsTargetApproaching(target) && distToTarget > meleePreferenceDistance)
                 {
-                    rangedScore += 0.25f;
+                    rangedScore += DangerousApproachRangedBonus;
                 }
                 
                 // Trivial enemies close by - melee is faster
                 if (profile.Classification == ThreatAnalyzer.EnemyClass.Trivial && closeEnemies >= 1)
                 {
-                    meleeScore += 0.2f;
+                    meleeScore += TrivialTargetMeleeBonus;
                 }
                 
                 // Low health enemy far away - finish with ranged
-                if (profile.HealthPercent < 0.3f && distToTarget > meleePreferenceDistance)
+                if (profile.HealthPercent < LowTargetHealthFraction && distToTarget > meleePreferenceDistance)
                 {
-                    rangedScore += 0.2f;
+                    rangedScore += WeakTargetRangedBonus;
                 }
             }
             
@@ -964,21 +1000,21 @@ public bool IsRanged;
             float heightDiff = Mathf.Abs(target.transform.position.y - transform.position.y);
             if (heightDiff > elevationSwapThreshold)
             {
-                rangedScore += 0.5f;
-                meleeScore -= 0.3f; // Penalize melee when we can't reach
+                rangedScore += ElevationRangedBonus;
+                meleeScore -= ElevationMeleePenalty; // Penalize melee when we can't reach
             }
             
             // Target unreachable (tried to path but failed)
             if (IsTargetUnreachable(target))
             {
-                rangedScore += 0.6f;
-                meleeScore -= 0.4f;
+                rangedScore += UnreachableRangedBonus;
+                meleeScore -= UnreachableMeleePenalty;
             }
             
             // Water between us (swimming enemies or we're in water)
-            if (_character != null && _character.IsSwimming() && distToTarget > 3f)
+            if (_character != null && _character.IsSwimming() && distToTarget > PointBlankDistance)
             {
-                rangedScore += 0.3f; // Hard to melee while swimming
+                rangedScore += SwimmingRangedBonus; // Hard to melee while swimming
             }
             
             // ==========================================
@@ -990,7 +1026,7 @@ public bool IsRanged;
             {
                 if (distToTarget > meleePreferenceDistance)
                 {
-                    rangedScore += 0.4f; // Can't catch them, shoot them
+                    rangedScore += FleeingTargetRangedBonus; // Can't catch them, shoot them
                 }
             }
             
@@ -999,12 +1035,12 @@ public bool IsRanged;
                 if (distToTarget > rangedPreferenceDistance)
                 {
                     // Still far - get shots off while they approach
-                    rangedScore += 0.3f;
+                    rangedScore += ApproachingFarRangedBonus;
                 }
-                else if (distToTarget <= meleePreferenceDistance * 1.5f)
+                else if (distToTarget <= meleePreferenceDistance * PreferenceDistanceMargin)
                 {
                     // Close enough - prepare for melee
-                    meleeScore += 0.2f;
+                    meleeScore += ApproachingCloseMeleeBonus;
                 }
             }
             
@@ -1019,16 +1055,16 @@ public bool IsRanged;
                 float staminaPercent = staminaManager.GetStaminaPercent();
                 
                 // Low stamina - ranged uses less stamina per attack
-                if (staminaPercent < 0.3f)
+                if (staminaPercent < LowStaminaFraction)
                 {
-                    rangedScore += 0.2f;
+                    rangedScore += LowStaminaRangedBonus;
                 }
                 
                 // In recovery - definitely prefer ranged (kiting)
                 if (staminaManager.IsInCriticalRecovery())
                 {
-                    rangedScore += 0.5f;
-                    meleeScore -= 0.3f;
+                    rangedScore += StaminaRecoveryRangedBonus;
+                    meleeScore -= StaminaRecoveryMeleePenalty;
                 }
             }
             
@@ -1037,9 +1073,9 @@ public bool IsRanged;
                 float healthPercent = _character.GetHealthPercentage();
                 
                 // Low health - prefer ranged for safety
-                if (healthPercent < 0.3f)
+                if (healthPercent < LowHealthFraction)
                 {
-                    rangedScore += 0.3f;
+                    rangedScore += LowHealthRangedBonus;
                 }
             }
             
@@ -1055,7 +1091,7 @@ public bool IsRanged;
                 var combatMovement = GetComponent<CompanionCombatMovement>();
                 if (combatMovement != null && !combatMovement.IsInCombat)
                 {
-                    rangedScore += 0.3f;
+                    rangedScore += CombatEntryRangedBonus;
                 }
             }
             
@@ -1066,11 +1102,11 @@ public bool IsRanged;
             
             if (currentlyRanged)
             {
-                rangedScore += 0.15f;
+                rangedScore += CurrentWeaponHysteresisBonus;
             }
             else
             {
-                meleeScore += 0.15f;
+                meleeScore += CurrentWeaponHysteresisBonus;
             }
             
             // ==========================================
@@ -1085,7 +1121,7 @@ public bool IsRanged;
             // Need clear advantage to recommend swap
             float scoreDiff = Mathf.Abs(rangedScore - meleeScore);
             
-            if (scoreDiff < 0.15f)
+            if (scoreDiff < MinScoreDifferenceToSwap)
             {
                 // Scores are close - keep current weapon
                 recommendation = WeaponRecommendation.KeepCurrent;
@@ -1118,27 +1154,27 @@ public bool IsRanged;
             
             // For opening, we don't add hysteresis - pure tactical choice
             // Remove the hysteresis bonus we added
-            if (currentlyRanged) rangedScore -= 0.15f;
-            else meleeScore -= 0.15f;
+            if (currentlyRanged) rangedScore -= CurrentWeaponHysteresisBonus;
+            else meleeScore -= CurrentWeaponHysteresisBonus;
             
             // Additional opening-specific logic:
             
             // Far away = definitely open with ranged to get damage in while closing
             if (distToTarget > rangedPreferenceDistance)
             {
-                rangedScore += 0.3f;
+                rangedScore += OpeningLongRangeRangedBonus;
             }
             
             // Medium distance with approaching enemy = ranged opening
             if (distToTarget > meleePreferenceDistance && IsTargetApproaching(target))
             {
-                rangedScore += 0.2f;
+                rangedScore += OpeningApproachRangedBonus;
             }
             
             // Very close = melee immediately
-            if (distToTarget <= 4f)
+            if (distToTarget <= OpeningMeleeDistance)
             {
-                meleeScore += 0.3f;
+                meleeScore += OpeningCloseMeleeBonus;
             }
             
             if (VerboseLogging)
@@ -1699,7 +1735,7 @@ if (Time.time - _targetUnreachableStartTime > unreachableCheckTime)
         public bool ForceSwapToRanged()
         {
             // Refresh scan cache if stale
-            if (Time.time - _lastScanTime >= SCAN_COOLDOWN)
+            if (Time.time - _lastScanTime >= ScanCooldown)
                 ScanAvailableWeapons();
                 
             if (_rangedWeapon == null) return false;
@@ -1723,7 +1759,7 @@ if (Time.time - _targetUnreachableStartTime > unreachableCheckTime)
         public bool ForceSwapToMelee()
         {
             // Refresh scan cache if stale
-            if (Time.time - _lastScanTime >= SCAN_COOLDOWN)
+            if (Time.time - _lastScanTime >= ScanCooldown)
                 ScanAvailableWeapons();
                 
             if (_meleeWeapon == null) return false;
@@ -1745,7 +1781,7 @@ if (Time.time - _targetUnreachableStartTime > unreachableCheckTime)
         /// </summary>
         public bool CanSwapWeapons()
         {
-            if (Time.time - _lastScanTime >= SCAN_COOLDOWN)
+            if (Time.time - _lastScanTime >= ScanCooldown)
                 ScanAvailableWeapons();
             return _meleeWeapon != null && _rangedWeapon != null;
         }
@@ -1755,7 +1791,7 @@ if (Time.time - _targetUnreachableStartTime > unreachableCheckTime)
         /// </summary>
         public bool CanSwapStaves()
         {
-            if (Time.time - _lastScanTime >= SCAN_COOLDOWN)
+            if (Time.time - _lastScanTime >= ScanCooldown)
                 ScanAvailableWeapons();
             return _supportStaff != null && _offensiveStaff != null;
         }
@@ -1782,7 +1818,7 @@ if (Time.time - _targetUnreachableStartTime > unreachableCheckTime)
         /// </summary>
         public bool ForceSwapToSupportStaff()
         {
-            if (Time.time - _lastScanTime >= SCAN_COOLDOWN)
+            if (Time.time - _lastScanTime >= ScanCooldown)
                 ScanAvailableWeapons();
             if (_supportStaff == null) return false;
             
@@ -1801,7 +1837,7 @@ if (Time.time - _targetUnreachableStartTime > unreachableCheckTime)
         /// </summary>
         public bool ForceSwapToOffensiveStaff()
         {
-            if (Time.time - _lastScanTime >= SCAN_COOLDOWN)
+            if (Time.time - _lastScanTime >= ScanCooldown)
                 ScanAvailableWeapons();
             if (_offensiveStaff == null) return false;
             

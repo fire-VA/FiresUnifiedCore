@@ -50,7 +50,7 @@ namespace FiresCore.Npc.IdleBehaviors
                             
                             // Calculate proper interaction point in front of chest
                             Vector3 chestInteractionPoint = Core.InteractionPointHelper.GetContainerInteractionPoint(
-                                _toolChest, Transform.position, CHEST_INTERACTION_DISTANCE);
+                                _toolChest, Transform.position, ChestInteractionDistance);
                             MoveToPosition(chestInteractionPoint);
                             
                             CompanionChatHelper.ShowWorkingStatus(Companion, $"Getting tool from chest...");
@@ -211,7 +211,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _targetPosition = _targetResource.InteractionPosition;
             float dist = Vector3.Distance(Transform.position, _targetPosition);
             
-            float requiredRange = _targetResource.IsPickable ? PICKABLE_RANGE : ATTACK_RANGE;
+            float requiredRange = _targetResource.IsPickable ? PickableRange : AttackRange;
             
             if (dist < requiredRange)
             {
@@ -268,7 +268,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float angle = Random.Range(90f, 120f) * (Random.value > 0.5f ? 1f : -1f);
             Vector3 newDir = Quaternion.Euler(0, angle, 0) * currentDir;
-            Vector3 newPosition = resourceCenter + newDir * ATTACK_RANGE * 0.8f;
+            Vector3 newPosition = resourceCenter + newDir * AttackRange * 0.8f;
             
             if (ZoneSystem.instance != null)
             {
@@ -304,9 +304,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 return true;
             }
 
-            const float WORKBENCH_INTERACT_DIST = 2f;
+            const float WorkbenchInteractDist = 2f;
             float dist = Vector3.Distance(Transform.position, _craftWorkbench.transform.position);
-            if (dist <= WORKBENCH_INTERACT_DIST)
+            if (dist <= WorkbenchInteractDist)
             {
                 StopMovement();
                 FaceTarget(_craftWorkbench.transform.position);
@@ -333,8 +333,8 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_craftWorkbench != null)
                 FaceTarget(_craftWorkbench.transform.position);
 
-            const float CRAFT_DURATION = 3f;
-            if (Time.time - _phaseStartTime < CRAFT_DURATION)
+            const float CraftDuration = 3f;
+            if (Time.time - _phaseStartTime < CraftDuration)
                 return false;
 
             _zanim?.SetBool("crafting", false);
@@ -364,7 +364,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private void TryFindNextResource()
         {
-            if (_resourcesGathered < 5 && Random.value < CONTINUE_GATHERING_CHANCE)
+            if (_resourcesGathered < 5 && Random.value < ContinueGatheringChance)
             {
                 var nextResource = FindNearbyResource();
                 if (nextResource != null)

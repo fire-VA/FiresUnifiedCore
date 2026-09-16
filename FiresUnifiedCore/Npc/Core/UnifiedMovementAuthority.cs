@@ -5,49 +5,11 @@ using FiresCore.Npc.Movement;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// UNIFIED MOVEMENT AUTHORITY - Single source of truth for ALL companion movement.
-    /// 
-    /// CRITICAL ARCHITECTURE:
-    /// This is the ONLY component that should call Character.SetMoveDir() for companions.
-    /// All other systems MUST go through this authority - no exceptions.
-    /// 
-    /// THE SLIDING BUG ROOT CAUSE:
-    /// When multiple systems call SetMoveDir() in the same frame:
-    /// 1. System A sets direction/velocity
-    /// 2. System B overwrites with different values
-    /// 3. Animator receives inconsistent speed input
-    /// 4. Visual animation doesn't match actual movement = SLIDING
-    /// 
-    /// THE SOLUTION:
-    /// 1. This component is the ONLY thing that calls Character.SetMoveDir()
-    /// 2. All other systems request movement through TryAcquireAuthority() + SetMoveDirection()
-    /// 3. Only ONE source can have authority at a time
-    /// 4. Authority handoffs include a clean stop before the new source takes over
-    /// 5. Movement is blocked until animator transitions to locomotion state
-    /// 
-    /// MOVEMENT SOURCES (Priority order - higher wins):
-    /// 100 - Forced: Knockback, teleport, ragdoll
-    ///  90 - PlayerCommand: Direct player commands (ping move, attack)
-    ///  80 - Animation: Root motion, attack animations
-    ///  70 - Combat: Combat AI movement (dodge, strafe, approach)
-    ///  60 - SubBehavior: Idle sub-behaviors (fire tending, smelting)
-    ///  50 - Following: Following the owner
-    ///  40 - IdleWander: Idle wandering
-    ///   0 - None: No movement
-    /// 
-    /// HOW OTHER SYSTEMS SHOULD USE THIS:
-    /// 
-    /// // WRONG - Never do this:
-    /// _character.SetMoveDir(direction);
-    /// 
-    /// // RIGHT - Always do this:
-    /// var authority = companion.GetMovementAuthority();
-    /// if (authority.TryAcquireAuthority(MovementSource.Combat, "CombatMovement", 2f))
-    /// {
-    ///     authority.SetMoveDirection("CombatMovement", direction, walk, run);
-    /// }
-    /// // When done:
-    /// authority.ReleaseAuthority("CombatMovement");
+    /// The only component allowed to call Character.SetMoveDir for a companion. Several systems writing the
+    /// move direction in one frame fed the animator inconsistent speeds and made companions slide, so each
+    /// system acquires authority by priority (forced, player command, animation, combat, sub-behavior,
+    /// following, idle wander), moves through the authority and releases it when done. A handoff stops the
+    /// previous source cleanly, and movement waits until the animator reaches locomotion.
     /// </summary>
     public class UnifiedMovementAuthority : MonoBehaviour
     {
@@ -172,17 +134,15 @@ namespace FiresCore.Npc.Core
         
         // LOG THROTTLING - Only log significant state changes, not every frame
         private Vector3 _lastLoggedDirection;
-        private MovementSource _lastLoggedAuthority = MovementSource.None;
-        private string _lastLoggedOwner = "";
         private float _lastDirectionLogTime;
-        private const float DIRECTION_LOG_INTERVAL = 2.0f;  // Only log direction changes every 2 seconds
-        private const float DIRECTION_CHANGE_THRESHOLD = 0.3f;  // Only log if direction changed significantly
+        private const float DirectionLogInterval = 2.0f;  // Only log direction changes every 2 seconds
+        private const float DirectionChangeThreshold = 0.3f;  // Only log if direction changed significantly
         
         // DENIED log throttling - don't spam logs when authority is denied
         private MovementSource _lastDeniedSource = MovementSource.None;
         private string _lastDeniedOwner = "";
         private float _lastDeniedLogTime;
-        private const float DENIED_LOG_INTERVAL = 5.0f;  // Only log denied once per 5 seconds per source/owner
+        private const float DeniedLogInterval = 5.0f;  // Only log denied once per 5 seconds per source/owner
         
         // Authority timeout
         private float _authorityTimeoutTime;
@@ -322,7 +282,7 @@ namespace FiresCore.Npc.Core
             if (_isMovementFrozen && source != MovementSource.Forced)
             {
                 // Throttle DENIED logs
-                if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DENIED_LOG_INTERVAL)
+                if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DeniedLogInterval)
                 {
                     Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - movement frozen ({_freezeReason})");
                     _lastDeniedSource = source;
@@ -339,7 +299,7 @@ namespace FiresCore.Npc.Core
             if (_suspendActive && source != MovementSource.Forced &&
                 owner != _suspendResumer && (int)source <= (int)_suspendFloor)
             {
-                if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DENIED_LOG_INTERVAL)
+                if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DeniedLogInterval)
                 {
                     Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - band suspended below {_suspendFloor} by {_suspendResumer}");
                     _lastDeniedSource = source;
@@ -353,7 +313,7 @@ namespace FiresCore.Npc.Core
             if ((int)source < (int)CurrentAuthority)
             {
                 // Throttle DENIED logs - only log once per 5 seconds for same source/owner
-                if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DENIED_LOG_INTERVAL)
+                if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DeniedLogInterval)
                 {
                     Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - {CurrentAuthorityOwner} ({CurrentAuthority}) has higher priority");
                     _lastDeniedSource = source;
@@ -363,29 +323,15 @@ namespace FiresCore.Npc.Core
                 return false;
             }
 
-            // EQUAL-PRIORITY INCUMBENCY GUARD
-            // If a different owner already holds authority at the SAME priority level,
-            // we deny rather than steal.  Without this guard, two systems at the same
-            // priority (e.g. CompanionAI and CompanionCombatMovement, both at
-            // MovementSource.Combat) call TryAcquireAuthority every frame and alternately
-            // steal authority from each other in an infinite ping-pong loop:
-            //
-            //   Frame N   : CompanionAI ACQUIRED Combat (from CompanionCombatMovement)
-            //   Frame N+1 : CompanionCombatMovement ACQUIRED Combat (from CompanionAI)
-            //   Frame N+2 : CompanionAI ACQUIRED Combat (from CompanionCombatMovement)
-            //   …
-            //
-            // Each swap calls StopMovementImmediate() and OnAuthorityChanged on the main
-            // thread, which is enough work to lock the loading screen during a dungeon
-            // teleport.  The correct rule for SAME-priority handoffs is: incumbent keeps
-            // it until they explicitly call ReleaseAuthority (or the duration timeout
-            // fires).  Strictly-higher-priority sources can still preempt as before.
+            // Same priority never steals from the incumbent. Two Combat-level sources used to swap authority every
+            // frame, and the stop and change events on each swap were enough to lock the loading screen during a
+            // dungeon teleport. Only a strictly higher priority preempts; the incumbent keeps it until released.
             if ((int)source == (int)CurrentAuthority &&
                 CurrentAuthority != MovementSource.None &&
                 !string.IsNullOrEmpty(CurrentAuthorityOwner) &&
                 owner != CurrentAuthorityOwner)
             {
-                if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DENIED_LOG_INTERVAL)
+                if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DeniedLogInterval)
                 {
                     Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - {CurrentAuthorityOwner} already holds same-priority {CurrentAuthority} authority (no equal-priority preemption)");
                     _lastDeniedSource = source;
@@ -656,8 +602,8 @@ namespace FiresCore.Npc.Core
             {
                 // Log if direction changed significantly OR it's been a while
                 float dirChange = Vector3.Distance(direction.normalized, _lastLoggedDirection.normalized);
-                bool directionChanged = dirChange > DIRECTION_CHANGE_THRESHOLD;
-                bool timeElapsed = Time.time - _lastDirectionLogTime > DIRECTION_LOG_INTERVAL;
+                bool directionChanged = dirChange > DirectionChangeThreshold;
+                bool timeElapsed = Time.time - _lastDirectionLogTime > DirectionLogInterval;
                 
                 // Also log if we just started moving from stopped
                 bool startedMoving = _lastLoggedDirection.sqrMagnitude < 0.01f;

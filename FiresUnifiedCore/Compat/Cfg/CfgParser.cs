@@ -4,24 +4,11 @@ using System.IO;
 
 namespace FiresCore.Compat.Cfg
 {
-    // Shared skeleton parser for Marketplace's bespoke .cfg family (the Phase-2 drop-in foundation).
-    //
-    // There is NO single Marketplace serializer: every module's _Main_Server hand-parses its own
-    // data-line grammar. What they ALL share is the skeleton transcribed here from
-    // Trader_Main_Server.ProcessTraderProfiles (kg.Marketplace v9.8.1):
-    //
-    //   key = "default"; flag = false;
-    //   foreach line:
-    //     if (IsNullOrWhiteSpace || StartsWith("#")) skip;          // comments incl. "##"
-    //     else if (StartsWith("[")):                                // section header
-    //        key = line.Replace("[","").Replace("]","").Replace(" ","").ToLower();
-    //        if (key.Split('=').Length == 2) { key = parts[0]; flag = ToBoolean(parts[1]); } else flag = false;
-    //     else: data line -> module grammar, appended to current section.
-    //   Folder read: Directory.GetFiles(folder,"*.cfg",AllDirectories) + File.ReadAllLines, merged.
-    //
-    // This type does ONLY the shared part. Per-module data-line grammar layers on CfgSection.Lines.
-    // Faithful to MP's tolerances: brackets are STRIPPED, never regex-matched (~1.5% of real headers
-    // are missing the closing ']'); parsing never throws (importers decide log-and-skip vs break).
+    // Parses the section skeleton shared by Marketplace's .cfg files (transcribed from kg.Marketplace 9.8.1's
+    // Trader_Main_Server): blank and "#" lines are skipped, a "[key]" or "[key=bool]" line opens a section, and
+    // every other line belongs to it; a folder read merges every *.cfg beneath it. Each module's data-line grammar
+    // is layered on CfgSection.Lines. Brackets are stripped rather than matched, as some real headers lack the
+    // closing one, and parsing never throws.
 
     // One raw config line with provenance, for Marketplace-style "in {file}, line: {n}" diagnostics.
     public readonly struct CfgLine
@@ -47,10 +34,10 @@ namespace FiresCore.Compat.Cfg
         // Marketplace's common section key: spaces stripped, lowercased, part before the first '='
         // (only when the header splits into exactly 2 on '=', matching MP). Most modules key this way;
         // use RawHeader for the exceptions (Territory '@', PlayersTag ':', Banker/Teleporter no-split).
-        public string Key { get { string k, f; CfgHeader.SplitEq(RawHeader, out k, out f); return k; } }
+        public string Key { get { string key, eqFlag; CfgHeader.SplitEq(RawHeader, out key, out eqFlag); return key; } }
 
         // Raw token after the first '=' (Trader NeedToKnow bool / Gambler MAXROLLS int), or null.
-        public string EqFlag { get { string k, f; CfgHeader.SplitEq(RawHeader, out k, out f); return f; } }
+        public string EqFlag { get { string key, eqFlag; CfgHeader.SplitEq(RawHeader, out key, out eqFlag); return eqFlag; } }
         // Raw token after the first '@' (Territory priority), or null.
         public string AtFlag => CfgHeader.AfterFirst(RawHeader, '@');
         // Raw token after the first ':' (PlayersTag), or null.
@@ -66,17 +53,17 @@ namespace FiresCore.Compat.Cfg
         // First section whose common Key equals key (Marketplace-normalized).
         public CfgSection Find(string key)
         {
-            string k = Normalize(key);
-            foreach (var s in Sections) if (s.Key == k) return s;
+            string normalizedKey = Normalize(key);
+            foreach (var section in Sections) if (section.Key == normalizedKey) return section;
             return null;
         }
 
         // All sections sharing the common key (Marketplace merges same-key sections across files).
         public List<CfgSection> FindAll(string key)
         {
-            string k = Normalize(key);
+            string normalizedKey = Normalize(key);
             var result = new List<CfgSection>();
-            foreach (var s in Sections) if (s.Key == k) result.Add(s);
+            foreach (var section in Sections) if (section.Key == normalizedKey) result.Add(section);
             return result;
         }
 
@@ -108,9 +95,9 @@ namespace FiresCore.Compat.Cfg
             try { lines = File.ReadAllLines(path); }
             catch (Exception ex)
             {
-                var d = new CfgDocument();
-                d.Warnings.Add("Can't read " + path + ": " + ex.Message);
-                return d;
+                var document = new CfgDocument();
+                document.Warnings.Add("Can't read " + path + ": " + ex.Message);
+                return document;
             }
             return ParseLines(Enumerate(lines, path));
         }
@@ -169,10 +156,10 @@ namespace FiresCore.Compat.Cfg
         // there is no flag. Input is the bracket-stripped header.
         public static void SplitEq(string rawHeader, out string key, out string flag)
         {
-            string s = (rawHeader ?? "").Replace(" ", "").ToLowerInvariant();
-            string[] parts = s.Split('=');
+            string normalized = (rawHeader ?? "").Replace(" ", "").ToLowerInvariant();
+            string[] parts = normalized.Split('=');
             if (parts.Length == 2) { key = parts[0]; flag = parts[1]; }
-            else { key = s; flag = null; }
+            else { key = normalized; flag = null; }
         }
 
         // Substring after the first occurrence of delim, or null if absent.

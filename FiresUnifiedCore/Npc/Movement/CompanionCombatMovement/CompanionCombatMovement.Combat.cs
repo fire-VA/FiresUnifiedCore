@@ -15,7 +15,7 @@ namespace FiresCore.Npc
 
         // Track when we last logged critical stamina retreat (to avoid spam)
         private float _lastCriticalStaminaLogTime = -10f;
-        private const float CRITICAL_STAMINA_LOG_INTERVAL = 5f;
+        private const float CriticalStaminaLogInterval = 5f;
 
         private void UpdateCombatState()
         {
@@ -159,7 +159,6 @@ namespace FiresCore.Npc
                 _stateTransitionHandler?.OnEnterCombat();
                 _hasActiveCommitment = false;
                 _isInCombatCooldown = false;
-                _moveDirSet = false;
                 _hasRangedMovementRequest = false;
 
                 if (_previousIntent == MovementIntent.Idle || _lastMoveDirection.sqrMagnitude < 0.01f)
@@ -179,7 +178,6 @@ namespace FiresCore.Npc
                 _stateTransitionHandler?.OnExitCombat();
                 _isInCombatCooldown = true;
                 _lastEnemyKillTime = Time.time;
-                _moveDirSet = false;
                 _hasRangedMovementRequest = false;
 
                 BeginStateTransition();
@@ -241,7 +239,6 @@ namespace FiresCore.Npc
             _transitionStartTime = Time.time;
             _lastMoveDirection = _currentMoveDirection;
             _previousIntent = _currentIntent;
-            _moveDirSet = false;
             _stateTransitionHandler?.BeginTransition(_currentMoveDirection);
         }
 
@@ -249,7 +246,6 @@ namespace FiresCore.Npc
         {
             _isInTransition = false;
             _lastStateChangeTime = Time.time;
-            _moveDirSet = false;
             _stateTransitionHandler?.EndTransition();
         }
 
@@ -417,7 +413,7 @@ namespace FiresCore.Npc
                     _staminaManager.OnBlockEnded();
                     
                     if ((VerboseLogging || StaminaManager.CombatFlowLogging) && 
-                        Time.time - _lastCriticalStaminaLogTime >= CRITICAL_STAMINA_LOG_INTERVAL)
+                        Time.time - _lastCriticalStaminaLogTime >= CriticalStaminaLogInterval)
                     {
                         _lastCriticalStaminaLogTime = Time.time;
                         Debug.Log($"[CompanionCombatMovement] {_companion?.companionName} CRITICAL STAMINA - retreating to owner! No combat actions allowed.");
@@ -650,21 +646,21 @@ namespace FiresCore.Npc
 
         private (MovementIntent intent, float duration) DetermineRangedIntent(float distToTarget, bool isAttacking, StaminaManager.StaminaRecommendation staminaRec)
         {
-            const float DANGER_RANGE = 5f;
-            const float OPTIMAL_MIN = 10f;
-            const float OPTIMAL_MAX = 15f;
+            const float DangerRange = 5f;
+            const float OptimalMin = 10f;
+            const float OptimalMax = 15f;
 
             if (isAttacking)
             {
                 return (MovementIntent.PlantedFiring, 2f);
             }
 
-            if (distToTarget < DANGER_RANGE)
+            if (distToTarget < DangerRange)
             {
                 return (MovementIntent.CombatRetreat, approachCommitmentDuration);
             }
 
-            if (distToTarget >= OPTIMAL_MIN && distToTarget <= OPTIMAL_MAX)
+            if (distToTarget >= OptimalMin && distToTarget <= OptimalMax)
             {
                 if (staminaRec != StaminaManager.StaminaRecommendation.DefendOnly &&
                     (_attackRecognition?.IsSafeToAttack() ?? true))
@@ -674,7 +670,7 @@ namespace FiresCore.Npc
                 return (MovementIntent.Repositioning, 1f);
             }
 
-            if (distToTarget < OPTIMAL_MIN)
+            if (distToTarget < OptimalMin)
             {
                 return (MovementIntent.CombatRetreat, approachCommitmentDuration);
             }
@@ -724,7 +720,6 @@ namespace FiresCore.Npc
             _commitmentStartTime = Time.time;
             _commitmentDuration = duration;
             _hasActiveCommitment = true;
-            _moveDirSet = false;
 
             if (intent == MovementIntent.CombatStrafe && !_isStrafeCommitted)
             {
@@ -779,7 +774,6 @@ namespace FiresCore.Npc
                     
                 if (needsNewDirection)
                 {
-                    _moveDirSet = false;
                 }
             }
             _committedIntent = newIntent;
@@ -792,7 +786,6 @@ namespace FiresCore.Npc
             _strafeDirection = _combatHandler?.StrafeDirection ?? 0;
             _strafeCommitEndTime = Time.time + strafeCommitmentDuration;
             _isStrafeCommitted = true;
-            _moveDirSet = false;
         }
 
         private void ExecuteCommittedStrafe()
@@ -809,7 +802,6 @@ namespace FiresCore.Npc
             if (result.StrafeDirectionFlipped)
             {
                 _strafeDirection = _combatHandler?.StrafeDirection ?? _strafeDirection * -1;
-                _moveDirSet = false;
             }
             
             _targetMoveDirection = result.MoveDirection;
@@ -868,7 +860,6 @@ namespace FiresCore.Npc
             _committedTarget = null;
             _isStrafeCommitted = false;
             _strafeDirection = 0;
-            _moveDirSet = false;
             _hasRangedMovementRequest = false;
 
             if (_combat != null)
@@ -882,7 +873,6 @@ namespace FiresCore.Npc
         {
             _committedTarget = newTarget;
             _hasActiveCommitment = false;
-            _moveDirSet = false;
 
             if (VerboseLogging)
             {
@@ -1083,7 +1073,6 @@ namespace FiresCore.Npc
             else if (result.Direction.sqrMagnitude > 0.01f)
                 SetMoveDirSafe(result.Direction);
             
-            _moveDirSet = false;
             
             if (VerboseLogging)
                 Debug.Log($"[CompanionCombatMovement] Ranged movement: {intent}, dir: {result.Direction}");
@@ -1104,7 +1093,6 @@ namespace FiresCore.Npc
                 _hasRangedMovementRequest = false;
                 _isStrafeCommitted = false;
                 _strafeDirection = 0;
-                _moveDirSet = false;
                 
                 if (VerboseLogging)
                     Debug.Log($"[CompanionCombatMovement] {_companion?.companionName} entering FLEE mode");

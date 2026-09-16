@@ -16,13 +16,13 @@ namespace FiresCore.Npc.AI
         // Kiting behavior state
         private int _kiteDirection = 0;
         private float _lastKiteDirectionChange = -100f;
-        private const float KITE_DIRECTION_COMMIT_TIME = 3f;
-        private const float KITE_RADIUS_MIN = 10f;
-        private const float KITE_RADIUS_MAX = 18f;
-        private const float GROUP_AWARENESS_RANGE = 15f;
-        private const float ENEMY_DANGER_RADIUS = 6f;
-        private const float MIN_FLEE_TIME = 3f;
-        private const float FLEE_THREAT_SCAN_RANGE = 30f;
+        private const float KiteDirectionCommitTime = 3f;
+        private const float KiteRadiusMin = 10f;
+        private const float KiteRadiusMax = 18f;
+        private const float GroupAwarenessRange = 15f;
+        private const float EnemyDangerRadius = 6f;
+        private const float MinFleeTime = 3f;
+        private const float FleeThreatScanRange = 30f;
 
         // After exiting flee, the AI must spend at least this long in
         // a non-flee state before it is allowed to re-enter flee. Prevents
@@ -31,14 +31,14 @@ namespace FiresCore.Npc.AI
         // a transient stale value right after a respawn). Tuned to be
         // long enough that a real "oh god retreat" still fires within a
         // second after taking damage — OnDamaged bypasses this gate.
-        private const float MIN_FLEE_REENTRY_DELAY = 1.5f;
+        private const float MinFleeReentryDelay = 1.5f;
 
         // Rate-limit for the spammy "transitioning to Fleeing" log so a
         // misbehaving threat-analyzer doesn't flood BepInEx output at
         // 60 Hz. The actual state transition is NOT rate-limited —
         // SetState() already short-circuits when the state hasn't
         // changed; the cooldown above is what governs re-entry.
-        private const float FLEE_LOG_INTERVAL = 1.0f;
+        private const float FleeLogInterval = 1.0f;
         private float _lastFleeEntryLogTime = -100f;
         private float _lastFleeExitTime = -100f;
         private bool _hasTriedKitingRangedSwap = false;
@@ -51,7 +51,7 @@ namespace FiresCore.Npc.AI
         // Defend range (aggro bubble), leash range (give-up distance), and combat-hold (alert buffer after the
         // last threat clears) are live-tunable via the BepInEx .cfg — see CompanionSettings.Stationed* for the
         // keys, defaults, and clamps. Read fresh each tick so config edits apply without a relog.
-        private const float STATIONED_THREAT_SCAN_INTERVAL = 0.3f;
+        private const float StationedThreatScanInterval = 0.3f;
         private float _stationedThreatLastSeen = -100f;
         private float _stationedLastScan = -100f;
 
@@ -68,7 +68,7 @@ namespace FiresCore.Npc.AI
             bool haveThreat = _targetCreature != null && !_targetCreature.IsDead()
                               && Vector3.Distance(_targetCreature.transform.position, post) <= CompanionSettings.StationedLeashRange;
 
-            if (!haveThreat && Time.time - _stationedLastScan >= STATIONED_THREAT_SCAN_INTERVAL)
+            if (!haveThreat && Time.time - _stationedLastScan >= StationedThreatScanInterval)
             {
                 _stationedLastScan = Time.time;
                 var found = FindStationedThreat(post, CompanionSettings.StationedDefendRange);
@@ -103,17 +103,17 @@ namespace FiresCore.Npc.AI
             var all = Character.GetAllCharacters();
             for (int i = 0; i < all.Count; i++)
             {
-                var c = all[i];
-                if (c == null || c == m_character || c.IsDead()) continue;
-                if (c.IsTamed() || c.IsPlayer()) continue;   // never aggro players or allied tames
-                if (!IsEnemy(c)) continue;                    // hostiles only — passives must not shadow a real threat
-                float dSq = (c.transform.position - post).sqrMagnitude;
-                if (dSq > bestSq) continue;                   // (cull before the heavier passive probe below)
-                if (IsPassiveCreature(c)) continue;           // honor the admin HuntList — never PROACTIVELY aggro prey
+                var candidate = all[i];
+                if (candidate == null || candidate == m_character || candidate.IsDead()) continue;
+                if (candidate.IsTamed() || candidate.IsPlayer()) continue;   // never aggro players or allied tames
+                if (!IsEnemy(candidate)) continue;                    // hostiles only — passives must not shadow a real threat
+                float sqrDistance = (candidate.transform.position - post).sqrMagnitude;
+                if (sqrDistance > bestSq) continue;                   // (cull before the heavier passive probe below)
+                if (IsPassiveCreature(candidate)) continue;           // honor the admin HuntList — never PROACTIVELY aggro prey
                                                               // (deer/boar/hunt-list); OnDamaged still retaliates if hit
-                if (!IsThreatToOwnerOrSelf(c, post, m_character)) continue;
-                bestSq = dSq;
-                best = c;
+                if (!IsThreatToOwnerOrSelf(candidate, post, m_character)) continue;
+                bestSq = sqrDistance;
+                best = candidate;
             }
             return best;
         }
@@ -134,7 +134,7 @@ namespace FiresCore.Npc.AI
             
             bool isTank = _archetypeController != null && _archetypeController.IsTank;
             
-            if (StateTransitionLogging && _staminaManager != null && Time.time - _lastStateLogTime >= STATE_LOG_INTERVAL)
+            if (StateTransitionLogging && _staminaManager != null && Time.time - _lastStateLogTime >= StateLogInterval)
             {
                 _lastStateLogTime = Time.time;
                 bool inCritical = _staminaManager.IsInCriticalRecovery();
@@ -195,17 +195,17 @@ namespace FiresCore.Npc.AI
                 // analyzer doesn't bounce us back into flee on the very
                 // next tick. Real new damage events go through OnDamaged
                 // which bypasses this gate.
-                if (Time.time - _lastFleeExitTime < MIN_FLEE_REENTRY_DELAY)
+                if (Time.time - _lastFleeExitTime < MinFleeReentryDelay)
                 {
-                    if (Time.time - _lastFleeEntryLogTime >= FLEE_LOG_INTERVAL)
+                    if (Time.time - _lastFleeEntryLogTime >= FleeLogInterval)
                     {
                         _lastFleeEntryLogTime = Time.time;
-                        Debug.Log($"[CompanionAI] {m_character?.m_name} ShouldFlee=true but re-entry cooldown active ({MIN_FLEE_REENTRY_DELAY - (Time.time - _lastFleeExitTime):F1}s left) — staying in Combat");
+                        Debug.Log($"[CompanionAI] {m_character?.m_name} ShouldFlee=true but re-entry cooldown active ({MinFleeReentryDelay - (Time.time - _lastFleeExitTime):F1}s left) — staying in Combat");
                     }
                 }
                 else
                 {
-                    if (Time.time - _lastFleeEntryLogTime >= FLEE_LOG_INTERVAL)
+                    if (Time.time - _lastFleeEntryLogTime >= FleeLogInterval)
                     {
                         _lastFleeEntryLogTime = Time.time;
                         Debug.Log($"[CompanionAI] {m_character?.m_name} UpdateCombatState detected ShouldFlee=true ({GetFleeReason()}) — transitioning to Fleeing!");
@@ -222,7 +222,7 @@ namespace FiresCore.Npc.AI
                     return;
                 }
 
-                if (timeInCombat < MIN_COMBAT_STATE_TIME)
+                if (timeInCombat < MinCombatStateTime)
                 {
                     return;
                 }
@@ -270,7 +270,7 @@ namespace FiresCore.Npc.AI
             {
                 float distToTarget = Vector3.Distance(transform.position, _targetCreature.transform.position);
                 // ONLY re-engage if the enemy is right on top of us — actively in
-                // our face. Do NOT re-engage just because MIN_RETURNING_STATE_TIME
+                // our face. Do NOT re-engage just because MinReturningStateTime
                 // has elapsed; that caused a yo-yo where the companion kept leaving
                 // the player to chase a running enemy, ratcheting further away each
                 // cycle until it was 100 m out.
@@ -322,7 +322,7 @@ namespace FiresCore.Npc.AI
             bool inCriticalRecovery = _staminaManager?.IsInCriticalRecovery() ?? false;
             bool inRecovery = _staminaManager?.IsRecovering() ?? false;
             
-            if (StateTransitionLogging && Time.time - _lastStateLogTime >= STATE_LOG_INTERVAL)
+            if (StateTransitionLogging && Time.time - _lastStateLogTime >= StateLogInterval)
             {
                 _lastStateLogTime = Time.time;
                 float fleeTimeRemaining = fleeTime - (Time.time - _fleeStartTime);
@@ -332,7 +332,7 @@ namespace FiresCore.Npc.AI
             
             // Range-limited scan — only check characters within 30m, not the entire world
             bool hasActiveThreat = false;
-            Character.GetCharactersInRange(transform.position, FLEE_THREAT_SCAN_RANGE, _tempCharacterList);
+            Character.GetCharactersInRange(transform.position, FleeThreatScanRange, _tempCharacterList);
             foreach (var character in _tempCharacterList)
             {
                 if (character == null || character.IsDead()) continue;
@@ -348,7 +348,7 @@ namespace FiresCore.Npc.AI
             if (!hasActiveThreat && !inCriticalRecovery && staminaPercent >= 0.70f)
             {
                 float timeInFlee = Time.time - _fleeStartTime;
-                if (timeInFlee >= MIN_FLEE_TIME)
+                if (timeInFlee >= MinFleeTime)
                 {
                     _kiteDirection = 0;
                     _hasTriedKitingRangedSwap = false;
@@ -362,7 +362,7 @@ namespace FiresCore.Npc.AI
             if (healthPercent >= healReturnPercent)
             {
                 float timeInFlee = Time.time - _fleeStartTime;
-                if (timeInFlee < MIN_FLEE_TIME)
+                if (timeInFlee < MinFleeTime)
                 {
                     // Continue fleeing
                 }
@@ -418,7 +418,7 @@ namespace FiresCore.Npc.AI
             // positions for the kite target danger check below.
             // Uses GetCharactersInRange instead of scanning every entity in the world.
             _nearbyEnemyPositions.Clear();
-            Character.GetCharactersInRange(myPos, GROUP_AWARENESS_RANGE, _tempCharacterList);
+            Character.GetCharactersInRange(myPos, GroupAwarenessRange, _tempCharacterList);
             
             foreach (var character in _tempCharacterList)
             {
@@ -462,7 +462,7 @@ namespace FiresCore.Npc.AI
                 combinedThreatDirection = (ownerPos - myPos).normalized;
             }
             
-            if (_kiteDirection == 0 || Time.time - _lastKiteDirectionChange > KITE_DIRECTION_COMMIT_TIME * 3f)
+            if (_kiteDirection == 0 || Time.time - _lastKiteDirectionChange > KiteDirectionCommitTime * 3f)
             {
                 Vector3 initOwnerToMe = (myPos - ownerPos).normalized;
                 if (initOwnerToMe.sqrMagnitude < 0.1f) initOwnerToMe = Vector3.forward;
@@ -491,22 +491,22 @@ namespace FiresCore.Npc.AI
             }
             ownerToMe = ownerToMe.normalized;
             
-            float targetRadius = KITE_RADIUS_MIN;
+            float targetRadius = KiteRadiusMin;
             
-            if (closestEnemyDist < ENEMY_DANGER_RADIUS)
+            if (closestEnemyDist < EnemyDangerRadius)
             {
-                targetRadius = KITE_RADIUS_MAX;
+                targetRadius = KiteRadiusMax;
             }
-            else if (closestEnemyDist < ENEMY_DANGER_RADIUS * 1.5f)
+            else if (closestEnemyDist < EnemyDangerRadius * 1.5f)
             {
-                targetRadius = Mathf.Lerp(KITE_RADIUS_MIN, KITE_RADIUS_MAX, 0.7f);
+                targetRadius = Mathf.Lerp(KiteRadiusMin, KiteRadiusMax, 0.7f);
             }
             else if (enemyCount >= 3)
             {
-                targetRadius = Mathf.Lerp(KITE_RADIUS_MIN, KITE_RADIUS_MAX, 0.5f);
+                targetRadius = Mathf.Lerp(KiteRadiusMin, KiteRadiusMax, 0.5f);
             }
             
-            float rotationSpeed = closestEnemyDist < ENEMY_DANGER_RADIUS ? 60f : 45f;
+            float rotationSpeed = closestEnemyDist < EnemyDangerRadius ? 60f : 45f;
             Quaternion rotation = Quaternion.Euler(0, _kiteDirection * rotationSpeed * dt * 2f, 0);
             Vector3 newDirection = rotation * ownerToMe;
             
@@ -518,7 +518,7 @@ namespace FiresCore.Npc.AI
             for (int i = 0; i < _nearbyEnemyPositions.Count; i++)
             {
                 float distToKiteTarget = Vector3.Distance(kiteTarget, _nearbyEnemyPositions[i]);
-                if (distToKiteTarget < ENEMY_DANGER_RADIUS)
+                if (distToKiteTarget < EnemyDangerRadius)
                 {
                     wouldEnterDanger = true;
                     break;
@@ -533,10 +533,10 @@ namespace FiresCore.Npc.AI
                 kiteTarget = myPos + combinedThreatDirection * 8f;
                 
                 float distFromOwnerToKiteTarget = Vector3.Distance(ownerPos, kiteTarget);
-                if (distFromOwnerToKiteTarget > KITE_RADIUS_MAX * 1.5f)
+                if (distFromOwnerToKiteTarget > KiteRadiusMax * 1.5f)
                 {
                     Vector3 toOwner = (ownerPos - kiteTarget).normalized;
-                    kiteTarget += toOwner * (distFromOwnerToKiteTarget - KITE_RADIUS_MAX);
+                    kiteTarget += toOwner * (distFromOwnerToKiteTarget - KiteRadiusMax);
                 }
                 
                 if (VerboseLogging)
@@ -584,16 +584,16 @@ namespace FiresCore.Npc.AI
             }
             
             float finalDistToOwner = Vector3.Distance(kiteTarget, ownerPos);
-            if (finalDistToOwner > KITE_RADIUS_MAX * 1.5f)
+            if (finalDistToOwner > KiteRadiusMax * 1.5f)
             {
                 Vector3 toOwner = (ownerPos - kiteTarget).normalized;
-                kiteTarget += toOwner * (finalDistToOwner - KITE_RADIUS_MAX);
+                kiteTarget += toOwner * (finalDistToOwner - KiteRadiusMax);
             }
-            else if (finalDistToOwner < KITE_RADIUS_MIN * 0.5f)
+            else if (finalDistToOwner < KiteRadiusMin * 0.5f)
             {
                 Vector3 awayFromOwner = (kiteTarget - ownerPos).normalized;
                 if (awayFromOwner.sqrMagnitude < 0.1f) awayFromOwner = combinedThreatDirection;
-                kiteTarget = ownerPos + awayFromOwner * KITE_RADIUS_MIN;
+                kiteTarget = ownerPos + awayFromOwner * KiteRadiusMin;
             }
             
             if (_combatMovement != null)
@@ -786,7 +786,7 @@ namespace FiresCore.Npc.AI
             {
                 Vector3 moveTarget = canSee ? targetPos : _lastKnownTargetPos;
 
-                if (!canSee && Vector3.Distance(transform.position, _lastKnownTargetPos) < POSITION_REACHED_THRESHOLD)
+                if (!canSee && Vector3.Distance(transform.position, _lastKnownTargetPos) < PositionReachedThreshold)
                 {
                     _beenAtLastTargetPos = true;
                 }
@@ -842,12 +842,12 @@ namespace FiresCore.Npc.AI
                 //   - we were directly damaged in the recent past, or
                 //   - the threat analyzer reports a dangerous enemy nearby, or
                 //   - we have a current target that is not a passive creature.
-                bool wasRecentlyDamaged = Time.time - _lastDirectlyDamagedTime < DIRECT_DAMAGE_ALERT_DURATION;
+                bool wasRecentlyDamaged = Time.time - _lastDirectlyDamagedTime < DirectDamageAlertDuration;
                 bool analyzerSeesThreat = false;
                 if (_threatAnalyzer != null)
                 {
-                    var s = _threatAnalyzer.GetCurrentSituation();
-                    analyzerSeesThreat = s.DangerousEnemies > 0 || s.IsCompanionInDanger;
+                    var currentSituation = _threatAnalyzer.GetCurrentSituation();
+                    analyzerSeesThreat = currentSituation.DangerousEnemies > 0 || currentSituation.IsCompanionInDanger;
                 }
                 bool hostileTarget = _targetCreature != null
                     && !_targetCreature.IsDead()

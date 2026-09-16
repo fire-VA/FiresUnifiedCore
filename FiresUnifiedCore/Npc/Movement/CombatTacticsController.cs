@@ -308,9 +308,9 @@ if (_attackRecognition != null)
         private (CombatIntent intent, float duration) DetermineRangedIntent(
             float distToTarget, bool isAttacking, StaminaManager.StaminaRecommendation staminaRec)
         {
-            const float DANGER_RANGE = 5f;
-            const float OPTIMAL_MIN = 10f;
-            const float OPTIMAL_MAX = 15f;
+            const float DangerRange = 5f;
+            const float OptimalMin = 10f;
+            const float OptimalMax = 15f;
 
             // Critical stamina - retreat regardless of position
             if (staminaRec == StaminaManager.StaminaRecommendation.CriticalRetreat)
@@ -323,12 +323,12 @@ if (_attackRecognition != null)
                 return (CombatIntent.PlantedFiring, 2f);
             }
 
-            if (distToTarget < DANGER_RANGE)
+            if (distToTarget < DangerRange)
             {
                 return (CombatIntent.Retreat, ApproachCommitmentDuration);
             }
 
-            if (distToTarget >= OPTIMAL_MIN && distToTarget <= OPTIMAL_MAX)
+            if (distToTarget >= OptimalMin && distToTarget <= OptimalMax)
             {
                 if (staminaRec != StaminaManager.StaminaRecommendation.DefendOnly &&
                     staminaRec != StaminaManager.StaminaRecommendation.CriticalRetreat &&
@@ -339,7 +339,7 @@ if (_attackRecognition != null)
                 return (CombatIntent.Reposition, 1f);
             }
 
-            if (distToTarget < OPTIMAL_MIN)
+            if (distToTarget < OptimalMin)
             {
                 return (CombatIntent.Retreat, ApproachCommitmentDuration);
             }
@@ -549,10 +549,10 @@ if (_attackRecognition != null)
             if (_committedTarget == null) return Vector3.zero;
 
     float distToTarget = Vector3.Distance(_transform.position, _committedTarget.transform.position);
-const float OPTIMAL_RANGE = 12f;
+const float OptimalRange = 12f;
 
             Vector3 moveDir;
-       if (distToTarget < OPTIMAL_RANGE)
+       if (distToTarget < OptimalRange)
 {
       moveDir = (_transform.position - _committedTarget.transform.position).normalized;
             }
@@ -638,9 +638,9 @@ if (enemy == null) return false;
       var projectiles = Physics.OverlapSphere(_transform.position, ProjectileDetectionRange, 
        LayerMask.GetMask("projectile", "piece_nonsolid"));
 
-            foreach (var col in projectiles)
+            foreach (var collider in projectiles)
          {
-  var proj = col.GetComponent<Projectile>();
+  var proj = collider.GetComponent<Projectile>();
          if (proj != null)
    {
 Vector3 toUs = (_transform.position - proj.transform.position).normalized;

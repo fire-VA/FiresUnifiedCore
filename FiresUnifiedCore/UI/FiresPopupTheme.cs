@@ -81,12 +81,12 @@ namespace FiresCore.UI
 
         private static void StylePanelShell(GameObject panelRoot)
         {
-            var bg = panelRoot.GetComponent<Image>();
-            if (bg != null)
+            var image = panelRoot.GetComponent<Image>();
+            if (image != null)
             {
-                bg.sprite = FiresRoundedSkin.RoundedSprite(10, PanelBg, PanelEdge, 1);
-                bg.type = Image.Type.Sliced;
-                bg.color = Color.white;
+                image.sprite = FiresRoundedSkin.RoundedSprite(10, PanelBg, PanelEdge, 1);
+                image.type = Image.Type.Sliced;
+                image.color = Color.white;
             }
             var outline = panelRoot.GetComponent<Outline>();
             if (outline != null) outline.enabled = false;   // the sprite bakes its own border ring
@@ -123,7 +123,7 @@ namespace FiresCore.UI
                 img.color = Color.white;
             }
             if (input.textComponent != null) input.textComponent.color = TextCream;
-            if (input.placeholder is TMP_Text ph) ph.color = TextDim;
+            if (input.placeholder is TMP_Text placeholder) placeholder.color = TextDim;
             // White caret, wide + steady blink — the gold one vanished against the brown fills.
             input.caretColor = Color.white;
             input.customCaretColor = true;
@@ -171,12 +171,12 @@ namespace FiresCore.UI
 
         private static void StyleSlider(Slider slider)
         {
-            var bg = slider.GetComponent<Image>();
-            if (bg != null)
+            var image = slider.GetComponent<Image>();
+            if (image != null)
             {
-                bg.sprite = FiresRoundedSkin.RoundedSprite(5, TrackFill, PanelEdge, 1);
-                bg.type = Image.Type.Sliced;
-                bg.color = Color.white;
+                image.sprite = FiresRoundedSkin.RoundedSprite(5, TrackFill, PanelEdge, 1);
+                image.type = Image.Type.Sliced;
+                image.color = Color.white;
             }
             if (slider.fillRect != null)
             {
@@ -230,8 +230,8 @@ namespace FiresCore.UI
             }
             // Flip parchment-ink (dark) text to the light palette; text already light/gold was set
             // deliberately by a control styler above — leave it.
-            Color c = tmp.color;
-            float luminance = 0.299f * c.r + 0.587f * c.g + 0.114f * c.b;
+            Color color = tmp.color;
+            float luminance = 0.299f * color.r + 0.587f * color.g + 0.114f * color.b;
             if (luminance < 0.45f) tmp.color = TextLight;
         }
     }

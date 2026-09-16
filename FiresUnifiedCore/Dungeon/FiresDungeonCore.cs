@@ -9,20 +9,12 @@ using UnityEngine;
 namespace FiresCore.Dungeon
 {
     /// <summary>
-    /// The generic custom-dungeon engine, lifted verbatim-in-behavior from FiresMausoleum.Dungeon.MausoleumDungeon
-    /// and parameterized by <see cref="DungeonSpec"/>. The four Harmony bodies live ONCE here and dispatch through
-    /// <see cref="FiresDungeonRegistry"/> by DG-name PREFIX, so multiple dungeon mods coexist without fighting over
-    /// the single static DungeonGenerator.m_availableRooms. Robust against Expand World Data, which patches
-    /// Enum.TryParse&lt;Room.Theme&gt; and rebuilds DungeonDB.m_rooms from its YAML:
-    ///
-    ///   • DungeonDB.Start postfix — for EVERY registered spec, register its room prefabs as DungeonDB.RoomData on
-    ///     a NAMED theme and add them to the private m_roomByHash so DungeonGenerator.Load resolves saved rooms by
-    ///     hash after a restart. The RoomData are HELD per spec so SetupAvailableRooms can re-inject them.
-    ///   • DungeonGenerator.SetupAvailableRooms postfix — for the matching spec's DG only, REPLACE the static
-    ///     availableRooms list with EXACTLY that spec's rooms (never 0; the entrance room is present so
-    ///     FindStartRoom never crashes). Immune to EWD wiping DungeonDB.m_rooms.
-    ///   • DungeonGenerator.Awake postfix — ensure the env box + stale-heal regenerate for the matching spec's DG.
-    ///   • ZoneSystem.SetupLocations postfix — append each spec's optional near-spawn ZoneLocation.
+    /// The custom-dungeon engine, lifted from FiresMausoleum and parameterized by <see cref="DungeonSpec"/>. Its
+    /// patches live once here and dispatch by generator-name prefix through <see cref="FiresDungeonRegistry"/>, so
+    /// several dungeon mods coexist, and they hold up against Expand World Data rebuilding DungeonDB. DungeonDB.Start
+    /// registers each spec's rooms and indexes them by hash for saved dungeons; SetupAvailableRooms swaps in exactly
+    /// the matching spec's rooms; DungeonGenerator.Awake ensures the environment box and stale-dungeon heal; and
+    /// SetupLocations adds each spec's optional near-spawn location.
     /// </summary>
     public static class FiresDungeonCore
     {
@@ -68,12 +60,12 @@ namespace FiresCore.Dungeon
             }
         }
 
-        private static void RegisterRooms(DungeonDB db, DungeonSpec spec)
+        private static void RegisterRooms(DungeonDB dungeonDb, DungeonSpec spec)
         {
             var rooms = DungeonDB.GetRooms();
             if (rooms == null) return;
 
-            var roomByHash = GetRoomByHash(db);
+            var roomByHash = GetRoomByHash(dungeonDb);
             var held = HeldFor(spec);
             held.Clear();
 
@@ -114,11 +106,11 @@ namespace FiresCore.Dungeon
             }
         }
 
-        private static Dictionary<int, DungeonDB.RoomData> GetRoomByHash(DungeonDB db)
+        private static Dictionary<int, DungeonDB.RoomData> GetRoomByHash(DungeonDB dungeonDb)
         {
             if (_roomByHashField == null)
                 _roomByHashField = typeof(DungeonDB).GetField("m_roomByHash", BindingFlags.NonPublic | BindingFlags.Instance);
-            return _roomByHashField?.GetValue(db) as Dictionary<int, DungeonDB.RoomData>;
+            return _roomByHashField?.GetValue(dungeonDb) as Dictionary<int, DungeonDB.RoomData>;
         }
 
         // ── DungeonGenerator.SetupAvailableRooms: inject ONLY the matching spec's rooms ──
@@ -252,23 +244,23 @@ namespace FiresCore.Dungeon
             }
         }
 
-        private static void MaybeRegenerateStale(DungeonGenerator dg, DungeonSpec spec)
+        private static void MaybeRegenerateStale(DungeonGenerator generator, DungeonSpec spec)
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return; // only the authority regenerates
 
             // Wrap the interior rooms in the env box (server-authoritative, ZDO-persisted). Ensured BEFORE the
             // ZDO-owner early-return so the env box is created on every server even when regeneration is skipped.
-            EnsureEnvBox(dg, spec);
+            EnsureEnvBox(generator, spec);
 
-            var nv = dg.GetComponent<ZNetView>();
-            ZDO zdo = (nv != null && nv.IsValid()) ? nv.GetZDO() : null;
+            var netView = generator.GetComponent<ZNetView>();
+            ZDO zdo = (netView != null && netView.IsValid()) ? netView.GetZDO() : null;
             if (zdo == null || !zdo.IsOwner()) return;
 
             // already generated? (Save always writes s_roomData). Then leave it alone.
             if (zdo.GetByteArray(ZDOVars.s_roomData, out byte[] data) && data != null && data.Length >= 4) return;
 
-            Debug.Log($"{spec.LogTag} stale dungeon DG at {dg.transform.position} has no saved rooms — scheduling a regenerate.");
-            FiresDungeonService.RegenerateDungeonSoon(dg, spec);
+            Debug.Log($"{spec.LogTag} stale dungeon DG at {generator.transform.position} has no saved rooms — scheduling a regenerate.");
+            FiresDungeonService.RegenerateDungeonSoon(generator, spec);
         }
 
         /// <summary>
@@ -277,13 +269,13 @@ namespace FiresCore.Dungeon
         /// of a bright open sky. ForcedBiome from the spec (None for a dungeon). Deduped by scanning for an existing
         /// box near the DG; the box is ZDO-backed so it persists. Server only (caller is IsServer-gated).
         /// </summary>
-        private static void EnsureEnvBox(DungeonGenerator dg, DungeonSpec spec)
+        private static void EnsureEnvBox(DungeonGenerator generator, DungeonSpec spec)
         {
             if (string.IsNullOrEmpty(spec.EnvBoxPrefabName)) return;
-            Vector3 center = dg.transform.position; // already at surface pos + (0,5000,0), i.e. the zone centre
+            Vector3 center = generator.transform.position; // already at surface pos + (0,5000,0), i.e. the zone centre
             Vector3 boxSize = VanillaEnvBoxSize;    // 64 x 64 x 500 immediately — vanilla parity, no math
 
-            Debug.Log($"[ENVBOX-DBG] EnsureEnvBox: {spec.LogTag} DG='{dg.gameObject.name}' dgPos={center} " +
+            Debug.Log($"[ENVBOX-DBG] EnsureEnvBox: {spec.LogTag} DG='{generator.gameObject.name}' dgPos={center} " +
                       $"boxSize={boxSize} (vanilla 64x64x500 minimum) env='{spec.EnvName}' skybox={spec.SkyboxMode}. " +
                       $"ScaleEnvBoxToRooms grows this SAME box up if rooms sprawl past the zone.");
 
@@ -334,12 +326,12 @@ namespace FiresCore.Dungeon
 
         private static void AssertSpecConfigOnce(FiresCore.Utilities.EnvironmentBoxController box, DungeonSpec spec)
         {
-            var nv = box.GetComponent<ZNetView>();
-            ZDO zdo = (nv != null && nv.IsValid()) ? nv.GetZDO() : null;
+            var netView = box.GetComponent<ZNetView>();
+            ZDO zdo = (netView != null && netView.IsValid()) ? netView.GetZDO() : null;
             if (zdo == null) return;
             if (zdo.GetInt(HashEnvBoxSpecRev, 0) >= EnvBoxSpecConfigRev) return; // already asserted this revision
 
-            if (!nv.IsOwner()) nv.ClaimOwnership(); // SaveToZDO is owner-gated; the server must own to persist
+            if (!netView.IsOwner()) netView.ClaimOwnership(); // SaveToZDO is owner-gated; the server must own to persist
 
             box.EnvironmentName = spec.EnvName ?? string.Empty;
             box.CurrentSkyboxMode = spec.SkyboxMode;
@@ -355,8 +347,8 @@ namespace FiresCore.Dungeon
 
         private static void StampSpecConfigRev(FiresCore.Utilities.EnvironmentBoxController box)
         {
-            var nv = box != null ? box.GetComponent<ZNetView>() : null;
-            ZDO zdo = (nv != null && nv.IsValid()) ? nv.GetZDO() : null;
+            var netView = box != null ? box.GetComponent<ZNetView>() : null;
+            ZDO zdo = (netView != null && netView.IsValid()) ? netView.GetZDO() : null;
             if (zdo != null) zdo.Set(HashEnvBoxSpecRev, EnvBoxSpecConfigRev);
         }
 
@@ -368,31 +360,31 @@ namespace FiresCore.Dungeon
         /// also keeps the arrival pad above the rooms enclosed). One box, scaled — no buffer math, no second box.
         /// Server-authoritative + ZDO-persisted.
         /// </summary>
-        private static void ScaleEnvBoxToRooms(DungeonGenerator dg, DungeonSpec spec)
+        private static void ScaleEnvBoxToRooms(DungeonGenerator generator, DungeonSpec spec)
         {
             if (string.IsNullOrEmpty(spec.EnvBoxPrefabName)) return;
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return; // server computes; clients read ZDO
 
-            var box = FindWrappingBox(dg, spec);
+            var box = FindWrappingBox(generator, spec);
             if (box == null)
             {
-                Debug.Log($"[ENVBOX-DBG] ScaleEnvBoxToRooms: {spec.LogTag} DG='{dg.gameObject.name}' — no env box found " +
-                          $"near {dg.transform.position} within {spec.EnvBoxDedupeRadius}m; skipping.");
+                Debug.Log($"[ENVBOX-DBG] ScaleEnvBoxToRooms: {spec.LogTag} DG='{generator.gameObject.name}' — no env box found " +
+                          $"near {generator.transform.position} within {spec.EnvBoxDedupeRadius}m; skipping.");
                 return;
             }
 
             // Seed the AABB as the vanilla box centred on the DG (zone centre). Rooms that fit inside it leave the box at
             // exactly 64x64x500; rooms past the zone extend it.
-            Bounds bounds = new Bounds(dg.transform.position, VanillaEnvBoxSize);
-            Room[] rooms = dg.GetComponentsInChildren<Room>();
+            Bounds bounds = new Bounds(generator.transform.position, VanillaEnvBoxSize);
+            Room[] rooms = generator.GetComponentsInChildren<Room>();
             int colliderCount = 0;
             foreach (Room room in rooms)
             {
                 if (room == null) continue;
-                foreach (BoxCollider bc in room.GetComponentsInChildren<BoxCollider>())
+                foreach (BoxCollider boxCollider in room.GetComponentsInChildren<BoxCollider>())
                 {
-                    if (bc == null) continue;
-                    bounds.Encapsulate(bc.bounds);
+                    if (boxCollider == null) continue;
+                    bounds.Encapsulate(boxCollider.bounds);
                     colliderCount++;
                 }
             }
@@ -400,7 +392,7 @@ namespace FiresCore.Dungeon
             Vector3 newCenter = bounds.center;
             Vector3 newSize = Vector3.Max(bounds.size, VanillaEnvBoxSize); // never below the vanilla minimum
 
-            Debug.Log($"[ENVBOX-DBG] ScaleEnvBoxToRooms: {spec.LogTag} DG='{dg.gameObject.name}' rooms={rooms.Length} " +
+            Debug.Log($"[ENVBOX-DBG] ScaleEnvBoxToRooms: {spec.LogTag} DG='{generator.gameObject.name}' rooms={rooms.Length} " +
                       $"colliders={colliderCount} roomAABB[center={bounds.center} size={bounds.size}] -> box center={newCenter} " +
                       $"size={newSize} (min 64x64x500; was center={box.transform.position} size={box.BoxSize}).");
 
@@ -411,16 +403,16 @@ namespace FiresCore.Dungeon
         /// Find the single env box wrapping this DG — the nearest <see cref="FiresCore.Utilities.EnvironmentBoxController"/>
         /// within the spec's dedupe radius of the DG anchor (the same criterion EnsureEnvBox uses to dedupe).
         /// </summary>
-        private static FiresCore.Utilities.EnvironmentBoxController FindWrappingBox(DungeonGenerator dg, DungeonSpec spec)
+        private static FiresCore.Utilities.EnvironmentBoxController FindWrappingBox(DungeonGenerator generator, DungeonSpec spec)
         {
-            Vector3 center = dg.transform.position;
+            Vector3 center = generator.transform.position;
             float bestSqr = spec.EnvBoxDedupeRadius * spec.EnvBoxDedupeRadius;
             FiresCore.Utilities.EnvironmentBoxController best = null;
-            foreach (var b in UnityEngine.Object.FindObjectsByType<FiresCore.Utilities.EnvironmentBoxController>(FindObjectsSortMode.None))
+            foreach (var box in UnityEngine.Object.FindObjectsByType<FiresCore.Utilities.EnvironmentBoxController>(FindObjectsSortMode.None))
             {
-                if (b == null) continue;
-                float sqr = (b.transform.position - center).sqrMagnitude;
-                if (sqr <= bestSqr) { bestSqr = sqr; best = b; }
+                if (box == null) continue;
+                float sqr = (box.transform.position - center).sqrMagnitude;
+                if (sqr <= bestSqr) { bestSqr = sqr; best = box; }
             }
             return best;
         }
@@ -432,7 +424,7 @@ namespace FiresCore.Dungeon
         /// Ours must ONLY ever generate inside their own dungeon, so we strip them back out here. Idempotent and
         /// cheap (a name-set pass over the already-built list); logs only when it actually removed something.
         /// </summary>
-        private static void StripOurRoomsFromForeignDg(DungeonGenerator dg)
+        private static void StripOurRoomsFromForeignDg(DungeonGenerator generator)
         {
             var available = DungeonGenerator.m_availableRooms;
             if (available == null || available.Count == 0) return;
@@ -441,8 +433,8 @@ namespace FiresCore.Dungeon
             foreach (var spec in FiresDungeonRegistry.All)
             {
                 if (spec?.RoomPrefabNames == null) continue;
-                foreach (string n in spec.RoomPrefabNames)
-                    if (!string.IsNullOrEmpty(n)) ours.Add(n);
+                foreach (string roomName in spec.RoomPrefabNames)
+                    if (!string.IsNullOrEmpty(roomName)) ours.Add(roomName);
             }
             if (ours.Count == 0) return;
 
@@ -450,11 +442,11 @@ namespace FiresCore.Dungeon
             available.RemoveAll(rd => rd != null && rd.m_prefab.IsValid && ours.Contains(rd.m_prefab.Name));
             int removed = before - available.Count;
             if (removed > 0)
-                Debug.Log($"[FiresCore] stripped {removed} Fires room(s) from foreign dungeon '{dg.gameObject.name}' " +
+                Debug.Log($"[FiresCore] stripped {removed} Fires room(s) from foreign dungeon '{generator.gameObject.name}' " +
                           $"(available {before} -> {available.Count}) — our rooms only generate in our own dungeons.");
         }
 
-        private static void InjectOurRooms(DungeonGenerator dg, DungeonSpec spec)
+        private static void InjectOurRooms(DungeonGenerator generator, DungeonSpec spec)
         {
             var held = HeldFor(spec);
 
@@ -475,17 +467,17 @@ namespace FiresCore.Dungeon
             if (validOurs == 0)
             {
                 // Never make it worse: if we somehow have no rooms to inject, leave whatever the original found.
-                Debug.LogWarning($"{spec.LogTag} SetupAvailableRooms[{dg.gameObject.name}]: no valid rooms to inject; leaving available={hadBefore}.");
+                Debug.LogWarning($"{spec.LogTag} SetupAvailableRooms[{generator.gameObject.name}]: no valid rooms to inject; leaving available={hadBefore}.");
                 return;
             }
 
             available.Clear();
-            foreach (var rd in held)
-                if (rd != null && rd.m_prefab.IsValid) available.Add(rd);
+            foreach (var roomData in held)
+                if (roomData != null && roomData.m_prefab.IsValid) available.Add(roomData);
 
             int dbCount = DungeonDB.GetRooms()?.Count ?? -1;
             int present = CountOursInDb(held);
-            Debug.Log($"{spec.LogTag} SetupAvailableRooms[{dg.gameObject.name}]: DungeonDB rooms={dbCount}, ours-in-DB={present}/{held.Count}, " +
+            Debug.Log($"{spec.LogTag} SetupAvailableRooms[{generator.gameObject.name}]: DungeonDB rooms={dbCount}, ours-in-DB={present}/{held.Count}, " +
                       $"availableBefore={hadBefore} -> availableAfter={available.Count} (theme={spec.NamedTheme}).");
         }
 
@@ -510,19 +502,19 @@ namespace FiresCore.Dungeon
 
         private static void EnsureRoomsInDungeonDB(DungeonSpec spec, List<DungeonDB.RoomData> held)
         {
-            var db = DungeonDB.instance;
-            if (db == null) return;
+            var dungeonDb = DungeonDB.instance;
+            if (dungeonDb == null) return;
             var rooms = DungeonDB.GetRooms();
             if (rooms == null) return;
-            var roomByHash = GetRoomByHash(db);
+            var roomByHash = GetRoomByHash(dungeonDb);
 
-            foreach (var rd in held)
+            foreach (var roomData in held)
             {
-                if (rd == null || !rd.m_prefab.IsValid) continue;
-                int hash = rd.m_prefab.Name.GetStableHashCode();
+                if (roomData == null || !roomData.m_prefab.IsValid) continue;
+                int hash = roomData.m_prefab.Name.GetStableHashCode();
                 if (roomByHash != null && roomByHash.ContainsKey(hash)) continue;
-                rooms.Add(rd);
-                if (roomByHash != null) roomByHash[hash] = rd;
+                rooms.Add(roomData);
+                if (roomByHash != null) roomByHash[hash] = roomData;
             }
         }
 
@@ -530,13 +522,13 @@ namespace FiresCore.Dungeon
         {
             var rooms = DungeonDB.GetRooms();
             if (rooms == null) return -1;
-            int n = 0;
-            foreach (var rd in held)
+            int count = 0;
+            foreach (var roomData in held)
             {
-                if (rd == null || !rd.m_prefab.IsValid) continue;
-                if (rooms.Contains(rd)) n++;
+                if (roomData == null || !roomData.m_prefab.IsValid) continue;
+                if (rooms.Contains(roomData)) count++;
             }
-            return n;
+            return count;
         }
 
         // ── ZoneSystem: place each spec's surface dungeon near spawn ──────────────
@@ -572,37 +564,23 @@ namespace FiresCore.Dungeon
         }
 
         /// <summary>
-        /// Register a spec's dungeon ZoneLocation with ZoneSystem the SAME way vanilla <c>SetupLocations</c> does:
-        /// append it to <c>m_locations</c> (world-gen placement, when the spec opts in) AND — the load-bearing part —
-        /// index it in the private <c>m_locationsByHash</c> keyed by <see cref="ZoneSystem.ZoneLocation.Hash"/>
-        /// (= <c>m_prefab.Name.GetStableHashCode()</c>).
-        ///
-        /// Vanilla builds <c>m_locationsByHash</c> from <c>m_locations</c> INSIDE the base <c>SetupLocations</c> body,
-        /// iterating only the built-in LocationList prefabs — and it runs BEFORE this postfix. So a mod location never
-        /// lands in that dictionary unless we add it explicitly here. It matters because a networked
-        /// <see cref="LocationProxy"/> (created by <c>ZoneSystem.CreateLocationProxy</c> whenever the server spawns the
-        /// Location in Full mode) re-spawns the Location on every CLIENT via
-        /// <c>ZoneSystem.SpawnProxyLocation(hash) → GetLocation(hash)</c>. If the hash isn't found the client logs
-        /// "Missing location:HASH" and spawns nothing — so the client never runs <c>DungeonGenerator.Awake→Load→Spawn</c>
-        /// and never rebuilds the room ROOTS. Cave/crypt walls + floors are STATIC (non-networked) mesh carried on those
-        /// room roots (DungeonGenerator.PlaceRoom line 719), so they only exist wherever a DG runs; the room's ZNetView
-        /// children (icicles/torches/creatures, line 700) are the only pieces that replicate as independent ZDOs. Net
-        /// effect on a dedicated server without this registration: the client sees the props but no walls. This makes
-        /// the client resolve the Location and rebuild the walls exactly like a vanilla dungeon. Server + client,
-        /// idempotent.
+        /// Registers a spec's dungeon location the way vanilla SetupLocations does, including the private
+        /// m_locationsByHash index that vanilla only builds for built-in locations. Clients re-spawn a location
+        /// proxy by hash; without the index they log "Missing location", never run the DungeonGenerator, and see
+        /// the networked props without the static walls and floors. Idempotent on server and client. Returns the
+        /// spec's name when a new hash was indexed, otherwise null.
         /// </summary>
-        /// <returns>The spec's friendly name when a NEW hash was indexed (for the load summary), else null.</returns>
-        private static string RegisterDungeonLocation(ZoneSystem zs, DungeonSpec spec)
+        private static string RegisterDungeonLocation(ZoneSystem zoneSystem, DungeonSpec spec)
         {
-            if (zs == null || zs.m_locations == null) return null;
+            if (zoneSystem == null || zoneSystem.m_locations == null) return null;
 
-            ZoneSystem.ZoneLocation loc = zs.m_locations.Find(l => l != null && l.m_prefabName == spec.CryptLocationPrefabName);
+            ZoneSystem.ZoneLocation loc = zoneSystem.m_locations.Find(l => l != null && l.m_prefabName == spec.CryptLocationPrefabName);
             if (loc == null)
             {
                 // World-gen specs get the full placement descriptor; door-/command-spawned specs get the manual record.
                 loc = spec.NearSpawnLocation != null ? BuildZoneLocation(spec) : BuildManualZoneLocation(spec);
                 if (loc == null) return null;
-                zs.m_locations.Add(loc);
+                zoneSystem.m_locations.Add(loc);
             }
             else
             {
@@ -623,7 +601,7 @@ namespace FiresCore.Dungeon
             // m_prefab.Name onto the proxy ZDO, so the client resolves by exactly this hash. Mirror it verbatim.
             loc.m_prefabName = loc.m_prefab.Name;
             int hash = loc.Hash;
-            var byHash = GetLocationsByHash(zs);
+            var byHash = GetLocationsByHash(zoneSystem);
             if (byHash == null)
             {
                 Debug.LogError($"{spec.LogTag} could not access ZoneSystem.m_locationsByHash; " +
@@ -668,11 +646,11 @@ namespace FiresCore.Dungeon
             LoadSummary.EmitMiniBox("🏰 DUNGEONS", lines.ToArray());
         }
 
-        private static Dictionary<int, ZoneSystem.ZoneLocation> GetLocationsByHash(ZoneSystem zs)
+        private static Dictionary<int, ZoneSystem.ZoneLocation> GetLocationsByHash(ZoneSystem zoneSystem)
         {
             if (_locationsByHashField == null)
                 _locationsByHashField = typeof(ZoneSystem).GetField("m_locationsByHash", BindingFlags.NonPublic | BindingFlags.Instance);
-            return _locationsByHashField?.GetValue(zs) as Dictionary<int, ZoneSystem.ZoneLocation>;
+            return _locationsByHashField?.GetValue(zoneSystem) as Dictionary<int, ZoneSystem.ZoneLocation>;
         }
 
         /// <summary>
@@ -685,9 +663,9 @@ namespace FiresCore.Dungeon
         public static void EnsureLocationRegistered(DungeonSpec spec)
         {
             if (spec == null || !spec.IsEnabled()) return;
-            var zs = ZoneSystem.instance;
-            if (zs == null) return; // ZoneSystem not up yet; SetupLocations postfix will register it at world load.
-            try { RegisterDungeonLocation(zs, spec); }
+            var zoneSystem = ZoneSystem.instance;
+            if (zoneSystem == null) return; // ZoneSystem not up yet; SetupLocations postfix will register it at world load.
+            try { RegisterDungeonLocation(zoneSystem, spec); }
             catch (Exception ex) { Debug.LogError($"{spec.LogTag} EnsureLocationRegistered failed: {ex}"); }
         }
 
@@ -700,27 +678,27 @@ namespace FiresCore.Dungeon
                 Debug.LogWarning($"{spec.LogTag} location prefab not loaded; cannot build ZoneLocation.");
                 return null;
             }
-            var d = spec.NearSpawnLocation;
-            if (d == null) return null;
+            var nearSpawn = spec.NearSpawnLocation;
+            if (nearSpawn == null) return null;
 
             return new ZoneSystem.ZoneLocation
             {
                 m_prefabName = spec.CryptLocationPrefabName,
                 m_prefab = spec.Assets.SoftRefFor(crypt),
                 m_enable = true,
-                m_biome = d.Biome,
-                m_biomeArea = d.BiomeArea,
-                m_quantity = d.Quantity,
-                m_unique = d.Unique,
-                m_prioritized = d.Prioritized,
-                m_centerFirst = d.CenterFirst,
-                m_minDistanceFromCenter = d.MinDistanceFromCenter,
-                m_maxDistanceFromCenter = d.MaxDistanceFromCenter,
-                m_exteriorRadius = d.ExteriorRadius,
-                m_interiorRadius = d.InteriorRadius,
-                m_clearArea = d.ClearArea,
-                m_randomRotation = d.RandomRotation,
-                m_minAltitude = d.MinAltitude,
+                m_biome = nearSpawn.Biome,
+                m_biomeArea = nearSpawn.BiomeArea,
+                m_quantity = nearSpawn.Quantity,
+                m_unique = nearSpawn.Unique,
+                m_prioritized = nearSpawn.Prioritized,
+                m_centerFirst = nearSpawn.CenterFirst,
+                m_minDistanceFromCenter = nearSpawn.MinDistanceFromCenter,
+                m_maxDistanceFromCenter = nearSpawn.MaxDistanceFromCenter,
+                m_exteriorRadius = nearSpawn.ExteriorRadius,
+                m_interiorRadius = nearSpawn.InteriorRadius,
+                m_clearArea = nearSpawn.ClearArea,
+                m_randomRotation = nearSpawn.RandomRotation,
+                m_minAltitude = nearSpawn.MinAltitude,
             };
         }
 
@@ -741,25 +719,25 @@ namespace FiresCore.Dungeon
                 Debug.LogWarning($"{spec.LogTag} location prefab not loaded; cannot build ZoneLocation.");
                 return null;
             }
-            var d = spec.NearSpawnLocation;
+            var nearSpawn = spec.NearSpawnLocation;
             return new ZoneSystem.ZoneLocation
             {
                 m_prefabName = spec.CryptLocationPrefabName,
                 m_prefab = spec.Assets.SoftRefFor(crypt),
                 m_enable = true,
-                m_biome = d?.Biome ?? Heightmap.Biome.All,
-                m_biomeArea = d?.BiomeArea ?? Heightmap.BiomeArea.Everything,
-                m_quantity = d?.Quantity ?? 0,
-                m_unique = d?.Unique ?? false,
-                m_prioritized = d?.Prioritized ?? false,
-                m_centerFirst = d?.CenterFirst ?? false,
-                m_minDistanceFromCenter = d?.MinDistanceFromCenter ?? 0f,
-                m_maxDistanceFromCenter = d?.MaxDistanceFromCenter ?? 0f,
-                m_exteriorRadius = d?.ExteriorRadius ?? 16f,
-                m_interiorRadius = d?.InteriorRadius ?? 32f,
-                m_clearArea = d?.ClearArea ?? true,
-                m_randomRotation = d?.RandomRotation ?? false,
-                m_minAltitude = d?.MinAltitude ?? 1f,
+                m_biome = nearSpawn?.Biome ?? Heightmap.Biome.All,
+                m_biomeArea = nearSpawn?.BiomeArea ?? Heightmap.BiomeArea.Everything,
+                m_quantity = nearSpawn?.Quantity ?? 0,
+                m_unique = nearSpawn?.Unique ?? false,
+                m_prioritized = nearSpawn?.Prioritized ?? false,
+                m_centerFirst = nearSpawn?.CenterFirst ?? false,
+                m_minDistanceFromCenter = nearSpawn?.MinDistanceFromCenter ?? 0f,
+                m_maxDistanceFromCenter = nearSpawn?.MaxDistanceFromCenter ?? 0f,
+                m_exteriorRadius = nearSpawn?.ExteriorRadius ?? 16f,
+                m_interiorRadius = nearSpawn?.InteriorRadius ?? 32f,
+                m_clearArea = nearSpawn?.ClearArea ?? true,
+                m_randomRotation = nearSpawn?.RandomRotation ?? false,
+                m_minAltitude = nearSpawn?.MinAltitude ?? 1f,
             };
         }
 
@@ -776,11 +754,11 @@ namespace FiresCore.Dungeon
         public static string SpawnDungeonAt(DungeonSpec spec, Vector3 pos, Quaternion rot)
         {
             if (spec == null) return "no dungeon spec.";
-            var zs = ZoneSystem.instance;
-            if (zs == null) return "ZoneSystem not ready.";
+            var zoneSystem = ZoneSystem.instance;
+            if (zoneSystem == null) return "ZoneSystem not ready.";
 
             ZoneSystem.ZoneLocation loc =
-                zs.m_locations?.Find(l => l != null && l.m_prefabName == spec.CryptLocationPrefabName)
+                zoneSystem.m_locations?.Find(l => l != null && l.m_prefabName == spec.CryptLocationPrefabName)
                 ?? BuildManualZoneLocation(spec);
             if (loc == null || loc.m_prefab.IsValid == false) return "dungeon ZoneLocation unavailable (bundle not loaded?).";
 
@@ -791,12 +769,12 @@ namespace FiresCore.Dungeon
             // off-centre → rooms clipped on one side (which the old 256 m_zoneSize balloon "fixed" by over-generating).
             if (spec.AnchorInteriorToZoneCenter)
             {
-                Vector3 inPos = pos;
+                Vector3 requestedPosition = pos;
                 Vector3 zoneCentre = ZoneSystem.GetZonePos(ZoneSystem.GetZone(pos));
                 pos = new Vector3(zoneCentre.x, pos.y, zoneCentre.z);
-                Debug.Log($"[FDM-PLACE] {spec.LogTag} SpawnDungeonAt zone-centre snap: inPos={inPos} " +
-                          $"zone={ZoneSystem.GetZone(inPos)} zoneCentre={zoneCentre} -> spawnPos={pos} " +
-                          $"(shifted XZ by {new Vector2(pos.x - inPos.x, pos.z - inPos.z).magnitude:F2}m). " +
+                Debug.Log($"[FDM-PLACE] {spec.LogTag} SpawnDungeonAt zone-centre snap: inPos={requestedPosition} " +
+                          $"zone={ZoneSystem.GetZone(requestedPosition)} zoneCentre={zoneCentre} -> spawnPos={pos} " +
+                          $"(shifted XZ by {new Vector2(pos.x - requestedPosition.x, pos.z - requestedPosition.z).magnitude:F2}m). " +
                           $"DG should land at spawnPos+DGlocal; expect DG world XZ == zoneCentre XZ if DG local XZ~0.");
             }
 
@@ -815,7 +793,7 @@ namespace FiresCore.Dungeon
                 }
                 if (_spawnLocationMethod != null)
                 {
-                    _spawnLocationMethod.Invoke(zs, new object[]
+                    _spawnLocationMethod.Invoke(zoneSystem, new object[]
                     {
                         loc, seed, pos, rot, ZoneSystem.SpawnMode.Full, new List<GameObject>()
                     });
@@ -836,8 +814,8 @@ namespace FiresCore.Dungeon
                 GameObject prefab = spec.Assets?.Get(spec.CryptLocationPrefabName);
                 if (prefab == null) return "dungeon prefab not loaded.";
                 GameObject go = UnityEngine.Object.Instantiate(prefab, pos, rot);
-                var dg = go.GetComponentInChildren<DungeonGenerator>();
-                if (dg != null) dg.Generate(ZoneSystem.SpawnMode.Full);
+                var generator = go.GetComponentInChildren<DungeonGenerator>();
+                if (generator != null) generator.Generate(ZoneSystem.SpawnMode.Full);
                 int rooms = LogGeneratedRooms(spec, pos);
                 Debug.Log($"{spec.LogTag} spawn: generated, placed {rooms} rooms (fallback instantiate).");
                 spec.OnDungeonGenerated?.Invoke();
@@ -854,20 +832,20 @@ namespace FiresCore.Dungeon
         {
             try
             {
-                Vector3 dgPos = spawnPos + new Vector3(0f, 5000f, 0f);
+                Vector3 generatorPosition = spawnPos + new Vector3(0f, 5000f, 0f);
                 DungeonGenerator best = null;
                 float bestSqr = 64f * 64f; // within one zone of where the DG should be
-                foreach (var dg in UnityEngine.Object.FindObjectsByType<DungeonGenerator>(FindObjectsSortMode.None))
+                foreach (var generator in UnityEngine.Object.FindObjectsByType<DungeonGenerator>(FindObjectsSortMode.None))
                 {
-                    if (dg == null) continue;
-                    float sqr = (dg.transform.position - dgPos).sqrMagnitude;
-                    if (sqr < bestSqr) { bestSqr = sqr; best = dg; }
+                    if (generator == null) continue;
+                    float sqr = (generator.transform.position - generatorPosition).sqrMagnitude;
+                    if (sqr < bestSqr) { bestSqr = sqr; best = generator; }
                 }
                 if (best == null) { Debug.Log($"{spec.LogTag} spawn: no DG found near spawn to count rooms."); return -1; }
 
                 int rooms = -1;
-                var nv = best.GetComponent<ZNetView>();
-                ZDO zdo = (nv != null && nv.IsValid()) ? nv.GetZDO() : null;
+                var netView = best.GetComponent<ZNetView>();
+                ZDO zdo = (netView != null && netView.IsValid()) ? netView.GetZDO() : null;
                 if (zdo != null && zdo.GetByteArray(ZDOVars.s_roomData, out byte[] data) && data != null && data.Length >= 4)
                     rooms = BitConverter.ToInt32(data, 0); // DungeonGenerator.Save writes the room count as the first int
 
@@ -875,27 +853,27 @@ namespace FiresCore.Dungeon
                 // SYMMETRICALLY around it (vanilla) rather than clipped to one side (off-centre)? offCentreXZ ~0 proves
                 // the zone-centre anchor worked; a room AABB centre far from the DG in XZ proves it did not.
                 Vector3 dgWorld = best.transform.position;
-                Vector3 zc = ZoneSystem.GetZonePos(ZoneSystem.GetZone(dgWorld));
-                float offCentreXZ = new Vector2(dgWorld.x - zc.x, dgWorld.z - zc.z).magnitude;
+                Vector3 zoneCenter = ZoneSystem.GetZonePos(ZoneSystem.GetZone(dgWorld));
+                float offCentreXZ = new Vector2(dgWorld.x - zoneCenter.x, dgWorld.z - zoneCenter.z).magnitude;
 
                 var roomComps = best.GetComponentsInChildren<Room>();
                 if (roomComps.Length > 0)
                 {
-                    var b = new Bounds(dgWorld, Vector3.zero);
+                    var bounds = new Bounds(dgWorld, Vector3.zero);
                     int colliders = 0;
-                    foreach (var rm in roomComps)
+                    foreach (var room in roomComps)
                     {
-                        if (rm == null) continue;
-                        foreach (var bc in rm.GetComponentsInChildren<BoxCollider>())
+                        if (room == null) continue;
+                        foreach (var boxCollider in room.GetComponentsInChildren<BoxCollider>())
                         {
-                            if (bc == null) continue;
-                            b.Encapsulate(bc.bounds); colliders++;
+                            if (boxCollider == null) continue;
+                            bounds.Encapsulate(boxCollider.bounds); colliders++;
                         }
                     }
-                    Vector2 aabbOff = new Vector2(b.center.x - dgWorld.x, b.center.z - dgWorld.z);
-                    Debug.Log($"[FDM-PLACE] {spec.LogTag} PLACEMENT CHECK: DG world={dgWorld} zoneCentre={zc} " +
+                    Vector2 aabbOff = new Vector2(bounds.center.x - dgWorld.x, bounds.center.z - dgWorld.z);
+                    Debug.Log($"[FDM-PLACE] {spec.LogTag} PLACEMENT CHECK: DG world={dgWorld} zoneCentre={zoneCenter} " +
                               $"DGoffZoneCentreXZ={offCentreXZ:F2}m | m_zoneCenter={best.m_zoneCenter} m_zoneSize={best.m_zoneSize} | " +
-                              $"rooms={roomComps.Length} colliders={colliders} roomAABBcentre={b.center} size={b.size} " +
+                              $"rooms={roomComps.Length} colliders={colliders} roomAABBcentre={bounds.center} size={bounds.size} " +
                               $"roomAABBoffDGxz={aabbOff.magnitude:F2}m. WANT: DGoffZoneCentreXZ~0 AND roomAABBoffDGxz small/symmetric.");
                 }
 

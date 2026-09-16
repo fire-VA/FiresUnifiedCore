@@ -6,23 +6,14 @@ using System.Linq;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Manages archetype role assignments for a group of companions.
-    /// Ensures proper role distribution - only one Tank, balanced DPS/Support ratios.
-    /// 
-    /// ROLE ASSIGNMENT RULES:
-    /// 1. Only ONE companion can be Tank at a time per player
-    /// 2. Support role is given to companions with support staves
-    /// 3. Tank role requires shield + melee weapon
-    /// 4. Giants get priority for Tank role
-    /// 5. Remaining companions become DPS (melee or ranged based on equipment)
-    /// 
-    /// ROLE REASSIGNMENT:
-    /// - Tank dies ? Next best Tank candidate takes over (if available)
-    /// - Support dies ? DPS companions don't automatically become Support
-    /// - Equipment changes during combat don't change roles (locked until combat ends)
+    /// Distributes roles across a player's companions: one tank at a time (shield and melee weapon, giants first),
+    /// support for support-staff users, and DPS for the rest by equipment. A fallen tank is replaced by the next
+    /// candidate, a fallen support is not, and roles stay fixed until the fight ends.
     /// </summary>
     public class GroupRoleManager
     {
+        private const float TankReplacementPriorityMargin = 20f;
+
         private static GroupRoleManager _instance;
         public static GroupRoleManager Instance => _instance ??= new GroupRoleManager();
         
@@ -123,7 +114,7 @@ namespace FiresCore.Npc.Archetypes
                         float myPriority = ArchetypeUtils.GetArchetypePriority(companion, CompanionArchetypeType.Tank);
                         float theirPriority = ArchetypeUtils.GetArchetypePriority(currentTank, CompanionArchetypeType.Tank);
                         
-                        if (myPriority > theirPriority + 20f && !group.RolesLocked)
+                        if (myPriority > theirPriority + TankReplacementPriorityMargin && !group.RolesLocked)
                         {
                             // Significantly better tank - take over (but not during combat)
                             group.TankCompanionId = companion.companionId;

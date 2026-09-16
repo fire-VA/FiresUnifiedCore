@@ -16,7 +16,7 @@ namespace FiresCore.UI
     /// the vanilla drag visual is missing (e.g., inventory GUI not fully open
     /// but hotbar drag is active).
     ///
-    /// This is a singleton � use <see cref="EnsureInstance"/> to create.
+    /// This is a singleton - use <see cref="EnsureInstance"/> to create.
     /// </summary>
     public class UIOverrideDragGhostManager : MonoBehaviour
     {
@@ -72,15 +72,13 @@ namespace FiresCore.UI
                 return;
             }
 
-            // Vanilla drag item exists but no visible ghost � we provide one
+            // Vanilla drag item exists but no visible ghost - we provide one
             EnsureGhost();
             UpdateGhostVisual(dragItem);
             UpdateGhostPosition();
         }
 
-        // ???????????????????????????????????????
         //  Ghost lifecycle
-        // ???????????????????????????????????????
 
         private void EnsureGhost()
         {
@@ -127,12 +125,12 @@ namespace FiresCore.UI
 
             // Try to find the main UI canvas
             var allCanvases = FindObjectsByType<Canvas>(FindObjectsSortMode.None);
-            foreach (var c in allCanvases)
+            foreach (var canvas in allCanvases)
             {
-                if (c.renderMode == RenderMode.ScreenSpaceOverlay && c.sortingOrder >= 0)
+                if (canvas.renderMode == RenderMode.ScreenSpaceOverlay && canvas.sortingOrder >= 0)
                 {
-                    _canvas = c;
-                    _canvasRect = c.GetComponent<RectTransform>();
+                    _canvas = canvas;
+                    _canvasRect = canvas.GetComponent<RectTransform>();
                     return;
                 }
             }
@@ -147,9 +145,7 @@ namespace FiresCore.UI
             _canvasRect = canvasGO.GetComponent<RectTransform>();
         }
 
-        // ???????????????????????????????????????
         //  Visual update
-        // ???????????????????????????????????????
 
         private void UpdateGhostVisual(ItemDrop.ItemData item)
         {
@@ -185,9 +181,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Public API
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Returns the item currently being dragged, or null.

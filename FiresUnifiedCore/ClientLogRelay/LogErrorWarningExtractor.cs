@@ -19,6 +19,10 @@ namespace FiresCore.ClientLogRelay
     /// </summary>
     public static class LogErrorWarningExtractor
     {
+        private const int MinSourceTagLength = 3;
+        private const int MaxPrefixNameLength = 60;
+        private const int MaxTimestampPrefixLength = 30;
+
         public static readonly List<string> BenignPatterns = new List<string>
         {
             "Failed to find expected binary shader data",
@@ -122,12 +126,12 @@ namespace FiresCore.ClientLogRelay
                 }
 
                 // Stamp repeat counts into the emitted lines.
-                foreach (var k in orderedKeys)
+                foreach (var orderedKey in orderedKeys)
                 {
-                    int count = messageCounts[k];
+                    int count = messageCounts[orderedKey];
                     if (count > 1)
                     {
-                        int idx = keyToEmitIdx[k];
+                        int idx = keyToEmitIdx[orderedKey];
                         emittedLines[idx] = emittedLines[idx] + $"   [repeated {count} times]";
                     }
                 }
@@ -184,8 +188,8 @@ namespace FiresCore.ClientLogRelay
             sb.AppendLine("# ??????????????????????????????????????????????????????????");
             sb.AppendLine();
 
-            foreach (var l in emittedLines)
-                sb.AppendLine(l);
+            foreach (var emittedLine in emittedLines)
+                sb.AppendLine(emittedLine);
 
             result.Report = sb.ToString();
             return result;
@@ -269,7 +273,7 @@ namespace FiresCore.ClientLogRelay
             if (colon >= 0 && colon < firstBracket.Length - 1)
             {
                 string afterColon = firstBracket.Substring(colon + 1).Trim();
-                if (afterColon.Length >= 3 && !string.Equals(afterColon, "Unity Log", StringComparison.OrdinalIgnoreCase))
+                if (afterColon.Length >= MinSourceTagLength &&!string.Equals(afterColon, "Unity Log", StringComparison.OrdinalIgnoreCase))
                     return afterColon;
             }
 
@@ -284,7 +288,7 @@ namespace FiresCore.ClientLogRelay
                     string secondTag = rest.Substring(secondOpen + 1, secondClose - secondOpen - 1).Trim();
                     // Skip embedded timestamps like [04/20/2026 01:55:16]
                     // Skip dedup suffixes like [repeated 2 times]
-                    if (secondTag.Length >= 3
+                    if (secondTag.Length >= MinSourceTagLength
                         && !char.IsDigit(secondTag[0])
                         && !secondTag.StartsWith("repeated ", StringComparison.OrdinalIgnoreCase))
                         return secondTag;
@@ -294,10 +298,10 @@ namespace FiresCore.ClientLogRelay
             // Look for "PrefixName: " at the start of message body
             string body = rest.TrimStart();
             int colonIdx = body.IndexOf(": ", StringComparison.Ordinal);
-            if (colonIdx > 0 && colonIdx <= 60)
+            if (colonIdx > 0 && colonIdx <= MaxPrefixNameLength)
             {
                 string candidate = body.Substring(0, colonIdx).Trim();
-                if (candidate.Length >= 3 && candidate.IndexOf(' ') < 0)
+                if (candidate.Length >= MinSourceTagLength &&candidate.IndexOf(' ') < 0)
                     return candidate;
             }
 
@@ -306,7 +310,7 @@ namespace FiresCore.ClientLogRelay
 
         /// <summary>
         /// Strips the BepInEx log-level prefix for the grouped view, leaving just the
-        /// message body. e.g. <c>[Error  : Unity Log] Foo: bar</c> ? <c>Foo: bar</c>.
+        /// message body. e.g. <c>[Error  : Unity Log] Foo: bar</c> - <c>Foo: bar</c>.
         /// </summary>
         private static string TrimBepInExPrefix(string line)
         {
@@ -370,8 +374,8 @@ namespace FiresCore.ClientLogRelay
 
             if (body.Length > 2 && body[0] == '[')
             {
-                int ts = body.IndexOf("] ", StringComparison.Ordinal);
-                if (ts > 0 && ts < 30) body = body.Substring(ts + 2);
+                int timestampEnd = body.IndexOf("] ", StringComparison.Ordinal);
+                if (timestampEnd > 0 && timestampEnd < MaxTimestampPrefixLength) body = body.Substring(timestampEnd + 2);
             }
 
             return body.Trim();

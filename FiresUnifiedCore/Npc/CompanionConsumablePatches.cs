@@ -4,22 +4,11 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Makes companion attacks actually pay for consumable weapons.
-    ///
-    /// Companions execute vanilla <see cref="Attack"/> instances (CompanionAttackBridge), so a thrown
-    /// spear runs the full vanilla flow: FireProjectileBurst hands the weapon ItemData to the projectile
-    /// (m_respawnItemOnHit → a recoverable ItemDrop where it lands) and ConsumeItem() removes the weapon
-    /// from m_character.GetInventory() — the VANILLA Humanoid inventory. Companion equipment lives in
-    /// CompanionInventory, a separate store the vanilla inventory never sees, so vanilla consumption
-    /// silently no-oped while the drop still spawned: every throw minted a new spear. Wild spear-throwers
-    /// never stop attacking, so the mints merged into massive ItemDrop stacks and flooded the server.
-    ///
-    /// - TAMED companions consume for real: stacked throwables decrement; the last one clears the slot
-    ///   through CompanionInventory.UnequipSlot (persisted name, stats, visuals). The landed ItemDrop
-    ///   stays retrievable — a throw moves the item from hand to ground, net zero items in the world.
-    /// - WILD companions (isTamed=false, incl. untamed guards) keep vanilla-monster parity: no inventory
-    ///   to drain, they stay armed and keep fighting — but their projectiles never leave a recoverable
-    ///   item behind (m_spawnItem cleared), so nothing can pile up.
+    /// Makes companions actually spend consumable weapons. Vanilla's Attack consumes the thrown item from the
+    /// Humanoid inventory, but companion equipment lives in CompanionInventory, so every throw minted a new spear
+    /// and wild throwers flooded servers with ItemDrop stacks. Tamed companions now consume from their own
+    /// inventory, clearing the slot on the last one, while the landed spear stays retrievable. Wild companions
+    /// keep monster parity and stay armed, but their projectiles no longer leave an item behind.
     /// </summary>
     [HarmonyPatch]
     internal static class CompanionConsumablePatches

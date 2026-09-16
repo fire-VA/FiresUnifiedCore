@@ -3,23 +3,9 @@
 namespace FiresCore.Npc.Movement
 {
     /// <summary>
- /// Handles movement speed modes (Walk/Jog/Run) and velocity clamping.
-    /// Extracted from CompanionCombatMovement for maintainability.
-    /// 
-    /// MOVEMENT MODES:
-  /// - Stop: No movement, velocity clamped to near zero
-    /// - Walk: Slow, careful movement (blocking, strafing, precision)
-    /// - Jog: Normal movement speed
-    /// - Run: Fast movement (combat approach, retreat, following)
-    /// 
-    /// ANTI-SPAM:
-    /// Only sends SetWalk/SetRun commands when the mode actually changes.
-    /// This prevents overwhelming Character with redundant calls.
-    /// 
-    /// ANIMATION SYNC:
-    /// Movement is synchronized with animation state to prevent the
-    /// "sliding while standing" visual glitch. Movement commands are
-    /// blocked if the animator hasn't transitioned to locomotion yet.
+    /// Stop, walk, jog and run movement modes with velocity clamping, split out of CompanionCombatMovement. Walk
+    /// and run changes are only sent when the mode actually changes, and movement is held until the animator
+    /// reaches locomotion so companions don't slide.
     /// </summary>
     public class MovementModeController
     {
@@ -42,7 +28,7 @@ namespace FiresCore.Npc.Movement
         
         private Vector3 _lastSetMoveDir = Vector3.zero;
         private bool _moveDirSet = false;
-        private const float MOVE_DIR_CHANGE_THRESHOLD = 0.05f;
+        private const float MoveDirChangeThreshold = 0.05f;
 
      // Settings
         public float SlowWalkSpeedMultiplier { get; set; } = 0.5f;
@@ -136,7 +122,7 @@ break;
            return;
        }
 
-            if (!_moveDirSet || Vector3.Distance(moveDir, _lastSetMoveDir) > MOVE_DIR_CHANGE_THRESHOLD)
+            if (!_moveDirSet || Vector3.Distance(moveDir, _lastSetMoveDir) > MoveDirChangeThreshold)
      {
               _character.SetMoveDir(moveDir);
 _lastSetMoveDir = moveDir;

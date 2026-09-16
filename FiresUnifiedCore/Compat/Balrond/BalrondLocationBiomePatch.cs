@@ -6,17 +6,9 @@ using UnityEngine;
 namespace FiresCore.Compat.Balrond
 {
     /// <summary>
-    /// Reverts BalrondAmazingNature's <see cref="ZoneSystem.SetupLocations"/> postfix that OR-adds
-    /// <c>Heightmap.Biome.DeepNorth | Heightmap.Biome.AshLands</c> to every Mistlands location's
-    /// allowed-biome filter (see <c>BalrondNature.LocationBuilder.editLocation</c>). The visible
-    /// symptom of that change is mistlands fog appearing in DeepNorth and Ashlands, because the
-    /// vanilla Mistlands location prefabs carry <c>MistEmitter</c> child GameObjects that fire
-    /// regardless of host biome.
-    ///
-    /// Strategy: run as a <c>[HarmonyAfter]</c> postfix so we land AFTER Balrond's postfix has
-    /// finished mutating <c>ZoneSystem.m_locations</c>. For each location whose prefab name is on the
-    /// known mist-bearing list, mask off the DeepNorth and Ashlands bits without touching the
-    /// vanilla Mistlands bit — the locations stay spawnable in Mistlands, just nowhere else.
+    /// Undoes BalrondAmazingNature adding DeepNorth and Ashlands to every Mistlands location's biome filter, which put
+    /// mist emitters and fog in those biomes. Runs after Balrond's SetupLocations postfix and masks those bits off the
+    /// known mist-bearing locations, leaving them in Mistlands.
     /// </summary>
     [HarmonyPatch(typeof(ZoneSystem), "SetupLocations")]
     [HarmonyAfter("balrond.astafaraios.BalrondAmazingNature")]

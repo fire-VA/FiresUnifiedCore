@@ -24,19 +24,19 @@ namespace FiresCore.Storage
             try
             {
                 using var db = VaultDatabase.Open();
-                var col = db.GetCollection<PlayerAppearance>(VaultDatabase.PlayerAppearanceCollection, BsonAutoId.ObjectId);
-                col.EnsureIndex(x => x.Owner);
+                var collection = db.GetCollection<PlayerAppearance>(VaultDatabase.PlayerAppearanceCollection, BsonAutoId.ObjectId);
+                collection.EnsureIndex(x => x.Owner);
 
-                var existing = col.FindOne(e => e.Owner == incoming.Owner);
+                var existing = collection.FindOne(e => e.Owner == incoming.Owner);
                 if (existing == null)
                 {
-                    col.Insert(incoming);
+                    collection.Insert(incoming);
                     return;
                 }
 
                 // Latest-wins: only overwrite when the incoming snapshot is at least as new.
                 if (incoming.UpdatedAtUtcTicks < existing.UpdatedAtUtcTicks) return;
-                col.Update(incoming);
+                collection.Update(incoming);
             }
             catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} Upsert failed: {ex.Message}"); }
         }

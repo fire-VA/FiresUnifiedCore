@@ -12,28 +12,14 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Audits Harmony patches and runtime MonoBehaviours on UI GameObjects at capture time.
-    ///
-    /// Records which mods modify which game methods and which components exist on the hierarchy.
-    /// Data is stored two ways:
-    ///   1. **Layout metadata** � compact pipe-delimited strings for programmatic dependency
-    ///      checking at override-apply time (GetMissingDependencies).
-    ///   2. **Markdown report files** � human-readable .md files organized per-mod, written to
-    ///      Config/FiresRPGmaker/UIAudits/{layoutUID}/. Each mod gets its own file with
-    ///      full IL disassembly of every patch method body, referenced fields/methods/types,
-    ///      and C# code stubs. A summary index file links to all per-mod reports.
-    ///
-    /// Layout metadata keys:
-    ///   "harmony_patches"    � pipe-delimited patch records
-    ///   "mod_components"     � pipe-delimited component records
-    ///   "dependency_mods"    � comma-separated mod assembly names
-    ///   "dependency_plugins" � human-readable BepInEx plugin info
+    /// Records, at capture time, which mods patch the methods behind a UI and which of their components sit on
+    /// its hierarchy. A compact form goes into the layout metadata (harmony_patches, mod_components,
+    /// dependency_mods, dependency_plugins) for dependency checks when an override is applied, and a readable
+    /// Markdown report per mod, with the IL of every patch method, is written alongside a summary index.
     /// </summary>
     public static class UIHarmonyPatchAuditor
     {
-        // ???????????????????????????????????????
         //  Structured audit record types
-        // ???????????????????????????????????????
 
         public class PatchRecord
         {
@@ -50,7 +36,7 @@ namespace FiresCore.UI
             public string PatchMethodName;
             public string PatchMethodSignature;
             public int Priority;
-            /// <summary>Live MethodInfo for the patch method � used for IL extraction during report generation.</summary>
+            /// <summary>Live MethodInfo for the patch method - used for IL extraction during report generation.</summary>
             public MethodInfo PatchMethodInfo;
         }
 
@@ -78,9 +64,7 @@ namespace FiresCore.UI
             public HashSet<string> ModAssemblyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
-        // ???????????????????????????????????????
         //  Known UI types to audit for patches
-        // ???????????????????????????????????????
 
         private static readonly Type[] _auditTargetTypes = new Type[]
         {
@@ -124,9 +108,7 @@ namespace FiresCore.UI
         private static string AuditDir =>
             Path.Combine(FiresCore.Storage.FiresConfigPaths.UiAudits);
 
-        // ???????????????????????????????????????
         //  Public API
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Performs a full audit of the captured UI hierarchy, records results as layout
@@ -224,12 +206,12 @@ namespace FiresCore.UI
                     for (int i = 0; i < result.Components.Count; i++)
                     {
                         string asm = result.Components[i].AssemblyName;
-                        if (!compsByAsm.TryGetValue(asm, out var cList))
+                        if (!compsByAsm.TryGetValue(asm, out var components))
                         {
-                            cList = new List<ComponentRecord>();
-                            compsByAsm[asm] = cList;
+                            components = new List<ComponentRecord>();
+                            compsByAsm[asm] = components;
                         }
-                        cList.Add(result.Components[i]);
+                        components.Add(result.Components[i]);
                     }
 
                     // Write per-mod files
@@ -347,7 +329,7 @@ namespace FiresCore.UI
                 {
                     string trimmed = mod.Trim();
                     if (!string.IsNullOrEmpty(trimmed))
-                        sb.AppendLine($"  � {trimmed}");
+                        sb.AppendLine($"  - {trimmed}");
                 }
             }
 
@@ -388,9 +370,7 @@ namespace FiresCore.UI
             return sb.ToString();
         }
 
-        // ???????????????????????????????????????
         //  Phase 1: Harmony patch scanning
-        // ???????????????????????????????????????
 
         private static void ScanHarmonyPatches(AuditResult result)
         {
@@ -431,8 +411,8 @@ namespace FiresCore.UI
                             string returnType = FormatTypeName(method.ReturnType);
                             var paramInfos = method.GetParameters();
                             string[] paramNames = new string[paramInfos.Length];
-                            for (int p = 0; p < paramInfos.Length; p++)
-                                paramNames[p] = $"{FormatTypeName(paramInfos[p].ParameterType)} {paramInfos[p].Name}";
+                            for (int paramIndex = 0; paramIndex < paramInfos.Length; paramIndex++)
+                                paramNames[paramIndex] = $"{FormatTypeName(paramInfos[paramIndex].ParameterType)} {paramInfos[paramIndex].Name}";
 
                             foreach (var patch in modPatches)
                             {
@@ -484,9 +464,7 @@ namespace FiresCore.UI
                 Debug.Log($"[UIHarmonyPatchAuditor] Found {result.Patches.Count} mod Harmony patch(es) on UI methods");
         }
 
-        // ???????????????????????????????????????
         //  Phase 2: Runtime component scanning
-        // ???????????????????????????????????????
 
         private static void ScanRuntimeComponents(GameObject root, AuditResult result)
         {
@@ -512,10 +490,10 @@ namespace FiresCore.UI
                 Type type = behaviours[i].GetType();
                 string fullTypeName = type.FullName ?? type.Name;
 
-                string ns = type.Namespace ?? "";
-                if (ns.StartsWith("UnityEngine", StringComparison.Ordinal)) continue;
-                if (ns.StartsWith("TMPro", StringComparison.Ordinal)) continue;
-                if (ns.StartsWith("VerdantsAscent", StringComparison.Ordinal)) continue;
+                string typeNamespace = type.Namespace ?? "";
+                if (typeNamespace.StartsWith("UnityEngine", StringComparison.Ordinal)) continue;
+                if (typeNamespace.StartsWith("TMPro", StringComparison.Ordinal)) continue;
+                if (typeNamespace.StartsWith("VerdantsAscent", StringComparison.Ordinal)) continue;
 
                 string asmName = "";
                 try { asmName = type.Assembly.GetName().Name ?? ""; }
@@ -541,13 +519,11 @@ namespace FiresCore.UI
                 });
             }
 
-            for (int c = 0; c < current.childCount; c++)
-                ScanComponentsRecursive(current.GetChild(c), result, visited, currentPath);
+            for (int childIndex = 0; childIndex < current.childCount; childIndex++)
+                ScanComponentsRecursive(current.GetChild(childIndex), result, visited, currentPath);
         }
 
-        // ???????????????????????????????????????
         //  Phase 3: BepInEx plugin metadata
-        // ???????????????????????????????????????
 
         private static void ScanBepInExPlugins(AuditResult result)
         {
@@ -588,43 +564,41 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Metadata storage (compact, for programmatic use)
-        // ???????????????????????????????????????
 
         private static void StoreMetadata(UILayoutDefinition layout, AuditResult result)
         {
-            // harmony_patches � pipe-delimited for backwards compat
+            // harmony_patches - pipe-delimited for backwards compat
             if (result.Patches.Count > 0)
             {
                 var sb = new StringBuilder();
                 for (int i = 0; i < result.Patches.Count; i++)
                 {
-                    var p = result.Patches[i];
+                    var patch = result.Patches[i];
                     if (sb.Length > 0) sb.Append("|");
-                    sb.Append($"method:{p.TargetTypeName}.{p.TargetMethodName}");
-                    sb.Append($",patch:{p.PatchType}");
-                    sb.Append($",owner:{p.HarmonyOwner}");
-                    sb.Append($",mod:{p.ModAssemblyName}");
-                    if (!string.IsNullOrEmpty(p.PatchDeclaringType))
-                        sb.Append($",patchMethod:{p.PatchDeclaringType}.{p.PatchMethodName}");
-                    sb.Append($",priority:{p.Priority}");
+                    sb.Append($"method:{patch.TargetTypeName}.{patch.TargetMethodName}");
+                    sb.Append($",patch:{patch.PatchType}");
+                    sb.Append($",owner:{patch.HarmonyOwner}");
+                    sb.Append($",mod:{patch.ModAssemblyName}");
+                    if (!string.IsNullOrEmpty(patch.PatchDeclaringType))
+                        sb.Append($",patchMethod:{patch.PatchDeclaringType}.{patch.PatchMethodName}");
+                    sb.Append($",priority:{patch.Priority}");
                 }
                 layout.SetMeta("harmony_patches", sb.ToString());
             }
 
-            // mod_components � pipe-delimited
+            // mod_components - pipe-delimited
             if (result.Components.Count > 0)
             {
                 var sb = new StringBuilder();
                 for (int i = 0; i < result.Components.Count; i++)
                 {
-                    var c = result.Components[i];
+                    var component = result.Components[i];
                     if (sb.Length > 0) sb.Append("|");
-                    sb.Append($"type:{c.FullTypeName}");
-                    sb.Append($",asm:{c.AssemblyName}");
-                    sb.Append($",go:{c.GameObjectPath}");
-                    sb.Append($",enabled:{c.Enabled}");
+                    sb.Append($"type:{component.FullTypeName}");
+                    sb.Append($",asm:{component.AssemblyName}");
+                    sb.Append($",go:{component.GameObjectPath}");
+                    sb.Append($",enabled:{component.Enabled}");
                 }
                 layout.SetMeta("mod_components", sb.ToString());
             }
@@ -652,9 +626,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Summary index builder
-        // ???????????????????????????????????????
 
         private static string BuildSummaryIndex(UILayoutDefinition layout, AuditResult result, string safeUID, string captureTime)
         {
@@ -686,9 +658,9 @@ namespace FiresCore.UI
                 sb.AppendLine("|--------|---------|------|----------|--------|");
                 for (int i = 0; i < result.Plugins.Count; i++)
                 {
-                    var p = result.Plugins[i];
-                    string safeMod = SanitizeFileName(p.AssemblyName);
-                    sb.AppendLine($"| {Escape(p.Name)} | {Escape(p.Version)} | `{Escape(p.GUID)}` | `{Escape(p.AssemblyName)}` | [{safeMod}.md]({safeUID}/{safeMod}.md) |");
+                    var plugin = result.Plugins[i];
+                    string safeMod = SanitizeFileName(plugin.AssemblyName);
+                    sb.AppendLine($"| {Escape(plugin.Name)} | {Escape(plugin.Version)} | `{Escape(plugin.GUID)}` | `{Escape(plugin.AssemblyName)}` | [{safeMod}.md]({safeUID}/{safeMod}.md) |");
                 }
                 sb.AppendLine();
             }
@@ -710,13 +682,13 @@ namespace FiresCore.UI
                 var compCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 for (int i = 0; i < result.Patches.Count; i++)
                 {
-                    string m = result.Patches[i].ModAssemblyName ?? "Unknown";
-                    patchCounts[m] = patchCounts.TryGetValue(m, out int c) ? c + 1 : 1;
+                    string assemblyName = result.Patches[i].ModAssemblyName ?? "Unknown";
+                    patchCounts[assemblyName] = patchCounts.TryGetValue(assemblyName, out int count) ? count + 1 : 1;
                 }
                 for (int i = 0; i < result.Components.Count; i++)
                 {
-                    string m = result.Components[i].AssemblyName;
-                    compCounts[m] = compCounts.TryGetValue(m, out int c) ? c + 1 : 1;
+                    string assemblyName = result.Components[i].AssemblyName;
+                    compCounts[assemblyName] = compCounts.TryGetValue(assemblyName, out int count) ? count + 1 : 1;
                 }
 
                 sb.AppendLine("| Mod | Patches | Components | Report File |");
@@ -724,8 +696,8 @@ namespace FiresCore.UI
                 foreach (string mod in allMods.OrderBy(m => m, StringComparer.OrdinalIgnoreCase))
                 {
                     string safeMod = SanitizeFileName(mod);
-                    int pCount = patchCounts.TryGetValue(mod, out int pc) ? pc : 0;
-                    int cCount = compCounts.TryGetValue(mod, out int cc) ? cc : 0;
+                    int pCount = patchCounts.TryGetValue(mod, out int patchCount) ? patchCount : 0;
+                    int cCount = compCounts.TryGetValue(mod, out int componentCount) ? componentCount : 0;
                     sb.AppendLine($"| `{Escape(mod)}` | {pCount} | {cCount} | [{safeMod}.md]({safeUID}/{safeMod}.md) |");
                 }
                 sb.AppendLine();
@@ -738,19 +710,17 @@ namespace FiresCore.UI
                 sb.AppendLine("## ? Missing Dependencies");
                 sb.AppendLine();
                 for (int i = 0; i < missing.Count; i++)
-                    sb.AppendLine($"- **{missing[i]}** � NOT LOADED");
+                    sb.AppendLine($"- **{missing[i]}** - NOT LOADED");
                 sb.AppendLine();
             }
 
             sb.AppendLine("---");
             sb.AppendLine();
-            sb.AppendLine($"*Generated by UIHarmonyPatchAuditor � {captureTime}*");
+            sb.AppendLine($"*Generated by UIHarmonyPatchAuditor - {captureTime}*");
             return sb.ToString();
         }
 
-        // ???????????????????????????????????????
         //  Per-mod report builder
-        // ???????????????????????????????????????
 
         private static string BuildPerModReport(UILayoutDefinition layout, string modName,
             PluginRecord plugin, List<PatchRecord> patches, List<ComponentRecord> components, string captureTime)
@@ -775,7 +745,7 @@ namespace FiresCore.UI
             sb.AppendLine($"- **Runtime Components:** {cCount}");
             sb.AppendLine();
 
-            // ?? Harmony Patches ??
+            // Harmony Patches
             if (patches != null && patches.Count > 0)
             {
                 sb.AppendLine("---");
@@ -792,64 +762,64 @@ namespace FiresCore.UI
                 sb.AppendLine("|---|---------------|------|----------|-------------|");
                 for (int i = 0; i < patches.Count; i++)
                 {
-                    var p = patches[i];
-                    string shortTarget = $"{ShortTypeName(p.TargetTypeName)}.{p.TargetMethodName}";
-                    string pm = !string.IsNullOrEmpty(p.PatchDeclaringType)
-                        ? $"`{ShortTypeName(p.PatchDeclaringType)}.{p.PatchMethodName}`"
-                        : "�";
-                    sb.AppendLine($"| {i + 1} | `{shortTarget}` | {p.PatchType} | {p.Priority} | {pm} |");
+                    var patch = patches[i];
+                    string shortTarget = $"{ShortTypeName(patch.TargetTypeName)}.{patch.TargetMethodName}";
+                    string patchMethod = !string.IsNullOrEmpty(patch.PatchDeclaringType)
+                        ? $"`{ShortTypeName(patch.PatchDeclaringType)}.{patch.PatchMethodName}`"
+                        : "-";
+                    sb.AppendLine($"| {i + 1} | `{shortTarget}` | {patch.PatchType} | {patch.Priority} | {patchMethod} |");
                 }
                 sb.AppendLine();
 
                 // Detailed per-patch entries
                 for (int i = 0; i < patches.Count; i++)
                 {
-                    var p = patches[i];
-                    string shortTarget = ShortTypeName(p.TargetTypeName);
+                    var patch = patches[i];
+                    string shortTarget = ShortTypeName(patch.TargetTypeName);
 
-                    sb.AppendLine($"### {i + 1}. `{shortTarget}.{p.TargetMethodName}` � {p.PatchType}");
+                    sb.AppendLine($"### {i + 1}. `{shortTarget}.{patch.TargetMethodName}` - {patch.PatchType}");
                     sb.AppendLine();
 
                     sb.AppendLine("**Target method:**");
                     sb.AppendLine("```csharp");
-                    sb.AppendLine(p.TargetMethodSignature);
+                    sb.AppendLine(patch.TargetMethodSignature);
                     sb.AppendLine("```");
                     sb.AppendLine();
 
-                    if (!string.IsNullOrEmpty(p.PatchMethodSignature))
+                    if (!string.IsNullOrEmpty(patch.PatchMethodSignature))
                     {
                         sb.AppendLine("**Patch method:**");
                         sb.AppendLine("```csharp");
-                        sb.AppendLine($"// {p.PatchDeclaringType} (in {p.ModAssemblyName}.dll)");
-                        sb.AppendLine(p.PatchMethodSignature);
+                        sb.AppendLine($"// {patch.PatchDeclaringType} (in {patch.ModAssemblyName}.dll)");
+                        sb.AppendLine(patch.PatchMethodSignature);
                         sb.AppendLine("```");
                         sb.AppendLine();
                     }
 
-                    sb.AppendLine($"**Harmony ID:** `{p.HarmonyOwner}` | **Priority:** {p.Priority}");
+                    sb.AppendLine($"**Harmony ID:** `{patch.HarmonyOwner}` | **Priority:** {patch.Priority}");
                     sb.AppendLine();
 
                     // Code stub
                     sb.AppendLine("<details><summary><b>Recreatable Harmony stub</b> (click to expand)</summary>");
                     sb.AppendLine();
                     sb.AppendLine("```csharp");
-                    WriteCodeStub(sb, p);
+                    WriteCodeStub(sb, patch);
                     sb.AppendLine("```");
                     sb.AppendLine("</details>");
                     sb.AppendLine();
 
                     // IL disassembly + referenced members
-                    if (p.PatchMethodInfo != null)
+                    if (patch.PatchMethodInfo != null)
                     {
-                        string ilDis = DisassembleMethod(p.PatchMethodInfo);
-                        var refs = ExtractReferencedMembers(p.PatchMethodInfo);
+                        string ilDis = DisassembleMethod(patch.PatchMethodInfo);
+                        var refs = ExtractReferencedMembers(patch.PatchMethodInfo);
 
                         if (refs.Count > 0)
                         {
-                            sb.AppendLine("**Referenced members** � fields, methods, and types this patch touches:");
+                            sb.AppendLine("**Referenced members** - fields, methods, and types this patch touches:");
                             sb.AppendLine();
-                            for (int r = 0; r < refs.Count; r++)
-                                sb.AppendLine($"- `{refs[r]}`");
+                            for (int refIndex = 0; refIndex < refs.Count; refIndex++)
+                                sb.AppendLine($"- `{refs[refIndex]}`");
                             sb.AppendLine();
                         }
 
@@ -867,7 +837,7 @@ namespace FiresCore.UI
                 }
             }
 
-            // ?? Runtime Components ??
+            // Runtime Components
             if (components != null && components.Count > 0)
             {
                 sb.AppendLine("---");
@@ -880,21 +850,19 @@ namespace FiresCore.UI
                 sb.AppendLine("|------|----------------|---------|");
                 for (int i = 0; i < components.Count; i++)
                 {
-                    var c = components[i];
-                    sb.AppendLine($"| `{Escape(c.FullTypeName)}` | `{Escape(c.GameObjectPath)}` | {(c.Enabled ? "?" : "?")} |");
+                    var component = components[i];
+                    sb.AppendLine($"| `{Escape(component.FullTypeName)}` | `{Escape(component.GameObjectPath)}` | {(component.Enabled ? "?" : "?")} |");
                 }
                 sb.AppendLine();
             }
 
             sb.AppendLine("---");
             sb.AppendLine();
-            sb.AppendLine($"*Generated by UIHarmonyPatchAuditor � {captureTime}*");
+            sb.AppendLine($"*Generated by UIHarmonyPatchAuditor - {captureTime}*");
             return sb.ToString();
         }
 
-        // ???????????????????????????????????????
         //  IL Disassembly Engine
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Disassembles a method body into human-readable IL text.
@@ -912,11 +880,11 @@ namespace FiresCore.UI
                 var body = method.GetMethodBody();
                 if (body == null) return "// Method has no IL body (extern or abstract)";
 
-                byte[] il = body.GetILAsByteArray();
-                if (il == null || il.Length == 0) return "// Empty IL body";
+                byte[] ilBytes = body.GetILAsByteArray();
+                if (ilBytes == null || ilBytes.Length == 0) return "// Empty IL body";
 
                 var module = method.Module;
-                var sb = new StringBuilder(il.Length * 4);
+                var sb = new StringBuilder(ilBytes.Length * 4);
 
                 // Write locals
                 var locals = body.LocalVariables;
@@ -933,22 +901,22 @@ namespace FiresCore.UI
                 }
 
                 int pos = 0;
-                while (pos < il.Length)
+                while (pos < ilBytes.Length)
                 {
                     int instrStart = pos;
                     sb.Append($"IL_{instrStart:X4}: ");
 
                     // Read opcode
                     OpCode opcode;
-                    if (il[pos] == 0xFE)
+                    if (ilBytes[pos] == 0xFE)
                     {
                         pos++;
-                        if (pos >= il.Length) break;
-                        opcode = TwoByteOpCodes[il[pos]];
+                        if (pos >= ilBytes.Length) break;
+                        opcode = TwoByteOpCodes[ilBytes[pos]];
                     }
                     else
                     {
-                        opcode = OneByteOpCodes[il[pos]];
+                        opcode = OneByteOpCodes[ilBytes[pos]];
                     }
                     pos++;
 
@@ -961,70 +929,70 @@ namespace FiresCore.UI
                             break;
 
                         case OperandType.ShortInlineBrTarget:
-                            if (pos < il.Length)
+                            if (pos < ilBytes.Length)
                             {
-                                int offset = (sbyte)il[pos]; pos++;
+                                int offset = (sbyte)ilBytes[pos]; pos++;
                                 sb.Append($" IL_{(pos + offset):X4}");
                             }
                             break;
 
                         case OperandType.InlineBrTarget:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int offset = BitConverter.ToInt32(il, pos); pos += 4;
+                                int offset = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 sb.Append($" IL_{(pos + offset):X4}");
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.ShortInlineI:
-                            if (pos < il.Length)
+                            if (pos < ilBytes.Length)
                             {
-                                sb.Append($" {(sbyte)il[pos]}");
+                                sb.Append($" {(sbyte)ilBytes[pos]}");
                                 pos++;
                             }
                             break;
 
                         case OperandType.InlineI:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                sb.Append($" {BitConverter.ToInt32(il, pos)}");
+                                sb.Append($" {BitConverter.ToInt32(ilBytes, pos)}");
                                 pos += 4;
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineI8:
-                            if (pos + 7 < il.Length)
+                            if (pos + 7 < ilBytes.Length)
                             {
-                                sb.Append($" {BitConverter.ToInt64(il, pos)}");
+                                sb.Append($" {BitConverter.ToInt64(ilBytes, pos)}");
                                 pos += 8;
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.ShortInlineR:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                sb.Append($" {BitConverter.ToSingle(il, pos):G}");
+                                sb.Append($" {BitConverter.ToSingle(ilBytes, pos):G}");
                                 pos += 4;
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineR:
-                            if (pos + 7 < il.Length)
+                            if (pos + 7 < ilBytes.Length)
                             {
-                                sb.Append($" {BitConverter.ToDouble(il, pos):G}");
+                                sb.Append($" {BitConverter.ToDouble(ilBytes, pos):G}");
                                 pos += 8;
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineString:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int token = BitConverter.ToInt32(il, pos); pos += 4;
+                                int token = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 try
                                 {
                                     string str = module.ResolveString(token);
@@ -1032,94 +1000,94 @@ namespace FiresCore.UI
                                 }
                                 catch { sb.Append($" <string token 0x{token:X8}>"); }
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineMethod:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int token = BitConverter.ToInt32(il, pos); pos += 4;
+                                int token = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 sb.Append(" ");
                                 sb.Append(ResolveMethodToken(module, token, method));
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineField:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int token = BitConverter.ToInt32(il, pos); pos += 4;
+                                int token = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 sb.Append(" ");
                                 sb.Append(ResolveFieldToken(module, token, method));
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineType:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int token = BitConverter.ToInt32(il, pos); pos += 4;
+                                int token = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 sb.Append(" ");
                                 sb.Append(ResolveTypeToken(module, token, method));
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineTok:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int token = BitConverter.ToInt32(il, pos); pos += 4;
+                                int token = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 sb.Append(" ");
                                 sb.Append(ResolveMemberToken(module, token, method));
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineVar:
-                            if (pos + 1 < il.Length)
+                            if (pos + 1 < ilBytes.Length)
                             {
-                                sb.Append($" V_{BitConverter.ToInt16(il, pos)}");
+                                sb.Append($" V_{BitConverter.ToInt16(ilBytes, pos)}");
                                 pos += 2;
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.ShortInlineVar:
-                            if (pos < il.Length)
+                            if (pos < ilBytes.Length)
                             {
-                                sb.Append($" V_{il[pos]}");
+                                sb.Append($" V_{ilBytes[pos]}");
                                 pos++;
                             }
                             break;
 
                         case OperandType.InlineSig:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int token = BitConverter.ToInt32(il, pos); pos += 4;
+                                int token = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 sb.Append($" <sig 0x{token:X8}>");
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineSwitch:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int count = BitConverter.ToInt32(il, pos); pos += 4;
+                                int count = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 int baseOffset = pos + count * 4;
                                 sb.Append($" ({count} targets)");
-                                for (int j = 0; j < count && pos + 3 < il.Length; j++)
+                                for (int j = 0; j < count && pos + 3 < ilBytes.Length; j++)
                                 {
-                                    int target2 = BitConverter.ToInt32(il, pos); pos += 4;
+                                    int target2 = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                     // Don't print all targets to keep output manageable
                                 }
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         default:
-                            // Unknown operand type � skip 4 bytes as best guess
-                            if (pos + 3 < il.Length) pos += 4;
-                            else pos = il.Length;
+                            // Unknown operand type - skip 4 bytes as best guess
+                            if (pos + 3 < ilBytes.Length) pos += 4;
+                            else pos = ilBytes.Length;
                             break;
                     }
 
@@ -1149,83 +1117,83 @@ namespace FiresCore.UI
                 var body = method.GetMethodBody();
                 if (body == null) return refs;
 
-                byte[] il = body.GetILAsByteArray();
-                if (il == null || il.Length == 0) return refs;
+                byte[] ilBytes = body.GetILAsByteArray();
+                if (ilBytes == null || ilBytes.Length == 0) return refs;
 
                 var module = method.Module;
                 var seen = new HashSet<string>(StringComparer.Ordinal);
 
                 int pos = 0;
-                while (pos < il.Length)
+                while (pos < ilBytes.Length)
                 {
                     OpCode opcode;
-                    if (il[pos] == 0xFE)
+                    if (ilBytes[pos] == 0xFE)
                     {
                         pos++;
-                        if (pos >= il.Length) break;
-                        opcode = TwoByteOpCodes[il[pos]];
+                        if (pos >= ilBytes.Length) break;
+                        opcode = TwoByteOpCodes[ilBytes[pos]];
                     }
                     else
                     {
-                        opcode = OneByteOpCodes[il[pos]];
+                        opcode = OneByteOpCodes[ilBytes[pos]];
                     }
                     pos++;
 
                     switch (opcode.OperandType)
                     {
                         case OperandType.InlineMethod:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int token = BitConverter.ToInt32(il, pos); pos += 4;
+                                int token = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 try
                                 {
                                     var resolved = module.ResolveMethod(token, SafeGenericTypeArgs(method), SafeGenericMethodArgs(method));
                                     if (resolved != null)
                                     {
-                                        string entry = $"{FormatTypeName(resolved.DeclaringType)}.{resolved.Name}() � call";
+                                        string entry = $"{FormatTypeName(resolved.DeclaringType)}.{resolved.Name}() - call";
                                         if (seen.Add(entry)) refs.Add(entry);
                                     }
                                 }
                                 catch { }
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineField:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int token = BitConverter.ToInt32(il, pos); pos += 4;
+                                int token = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 try
                                 {
                                     var resolved = module.ResolveField(token, SafeGenericTypeArgs(method), SafeGenericMethodArgs(method));
                                     if (resolved != null)
                                     {
-                                        string entry = $"{FormatTypeName(resolved.DeclaringType)}.{resolved.Name} � {FormatTypeName(resolved.FieldType)} field";
+                                        string entry = $"{FormatTypeName(resolved.DeclaringType)}.{resolved.Name} - {FormatTypeName(resolved.FieldType)} field";
                                         if (seen.Add(entry)) refs.Add(entry);
                                     }
                                 }
                                 catch { }
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineType:
                         case OperandType.InlineTok:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int token = BitConverter.ToInt32(il, pos); pos += 4;
+                                int token = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 try
                                 {
                                     var resolved = module.ResolveType(token, SafeGenericTypeArgs(method), SafeGenericMethodArgs(method));
                                     if (resolved != null)
                                     {
-                                        string entry = $"{FormatTypeName(resolved)} � type ref";
+                                        string entry = $"{FormatTypeName(resolved)} - type ref";
                                         if (seen.Add(entry)) refs.Add(entry);
                                     }
                                 }
                                 catch { /* May be a method/field token for InlineTok, ignore */ }
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
 
                         case OperandType.InlineNone:
@@ -1233,37 +1201,37 @@ namespace FiresCore.UI
                         case OperandType.ShortInlineBrTarget:
                         case OperandType.ShortInlineI:
                         case OperandType.ShortInlineVar:
-                            if (pos < il.Length) pos++;
+                            if (pos < ilBytes.Length) pos++;
                             break;
                         case OperandType.InlineBrTarget:
                         case OperandType.InlineI:
                         case OperandType.ShortInlineR:
                         case OperandType.InlineString:
                         case OperandType.InlineSig:
-                            if (pos + 3 < il.Length) pos += 4;
-                            else pos = il.Length;
+                            if (pos + 3 < ilBytes.Length) pos += 4;
+                            else pos = ilBytes.Length;
                             break;
                         case OperandType.InlineVar:
-                            if (pos + 1 < il.Length) pos += 2;
-                            else pos = il.Length;
+                            if (pos + 1 < ilBytes.Length) pos += 2;
+                            else pos = ilBytes.Length;
                             break;
                         case OperandType.InlineI8:
                         case OperandType.InlineR:
-                            if (pos + 7 < il.Length) pos += 8;
-                            else pos = il.Length;
+                            if (pos + 7 < ilBytes.Length) pos += 8;
+                            else pos = ilBytes.Length;
                             break;
                         case OperandType.InlineSwitch:
-                            if (pos + 3 < il.Length)
+                            if (pos + 3 < ilBytes.Length)
                             {
-                                int count = BitConverter.ToInt32(il, pos); pos += 4;
+                                int count = BitConverter.ToInt32(ilBytes, pos); pos += 4;
                                 pos += count * 4;
-                                if (pos > il.Length) pos = il.Length;
+                                if (pos > ilBytes.Length) pos = ilBytes.Length;
                             }
-                            else pos = il.Length;
+                            else pos = ilBytes.Length;
                             break;
                         default:
-                            if (pos + 3 < il.Length) pos += 4;
-                            else pos = il.Length;
+                            if (pos + 3 < ilBytes.Length) pos += 4;
+                            else pos = ilBytes.Length;
                             break;
                     }
                 }
@@ -1273,9 +1241,7 @@ namespace FiresCore.UI
             return refs;
         }
 
-        // ???????????????????????????????????????
         //  IL token resolution helpers
-        // ???????????????????????????????????????
 
         private static Type[] SafeGenericTypeArgs(MethodInfo method)
         {
@@ -1303,9 +1269,9 @@ namespace FiresCore.UI
         {
             try
             {
-                var m = module.ResolveMethod(token, SafeGenericTypeArgs(context), SafeGenericMethodArgs(context));
-                if (m != null)
-                    return $"{FormatTypeName(m.DeclaringType)}::{m.Name}({FormatParamTypes(m.GetParameters())})";
+                var method = module.ResolveMethod(token, SafeGenericTypeArgs(context), SafeGenericMethodArgs(context));
+                if (method != null)
+                    return $"{FormatTypeName(method.DeclaringType)}::{method.Name}({FormatParamTypes(method.GetParameters())})";
             }
             catch { }
             return $"<method 0x{token:X8}>";
@@ -1315,9 +1281,9 @@ namespace FiresCore.UI
         {
             try
             {
-                var f = module.ResolveField(token, SafeGenericTypeArgs(context), SafeGenericMethodArgs(context));
-                if (f != null)
-                    return $"{FormatTypeName(f.FieldType)} {FormatTypeName(f.DeclaringType)}::{f.Name}";
+                var field = module.ResolveField(token, SafeGenericTypeArgs(context), SafeGenericMethodArgs(context));
+                if (field != null)
+                    return $"{FormatTypeName(field.FieldType)} {FormatTypeName(field.DeclaringType)}::{field.Name}";
             }
             catch { }
             return $"<field 0x{token:X8}>";
@@ -1327,9 +1293,9 @@ namespace FiresCore.UI
         {
             try
             {
-                var t = module.ResolveType(token, SafeGenericTypeArgs(context), SafeGenericMethodArgs(context));
-                if (t != null)
-                    return FormatTypeName(t);
+                var type = module.ResolveType(token, SafeGenericTypeArgs(context), SafeGenericMethodArgs(context));
+                if (type != null)
+                    return FormatTypeName(type);
             }
             catch { }
             return $"<type 0x{token:X8}>";
@@ -1340,12 +1306,12 @@ namespace FiresCore.UI
             try
             {
                 var member = module.ResolveMember(token, SafeGenericTypeArgs(context), SafeGenericMethodArgs(context));
-                if (member is FieldInfo fi)
-                    return $"{FormatTypeName(fi.FieldType)} {FormatTypeName(fi.DeclaringType)}::{fi.Name}";
-                if (member is MethodInfo mi)
-                    return $"{FormatTypeName(mi.DeclaringType)}::{mi.Name}()";
-                if (member is Type tp)
-                    return FormatTypeName(tp);
+                if (member is FieldInfo fieldInfo)
+                    return $"{FormatTypeName(fieldInfo.FieldType)} {FormatTypeName(fieldInfo.DeclaringType)}::{fieldInfo.Name}";
+                if (member is MethodInfo methodInfo)
+                    return $"{FormatTypeName(methodInfo.DeclaringType)}::{methodInfo.Name}()";
+                if (member is Type memberType)
+                    return FormatTypeName(memberType);
                 if (member != null)
                     return member.ToString();
             }
@@ -1362,16 +1328,14 @@ namespace FiresCore.UI
             return string.Join(", ", parts);
         }
 
-        private static string EscapeILString(string s)
+        private static string EscapeILString(string text)
         {
-            if (s == null) return "";
-            if (s.Length > 80) s = s.Substring(0, 77) + "...";
-            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+            if (text == null) return "";
+            if (text.Length > 80) text = text.Substring(0, 77) + "...";
+            return text.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
         }
 
-        // ???????????????????????????????????????
         //  OpCode lookup tables
-        // ???????????????????????????????????????
 
         private static readonly OpCode[] OneByteOpCodes = new OpCode[256];
         private static readonly OpCode[] TwoByteOpCodes = new OpCode[256];
@@ -1386,15 +1350,15 @@ namespace FiresCore.UI
             }
 
             // Populate from all OpCode fields
-            foreach (var fi in typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static))
+            foreach (var opCodeField in typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static))
             {
-                if (fi.FieldType != typeof(OpCode)) continue;
-                var op = (OpCode)fi.GetValue(null);
-                ushort val = (ushort)op.Value;
+                if (opCodeField.FieldType != typeof(OpCode)) continue;
+                var opCode = (OpCode)opCodeField.GetValue(null);
+                ushort val = (ushort)opCode.Value;
                 if (val < 0x100)
-                    OneByteOpCodes[val] = op;
+                    OneByteOpCodes[val] = opCode;
                 else if ((val & 0xFF00) == 0xFE00)
-                    TwoByteOpCodes[val & 0xFF] = op;
+                    TwoByteOpCodes[val & 0xFF] = opCode;
             }
         }
 
@@ -1468,9 +1432,9 @@ namespace FiresCore.UI
                     var fields = ParsePipeRecord(records[i]);
                     string type = GetField(fields, "type");
                     string asm = GetField(fields, "asm");
-                    string go = GetField(fields, "go");
+                    string gameObjectName = GetField(fields, "go");
                     string enabled = GetField(fields, "enabled");
-                    sb.AppendLine($"| `{Escape(type)}` | `{Escape(asm)}` | `{Escape(go)}` | {Escape(enabled)} |");
+                    sb.AppendLine($"| `{Escape(type)}` | `{Escape(asm)}` | `{Escape(gameObjectName)}` | {Escape(enabled)} |");
                 }
                 sb.AppendLine();
             }
@@ -1482,51 +1446,49 @@ namespace FiresCore.UI
                 sb.AppendLine("## ? Missing Dependencies");
                 sb.AppendLine();
                 for (int i = 0; i < missing.Count; i++)
-                    sb.AppendLine($"- **{missing[i]}** � NOT LOADED");
+                    sb.AppendLine($"- **{missing[i]}** - NOT LOADED");
                 sb.AppendLine();
             }
 
             sb.AppendLine("---");
             sb.AppendLine();
-            sb.AppendLine($"*Re-exported from layout metadata by UIHarmonyPatchAuditor � {DateTime.Now:yyyy-MM-dd HH:mm:ss}*");
+            sb.AppendLine($"*Re-exported from layout metadata by UIHarmonyPatchAuditor - {DateTime.Now:yyyy-MM-dd HH:mm:ss}*");
 
             return sb.ToString();
         }
 
-        // ???????????????????????????????????????
         //  Code stub generator
-        // ???????????????????????????????????????
 
-        private static void WriteCodeStub(StringBuilder sb, PatchRecord p)
+        private static void WriteCodeStub(StringBuilder sb, PatchRecord patch)
         {
-            string shortTarget = ShortTypeName(p.TargetTypeName);
-            string harmonyId = p.HarmonyOwner != "?" ? p.HarmonyOwner : "com.yourmod.id";
-            string attrType = p.PatchType;
+            string shortTarget = ShortTypeName(patch.TargetTypeName);
+            string harmonyId = patch.HarmonyOwner != "?" ? patch.HarmonyOwner : "com.yourmod.id";
+            string attrType = patch.PatchType;
 
-            sb.AppendLine($"[HarmonyPatch(typeof({shortTarget}), nameof({shortTarget}.{p.TargetMethodName}))]");
-            sb.AppendLine($"public static class {shortTarget}_{p.TargetMethodName}_{attrType}");
+            sb.AppendLine($"[HarmonyPatch(typeof({shortTarget}), nameof({shortTarget}.{patch.TargetMethodName}))]");
+            sb.AppendLine($"public static class {shortTarget}_{patch.TargetMethodName}_{attrType}");
             sb.AppendLine("{");
 
             // Build parameter list for the stub
             var stubParams = new List<string>();
 
             // For instance methods, add __instance
-            if (!p.TargetMethodIsStatic)
+            if (!patch.TargetMethodIsStatic)
                 stubParams.Add($"{shortTarget} __instance");
 
             // For Postfix with non-void return, add __result
-            if (attrType == "Postfix" && p.TargetMethodReturnType != "void")
-                stubParams.Add($"{p.TargetMethodReturnType} __result");
+            if (attrType == "Postfix" && patch.TargetMethodReturnType != "void")
+                stubParams.Add($"{patch.TargetMethodReturnType} __result");
 
             // For Prefix, add __result as ref if non-void (to allow skipping)
-            if (attrType == "Prefix" && p.TargetMethodReturnType != "void")
-                stubParams.Add($"ref {p.TargetMethodReturnType} __result");
+            if (attrType == "Prefix" && patch.TargetMethodReturnType != "void")
+                stubParams.Add($"ref {patch.TargetMethodReturnType} __result");
 
             // Add original method parameters
-            if (p.TargetMethodParameters != null)
+            if (patch.TargetMethodParameters != null)
             {
-                for (int j = 0; j < p.TargetMethodParameters.Length; j++)
-                    stubParams.Add(p.TargetMethodParameters[j]);
+                for (int j = 0; j < patch.TargetMethodParameters.Length; j++)
+                    stubParams.Add(patch.TargetMethodParameters[j]);
             }
 
             string paramList = string.Join(", ", stubParams.ToArray());
@@ -1539,27 +1501,27 @@ namespace FiresCore.UI
             if (attrType == "Prefix")
             {
                 sb.AppendLine($"        // Return false to skip the original method, true to let it run.");
-                sb.AppendLine($"        // Original mod: {p.PatchDeclaringType}.{p.PatchMethodName} (priority {p.Priority})");
+                sb.AppendLine($"        // Original mod: {patch.PatchDeclaringType}.{patch.PatchMethodName} (priority {patch.Priority})");
                 sb.AppendLine($"        // TODO: Implement your replacement logic here");
                 sb.AppendLine("        return true;");
             }
             else if (attrType == "Postfix")
             {
-                sb.AppendLine($"        // Runs after {shortTarget}.{p.TargetMethodName}() completes.");
-                sb.AppendLine($"        // Original mod: {p.PatchDeclaringType}.{p.PatchMethodName} (priority {p.Priority})");
+                sb.AppendLine($"        // Runs after {shortTarget}.{patch.TargetMethodName}() completes.");
+                sb.AppendLine($"        // Original mod: {patch.PatchDeclaringType}.{patch.PatchMethodName} (priority {patch.Priority})");
                 sb.AppendLine($"        // TODO: Implement your post-processing logic here");
             }
             else if (attrType == "Transpiler")
             {
                 sb.AppendLine($"        // Transpilers modify IL instructions. This is an advanced technique.");
-                sb.AppendLine($"        // Original mod: {p.PatchDeclaringType}.{p.PatchMethodName} (priority {p.Priority})");
+                sb.AppendLine($"        // Original mod: {patch.PatchDeclaringType}.{patch.PatchMethodName} (priority {patch.Priority})");
                 sb.AppendLine($"        // You'll need to use System.Reflection.Emit and HarmonyLib.CodeInstruction.");
                 sb.AppendLine($"        // See: https://harmony.pardeike.net/articles/patching-transpiler.html");
             }
             else if (attrType == "Finalizer")
             {
                 sb.AppendLine($"        // Finalizers run after the method even if it threw an exception.");
-                sb.AppendLine($"        // Original mod: {p.PatchDeclaringType}.{p.PatchMethodName} (priority {p.Priority})");
+                sb.AppendLine($"        // Original mod: {patch.PatchDeclaringType}.{patch.PatchMethodName} (priority {patch.Priority})");
                 sb.AppendLine($"        // TODO: Implement your cleanup/error-handling logic here");
             }
 
@@ -1567,9 +1529,7 @@ namespace FiresCore.UI
             sb.AppendLine("}");
         }
 
-        // ???????????????????????????????????????
         //  Reflection helpers
-        // ???????????????????????????????????????
 
         private static string FormatMethodSignature(MethodInfo method)
         {
@@ -1649,17 +1609,15 @@ namespace FiresCore.UI
             return fullName;
         }
 
-        // ???????????????????????????????????????
         //  Patch / metadata helpers
-        // ???????????????????????????????????????
 
         private static bool IsOurPatch(Patch patch)
         {
             if (patch.owner == OurHarmonyId) return true;
             if (patch.PatchMethod != null)
             {
-                string ns = patch.PatchMethod.DeclaringType?.Namespace ?? "";
-                if (ns.StartsWith("VerdantsAscent", StringComparison.Ordinal)) return true;
+                string patchNamespace = patch.PatchMethod.DeclaringType?.Namespace ?? "";
+                if (patchNamespace.StartsWith("VerdantsAscent", StringComparison.Ordinal)) return true;
             }
             return false;
         }
@@ -1710,14 +1668,12 @@ namespace FiresCore.UI
             return false;
         }
 
-        // ???????????????????????????????????????
         //  String utilities
-        // ???????????????????????????????????????
 
-        private static string Escape(string s)
+        private static string Escape(string text)
         {
-            if (string.IsNullOrEmpty(s)) return "";
-            return s.Replace("|", "\\|").Replace("\n", " ").Replace("\r", "");
+            if (string.IsNullOrEmpty(text)) return "";
+            return text.Replace("|", "\\|").Replace("\n", " ").Replace("\r", "");
         }
 
         private static string SanitizeFileName(string name)

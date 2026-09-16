@@ -13,16 +13,14 @@ namespace FiresCore.UI
     /// a unified slot abstraction for the override UI to mirror.
     ///
     /// Discovery strategy (in priority order):
-    /// 1. Reflect into the live VAInventory Slots class if loaded � reads real
+    /// 1. Reflect into the live VAInventory Slots class if loaded - reads real
     ///    slot IDs, grid positions, active states and InventoryHeightPlayer.
     /// 2. Fallback: scan items at grid positions beyond the vanilla visible
     ///    height and guess slot types from item data.
     /// </summary>
     public static class UIOverrideSlotSystem
     {
-        // ???????????????????????????????????????
         //  Slot ID constants
-        // ???????????????????????????????????????
 
         public const string HelmetSlotID = "Helmet";
         public const string ChestSlotID = "Chest";
@@ -36,9 +34,7 @@ namespace FiresCore.UI
         public const string QuickSlotID = "Quick";
         public const string EmptySlotID = "Empty";
 
-        // ???????????????????????????????????????
         //  Slot data class
-        // ???????????????????????????????????????
 
         public class Slot
         {
@@ -72,9 +68,7 @@ namespace FiresCore.UI
             public string GetShortcutText() => ShortcutText ?? Name ?? "";
         }
 
-        // ???????????????????????????????????????
         //  Slot registries
-        // ???????????????????????????????????????
 
         public static readonly Dictionary<string, Slot> slots =
             new Dictionary<string, Slot>(StringComparer.OrdinalIgnoreCase);
@@ -91,9 +85,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Convenience accessors
-        // ???????????????????????????????????????
 
         public static Player CurrentPlayer => Player.m_localPlayer;
         public static Inventory PlayerInventory => CurrentPlayer?.GetInventory();
@@ -127,9 +119,7 @@ namespace FiresCore.UI
         public static int InventorySizePlayer => InventoryHeight * InventoryWidth;
 
 
-        // ???????????????????????????????????????
         //  Reflection cache for VAInventory Slots
-        // ???????????????????????????????????????
 
         private static bool _reflectionAttempted;
         private static Type _slotsType;
@@ -193,7 +183,7 @@ namespace FiresCore.UI
                     _mi_slotGetShortcutText = slotInnerType.GetMethod("GetShortcutText");
                 }
 
-                Debug.Log($"[UIOverrideSlotSystem] Reflected VAInventory Slots class � " +
+                Debug.Log($"[UIOverrideSlotSystem] Reflected VAInventory Slots class - " +
                     $"slotsArray={_fi_slotsArray != null}, hotbar={_fi_toolHotbarSlots != null}, " +
                     $"heightPlayer={_pi_heightPlayer != null}");
 
@@ -207,9 +197,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Item type validators
-        // ???????????????????????????????????????
 
         public static bool IsHelmetItem(ItemDrop.ItemData item) =>
             item?.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Helmet;
@@ -250,33 +238,31 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Slot lookup
-        // ???????????????????????????????????????
 
         public static Slot GetSlotByID(string id)
         {
             if (string.IsNullOrEmpty(id)) return null;
-            if (slots.TryGetValue(id, out var s)) return s;
-            foreach (var hs in toolHotbarSlots)
+            if (slots.TryGetValue(id, out var slot)) return slot;
+            foreach (var hotbarSlot in toolHotbarSlots)
             {
-                if (hs != null && string.Equals(hs.ID, id, StringComparison.OrdinalIgnoreCase))
-                    return hs;
+                if (hotbarSlot != null && string.Equals(hotbarSlot.ID, id, StringComparison.OrdinalIgnoreCase))
+                    return hotbarSlot;
             }
             return null;
         }
 
         public static Slot GetSlotInGrid(Vector2i pos)
         {
-            foreach (var s in slots.Values)
+            foreach (var slot in slots.Values)
             {
-                if (s != null && s.IsActive && s.GridPosition == pos)
-                    return s;
+                if (slot != null && slot.IsActive && slot.GridPosition == pos)
+                    return slot;
             }
-            foreach (var s in toolHotbarSlots)
+            foreach (var slot in toolHotbarSlots)
             {
-                if (s != null && s.IsActive && s.GridPosition == pos)
-                    return s;
+                if (slot != null && slot.IsActive && slot.GridPosition == pos)
+                    return slot;
             }
             return null;
         }
@@ -302,29 +288,27 @@ namespace FiresCore.UI
             return slot != null && slot.IsEquipmentSlot;
         }
 
-        // ???????????????????????????????????????
         //  Slot finding (for item placement)
-        // ???????????????????????????????????????
 
         public static bool TryFindFreeSlotForItem(ItemDrop.ItemData item, out Slot slot)
         {
             slot = null;
             if (item == null) return false;
 
-            foreach (var s in slots.Values)
+            foreach (var candidate in slots.Values)
             {
-                if (s != null && s.IsActive && s.IsEquipmentSlot && s.IsFree && s.ItemFits(item))
+                if (candidate != null && candidate.IsActive && candidate.IsEquipmentSlot && candidate.IsFree && candidate.ItemFits(item))
                 {
-                    slot = s;
+                    slot = candidate;
                     return true;
                 }
             }
 
-            foreach (var s in slots.Values)
+            foreach (var candidate in slots.Values)
             {
-                if (s != null && s.IsActive && s.IsFree && s.ItemFits(item))
+                if (candidate != null && candidate.IsActive && candidate.IsFree && candidate.ItemFits(item))
                 {
-                    slot = s;
+                    slot = candidate;
                     return true;
                 }
             }
@@ -332,9 +316,7 @@ namespace FiresCore.UI
             return false;
         }
 
-        // ???????????????????????????????????????
         //  Slot registration (called by wiring code)
-        // ???????????????????????????????????????
 
         public static Slot RegisterSlot(string id, Vector2i gridPos, string name,
             bool isEquipment = false, Func<ItemDrop.ItemData, bool> itemFits = null)
@@ -380,9 +362,7 @@ namespace FiresCore.UI
             toolHotbarSlots.Clear();
         }
 
-        // ???????????????????????????????????????
         //  Inventory helpers
-        // ???????????????????????????????????????
 
         public static bool TryFindFreeInventorySlot(out Vector2i freePos)
         {
@@ -424,9 +404,7 @@ namespace FiresCore.UI
             return false;
         }
 
-        // ???????????????????????????????????????
         //  Dynamic discovery from live game
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Discovers equipment/extra slots from the live game state.
@@ -532,24 +510,24 @@ namespace FiresCore.UI
                 {
                     for (int i = 0; i < liveHotbar.Count; i++)
                     {
-                        var hbSlot = liveHotbar[i];
-                        if (hbSlot == null)
+                        var hotbarSlot = liveHotbar[i];
+                        if (hotbarSlot == null)
                         {
                             toolHotbarSlots.Add(null);
                             continue;
                         }
 
-                        string hbId = _pi_slotID?.GetValue(hbSlot) as string ?? $"ToolHotbar{i + 1}";
-                        Vector2i hbPos = _pi_slotGridPosition != null
-                            ? (Vector2i)_pi_slotGridPosition.GetValue(hbSlot) : EmptyPosition;
-                        string hbName = _pi_slotName?.GetValue(hbSlot) as string ?? $"Tool {i + 1}";
+                        string hotbarId = _pi_slotID?.GetValue(hotbarSlot) as string ?? $"ToolHotbar{i + 1}";
+                        Vector2i hotbarPosition = _pi_slotGridPosition != null
+                            ? (Vector2i)_pi_slotGridPosition.GetValue(hotbarSlot) : EmptyPosition;
+                        string hbName = _pi_slotName?.GetValue(hotbarSlot) as string ?? $"Tool {i + 1}";
                         string hbShortcut = _mi_slotGetShortcutText != null
-                            ? _mi_slotGetShortcutText.Invoke(hbSlot, null) as string : null;
+                            ? _mi_slotGetShortcutText.Invoke(hotbarSlot, null) as string : null;
 
                         toolHotbarSlots.Add(new Slot
                         {
-                            ID = hbId,
-                            GridPosition = hbPos,
+                            ID = hotbarId,
+                            GridPosition = hotbarPosition,
                             Name = hbName,
                             ShortcutText = hbShortcut,
                             IsActive = true,
@@ -580,7 +558,7 @@ namespace FiresCore.UI
         private static void DiscoverFromHeuristics(Inventory inv)
         {
             int width = inv.GetWidth();
-            // Use vanilla visible height (4) � NOT inv.GetHeight() which may
+            // Use vanilla visible height (4) - NOT inv.GetHeight() which may
             // include hidden equipment rows added by inventory mods
             int visibleHeight = InventoryHeight;
 

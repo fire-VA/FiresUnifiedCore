@@ -6,22 +6,9 @@ using UnityEngine;
 namespace FiresCore.Diagnostics
 {
     /// <summary>
-    /// Names the prefab behind vanilla's
-    /// <c>"PlayerClothWindShelter: MagicaCloth component not found on gameobject {name}"</c> error.
-    ///
-    /// Valheim 1.0 replaced Unity Cloth with MagicaCloth2 and added
-    /// <see cref="PlayerClothWindShelter"/>, whose Awake hard-errors when the GameObject it sits on
-    /// has no <c>MagicaCloth</c> sibling. Vanilla's message reports only the local GameObject name,
-    /// which on every cape is the FBX-import mesh name <c>"default"</c> — identical across all of
-    /// them, so the log alone cannot tell you which prefab is at fault.
-    ///
-    /// EBM's prewarm instantiates every registered prefab, so it surfaces this at load instead of
-    /// whenever a player first equips the offending cape. That is why it shows up on a rig running
-    /// EBM and not on a plain client.
-    ///
-    /// This logs the ROOT object name (the prefab) plus the child path, once per distinct root, so
-    /// the offender is identified without spamming. It costs nothing unless the fault is present —
-    /// the patch body only runs inside the Awake of a component that is already erroring.
+    /// Names the prefab behind vanilla's "PlayerClothWindShelter: MagicaCloth component not found" error, which only
+    /// reports the local object name ("default" on every cape). Logs the root prefab and child path once per
+    /// prefab. EBM's prewarm instantiates every prefab, which is why the error appears at load on rigs running it.
     /// </summary>
     [HarmonyPatch(typeof(PlayerClothWindShelter), "Awake")]
     internal static class ClothAuthoringProbe
@@ -54,8 +41,8 @@ namespace FiresCore.Diagnostics
             if (!_reported.Add(prefabName)) return;
 
             var path = new StringBuilder(__instance.gameObject.name);
-            for (Transform t = __instance.transform.parent; t != null; t = t.parent)
-                path.Insert(0, t.name + "/");
+            for (Transform ancestor = __instance.transform.parent; ancestor != null; ancestor = ancestor.parent)
+                path.Insert(0, ancestor.name + "/");
 
             Debug.LogWarning(
                 $"[ClothAuthoringProbe] PlayerClothWindShelter without MagicaCloth on prefab '{prefabName}' " +

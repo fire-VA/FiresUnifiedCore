@@ -183,8 +183,8 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Loads external sprites from the UIAssets/Sprites folder (custom mod sprites).
-        /// CapturedAssets/sprites are NOT bulk-loaded at startup � they are loaded
-        /// lazily on demand via GetSprite() ? TryLoadFromCapturedAssets(), since
+        /// CapturedAssets/sprites are NOT bulk-loaded at startup - they are loaded
+        /// lazily on demand via GetSprite() -> TryLoadFromCapturedAssets(), since
         /// most of those are vanilla/mod textures already available in memory.
         /// </summary>
         public static void LoadAllExternalSprites()
@@ -263,7 +263,7 @@ namespace FiresCore.UI
                 return sprite;
             }
 
-            // Remember this name was not found � avoid repeating expensive lookups
+            // Remember this name was not found - avoid repeating expensive lookups
             _negativeSpriteCache.Add(cleanName);
             return null;
         }
@@ -277,10 +277,10 @@ namespace FiresCore.UI
             try
             {
                 var allSprites = Resources.FindObjectsOfTypeAll<Sprite>();
-                foreach (var s in allSprites)
+                foreach (var sprite in allSprites)
                 {
-                    if (s != null && string.Equals(s.name, name, StringComparison.OrdinalIgnoreCase))
-                        return s;
+                    if (sprite != null && string.Equals(sprite.name, name, StringComparison.OrdinalIgnoreCase))
+                        return sprite;
                 }
             }
             catch { }
@@ -473,7 +473,7 @@ if (!loaded)
        foreach (var key in keysToRemove)
   _cachedSprites.Remove(key);
 
-            // Try to reload from disk � check Sprites folder first, then CapturedAssets
+            // Try to reload from disk - check Sprites folder first, then CapturedAssets
             string spritesDir = Path.Combine(UIAssetsDir, "Sprites");
             string capturedDir = Path.Combine(UIAssetsDir, "CapturedAssets", "sprites");
             string pngPath = Path.Combine(spritesDir, nameNoExt + ".png");

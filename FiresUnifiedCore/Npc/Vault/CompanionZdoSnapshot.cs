@@ -4,50 +4,10 @@ using UnityEngine;
 namespace FiresCore.Npc.Vault
 {
     /// <summary>
-    /// Pure-function bridge between a live <see cref="CompanionController"/>
-    /// (and the ZDO behind it) and an inert <see cref="CompanionSaveData"/>
-    /// snapshot blob.
-    /// 
-    /// Two operations:
-    ///   • <see cref="Capture"/>    — read everything we need from the live
-    ///                                companion to be able to reconstitute it.
-    ///   • <see cref="Apply"/>      — write a snapshot back onto a live
-    ///                                companion (typically a fresh respawn).
-    /// 
-    /// PHASE 2 DESIGN
-    /// --------------
-    /// The field-by-field copy logic already exists in
-    /// <see cref="CompanionVault.BuildSaveData"/> and
-    /// <see cref="CompanionVault.RestoreCompanion"/>. Both are essentially
-    /// pure functions today — they read/write the controller and the ZDO
-    /// but do not perform any IO and do not consult
-    /// <see cref="Modules.Vault.VaultOfKnowledge"/>.
-    /// 
-    /// This class is a thin facade on top of that pair. The reason for the
-    /// facade rather than a direct call:
-    ///   1. Phase 3+ callers depend on <c>CompanionZdoSnapshot.Capture</c> /
-    ///      <c>Apply</c>. When Phase 6 rewrites the field-copy code in a
-    ///      new home (or splits it differently), call sites don't change.
-    ///   2. Consistent <c>Capture</c> / <c>Apply</c> naming reads cleaner
-    ///      at the call site than <c>BuildSaveData</c> / <c>RestoreCompanion</c>.
-    ///   3. We get one place to harden error semantics (null-safe, single
-    ///      try/catch) without polluting the field-copy implementation.
-    /// 
-    /// PHASE 2 STATUS
-    /// --------------
-    /// Delivered without production call sites. Consumers wired up in
-    /// Phase 3 (death flow) and Phase 4 (login/logout flow). Until then
-    /// this is dead code that compiles and ships safely alongside the
-    /// existing vault path.
-    /// 
-    /// PURITY CONTRACT
-    /// ---------------
-    /// Neither method touches the filesystem, the JSON vault, or
-    /// <see cref="PlayerCompanionStorage"/>. They operate strictly on
-    /// the live <see cref="CompanionController"/> ?
-    /// <see cref="CompanionSaveData"/> bridge. Storage is the caller's
-    /// responsibility — typically <c>roster.UpsertEntry(player, ...)</c>
-    /// after a Capture.
+    /// Converts between a live companion (controller plus ZDO) and an inert <see cref="CompanionSaveData"/>:
+    /// <see cref="Capture"/> reads everything needed to rebuild it, <see cref="Apply"/> writes a snapshot back
+    /// onto a fresh companion. A facade over CompanionVault's field copy with no file, vault or roster I/O;
+    /// persisting the snapshot is the caller's job.
     /// </summary>
     public static class CompanionZdoSnapshot
     {
@@ -62,23 +22,9 @@ namespace FiresCore.Npc.Vault
         public static bool VerboseLogging = false;
 
         /// <summary>
-        /// Reads the live state of <paramref name="companion"/> into an
-        /// inert <see cref="CompanionSaveData"/> blob suitable for storage
-        /// in <see cref="PlayerCompanionStorage"/> or any other persistent
-        /// medium.
-        /// 
-        /// Returns null if:
-        ///   • <paramref name="companion"/> is null,
-        ///   • the companion lacks a <c>companionId</c> (not yet initialised),
-        ///   • the underlying field-copy throws (extremely defensive — the
-        ///     existing implementation has its own per-field try/catch).
-        /// 
-        /// On null return the caller must NOT persist anything. Persisting
-        /// a null/incomplete snapshot for a pending-respawn entry is
-        /// exactly the failure mode that produced the wrong-name /
-        /// wrong-scale bug, so the storage layer also rejects null
-        /// snapshots when <c>IsPendingRespawn=true</c> at upsert time
-        /// (see <see cref="PlayerCompanionStorage.UpsertEntry"/>).
+        /// Reads a live companion into an inert <see cref="CompanionSaveData"/>. Returns null when the companion
+        /// is null, has no companionId yet, or the copy throws; callers must then persist nothing, since storing
+        /// an incomplete snapshot for a pending respawn is what produced wrong-name and wrong-scale respawns.
         /// </summary>
         public static CompanionSaveData Capture(CompanionController companion)
         {
@@ -184,19 +130,9 @@ namespace FiresCore.Npc.Vault
         }
 
         /// <summary>
-        /// Convenience helper used by the respawn flow: capture the
-        /// current state of <paramref name="companion"/> and stamp it into
-        /// the player's roster as a death-snapshot entry, including a
-        /// wall-clock <paramref name="respawnDeadlineUtc"/> deadline.
-        /// 
-        /// Returns true if the snapshot was captured AND persisted to the
-        /// roster. False on any failure (caller should fall back to the
-        /// existing vault save path during the side-by-side phase).
-        /// 
-        /// This method exists in Phase 2 because it's a one-liner
-        /// equivalent of "Capture ? mutate entry ? UpsertEntry" and Phase 3
-        /// will call it three times. Defining it here keeps the storage /
-        /// snapshot pieces colocated.
+        /// Captures <paramref name="companion"/> and stores it in the owner's roster as a death snapshot with a
+        /// wall-clock <paramref name="respawnDeadlineUtc"/>. Returns true only when the snapshot was both captured and
+        /// persisted.
         /// </summary>
         public static bool StoreDeathSnapshotOnPlayer(
             Player owner,
@@ -224,7 +160,7 @@ namespace FiresCore.Npc.Vault
 
         /// <summary>
         /// Computes the seconds remaining on a stored respawn deadline,
-        /// clamped to ? 0. Returns 0 (i.e. "respawn now") when the deadline
+        /// clamped to - 0. Returns 0 (i.e. "respawn now") when the deadline
         /// has passed — that's how a crash recovery resumes a missed timer:
         /// next login finds <c>remaining = 0</c> and respawns immediately.
         /// </summary>

@@ -61,8 +61,8 @@ namespace FiresCore.UI
 
             // We overwrite GameCamera.m_fov every frame while active; remember the original so End restores it —
             // otherwise the world stays stuck at the screen-fill FOV after you step away (the "wonky camera").
-            var gc = GameCamera.instance;
-            if (gc != null && _savedFov <= 0f) _savedFov = gc.m_fov;
+            var gameCamera = GameCamera.instance;
+            if (gameCamera != null && _savedFov <= 0f) _savedFov = gameCamera.m_fov;
         }
 
         public static void End()
@@ -72,11 +72,11 @@ namespace FiresCore.UI
             _tuneKey = null;
             IsTuning = false;
 
-            var gc = GameCamera.instance;
-            if (gc != null && _savedFov > 0f)
+            var gameCamera = GameCamera.instance;
+            if (gameCamera != null && _savedFov > 0f)
             {
-                gc.m_fov = _savedFov;
-                var cam = gc.m_camera != null ? gc.m_camera : gc.GetComponent<Camera>();
+                gameCamera.m_fov = _savedFov;
+                var cam = gameCamera.m_camera != null ? gameCamera.m_camera : gameCamera.GetComponent<Camera>();
                 if (cam != null) cam.fieldOfView = _savedFov;
             }
             _savedFov = -1f;
@@ -94,11 +94,11 @@ namespace FiresCore.UI
                 var provider = _provider;
                 if (provider == null) return;
 
-                Pose? p;
-                try { p = provider(); }
-                catch { p = null; }
-                if (p == null) return;
-                var pose = p.Value;
+                Pose? providedPose;
+                try { providedPose = provider(); }
+                catch { providedPose = null; }
+                if (providedPose == null) return;
+                var pose = providedPose.Value;
 
                 // Ease an INTERNAL pose toward the target and write it absolutely. Lerping from the live transform
                 // would fight vanilla's per-frame follow/collision reset and make the camera bounce in and out.
@@ -110,16 +110,16 @@ namespace FiresCore.UI
                 }
                 else
                 {
-                    float k = 1f - Mathf.Exp(-_ease * Time.deltaTime);
-                    _curPos = Vector3.Lerp(_curPos, pose.Position, k);
-                    _curRot = Quaternion.Slerp(_curRot, pose.Rotation, k);
+                    float blend = 1f - Mathf.Exp(-_ease * Time.deltaTime);
+                    _curPos = Vector3.Lerp(_curPos, pose.Position, blend);
+                    _curRot = Quaternion.Slerp(_curRot, pose.Rotation, blend);
                 }
 
-                var t = __instance.transform;
+                var cameraTransform = __instance.transform;
                 // Add the live tune offset in the camera's own frame (x right, y up, z forward) so a drag moves the
                 // shot the way it looks, not along world axes. Applied after the ease so tuning is instant.
-                t.position = _curPos + _curRot * TuneOffset;
-                t.rotation = _curRot;
+                cameraTransform.position = _curPos + _curRot * TuneOffset;
+                cameraTransform.rotation = _curRot;
 
                 if (pose.Fov > 1f)
                 {

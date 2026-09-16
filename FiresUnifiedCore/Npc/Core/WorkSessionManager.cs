@@ -7,21 +7,9 @@ using FiresCore.Npc.Events;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// Manages long-running work sessions for companions.
-    /// Tracks work progress, handles interruptions (combat), and enforces global timeouts.
-    /// 
-    /// A "work session" is a period of time where a companion is performing work behaviors
-    /// like smelting, gathering resources, or crafting. Sessions can be:
-    /// - Interrupted by combat and resumed later
-    /// - Timed out if they run too long
-    /// - Tracked for statistics (items processed, time spent)
-    /// 
-    /// USAGE:
-    /// - Created automatically by BehaviorCoordinator
-    /// - Call StartSession() when a work behavior begins
-    /// - Call PauseSession() when interrupted by combat
-    /// - Call ResumeSession() when combat ends
-    /// - Call EndSession() when work completes
+    /// Tracks a companion's long-running work (smelting, gathering, crafting): progress and statistics, pausing
+    /// for combat and resuming afterwards, and a global timeout. Created by BehaviorCoordinator; behaviors call
+    /// StartSession, PauseSession, ResumeSession and EndSession.
     /// </summary>
     public class WorkSessionManager
     {
@@ -89,10 +77,10 @@ namespace FiresCore.Npc.Core
         private IdleSubBehavior _currentBehavior;
         
         // Global timeout - no session can run longer than this
-        private const float GLOBAL_SESSION_TIMEOUT = 1800f; // 30 minutes
+        private const float GlobalSessionTimeout = 1800f; // 30 minutes
         
         // Warning threshold - log warning when session runs this long
-        private const float SESSION_WARNING_THRESHOLD = 600f; // 10 minutes
+        private const float SessionWarningThreshold = 600f; // 10 minutes
         
         private bool _warningLogged = false;
         
@@ -193,7 +181,7 @@ namespace FiresCore.Npc.Core
             {
                 BehaviorName = behavior.BehaviorName,
                 StartTime = Time.time,
-                MaxDuration = maxDuration > 0 ? Mathf.Min(maxDuration, GLOBAL_SESSION_TIMEOUT) : behavior.MaxDuration,
+                MaxDuration = maxDuration > 0 ? Mathf.Min(maxDuration, GlobalSessionTimeout) : behavior.MaxDuration,
                 TotalPausedTime = 0f,
                 ItemsProcessed = 0,
                 ItemsCollected = 0,
@@ -323,7 +311,7 @@ namespace FiresCore.Npc.Core
             if (_currentSession == null) return;
             _currentSession.MaxDuration = Mathf.Min(
                 _currentSession.MaxDuration + additionalTime,
-                GLOBAL_SESSION_TIMEOUT
+                GlobalSessionTimeout
             );
             
             if (VerboseLogging)
@@ -363,7 +351,7 @@ namespace FiresCore.Npc.Core
             }
             
             // Log warning if session is running long
-            if (!_warningLogged && _currentSession.ActiveTime > SESSION_WARNING_THRESHOLD)
+            if (!_warningLogged && _currentSession.ActiveTime > SessionWarningThreshold)
             {
                 Debug.LogWarning($"[WorkSessionManager] Session running long: {_currentSession.BehaviorName} " +
                     $"({_currentSession.ActiveTime:F0}s / {_currentSession.MaxDuration:F0}s)");

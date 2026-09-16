@@ -7,18 +7,10 @@ using UnityEngine;
 namespace FiresCore.Appearance
 {
     /// <summary>
-    /// Owner-side reader that snapshots the LOCAL player's resolved <c>VisEquipment</c> state into a
-    /// <see cref="PlayerAppearance"/>. Only the owning client can cleanly read its own resolved equipment,
-    /// so capture is client-only and the dedi guard is automatic: <c>Player.m_localPlayer == null</c> on a
-    /// headless server ⇒ <see cref="Capture"/> returns null and nothing is sent.
-    ///
-    /// Private <c>VisEquipment</c> fields are read through a <see cref="FieldInfo"/> cache resolved once per
-    /// AppDomain (the same pattern as <c>NpcVisEquipment.EnsureFieldCachesPopulated</c>), using
-    /// <see cref="AccessTools.Field"/> with a soft fallback so a vanilla rename degrades to an empty value
-    /// rather than throwing. Item fields are read as <c>object</c>: a string is used verbatim; an int/long
-    /// hash is stored as its <c>ToString()</c> token (0 ⇒ empty). Colors are read as Vector3 (vanilla stores
-    /// <c>m_skinColor</c>/<c>m_hairColor</c> as Vector3) and emitted as <c>RRGGBBAA</c> via
-    /// <see cref="ColorUtility.ToHtmlStringRGBA"/>.
+    /// Snapshots the local player's resolved VisEquipment into a <see cref="PlayerAppearance"/>. Only the owning client
+    /// can read its own resolved equipment, so a headless server simply gets null. Private fields are read through a
+    /// cached AccessTools lookup that degrades to empty values on a rename; item fields become their string name or hash
+    /// token, and skin and hair colors become RRGGBBAA strings.
     /// </summary>
     public static class PlayerAppearanceCapture
     {
@@ -45,26 +37,26 @@ namespace FiresCore.Appearance
         private static void EnsureFieldsCached()
         {
             if (_fieldsCached) return;
-            var t = typeof(VisEquipment);
+            var type = typeof(VisEquipment);
 
-            _fModelIndex = AccessTools.Field(t, "m_modelIndex");
-            _fSkinColor = AccessTools.Field(t, "m_skinColor");
-            _fHairColor = AccessTools.Field(t, "m_hairColor");
-            _fHairItem = AccessTools.Field(t, "m_hairItem");
-            _fBeardItem = AccessTools.Field(t, "m_beardItem");
-            _fRightItem = AccessTools.Field(t, "m_rightItem");
-            _fLeftItem = AccessTools.Field(t, "m_leftItem");
-            _fLeftItemVariant = AccessTools.Field(t, "m_leftItemVariant");
-            _fChestItem = AccessTools.Field(t, "m_chestItem");
-            _fLegItem = AccessTools.Field(t, "m_legItem");
-            _fHelmetItem = AccessTools.Field(t, "m_helmetItem");
-            _fShoulderItem = AccessTools.Field(t, "m_shoulderItem");
-            _fShoulderItemVariant = AccessTools.Field(t, "m_shoulderItemVariant");
-            _fUtilityItem = AccessTools.Field(t, "m_utilityItem");
-            _fLeftBackItem = AccessTools.Field(t, "m_leftBackItem");
-            _fLeftBackItemVariant = AccessTools.Field(t, "m_leftBackItemVariant");
-            _fRightBackItem = AccessTools.Field(t, "m_rightBackItem");
-            _fTrinketItem = AccessTools.Field(t, "m_trinketItem");
+            _fModelIndex = AccessTools.Field(type, "m_modelIndex");
+            _fSkinColor = AccessTools.Field(type, "m_skinColor");
+            _fHairColor = AccessTools.Field(type, "m_hairColor");
+            _fHairItem = AccessTools.Field(type, "m_hairItem");
+            _fBeardItem = AccessTools.Field(type, "m_beardItem");
+            _fRightItem = AccessTools.Field(type, "m_rightItem");
+            _fLeftItem = AccessTools.Field(type, "m_leftItem");
+            _fLeftItemVariant = AccessTools.Field(type, "m_leftItemVariant");
+            _fChestItem = AccessTools.Field(type, "m_chestItem");
+            _fLegItem = AccessTools.Field(type, "m_legItem");
+            _fHelmetItem = AccessTools.Field(type, "m_helmetItem");
+            _fShoulderItem = AccessTools.Field(type, "m_shoulderItem");
+            _fShoulderItemVariant = AccessTools.Field(type, "m_shoulderItemVariant");
+            _fUtilityItem = AccessTools.Field(type, "m_utilityItem");
+            _fLeftBackItem = AccessTools.Field(type, "m_leftBackItem");
+            _fLeftBackItemVariant = AccessTools.Field(type, "m_leftBackItemVariant");
+            _fRightBackItem = AccessTools.Field(type, "m_rightBackItem");
+            _fTrinketItem = AccessTools.Field(type, "m_trinketItem");
 
             _fieldsCached = true;
         }
@@ -120,46 +112,46 @@ namespace FiresCore.Appearance
             }
         }
 
-        private static int ReadInt(FieldInfo f, VisEquipment vis)
+        private static int ReadInt(FieldInfo fieldInfo, VisEquipment vis)
         {
-            if (f == null) return 0;
+            if (fieldInfo == null) return 0;
             try
             {
-                object v = f.GetValue(vis);
-                return v is int i ? i : 0;
+                object raw = fieldInfo.GetValue(vis);
+                return raw is int i ? i : 0;
             }
             catch { return 0; }
         }
 
         // Vanilla stores skin/hair color as Vector3 (xyz, implicit alpha 1). On a build where the field is
         // already a Color we read it straight. Either way emit RRGGBBAA via ColorUtility.
-        private static string ReadColorRgba(FieldInfo f, VisEquipment vis)
+        private static string ReadColorRgba(FieldInfo fieldInfo, VisEquipment vis)
         {
-            if (f == null) return "";
+            if (fieldInfo == null) return "";
             try
             {
-                object v = f.GetValue(vis);
-                Color c;
-                if (v is Vector3 vec) c = new Color(vec.x, vec.y, vec.z, 1f);
-                else if (v is Color col) c = col;
+                object raw = fieldInfo.GetValue(vis);
+                Color color;
+                if (raw is Vector3 vec) color = new Color(vec.x, vec.y, vec.z, 1f);
+                else if (raw is Color colorValue) color = colorValue;
                 else return "";
-                return ColorUtility.ToHtmlStringRGBA(c);
+                return ColorUtility.ToHtmlStringRGBA(color);
             }
             catch { return ""; }
         }
 
         // Item fields are type-shifted string↔int across builds. string -> use; int/long hash -> token
         // ("0" hash means empty slot). The dress side re-resolves either form.
-        private static string ReadItem(FieldInfo f, VisEquipment vis)
+        private static string ReadItem(FieldInfo fieldInfo, VisEquipment vis)
         {
-            if (f == null) return "";
+            if (fieldInfo == null) return "";
             try
             {
-                object v = f.GetValue(vis);
-                if (v == null) return "";
-                if (v is string s) return s ?? "";
-                if (v is int i) return i == 0 ? "" : i.ToString();
-                if (v is long l) return l == 0L ? "" : l.ToString();
+                object raw = fieldInfo.GetValue(vis);
+                if (raw == null) return "";
+                if (raw is string text) return text ?? "";
+                if (raw is int i) return i == 0 ? "" : i.ToString();
+                if (raw is long number) return number == 0L ? "" : number.ToString();
                 return "";
             }
             catch { return ""; }

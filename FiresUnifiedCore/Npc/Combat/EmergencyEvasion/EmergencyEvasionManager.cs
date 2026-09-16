@@ -8,47 +8,32 @@ using FiresCore.Npc.Utilities;
 namespace FiresCore.Npc.Combat.EmergencyEvasion
 {
     /// <summary>
-    /// Manages emergency evasion abilities for companions.
-    /// Each archetype has a unique evasion ability that triggers when:
-    /// - Swarmed by enemies (3+ within 4m)
-    /// - Health drops below 25%
-    /// - Manual trigger via API
-    /// 
-    /// EVASION ABILITIES:
-    /// - Mage: Arcane Blink - Teleport 5m, AoE damage at origin
-    /// - Healer: Sanctuary Fade - Teleport toward allies, healing pulse at destination
-    /// - Berserker: Savage Leap - Jump with AoE slam on landing
-    /// - Rogue: Shadow Escape - Vanish + reposition, smoke bomb at origin
-    /// - Ranger: Disengage - Backflip, fire volley during retreat
-    /// - Tank: Shield Charge - Charge through enemies with knockback
-    /// - Paladin: Divine Retreat - Blinding flash at origin, reposition
-    /// - Monk: Wind Step - Rapid dodge with damaging afterimages
-    /// 
-    /// HYBRID VARIANT:
-    /// - Pyromancer (Mage+Berserker): Infernal Blink - Teleport with Fader Fire AOE at origin
+    /// Each archetype's emergency escape (Arcane Blink, Sanctuary Fade, Savage Leap, Shadow Escape, Disengage,
+    /// Shield Charge, Divine Retreat, Wind Step, and the Pyromancer's Infernal Blink), triggered when swarmed, at
+    /// low health, or through the API.
     /// </summary>
     public class EmergencyEvasionManager : MonoBehaviour
     {
         #region Constants
         
         // Trigger conditions
-        private const int SWARM_ENEMY_COUNT = 3;
-        private const float SWARM_DETECTION_RANGE = 4f;
-        private const float LOW_HEALTH_THRESHOLD = 0.25f;
+        private const int SwarmEnemyCount = 3;
+        private const float SwarmDetectionRange = 4f;
+        private const float LowHealthThreshold = 0.25f;
         
         // Base cooldowns (can be modified by archetype)
-        private const float BASE_COOLDOWN = 45f;
-        private const float CHECK_INTERVAL = 0.5f;
+        private const float BaseCooldown = 45f;
+        private const float CheckInterval = 0.5f;
         
         // Teleport settings
-        private const float BLINK_DISTANCE = 5f;
-        private const float LEAP_DISTANCE = 6f;
-        private const float BACKFLIP_DISTANCE = 4f;
-        private const float CHARGE_DISTANCE = 5f;
+        private const float BlinkDistance = 5f;
+        private const float LeapDistance = 6f;
+        private const float BackflipDistance = 4f;
+        private const float ChargeDistance = 5f;
         
         // Damage/healing values (scaled by level)
-        private const float BASE_AOE_DAMAGE = 30f;
-        private const float BASE_HEALING = 25f;
+        private const float BaseAoeDamage = 30f;
+        private const float BaseHealing = 25f;
         
         #endregion
         
@@ -63,7 +48,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         
         private float _lastEvasionTime = -1000f;
         private float _lastCheckTime;
-        private float _cooldown = BASE_COOLDOWN;
+        private float _cooldown = BaseCooldown;
         private bool _isEvading;
         
         // Archetype-specific evasion
@@ -143,7 +128,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             }
             
             // Check interval
-            if (Time.time - _lastCheckTime < CHECK_INTERVAL) return;
+            if (Time.time - _lastCheckTime < CheckInterval) return;
             _lastCheckTime = Time.time;
             
             // Check if evasion should trigger
@@ -271,8 +256,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             if (!HasResources()) return false;
             
             // Check for swarm condition
-            int nearbyEnemies = CountNearbyEnemies(SWARM_DETECTION_RANGE);
-            if (nearbyEnemies >= SWARM_ENEMY_COUNT)
+            int nearbyEnemies = CountNearbyEnemies(SwarmDetectionRange);
+            if (nearbyEnemies >= SwarmEnemyCount)
             {
                 if (VerboseLogging)
                     Debug.Log($"[EmergencyEvasion] {_companion?.companionName} SWARMED by {nearbyEnemies} enemies!");
@@ -280,7 +265,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             }
             
             // Check for low health condition
-            if (_character != null && _character.GetHealthPercentage() < LOW_HEALTH_THRESHOLD)
+            if (_character != null && _character.GetHealthPercentage() < LowHealthThreshold)
             {
                 // Only trigger if enemies are close
                 if (nearbyEnemies >= 1)
@@ -450,7 +435,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private IEnumerator ExecuteArcaneBlink(Vector3 origin)
         {
             // Find safe position away from enemies
-            Vector3 destination = FindSafePosition(origin, BLINK_DISTANCE);
+            Vector3 destination = FindSafePosition(origin, BlinkDistance);
             
             // VFX at origin (before teleport)
             SpawnVFX("vfx_ghost_death", origin);
@@ -465,7 +450,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             SpawnVFX("vfx_spiritbolt_explosion", destination);
             
             // Deal AoE damage at origin (enemies only)
-            DealAoEDamage(origin, 4f, GetScaledDamage(BASE_AOE_DAMAGE), false);
+            DealAoEDamage(origin, 4f, GetScaledDamage(BaseAoeDamage), false);
             
             // Spawn damage VFX at origin
             SpawnVFX("vfx_fireball_explosion", origin);
@@ -480,7 +465,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private IEnumerator ExecuteInfernalBlink(Vector3 origin)
         {
             // Find safe position away from enemies
-            Vector3 destination = FindSafePosition(origin, BLINK_DISTANCE);
+            Vector3 destination = FindSafePosition(origin, BlinkDistance);
             
             // VFX at origin (demonic teleport out)
             SpawnVFX("vfx_ghost_death", origin);
@@ -500,7 +485,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             SpawnFaderFireAOE(origin);
             
             // Also deal immediate burst damage
-            DealAoEDamage(origin, 5f, GetScaledDamage(BASE_AOE_DAMAGE * 1.5f), false, HitData.DamageType.Fire);
+            DealAoEDamage(origin, 5f, GetScaledDamage(BaseAoeDamage * 1.5f), false, HitData.DamageType.Fire);
             
             yield return new WaitForSeconds(0.3f);
         }
@@ -512,7 +497,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private IEnumerator ExecuteSanctuaryFade(Vector3 origin)
         {
             // Find position toward allies (not just away from enemies)
-            Vector3 destination = FindPositionTowardAllies(origin, BLINK_DISTANCE);
+            Vector3 destination = FindPositionTowardAllies(origin, BlinkDistance);
             
             // VFX at origin (gentle fade)
             SpawnVFX("fx_DvergerMage_Support_start", origin);
@@ -527,7 +512,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             SpawnVFX("fx_DvergerMage_Support_start", destination);
             
             // Heal allies at destination
-            HealAlliesInRange(destination, 6f, GetScaledHealing(BASE_HEALING));
+            HealAlliesInRange(destination, 6f, GetScaledHealing(BaseHealing));
             
             yield return new WaitForSeconds(0.3f);
         }
@@ -546,12 +531,12 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             if (leapInto)
             {
                 // Find position with most enemies (aggressive)
-                destination = FindPositionWithMostEnemies(origin, LEAP_DISTANCE);
+                destination = FindPositionWithMostEnemies(origin, LeapDistance);
             }
             else
             {
                 // Find safe position (defensive)
-                destination = FindSafePosition(origin, LEAP_DISTANCE);
+                destination = FindSafePosition(origin, LeapDistance);
             }
             
             // Launch VFX
@@ -570,7 +555,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             if (_character != null)
             {
                 float upVelocity = 8f;  // Strong upward force
-                float forwardVelocity = LEAP_DISTANCE / 0.5f; // Reach destination in ~0.5s
+                float forwardVelocity = LeapDistance / 0.5f; // Reach destination in ~0.5s
                 
                 // Face the jump direction
                 transform.rotation = Quaternion.LookRotation(jumpDirection);
@@ -586,11 +571,11 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             else
             {
                 // Fallback: Direct rigidbody jump if Character not available
-                var rb = GetComponent<Rigidbody>();
-                if (rb != null && !rb.isKinematic)
+                var body = GetComponent<Rigidbody>();
+                if (body != null && !body.isKinematic)
                 {
                     Vector3 jumpForce = jumpDirection * 12f + Vector3.up * 10f;
-                    rb.AddForce(jumpForce, ForceMode.VelocityChange);
+                    body.AddForce(jumpForce, ForceMode.VelocityChange);
                 }
             }
             
@@ -624,7 +609,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             SpawnVFX("fx_shaman_protect", landingPos);
             
             // AoE damage on landing
-            DealAoEDamage(landingPos, 4f, GetScaledDamage(BASE_AOE_DAMAGE * 1.2f), false);
+            DealAoEDamage(landingPos, 4f, GetScaledDamage(BaseAoeDamage * 1.2f), false);
             
             yield return new WaitForSeconds(0.2f);
         }
@@ -637,7 +622,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private IEnumerator ExecuteShadowEscape(Vector3 origin)
         {
             // Find flanking position
-            Vector3 destination = FindFlankingPosition(origin, BLINK_DISTANCE);
+            Vector3 destination = FindFlankingPosition(origin, BlinkDistance);
             
             // Smoke bomb VFX at origin
             SpawnVFX("vfx_ghost_death", origin);
@@ -691,7 +676,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             awayDir.y = 0;
             awayDir.Normalize();
             
-            Vector3 destination = FindValidPosition(origin + awayDir * BACKFLIP_DISTANCE);
+            Vector3 destination = FindValidPosition(origin + awayDir * BackflipDistance);
             
             // Backflip VFX
             SpawnVFX("fx_Lightning", origin);
@@ -700,7 +685,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             if (_character != null)
             {
                 float upVelocity = 4f;  // Small upward hop
-                float backwardVelocity = BACKFLIP_DISTANCE / 0.4f; // Reach destination in ~0.4s
+                float backwardVelocity = BackflipDistance / 0.4f; // Reach destination in ~0.4s
                 
                 // Face away from enemy (so "forward" is our retreat direction)
                 transform.rotation = Quaternion.LookRotation(awayDir);
@@ -719,7 +704,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 // Fire arrow at nearest enemy
                 if (nearestEnemy != null && !nearestEnemy.IsDead())
                 {
-                    FireArrowAtTarget(nearestEnemy, GetScaledDamage(BASE_AOE_DAMAGE * 0.4f));
+                    FireArrowAtTarget(nearestEnemy, GetScaledDamage(BaseAoeDamage * 0.4f));
                 }
                 
                 yield return new WaitForSeconds(arrowInterval);
@@ -739,7 +724,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         {
             // Find position through enemies (not away)
             Vector3 chargeDir = FindChargeDirection(origin);
-            Vector3 destination = FindValidPosition(origin + chargeDir * CHARGE_DISTANCE);
+            Vector3 destination = FindValidPosition(origin + chargeDir * ChargeDistance);
             
             // Charge start VFX
             SpawnVFX("fx_shield_start", origin);
@@ -752,9 +737,9 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             while (elapsed < chargeDuration)
             {
                 elapsed += Time.deltaTime;
-                float t = elapsed / chargeDuration;
+                float progress = elapsed / chargeDuration;
                 
-                Vector3 currentPos = Vector3.Lerp(origin, destination, t);
+                Vector3 currentPos = Vector3.Lerp(origin, destination, progress);
                 transform.position = currentPos;
                 
                 // Knockback enemies we pass through
@@ -788,7 +773,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             yield return new WaitForSeconds(0.15f);
             
             // Find safe position
-            Vector3 destination = FindSafePosition(origin, BLINK_DISTANCE);
+            Vector3 destination = FindSafePosition(origin, BlinkDistance);
             
             // Quick reposition (not instant teleport - divine dash)
             float dashDuration = 0.2f;
@@ -797,8 +782,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             while (elapsed < dashDuration)
             {
                 elapsed += Time.deltaTime;
-                float t = elapsed / dashDuration;
-                transform.position = Vector3.Lerp(origin, destination, t);
+                float progress = elapsed / dashDuration;
+                transform.position = Vector3.Lerp(origin, destination, progress);
                 yield return null;
             }
             
@@ -818,7 +803,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         {
             // Multiple rapid short teleports with afterimages
             int steps = 3;
-            float stepDistance = BLINK_DISTANCE / steps;
+            float stepDistance = BlinkDistance / steps;
             Vector3 awayDir = FindSafeDirection(origin);
             
             Vector3 currentPos = origin;
@@ -832,7 +817,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 SpawnVFX("vfx_Cold", currentPos);
                 
                 // Small damage at each afterimage
-                DealAoEDamage(currentPos, 2f, GetScaledDamage(BASE_AOE_DAMAGE * 0.2f), false);
+                DealAoEDamage(currentPos, 2f, GetScaledDamage(BaseAoeDamage * 0.2f), false);
                 
                 // Quick step
                 transform.position = nextPos;
@@ -1090,11 +1075,11 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             // Reset physics state to prevent momentum carrying over
             if (_character != null)
             {
-                var rb = _character.GetComponent<Rigidbody>();
-                if (rb != null && !rb.isKinematic)
+                var body = _character.GetComponent<Rigidbody>();
+                if (body != null && !body.isKinematic)
                 {
-                    rb.linearVelocity = Vector3.zero;
-                    rb.angularVelocity = Vector3.zero;
+                    body.linearVelocity = Vector3.zero;
+                    body.angularVelocity = Vector3.zero;
                 }
             }
             
@@ -1181,7 +1166,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         {
             float elapsed = 0f;
             float tickInterval = 0.5f;
-            float damagePerTick = GetScaledDamage(BASE_AOE_DAMAGE * 0.3f);
+            float damagePerTick = GetScaledDamage(BaseAoeDamage * 0.3f);
             
             while (elapsed < duration)
             {

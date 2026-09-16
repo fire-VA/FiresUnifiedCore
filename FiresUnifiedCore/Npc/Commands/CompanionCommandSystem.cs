@@ -13,40 +13,12 @@ using FiresCore.Npc.Vault;
 namespace FiresCore.Npc.Commands
 {
     /// <summary>
-    /// Handles player-issued commands to companions via a "ping" system.
-    /// 
-    /// USAGE:
-    /// - Shift + Middle Mouse Button on a target directs the companion to interact with it.
-    ///   Vanilla MMB unarmed-kick is suppressed while Shift is held (see
-    ///   CompanionPatches.Player_PlayerAttackInput_Prefix). Armed weapon attacks
-    ///   and sprint are NOT suppressed â€” Shift remains usable for normal play.
-    ///
-    /// SUPPORTED TARGETS:
-    /// - Enemy/Creature        â†’ AttackTarget    (CompanionAI.ForceTarget)
-    /// - Chair/Bench/Stool     â†’ SitOnChair      (CompanionInteractionBehavior)
-    /// - Archery target        â†’ TrainArchery    (BowTrainingBehavior)
-    /// - Smelter/Kiln          â†’ OperateSmelter  (SmelterOperatorBehavior)
-    /// - CookingStation        â†’ CookFood        (CompanionCookingBehavior)
-    /// - Fireplace             â†’ TendFire        (FireTendingBehaviorV2)
-    /// - Crafting Station      â†’ UseWorkstation  (WorkstationInteractionBehavior)
-    /// - Container/Chest       â†’ DepositToChest  (ChestDepositBehavior)
-    /// - Beehive               â†’ Farm            (FarmingBehavior)
-    /// - Plant / Pickable crop â†’ Farm            (FarmingBehavior)
-    /// - Cultivated soil       â†’ Farm            (FarmingBehavior â€” planting)
-    /// - Trees / rocks / ore   â†’ GatherResource  (CompanionInteractionBehavior)
-    /// - Damaged building      â†’ RepairBuilding  (BuildingRepairBehavior)
-    /// - Water surface         â†’ Fish            (FishingBehavior)
-    /// - Other destructible    â†’ AttackTarget
-    /// - Ground / piece / etc. â†’ MoveToPosition
-    ///
-    /// DESIGN:
-    /// - Commands are temporary overrides that clear after completion.
-    /// - Each idle behavior exposes SetCommandedTarget(GameObject) (or
-    ///   SetCommandedSpot(Vector3) for fishing) which bypasses the autonomous
-    ///   discovery + Stay-mode gates so the companion will leave Follow mode
-    ///   to honor the player's request.
-    /// - Companion returns to normal behavior after executing command.
-    /// - Visual/audio feedback when command is issued.
+    /// Shift + middle-mouse "ping" commands. The pinged target picks the command: creatures and other
+    /// destructibles are attacked; chairs, archery targets, smelters, cooking stations, fireplaces, crafting
+    /// stations, chests, beehives, crops, soil, trees and ore, damaged pieces and water start the matching
+    /// behavior; anything else is a move order. Behaviors receive the target through SetCommandedTarget (or
+    /// SetCommandedSpot for fishing), which bypasses autonomous discovery and Stay mode, and the companion
+    /// returns to normal once the command completes. Vanilla's unarmed kick is suppressed while Shift is held.
     /// </summary>
     public class CompanionCommandSystem : MonoBehaviour
     {
@@ -97,7 +69,6 @@ namespace FiresCore.Npc.Commands
         private Dictionary<CompanionController, ActiveCommand> _activeCommands = new Dictionary<CompanionController, ActiveCommand>();
 
         // Ping marker object pool
-        private GameObject _pingMarkerPrefab;
         private List<GameObject> _activePingMarkers = new List<GameObject>();
 
         // Layer masks for raycasting
@@ -120,12 +91,12 @@ namespace FiresCore.Npc.Commands
             TendFire,
             UseWorkstation,
             DepositToChest,
-            // Newer command types â€” wired to the matching idle behaviors via
+            // Newer command types — wired to the matching idle behaviors via
             // SetCommandedTarget on each behavior class.
-            CookFood,           // â†’ CompanionCookingBehavior   (CookingStation)
-            RepairBuilding,     // â†’ BuildingRepairBehavior     (damaged Piece/WearNTear)
-            Fish,               // â†’ FishingBehavior            (water surface)
-            Farm,               // â†’ FarmingBehavior            (Beehive / Pickable / cultivated)
+            CookFood,           // → CompanionCookingBehavior   (CookingStation)
+            RepairBuilding,     // → BuildingRepairBehavior     (damaged Piece/WearNTear)
+            Fish,               // → FishingBehavior            (water surface)
+            Farm,               // → FarmingBehavior            (Beehive / Pickable / cultivated)
         }
 
         public class ActiveCommand
@@ -544,17 +515,9 @@ namespace FiresCore.Npc.Commands
         }
         
         /// <summary>
-        /// Commands a companion to stay at the specified position.
-        ///
-        /// CRITICAL: routes through <see cref="CompanionController.CommandStay(Vector3)"/>
-        /// (the authoritative path) so the persistent follow intent and
-        /// vault/ZDO state are written. Earlier this method duplicated the
-        /// stay logic locally and missed <c>SetPersistentFollowIntent</c> /
-        /// <c>SaveFollowStateToVault</c>, which left <c>CompanionVault.IsFollowing</c>
-        /// stale at <c>true</c>; on death the respawn pipeline read the
-        /// stale value and put the respawned companion back into Follow
-        /// mode, overriding the owner's Stay command across the death/
-        /// respawn cycle.
+        /// Stay command for a pinged position. Goes through <see cref="CompanionController.CommandStay(Vector3)"/> so
+        /// follow intent is persisted; a local copy of the logic once left the vault saying Following, and companions
+        /// respawned into Follow mode.
         /// </summary>
         private void CommandCompanionStay(CompanionController companion, Vector3 position)
         {
@@ -566,7 +529,7 @@ namespace FiresCore.Npc.Commands
             // Force stop all behaviors
             ForceStopAllBehaviors(companion);
 
-            // Authoritative stay path ï¿½ sets runtime flag, stay anchor, home
+            // Authoritative stay path - sets runtime flag, stay anchor, home
             // positions on both movement systems, persistent follow intent
             // (vault + ZDO), and the roster snapshot.
             companion.CommandStay(position);
@@ -758,7 +721,7 @@ namespace FiresCore.Npc.Commands
                 return (CommandType.OperateSmelter, smelter.transform.position, smelter.gameObject, null);
             }
 
-            // 5. CookingStation â†’ cook food (separate from fire-tending; the
+            // 5. CookingStation → cook food (separate from fire-tending; the
             //    cooking behavior has its own raw-food / cooked-food loop)
             var cookingStation = hitObj.GetComponent<CookingStation>() ?? hitObj.GetComponentInParent<CookingStation>();
             if (cookingStation != null)
@@ -766,7 +729,7 @@ namespace FiresCore.Npc.Commands
                 return (CommandType.CookFood, cookingStation.transform.position, cookingStation.gameObject, null);
             }
 
-            // 5b. Fireplace (no food slots) â†’ tend fire / fuel it
+            // 5b. Fireplace (no food slots) → tend fire / fuel it
             var fireplace = hitObj.GetComponent<Fireplace>() ?? hitObj.GetComponentInParent<Fireplace>();
             if (fireplace != null)
             {
@@ -780,7 +743,7 @@ namespace FiresCore.Npc.Commands
                 return (CommandType.UseWorkstation, craftingStation.transform.position, craftingStation.gameObject, null);
             }
 
-            // 6.3. Beehive â†’ harvest (farming behavior)
+            // 6.3. Beehive → harvest (farming behavior)
             var beehive = hitObj.GetComponent<Beehive>() ?? hitObj.GetComponentInParent<Beehive>();
             if (beehive != null)
             {
@@ -799,7 +762,7 @@ namespace FiresCore.Npc.Commands
                 }
             }
 
-            // 6.7. Plant / cultivated soil â†’ farming. Plant component covers
+            // 6.7. Plant / cultivated soil → farming. Plant component covers
             //      grown crops and saplings; a Pickable flagged as a crop is
             //      handled by the GatherResource path below if it's not a Plant.
             var plantComp = hitObj.GetComponent<Plant>() ?? hitObj.GetComponentInParent<Plant>();
@@ -817,7 +780,7 @@ namespace FiresCore.Npc.Commands
             {
                 // A Pickable that names like a crop ("carrot", "turnip", "barley",
                 // "flax", etc.) routes to Farm so the FarmingBehavior gets to
-                // walk the harvest â†’ deposit loop instead of the generic gather.
+                // walk the harvest → deposit loop instead of the generic gather.
                 if (IsCropPickable(hitObj))
                 {
                     return (CommandType.Farm, hitObj.transform.position, hitObj, null);
@@ -825,16 +788,16 @@ namespace FiresCore.Npc.Commands
                 return (CommandType.GatherResource, hitObj.transform.position, hitObj, null);
             }
 
-            // 7.5. Damaged building piece â†’ repair (only if WearNTear is below
+            // 7.5. Damaged building piece → repair (only if WearNTear is below
             //      the repair threshold; an undamaged piece falls through to
             //      MoveToPosition like before)
-            var wnt = hitObj.GetComponent<WearNTear>() ?? hitObj.GetComponentInParent<WearNTear>();
-            if (wnt != null && wnt.GetHealthPercentage() < 0.95f)
+            var wearNTear = hitObj.GetComponent<WearNTear>() ?? hitObj.GetComponentInParent<WearNTear>();
+            if (wearNTear != null && wearNTear.GetHealthPercentage() < 0.95f)
             {
-                return (CommandType.RepairBuilding, wnt.transform.position, wnt.gameObject, null);
+                return (CommandType.RepairBuilding, wearNTear.transform.position, wearNTear.gameObject, null);
             }
 
-            // 7.7. Water at this position â†’ fishing. Water in Valheim has no
+            // 7.7. Water at this position → fishing. Water in Valheim has no
             //      collider, so Physics.Raycast hits the underwater terrain.
             //      We sample the terrain height at the hit's X,Z and check
             //      whether sea level (y=30) is at least 0.5m above it.
@@ -876,17 +839,17 @@ namespace FiresCore.Npc.Commands
             var pickable = obj.GetComponent<Pickable>() ?? obj.GetComponentInParent<Pickable>();
             if (pickable == null) return false;
 
-            string n = (pickable.gameObject.name ?? "").ToLowerInvariant();
+            string pickableName = (pickable.gameObject.name ?? "").ToLowerInvariant();
             // Common crop name fragments. Berries / mushrooms are wild gather,
             // not farming; carrots / turnips / onions / barley / flax are.
-            return n.Contains("carrot")
-                || n.Contains("turnip")
-                || n.Contains("onion")
-                || n.Contains("barley")
-                || n.Contains("flax")
-                || n.Contains("seedcarrot")
-                || n.Contains("seedturnip")
-                || n.Contains("seedonion");
+            return pickableName.Contains("carrot")
+                || pickableName.Contains("turnip")
+                || pickableName.Contains("onion")
+                || pickableName.Contains("barley")
+                || pickableName.Contains("flax")
+                || pickableName.Contains("seedcarrot")
+                || pickableName.Contains("seedturnip")
+                || pickableName.Contains("seedonion");
         }
 
         /// <summary>
@@ -897,12 +860,12 @@ namespace FiresCore.Npc.Commands
         /// </summary>
         private bool IsCultivatedSoil(GameObject obj)
         {
-            string n = (obj.name ?? "").ToLowerInvariant();
-            return n.Contains("cultivat");
+            string objectName = (obj.name ?? "").ToLowerInvariant();
+            return objectName.Contains("cultivat");
         }
 
         /// <summary>
-        /// Returns true if the ray-cast position is over a water column â€”
+        /// Returns true if the ray-cast position is over a water column —
         /// i.e., the terrain at that X,Z is at least 0.5m below Valheim's
         /// sea level (y=30). When true, <paramref name="waterSurface"/> is
         /// the point snapped to sea level so the fishing behavior receives
@@ -911,17 +874,17 @@ namespace FiresCore.Npc.Commands
         /// </summary>
         private bool TryResolveWaterSurface(Vector3 hitPoint, out Vector3 waterSurface)
         {
-            const float SEA_LEVEL = 30f;
-            const float MIN_DEPTH = 0.5f;
+            const float SeaLevel = 30f;
+            const float MinDepth = 0.5f;
             waterSurface = hitPoint;
 
             if (ZoneSystem.instance == null) return false;
             ZoneSystem.instance.GetSolidHeight(hitPoint, out float groundY);
-            if (SEA_LEVEL - groundY < MIN_DEPTH) return false;
+            if (SeaLevel - groundY < MinDepth) return false;
 
             // Snap to the water surface so FishingBehavior.FindShoreNearWaterPoint
             // can sweep outward and locate dry land near y=31.
-            waterSurface = new Vector3(hitPoint.x, SEA_LEVEL, hitPoint.z);
+            waterSurface = new Vector3(hitPoint.x, SeaLevel, hitPoint.z);
             return true;
         }
 
@@ -1293,10 +1256,10 @@ namespace FiresCore.Npc.Commands
             // Check if there are dropped items at the destination - if so, pick them up too
             bool hasLootNearby = CheckForLootAtPosition(command.TargetPosition, out int lootCount);
 
-            // NOTE: The command was already started by IssueCommand ? StartCommand
+            // NOTE: The command was already started by IssueCommand -> StartCommand
             // a few lines up the call stack.  Re-issuing it here used to call
             // StartCommand a SECOND time (with a different 60 s timeout, which then
-            // got stomped by SetMoveDestination's third call with 120 s) ï¿½ every
+            // got stomped by SetMoveDestination's third call with 120 s) - every
             // re-issue tore down + rebuilt PlayerCommand authority and was the
             // root cause of the "[COMMAND] cancelling existing command" log
             // tornado.  We just attach the on-arrival loot pickup callback to the
@@ -1311,7 +1274,7 @@ namespace FiresCore.Npc.Commands
 
             // Set movement destination via CompanionCombatMovement.
             // Pass skipCommandOverride: true so SetMoveDestination's internal
-            // StartCommand call is skipped ï¿½ the command is ALREADY active from
+            // StartCommand call is skipped - the command is ALREADY active from
             // IssueCommand and we don't want a third teardown/rebuild.
             var combatMovement = companion.GetComponent<CompanionCombatMovement>();
             if (combatMovement != null)
@@ -1335,10 +1298,10 @@ namespace FiresCore.Npc.Commands
             float pickupRadius = 3f;
             
             Collider[] colliders = Physics.OverlapSphere(position, pickupRadius);
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
-                var itemDrop = col.GetComponent<ItemDrop>();
+                if (collider == null) continue;
+                var itemDrop = collider.GetComponent<ItemDrop>();
                 if (itemDrop != null && itemDrop.CanPickup())
                 {
                     count++;
@@ -1369,11 +1332,11 @@ namespace FiresCore.Npc.Commands
                 Collider[] colliders = Physics.OverlapSphere(position, pickupRadius);
                 bool foundItem = false;
                 
-                foreach (var col in colliders)
+                foreach (var collider in colliders)
                 {
-                    if (col == null) continue;
+                    if (collider == null) continue;
                     
-                    var itemDrop = col.GetComponent<ItemDrop>();
+                    var itemDrop = collider.GetComponent<ItemDrop>();
                     if (itemDrop == null || !itemDrop.CanPickup()) continue;
                     
                     foundItem = true;
@@ -1389,11 +1352,11 @@ namespace FiresCore.Npc.Commands
                             dir.y = 0;
                             // Single-writer: drive the collect approach through UMA (PlayerCommand) so it
                             // can't race ApplyMovement; released when the collect loop ends.
-                            var uma = companion.GetMovementAuthority();
-                            if (uma != null)
+                            var authority = companion.GetMovementAuthority();
+                            if (authority != null)
                             {
-                                if (uma.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.PlayerCommand, "CommandCollect", 5f))
-                                    uma.SetMoveDirection("CommandCollect", dir, walk: true, run: false);
+                                if (authority.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.PlayerCommand, "CommandCollect", 5f))
+                                    authority.SetMoveDirection("CommandCollect", dir, walk: true, run: false);
                             }
                             else
                             {
@@ -1413,7 +1376,7 @@ namespace FiresCore.Npc.Commands
                         itemsCollected++;
 
                         // Remove from world. ItemDrop carries a ZNetView, so this MUST
-                        // route through ZNetScene.Destroy (via the helper) ï¿½ raw
+                        // route through ZNetScene.Destroy (via the helper) - raw
                         // Object.Destroy leaves a stale m_instances entry that NREs in
                         // ZNetScene.RemoveObjects every tick afterwards.
                         CompanionNetworkHelper.Destroy(itemDrop.gameObject, disableFirst: false);
@@ -1761,11 +1724,11 @@ namespace FiresCore.Npc.Commands
                 var colliders = Physics.OverlapSphere(position, 5f);
                 bool foundItems = false;
                 
-                foreach (var col in colliders)
+                foreach (var collider in colliders)
                 {
-                    if (col == null) continue;
+                    if (collider == null) continue;
                     
-                    var itemDrop = col.GetComponent<ItemDrop>();
+                    var itemDrop = collider.GetComponent<ItemDrop>();
                     if (itemDrop == null || !itemDrop.CanPickup()) continue;
                     
                     foundItems = true;
@@ -1780,11 +1743,11 @@ namespace FiresCore.Npc.Commands
                             Vector3 dir = (itemDrop.transform.position - companion.transform.position).normalized;
                             dir.y = 0;
                             // Single-writer: drive the collect approach through UMA (PlayerCommand).
-                            var uma = companion.GetMovementAuthority();
-                            if (uma != null)
+                            var authority = companion.GetMovementAuthority();
+                            if (authority != null)
                             {
-                                if (uma.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.PlayerCommand, "CommandCollect", 5f))
-                                    uma.SetMoveDirection("CommandCollect", dir, walk: true, run: false);
+                                if (authority.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.PlayerCommand, "CommandCollect", 5f))
+                                    authority.SetMoveDirection("CommandCollect", dir, walk: true, run: false);
                             }
                             else
                             {
@@ -2001,7 +1964,7 @@ namespace FiresCore.Npc.Commands
             StartCoroutine(ManualDepositToChest(companion, command));
         }
 
-        // â”€â”€ New behavior dispatchers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── New behavior dispatchers ──────────────────────────────────────────
         // Each of these mirrors ExecuteSmelterCommand's pattern:
         //   1. Cancel current idle activity + force-detach interaction.
         //   2. Locate the matching behavior on the companion.
@@ -2204,7 +2167,7 @@ namespace FiresCore.Npc.Commands
                 ShowMessage($"{companion.companionName}: Nothing to deposit");
             }
 
-            // ?? Organize the chest cluster ?????????????????????????????????????
+            // Organize the chest cluster
             // Whenever the player explicitly orders a companion to a chest we also
             // run the storage organizer over every chest in the local cluster so
             // partial stacks of the same item across multiple chests get

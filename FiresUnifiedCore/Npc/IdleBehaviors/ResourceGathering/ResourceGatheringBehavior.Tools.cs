@@ -8,7 +8,7 @@ namespace FiresCore.Npc.IdleBehaviors
     /// </summary>
     public partial class ResourceGatheringBehavior
     {
-        private const float CHEST_INTERACTION_DISTANCE = 1.5f;  // TIGHTENED: Force companion to walk to front of chest
+        private const float ChestInteractionDistance = 1.5f;  // TIGHTENED: Force companion to walk to front of chest
         
         /// <summary>
         /// Checks if companion has the appropriate tool equipped, in their own inventory, OR in nearby chests.
@@ -229,7 +229,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Calculate proper interaction point in front of chest
             Vector3 interactionPoint = Core.InteractionPointHelper.GetContainerInteractionPoint(
-                _toolChest, Transform.position, CHEST_INTERACTION_DISTANCE);
+                _toolChest, Transform.position, ChestInteractionDistance);
             
             float dist = Vector3.Distance(Transform.position, interactionPoint);
             
@@ -875,10 +875,10 @@ namespace FiresCore.Npc.IdleBehaviors
         // Tool crafting helpers
         // -----------------------------------------------------------------------
 
-        private const string PICKAXE_PREFAB_ANTLER = "PickaxeAntler";
-        private const string AXE_PREFAB_STONE = "AxeStone";
-        private const string AXE_PREFAB_FLINT = "AxeFlint";
-        private const float WORKBENCH_SEARCH_RADIUS_RG = 30f;
+        private const string PickaxePrefabAntler = "PickaxeAntler";
+        private const string AxePrefabStone = "AxeStone";
+        private const string AxePrefabFlint = "AxeFlint";
+        private const float WorkbenchSearchRadiusRg = 30f;
 
         /// <summary>Returns true if we have materials to craft any tool that would work for this resource.</summary>
         private bool CanCraftToolForResource(ResourceDataHelper.ResourceData resource)
@@ -937,7 +937,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 ConsumeItems(storage, "Wood", 10);
                 ConsumeItems(storage, "HardAntler", 1);
-                return AddCraftedItem(storage, PICKAXE_PREFAB_ANTLER);
+                return AddCraftedItem(storage, PickaxePrefabAntler);
             }
             return false;
         }
@@ -953,7 +953,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 ConsumeItems(storage, "Stone", 4);
                 ConsumeItems(storage, "Wood", 3);
-                return AddCraftedItem(storage, AXE_PREFAB_STONE);
+                return AddCraftedItem(storage, AxePrefabStone);
             }
             // Fallback: Flint Axe
             if (CountItemsByPrefab(storage, "Flint") >= 6 &&
@@ -963,22 +963,22 @@ namespace FiresCore.Npc.IdleBehaviors
                 ConsumeItems(storage, "Flint", 6);
                 ConsumeItems(storage, "Wood", 4);
                 ConsumeItems(storage, "LeatherScraps", 2);
-                return AddCraftedItem(storage, AXE_PREFAB_FLINT);
+                return AddCraftedItem(storage, AxePrefabFlint);
             }
             return false;
         }
 
         private CraftingStation FindNearestWorkbench()
         {
-            var colliders = Physics.OverlapSphere(Transform.position, WORKBENCH_SEARCH_RADIUS_RG);
+            var colliders = Physics.OverlapSphere(Transform.position, WorkbenchSearchRadiusRg);
             CraftingStation nearest = null;
             float nearestDist = float.MaxValue;
             var processed = new System.Collections.Generic.HashSet<CraftingStation>();
 
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
-                var station = col.GetComponent<CraftingStation>() ?? col.GetComponentInParent<CraftingStation>();
+                if (collider == null) continue;
+                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
                 if (station == null || processed.Contains(station)) continue;
                 processed.Add(station);
 

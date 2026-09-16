@@ -6,21 +6,15 @@ using UnityEngine;
 namespace FiresCore.Dungeon
 {
     /// <summary>
-    /// Holds an owning mod's loaded bundle prefabs and the SoftReference plumbing the custom-dungeon pipeline
-    /// needs. One instance per dungeon spec / bundle (the per-prefab cache is instance-scoped to avoid two specs
-    /// double-registering the same GameObject), while the underlying AssetBundleLoader registry it writes into is
-    /// process-global.
-    ///
-    /// The dungeon is NOT placed by an Instantiate loop — it rides the vanilla world-gen pipeline. That pipeline
-    /// (ZoneSystem.ZoneLocation.m_prefab and DungeonDB.RoomData.m_prefab) addresses prefabs by
-    /// <see cref="SoftReference{T}"/>, which normally only resolves assets that live in a registered AssetBundle.
-    /// To make already-loaded bundle prefabs addressable that way without shipping them through the real
-    /// SoftReferenceableAssets loader, each is registered as a pre-loaded AssetLoader entry whose Load()/Asset
-    /// resolve to the in-memory GameObject. Ported verbatim from BalrondNature.LocationConstructor
-    /// (AddLoadedSoftReferenceAsset) — formerly FiresMausoleum.Dungeon.MausoleumAssets.
+    /// A dungeon spec's loaded bundle prefabs, made addressable to the vanilla world-gen pipeline. ZoneLocation and
+    /// RoomData refer to prefabs by SoftReference, which normally resolves only registered bundles, so each prefab is
+    /// registered as a pre-loaded AssetLoader entry pointing at the in-memory object (ported from BalrondNature's
+    /// LocationConstructor). The prefab cache is per instance so two specs never double-register an object.
     /// </summary>
     public sealed class FiresDungeonAssets
     {
+        private const int AssetLoaderCapacityIncrement = 256;
+
         private readonly Dictionary<string, GameObject> _prefabsByName =
             new Dictionary<string, GameObject>(StringComparer.Ordinal);
         private readonly Dictionary<GameObject, SoftReference<GameObject>> _softRefs =
@@ -46,8 +40,8 @@ namespace FiresCore.Dungeon
 
         public bool HasAll(params string[] names)
         {
-            foreach (string n in names)
-                if (Get(n) == null) return false;
+            foreach (string assetName in names)
+                if (Get(assetName) == null) return false;
             return true;
         }
 
@@ -85,7 +79,7 @@ namespace FiresCore.Dungeon
             };
             int count = instance.m_assetIDToLoaderIndex.Count;
             if (count >= instance.m_assetLoaders.Length)
-                Array.Resize(ref instance.m_assetLoaders, count + 256);
+                Array.Resize(ref instance.m_assetLoaders, count + AssetLoaderCapacityIncrement);
             instance.m_assetLoaders[count] = assetLoader;
             instance.m_assetIDToLoaderIndex[assetId] = count;
             return new SoftReference<T>(assetId) { m_name = obj.name };

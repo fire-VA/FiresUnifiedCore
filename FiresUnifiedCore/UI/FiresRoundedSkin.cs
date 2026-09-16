@@ -169,7 +169,7 @@ namespace FiresCore.UI
                 Swatch = new GUIStyle(GUIStyle.none);
                 Swatch.normal.background = swatch;
 
-                var tipBg = Rounded(24, 24, 6, new Color(0.05f, 0.045f, 0.035f, 0.98f), FieldBorder, 1);
+                var tipBackground = Rounded(24, 24, 6, new Color(0.05f, 0.045f, 0.035f, 0.98f), FieldBorder, 1);
                 Tip = new GUIStyle(GUI.skin.label)
                 {
                     border = new RectOffset(8, 8, 8, 8),
@@ -179,20 +179,20 @@ namespace FiresCore.UI
                     fontSize = 11,
                     alignment = TextAnchor.UpperLeft,
                 };
-                Tip.normal.background = tipBg;
+                Tip.normal.background = tipBackground;
                 Tip.normal.textColor = TextLight;
             }
 
             int key = Mathf.RoundToInt(Mathf.Clamp01(windowAlpha) * 100f);
             if (!WindowByAlpha.TryGetValue(key, out var win))
             {
-                var c = new Color(PanelBrown.r, PanelBrown.g, PanelBrown.b, key / 100f);
+                var color = new Color(PanelBrown.r, PanelBrown.g, PanelBrown.b, key / 100f);
                 win = new GUIStyle(GUI.skin.window)
                 {
                     border = new RectOffset(14, 14, 14, 14),
                     padding = new RectOffset(12, 12, 10, 12),
                 };
-                var tex = Rounded(40, 40, 12, c);
+                var tex = Rounded(40, 40, 12, color);
                 win.normal.background = tex;
                 win.onNormal.background = tex;
                 WindowByAlpha[key] = win;
@@ -232,14 +232,14 @@ namespace FiresCore.UI
             if (Event.current == null || Event.current.type != EventType.Repaint) return;
             var mouse = Event.current.mousePosition;
             var content = new GUIContent(_pendingTip);
-            float w = Mathf.Min(280f, Tip.CalcSize(content).x + 2f);
-            float h = Tip.CalcHeight(content, w);
-            float sx = GUI.matrix.m00 != 0f ? GUI.matrix.m00 : 1f;
-            float sy = GUI.matrix.m11 != 0f ? GUI.matrix.m11 : 1f;
-            float logW = Screen.width / sx, logH = Screen.height / sy;
-            float x = Mathf.Clamp(mouse.x + 14f, 4f, logW - w - 4f);
-            float y = Mathf.Clamp(mouse.y + 16f, 4f, logH - h - 4f);
-            GUI.Label(new Rect(x, y, w, h), content, Tip);
+            float width = Mathf.Min(280f, Tip.CalcSize(content).x + 2f);
+            float height = Tip.CalcHeight(content, width);
+            float scaleX = GUI.matrix.m00 != 0f ? GUI.matrix.m00 : 1f;
+            float scaleY = GUI.matrix.m11 != 0f ? GUI.matrix.m11 : 1f;
+            float logW = Screen.width / scaleX, logH = Screen.height / scaleY;
+            float x = Mathf.Clamp(mouse.x + 14f, 4f, logW - width - 4f);
+            float y = Mathf.Clamp(mouse.y + 16f, 4f, logH - height - 4f);
+            GUI.Label(new Rect(x, y, width, height), content, Tip);
         }
 
         // 9-sliceable rounded-rect SPRITES for uGUI Images (the context menu etc.) in the same visual
@@ -262,25 +262,25 @@ namespace FiresCore.UI
         }
 
         // Anti-aliased rounded rect via signed-distance coverage; optional border ring baked in.
-        private static Texture2D Rounded(int w, int h, int radius, Color fill, Color? border = null, int borderPx = 0)
+        private static Texture2D Rounded(int width, int height, int radius, Color fill, Color? border = null, int borderPx = 0)
         {
-            var tex = new Texture2D(w, h, TextureFormat.ARGB32, false)
+            var tex = new Texture2D(width, height, TextureFormat.ARGB32, false)
             {
                 wrapMode = TextureWrapMode.Clamp,
                 hideFlags = HideFlags.HideAndDontSave,
             };
-            for (int y = 0; y < h; y++)
+            for (int y = 0; y < height; y++)
             {
-                for (int x = 0; x < w; x++)
+                for (int x = 0; x < width; x++)
                 {
-                    float outer = Coverage(x + 0.5f, y + 0.5f, 0f, w, h, radius);
-                    Color c = fill;
+                    float outer = Coverage(x + 0.5f, y + 0.5f, 0f, width, height, radius);
+                    Color color = fill;
                     if (border.HasValue && borderPx > 0)
                     {
-                        float inner = Coverage(x + 0.5f, y + 0.5f, borderPx, w, h, Mathf.Max(1, radius - borderPx));
-                        c = Color.Lerp(border.Value, fill, inner);
+                        float inner = Coverage(x + 0.5f, y + 0.5f, borderPx, width, height, Mathf.Max(1, radius - borderPx));
+                        color = Color.Lerp(border.Value, fill, inner);
                     }
-                    tex.SetPixel(x, y, new Color(c.r, c.g, c.b, c.a * outer));
+                    tex.SetPixel(x, y, new Color(color.r, color.g, color.b, color.a * outer));
                 }
             }
             tex.Apply();

@@ -11,8 +11,8 @@ namespace FiresCore.Npc
         // Movement progress tracking for wander stuck detection
         private Vector3 _lastWanderProgressPosition;
         private float _lastWanderProgressTime;
-        private const float WANDER_PROGRESS_CHECK_INTERVAL = 8f;
-        private const float WANDER_MIN_PROGRESS_DISTANCE = 0.5f;
+        private const float WanderProgressCheckInterval = 8f;
+        private const float WanderMinProgressDistance = 0.5f;
 
         // Mecanim trigger that the looping-emote state machine watches for
         // to exit; clearing the bool alone does NOT leave the looping state.
@@ -47,17 +47,16 @@ namespace FiresCore.Npc
 
                 case IdleState.Wandering:
                     // Quick stuck detection: if not making progress, abort early
-                    if (_hasActiveDestination && Time.time - _lastWanderProgressTime >= WANDER_PROGRESS_CHECK_INTERVAL)
+                    if (_hasActiveDestination && Time.time - _lastWanderProgressTime >= WanderProgressCheckInterval)
                     {
                         float moved = Vector3.Distance(transform.position, _lastWanderProgressPosition);
                         _lastWanderProgressPosition = transform.position;
                         _lastWanderProgressTime = Time.time;
 
-                        if (moved < WANDER_MIN_PROGRESS_DISTANCE)
+                        if (moved < WanderMinProgressDistance)
                         {
                             if (VerboseLogging)
-                                Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} stuck wandering (moved {moved:F2}m in {WANDER_PROGRESS_CHECK_INTERVAL}s) - resetting");
-                            _isWandering = false;
+                                Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} stuck wandering (moved {moved:F2}m in {WanderProgressCheckInterval}s) - resetting");
                             _hasActiveDestination = false;
                             ForceResetToStanding();
                             break;
@@ -111,7 +110,7 @@ namespace FiresCore.Npc
                 }
                 else
                 {
-                    // Fallback: replicate exactly what StopEmote does internally ï¿½
+                    // Fallback: replicate exactly what StopEmote does internally -
                     // clear the ZSyncAnimator bool and null out m_emoteID.
                     if (!string.IsNullOrEmpty(_currentEmote) && _zanim != null)
                         _zanim.SetBool(_currentEmote, false);
@@ -220,9 +219,6 @@ namespace FiresCore.Npc
                     _animator.SetBool(_currentEmote, false);
             }
             
-            _isLookingAround = false;
-            _isWandering = false;
-            _isWaitingAtWanderPoint = false;
             _isPlayingEmote = false;
             _currentEmote = "";
             _isPersistentEmote = false;

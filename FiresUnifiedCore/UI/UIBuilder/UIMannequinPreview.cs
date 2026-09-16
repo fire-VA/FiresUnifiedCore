@@ -8,19 +8,11 @@ using FiresCore.Storage;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Render widget for a REMOTE player's appearance, used by the leaderboard preview box. Sibling to
-    /// <see cref="UIOverridePlayerPreview"/> (which hard-binds the LOCAL player and culls the shared
-    /// "character" layer) — this one owns an isolated mannequin staged ~2000 m above the player and
-    /// renders it with distance isolation (cull ~0, transparent clear), so it can coexist with the live
-    /// local player without any bleed.
-    ///
-    /// It builds ONE rig (camera + RenderTexture + PreviewStage + dedicated light) and reuses it across
-    /// rows: <see cref="SetAppearance"/> re-dresses the SAME stage with a freshly-built mannequin rather
-    /// than rebuilding the rig. Rendering is on-demand (camera disabled; explicit Render() after the
-    /// deferred reframe and while dragging) to avoid per-frame cost/throw surface.
-    ///
-    /// Attach to a GameObject with a RawImage, or create one via <see cref="Create"/>. Dedi/headless
-    /// never creates the rig.
+    /// Renders a remote player's appearance for the leaderboard preview. Unlike
+    /// <see cref="UIOverridePlayerPreview"/>, which binds the local player, it stages an isolated mannequin far above
+    /// the world and renders it with distance isolation, so it never bleeds into the live scene. One rig (camera,
+    /// RenderTexture, stage, light) is reused across rows, rendering happens on demand, and headless builds never
+    /// create it.
     /// </summary>
     public class UIMannequinPreview : MonoBehaviour,
         IBeginDragHandler, IDragHandler, IEndDragHandler, IScrollHandler
@@ -300,17 +292,17 @@ namespace FiresCore.UI
 
         // ── helpers ────────────────────────────────────────────────────────────
 
-        private static bool IsEmpty(PlayerAppearance a)
+        private static bool IsEmpty(PlayerAppearance appearance)
         {
-            if (a == null) return true;
+            if (appearance == null) return true;
             // A record with no items, no hair/beard, and no colors is effectively a blank capture.
-            return string.IsNullOrEmpty(a.RightItem) && string.IsNullOrEmpty(a.LeftItem)
-                && string.IsNullOrEmpty(a.ChestItem) && string.IsNullOrEmpty(a.LegItem)
-                && string.IsNullOrEmpty(a.HelmetItem) && string.IsNullOrEmpty(a.ShoulderItem)
-                && string.IsNullOrEmpty(a.UtilityItem) && string.IsNullOrEmpty(a.LeftBackItem)
-                && string.IsNullOrEmpty(a.RightBackItem) && string.IsNullOrEmpty(a.HairItem)
-                && string.IsNullOrEmpty(a.BeardItem)
-                && string.IsNullOrEmpty(a.SkinColorRgba) && string.IsNullOrEmpty(a.HairColorRgba);
+            return string.IsNullOrEmpty(appearance.RightItem) && string.IsNullOrEmpty(appearance.LeftItem)
+                && string.IsNullOrEmpty(appearance.ChestItem) && string.IsNullOrEmpty(appearance.LegItem)
+                && string.IsNullOrEmpty(appearance.HelmetItem) && string.IsNullOrEmpty(appearance.ShoulderItem)
+                && string.IsNullOrEmpty(appearance.UtilityItem) && string.IsNullOrEmpty(appearance.LeftBackItem)
+                && string.IsNullOrEmpty(appearance.RightBackItem) && string.IsNullOrEmpty(appearance.HairItem)
+                && string.IsNullOrEmpty(appearance.BeardItem)
+                && string.IsNullOrEmpty(appearance.SkinColorRgba) && string.IsNullOrEmpty(appearance.HairColorRgba);
         }
     }
 }

@@ -6,61 +6,12 @@ using UnityEngine;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// Reconcile-on-arrival companion teleport service.
-    ///
-    /// DESIGN â€” why this is reconcile-on-arrival, not dispatch-on-depart:
-    ///
-    /// Earlier iterations of this service dispatched a teleport RPC from
-    /// <c>Player.TeleportTo</c> postfix â€” i.e. the moment the player
-    /// initiates a wayshrine / portal / dungeon entry. That model has a
-    /// fatal race on long jumps:
-    ///   1. Player still in source zone when RPC fires.
-    ///   2. Source zone may still be unloading.
-    ///   3. Destination zone may not be loaded server-side yet.
-    ///   4. Server writes companion ZDO position to a destination that
-    ///      isn't loaded â†’ write races with zone-load sync â†’ companion
-    ///      ends up half-teleported, follow flag thrashed by reconciliation
-    ///      logic, group HUD empty when player arrives.
-    ///
-    /// This service uses the inverse model: do NOTHING at depart time
-    /// (other than suppressing local CheckFollowTeleport via
-    /// <c>SuppressCompanionTeleportsUntil</c>). Wait until the loading
-    /// screen finishes and the character has control, THEN dispatch a
-    /// single <see cref="RequestReconcileFollowers"/> RPC. The server
-    /// scans <c>ZDOMan</c> for ZDOs where
-    /// <c>companion_owner == playerId &amp;&amp;
-    /// companion_wasfollowing == true</c> and rewrites the position of
-    /// every one that's far from the player. Companions already near
-    /// the player (small drift) are left in place.
-    ///
-    /// HOOK SET (covers all arrival transitions):
-    /// - <see cref="Player.OnSpawned"/> postfix â€” fires for initial
-    ///   login and death-respawn (the only paths that go through
-    ///   Game.SpawnPlayer â†’ Player.AwakeAndSpawn).
-    /// - <see cref="Player.TeleportTo"/> postfix â€” fires for wayshrine,
-    ///   portal, and dungeon teleports. Player.TeleportTo reuses the
-    ///   existing player object and never re-invokes OnSpawned, so a
-    ///   second hook is required to cover these cases.
-    /// Both hooks start ReconcileFollowersAfterArrival, which waits
-    /// for IsTeleporting=false and CanMove=true before firing.
-    ///
-    /// FOURTH TRIGGER (in-session drift):
-    /// - <see cref="CompanionController.CheckFollowTeleport"/> stranded
-    ///   path â€” companion has drifted catastrophically far in-session;
-    ///   the same reconcile call brings them back to the player.
-    ///
-    /// PROPERTIES:
-    /// - Server-authoritative: server claims ZDO ownership before the
-    ///   write (<c>zdo.SetOwner(ZDOMan.GetSessionID())</c>), so the
-    ///   write isn't competing with closest-peer ownership flap.
-    /// - <c>companion_wasfollowing</c> is treated as STICKY â€” the only
-    ///   things that should ever clear it are explicit owner commands
-    ///   (Stay via radial / shift+interact, Dismiss). Teleport, respawn,
-    ///   restore, etc. must never touch it. The server uses this flag as
-    ///   the source of truth for "should this companion follow my owner."
-    /// - Idempotent: if reconcile fires twice in quick succession the
-    ///   second one is mostly a no-op (companions now near the player
-    ///   are skipped by the distance gate).
+    /// Brings following companions to their owner after arrival rather than at departure; dispatching on
+    /// departure raced zone loads on long jumps and left companions half-teleported. Once the player has
+    /// control again (Player.OnSpawned for login and respawn, Player.TeleportTo for portals, wayshrines and
+    /// dungeons, or a companion stranded in session) one reconcile RPC has the server take ownership of and
+    /// move every far-off companion whose ZDO says it was following. companion_wasfollowing is only cleared
+    /// by an explicit owner command, and nearby companions are skipped, so repeat calls are harmless.
     /// </summary>
     [HarmonyPatch]
     public static class CompanionTeleportService
@@ -87,7 +38,7 @@ namespace FiresCore.Npc.Core
         private static float _lastHeartbeat;
 
         // Companion prefab names this service scans. Mirrors the list in
-        // CompanionPatches and CompanionRestoreService â€” kept local so we
+        // CompanionPatches and CompanionRestoreService — kept local so we
         // don't take a hard dependency on internal helpers.
         private static readonly string[] _companionPrefabNames =
         {
@@ -96,11 +47,11 @@ namespace FiresCore.Npc.Core
             "BaseNpc",
         };
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // RPC registration â€” non-generic Register(name, action) form
+        // ──────────────────────────────────────────────────────────────────
+        // RPC registration — non-generic Register(name, action) form
         // matches every working server-receiving RPC in the codebase
         // (VaultOfKnowledge, GuildSync, etc).
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
 
         [HarmonyPatch(typeof(ZNet), "Start")]
         [HarmonyPostfix]
@@ -108,7 +59,7 @@ namespace FiresCore.Npc.Core
         {
             if (ZRoutedRpc.instance == null)
             {
-                Debug.LogWarning($"{LogPrefix} ZNet.Start postfix: ZRoutedRpc.instance is null â€” RPC '{RPC_Reconcile}' NOT registered. Reconcile will silently no-op.");
+                Debug.LogWarning($"{LogPrefix} ZNet.Start postfix: ZRoutedRpc.instance is null — RPC '{RPC_Reconcile}' NOT registered. Reconcile will silently no-op.");
                 return;
             }
             ZRoutedRpc.instance.Register(
@@ -117,32 +68,14 @@ namespace FiresCore.Npc.Core
             Debug.Log($"{LogPrefix} Registered routed RPC '{RPC_Reconcile}' (server={ZNet.instance?.IsServer() == true})");
         }
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
         // Public client entry point
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Client â†’ server: "I'm at this position; reconcile my followers."
-        /// The server scans ZDOMan for every companion ZDO owned by
-        /// <paramref name="owner"/> with the persistent follow flag set,
-        /// and teleports any that are farther than the distance gate from
-        /// the player to the player. Idempotent â€” calling repeatedly is
-        /// harmless.
-        ///
-        /// Callsites:
-        /// - <c>Player.OnSpawned</c> postfix â†’ ReconcileFollowersAfterArrival
-        ///   coroutine. Covers initial login and death-respawn (the only
-        ///   transitions where the engine actually re-invokes OnSpawned).
-        /// - <c>Player.TeleportTo</c> postfix â†’ same coroutine. Covers
-        ///   wayshrine, portal, and dungeon teleports â€” Player.TeleportTo
-        ///   reuses the existing player object so OnSpawned never fires
-        ///   for these, which is why a separate dispatch site is required.
-        /// - <c>CompanionController.CheckFollowTeleport</c> stranded path
-        ///   when a single companion has drifted catastrophically far.
-        ///   The reconcile pattern handles this case too â€” server-side
-        ///   distance gate skips companions that are already close, so
-        ///   firing reconcile for "one stranded companion" only actually
-        ///   moves that one.
+        /// Client to server: "I'm here; reconcile my followers." The server moves every companion ZDO owned by
+        /// <paramref name="owner"/> with the follow flag set that is beyond the distance gate. Repeat calls are
+        /// harmless, which is why a single stranded companion can use the same call.
         /// </summary>
         public static void RequestReconcileFollowers(Player owner)
         {
@@ -170,9 +103,9 @@ namespace FiresCore.Npc.Core
             }
         }
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
         // Server-side handler
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
 
         private static void OnReconcileRequest(long sender, ZPackage pkg)
         {
@@ -185,7 +118,7 @@ namespace FiresCore.Npc.Core
                     // the client on the next frame after dispatch. Log this so we know
                     // whether the client got at least one frame of Update past
                     // "Sent reconcile request" before the freeze.
-                    Debug.Log($"[CompanionTeleportService][DIAG] OnReconcileRequest local self-echo received (sender={sender}) â€” bailing because !IsServer");
+                    Debug.Log($"[CompanionTeleportService][DIAG] OnReconcileRequest local self-echo received (sender={sender}) — bailing because !IsServer");
                     return;
                 }
                 if (pkg == null) return;
@@ -279,14 +212,14 @@ namespace FiresCore.Npc.Core
             // here even though a remote client's scene would not contain a different player. Skip players who
             // are mid-teleport or dead so we don't reel a follower onto a loading screen or a corpse.
             var ownerPositions = new Dictionary<long, Vector3>();
-            foreach (var p in Player.GetAllPlayers())
+            foreach (var player in Player.GetAllPlayers())
             {
-                if (p == null) continue;
+                if (player == null) continue;
                 // Shared guard: skip dead / mid-teleport / in-bed owners so we never yank followers onto a
                 // loading screen or a corpse (the "guard against player teleport/death" rule, server-side).
-                if (!CompanionLeash.IsOwnerReelTarget(p)) continue;
-                long id = p.GetPlayerID();
-                if (id != 0L) ownerPositions[id] = p.transform.position;
+                if (!CompanionLeash.IsOwnerReelTarget(player)) continue;
+                long id = player.GetPlayerID();
+                if (id != 0L) ownerPositions[id] = player.transform.position;
             }
             if (ownerPositions.Count == 0) return;
 
@@ -313,9 +246,9 @@ namespace FiresCore.Npc.Core
                 Debug.Log($"{LogPrefix} leash heartbeat reeled in {reeled} stranded follower(s)");
         }
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
         // Diagnostics
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
 
         public static bool Verbose = false;
     }

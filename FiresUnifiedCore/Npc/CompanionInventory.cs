@@ -14,20 +14,17 @@ namespace FiresCore.Npc
     /// </summary>
     public class CompanionInventory : MonoBehaviour
     {
+        private const float CarryWeightPerStrengthPoint = 5f;
+        private const float CarryWeightPerEndurancePoint = 3f;
+        private const float MegingjordCarryWeightBonus = 150f;
+        private const float VisualEquipmentApplyDelay = 2.5f;
+        private const float FullWeightFraction = 0.95f;
+        private const float NearlyFullWeightFraction = 0.80f;
+        private const int NearlyFullFreeSlotThreshold = 3;
+
         [Header("Inventory Settings")]
-        // Storage grid: 6 columns x 4 rows = 24 slots.
-        //
-        // The companion inventory UI displays a main 4x5 storage grid plus Food
-        // and Ammo rows that all share this single backing Inventory.  The old
-        // 6x3 = 18 backing was smaller than the visible UI: the trailing visual
-        // cells looked empty but had no backing slot, so dragging an item there
-        // returned false from Inventory.AddItem and the player's item silently
-        // disappeared.  24 slots covers the visible grid with headroom.
-        //
-        // Dimension changes are SAFE for existing saves: vanilla
-        // ZPackage Inventory.Load preserves each item's stored grid position,
-        // and any (x,y) valid in the old 6x3 box is still valid in 6x4.  Loading
-        // an old save just leaves the new bottom row empty.
+        // The backing inventory holds every visible UI cell (storage plus the food and ammo rows); a smaller one silently
+        // ate items dropped onto unbacked cells. Growing it is save-safe because items keep their stored grid positions.
         public int inventoryWidth = 6;
         public int inventoryHeight = 4;
         public float maxCarryWeight = 150f;
@@ -77,7 +74,7 @@ namespace FiresCore.Npc
         
         // Multiplayer sync - track last equipment state for change detection
         private float _lastRemoteSyncCheck = 0f;
-        private const float REMOTE_SYNC_INTERVAL = 2f; // Check every 2 seconds for remote changes
+        private const float RemoteSyncInterval = 2f; // Check every 2 seconds for remote changes
         private int _lastEquipmentHash = 0; // Hash of equipment state for change detection
 
         // Equipment slots matching player equipment
@@ -150,7 +147,7 @@ namespace FiresCore.Npc
 
             // Non-owner clients: periodic sync check for equipment changes.
             _lastRemoteSyncCheck += Time.deltaTime;
-            if (_lastRemoteSyncCheck >= REMOTE_SYNC_INTERVAL)
+            if (_lastRemoteSyncCheck >= RemoteSyncInterval)
             {
                 _lastRemoteSyncCheck = 0f;
                 CheckForRemoteEquipmentChanges();
@@ -274,15 +271,15 @@ namespace FiresCore.Npc
             _vaultDirtySinceTime = Time.unscaledTime;
     }
 
-       // ?? Vault auto-save (debounced) ??????????????????????????????????????
+       // Vault auto-save (debounced)
        // ZDO saves persist with the world but companions are restored from the
        // VAULT on logout/login and on respawn.  If we only update ZDO, anything
        // picked up since the last explicit vault save is lost across a session.
        private float _vaultDirtySinceTime = -1f;
        private float _lastVaultSaveTime;
-       private const float VAULT_SAVE_DEBOUNCE = 2.0f;   // wait this long after last change
-       private const float VAULT_SAVE_MAX_DELAY = 8.0f;  // never wait longer than this
-       private const float VAULT_SAVE_MIN_INTERVAL = 1.5f; // never save more often than this
+       private const float VaultSaveDebounce = 2.0f;   // wait this long after last change
+       private const float VaultSaveMaxDelay = 8.0f;  // never wait longer than this
+       private const float VaultSaveMinInterval = 1.5f; // never save more often than this
 
        private void TickVaultAutoSave()
        {
@@ -296,10 +293,10 @@ namespace FiresCore.Npc
 
            // Save when nothing has changed for DEBOUNCE seconds OR we've been
            // dirty for MAX_DELAY (so a stream of constant changes still flushes).
-           bool quiet  = dirtyFor >= VAULT_SAVE_DEBOUNCE;
-           bool overdue = dirtyFor >= VAULT_SAVE_MAX_DELAY;
+           bool quiet  = dirtyFor >= VaultSaveDebounce;
+           bool overdue = dirtyFor >= VaultSaveMaxDelay;
            if (!quiet && !overdue) return;
-           if (sinceLastSave < VAULT_SAVE_MIN_INTERVAL) return;
+           if (sinceLastSave < VaultSaveMinInterval) return;
 
            try
            {
@@ -404,11 +401,11 @@ EnsureInitialized();
                 
                 // Strength attribute bonus: +5 carry capacity per Strength point
                 int strength = progression.GetAttributeValue(CompanionProgression.AttributeType.Strength);
-                strengthBonus = strength * 5f;
+                strengthBonus = strength * CarryWeightPerStrengthPoint;
                 
                 // Endurance attribute bonus: +3 carry capacity per Endurance point
                 int endurance = progression.GetAttributeValue(CompanionProgression.AttributeType.Endurance);
-                enduranceBonus = endurance * 3f;
+                enduranceBonus = endurance * CarryWeightPerEndurancePoint;
             }
             
             // Utility slot item bonus (check for Megingjord and similar items)
@@ -431,7 +428,7 @@ EnsureInitialized();
                     // Only add if not already added via status effect
                     if (statusEffect == null || !(statusEffect is SE_Stats) || utilityBonus == 0f)
                     {
-                        utilityBonus = 150f;
+                        utilityBonus = MegingjordCarryWeightBonus;
                     }
                 }
             }
@@ -461,9 +458,9 @@ EnsureInitialized();
                 level = progression.Level;
                 levelBonus = level;
                 strength = progression.GetAttributeValue(CompanionProgression.AttributeType.Strength);
-                strengthBonus = strength * 5f;
+                strengthBonus = strength * CarryWeightPerStrengthPoint;
                 endurance = progression.GetAttributeValue(CompanionProgression.AttributeType.Endurance);
-                enduranceBonus = endurance * 3f;
+                enduranceBonus = endurance * CarryWeightPerEndurancePoint;
             }
             
             var utilityItem = GetEquippedItem(EquipmentSlot.Utility);
@@ -478,7 +475,7 @@ EnsureInitialized();
                 string prefabName = _equipUtility?.ToLower() ?? "";
                 if ((prefabName.Contains("beltstrength") || prefabName.Contains("megingjord")) && utilityBonus == 0f)
                 {
-                    utilityBonus = 150f;
+                    utilityBonus = MegingjordCarryWeightBonus;
                 }
             }
             
@@ -1315,31 +1312,31 @@ string inventoryData = zdo.GetString("companion_inventory", "");
 
                 // Try the new packed equipment field first (single base64 ZPackage with
                 // all 9 slots). Falls back to the legacy per-slot fields below if the
-                // packed field is missing ï¿½ that path will auto-migrate on next save.
+                // packed field is missing - that path will auto-migrate on next save.
                 bool loadedFromPacked = false;
                 string packedEquip = zdo.GetString("companion_equipment", "");
                 if (!string.IsNullOrEmpty(packedEquip))
                 {
                     try
                     {
-                        var eqPkg = new ZPackage(packedEquip);
-                        int version = eqPkg.ReadInt(); // 1 = name+quality, 2 = +stack
+                        var equipmentPackage = new ZPackage(packedEquip);
+                        int version = equipmentPackage.ReadInt(); // 1 = name+quality, 2 = +stack
                         _equipStacks.Clear();
                         int ReadStack(EquipmentSlot slot)
                         {
-                            int stack = version >= 2 ? eqPkg.ReadInt() : 1;
+                            int stack = version >= 2 ? equipmentPackage.ReadInt() : 1;
                             if (stack > 1) _equipStacks[slot] = stack;
                             return stack;
                         }
-                        _equipHelmet     = eqPkg.ReadString(); _equipHelmetQuality     = eqPkg.ReadInt(); ReadStack(EquipmentSlot.Helmet);
-                        _equipChest      = eqPkg.ReadString(); _equipChestQuality      = eqPkg.ReadInt(); ReadStack(EquipmentSlot.Chest);
-                        _equipLegs       = eqPkg.ReadString(); _equipLegsQuality       = eqPkg.ReadInt(); ReadStack(EquipmentSlot.Legs);
-                        _equipShoulder   = eqPkg.ReadString(); _equipShoulderQuality   = eqPkg.ReadInt(); ReadStack(EquipmentSlot.Shoulder);
-                        _equipUtility    = eqPkg.ReadString(); _equipUtilityQuality    = eqPkg.ReadInt(); ReadStack(EquipmentSlot.Utility);
-                        _equipRightHand  = eqPkg.ReadString(); _equipRightHandQuality  = eqPkg.ReadInt(); ReadStack(EquipmentSlot.RightHand);
-                        _equipLeftHand   = eqPkg.ReadString(); _equipLeftHandQuality   = eqPkg.ReadInt(); ReadStack(EquipmentSlot.LeftHand);
-                        _equipRightBack  = eqPkg.ReadString(); _equipRightBackQuality  = eqPkg.ReadInt(); ReadStack(EquipmentSlot.RightBack);
-                        _equipLeftBack   = eqPkg.ReadString(); _equipLeftBackQuality   = eqPkg.ReadInt(); ReadStack(EquipmentSlot.LeftBack);
+                        _equipHelmet     = equipmentPackage.ReadString(); _equipHelmetQuality     = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.Helmet);
+                        _equipChest      = equipmentPackage.ReadString(); _equipChestQuality      = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.Chest);
+                        _equipLegs       = equipmentPackage.ReadString(); _equipLegsQuality       = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.Legs);
+                        _equipShoulder   = equipmentPackage.ReadString(); _equipShoulderQuality   = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.Shoulder);
+                        _equipUtility    = equipmentPackage.ReadString(); _equipUtilityQuality    = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.Utility);
+                        _equipRightHand  = equipmentPackage.ReadString(); _equipRightHandQuality  = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.RightHand);
+                        _equipLeftHand   = equipmentPackage.ReadString(); _equipLeftHandQuality   = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.LeftHand);
+                        _equipRightBack  = equipmentPackage.ReadString(); _equipRightBackQuality  = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.RightBack);
+                        _equipLeftBack   = equipmentPackage.ReadString(); _equipLeftBackQuality   = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.LeftBack);
                         loadedFromPacked = true;
                     }
                     catch (Exception ex)
@@ -1351,7 +1348,7 @@ string inventoryData = zdo.GetString("companion_inventory", "");
                 if (!loadedFromPacked)
                 {
                     _equipStacks.Clear();
-                    // Legacy path ï¿½ read 18 per-slot fields. Next SaveToZDO will migrate
+                    // Legacy path - read 18 per-slot fields. Next SaveToZDO will migrate
                     // them into the packed field and remove the legacy keys automatically.
        _equipHelmet = zdo.GetString("companion_equip_helmet", "");
        _equipChest = zdo.GetString("companion_equip_chest", "");
@@ -1400,10 +1397,10 @@ string inventoryData = zdo.GetString("companion_inventory", "");
           // Apply visual equipment after NpcVisEquipment has had time to initialize
           // (its DelayedInitialize runs at 2s, so 2.5s is the earliest safe window).
           // A single one-shot retry is scheduled inside ApplyVisualEquipment if
-          // VisEquipment is still null at that point ï¿½ no need for 3 staggered calls.
+          // VisEquipment is still null at that point - no need for 3 staggered calls.
     if (HasAnyEquipment())
           {
-         Invoke(nameof(ApplyVisualEquipment), 2.5f);
+         Invoke(nameof(ApplyVisualEquipment), VisualEquipmentApplyDelay);
  }
 
           // Only log loaded inventory for tamed companions when verbose is enabled
@@ -1595,7 +1592,7 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
             {
                 _visEquipment.ForceReinitialize();
 
-                // Still not ready ï¿½ schedule one final retry in 2s and bail.
+                // Still not ready - schedule one final retry in 2s and bail.
                 // This handles the rare edge case where NpcVisEquipment hasn't
                 // finished its own DelayedInitialize yet at the 2.5s mark.
                 if (_visEquipment.VisEquipment == null)
@@ -1825,7 +1822,7 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
       return;
             }
 
-            // Skip during local player respawn / loading screen â€” companion-inventory
+            // Skip during local player respawn / loading screen — companion-inventory
             // ZDO writes during IsTeleporting=true deadlock the zone stream.
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
 
@@ -1842,22 +1839,22 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
            }
 
                 // Save all equipment slots packed into ONE base64-encoded ZPackage field
-                // (replaces 18 individual ZDO fields ï¿½ 9 prefab strings + 9 quality ints ï¿½
+                // (replaces 18 individual ZDO fields - 9 prefab strings + 9 quality ints -
                 // which were pushing companion ZDOs over Valheim's "Writing a lot of data;
                 // N items" warning threshold during world saves).
                 {
-                    var eqPkg = new ZPackage();
-                    eqPkg.Write(2); // version, for future schema changes (2 = +stack per slot)
-                    eqPkg.Write(_equipHelmet ?? "");      eqPkg.Write(_equipHelmetQuality);    eqPkg.Write(GetEquipmentStack(EquipmentSlot.Helmet));
-                    eqPkg.Write(_equipChest ?? "");       eqPkg.Write(_equipChestQuality);     eqPkg.Write(GetEquipmentStack(EquipmentSlot.Chest));
-                    eqPkg.Write(_equipLegs ?? "");        eqPkg.Write(_equipLegsQuality);      eqPkg.Write(GetEquipmentStack(EquipmentSlot.Legs));
-                    eqPkg.Write(_equipShoulder ?? "");    eqPkg.Write(_equipShoulderQuality);  eqPkg.Write(GetEquipmentStack(EquipmentSlot.Shoulder));
-                    eqPkg.Write(_equipUtility ?? "");     eqPkg.Write(_equipUtilityQuality);   eqPkg.Write(GetEquipmentStack(EquipmentSlot.Utility));
-                    eqPkg.Write(_equipRightHand ?? "");   eqPkg.Write(_equipRightHandQuality); eqPkg.Write(GetEquipmentStack(EquipmentSlot.RightHand));
-                    eqPkg.Write(_equipLeftHand ?? "");    eqPkg.Write(_equipLeftHandQuality);  eqPkg.Write(GetEquipmentStack(EquipmentSlot.LeftHand));
-                    eqPkg.Write(_equipRightBack ?? "");   eqPkg.Write(_equipRightBackQuality); eqPkg.Write(GetEquipmentStack(EquipmentSlot.RightBack));
-                    eqPkg.Write(_equipLeftBack ?? "");    eqPkg.Write(_equipLeftBackQuality);  eqPkg.Write(GetEquipmentStack(EquipmentSlot.LeftBack));
-                    zdo.Set("companion_equipment", eqPkg.GetBase64());
+                    var equipmentPackage = new ZPackage();
+                    equipmentPackage.Write(2); // version, for future schema changes (2 = +stack per slot)
+                    equipmentPackage.Write(_equipHelmet ?? "");      equipmentPackage.Write(_equipHelmetQuality);    equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Helmet));
+                    equipmentPackage.Write(_equipChest ?? "");       equipmentPackage.Write(_equipChestQuality);     equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Chest));
+                    equipmentPackage.Write(_equipLegs ?? "");        equipmentPackage.Write(_equipLegsQuality);      equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Legs));
+                    equipmentPackage.Write(_equipShoulder ?? "");    equipmentPackage.Write(_equipShoulderQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Shoulder));
+                    equipmentPackage.Write(_equipUtility ?? "");     equipmentPackage.Write(_equipUtilityQuality);   equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Utility));
+                    equipmentPackage.Write(_equipRightHand ?? "");   equipmentPackage.Write(_equipRightHandQuality); equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.RightHand));
+                    equipmentPackage.Write(_equipLeftHand ?? "");    equipmentPackage.Write(_equipLeftHandQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.LeftHand));
+                    equipmentPackage.Write(_equipRightBack ?? "");   equipmentPackage.Write(_equipRightBackQuality); equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.RightBack));
+                    equipmentPackage.Write(_equipLeftBack ?? "");    equipmentPackage.Write(_equipLeftBackQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.LeftBack));
+                    zdo.Set("companion_equipment", equipmentPackage.GetBase64());
                 }
 
                 // Strip the legacy per-slot QUALITY ints so previously-saved companion
@@ -1986,16 +1983,16 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
                 status.IsNearlyFull = true;
                 status.Reason = "No empty slots";
             }
-            else if (status.WeightPercent >= 0.95f)
+            else if (status.WeightPercent >= FullWeightFraction)
             {
                 status.IsFull = true;
                 status.IsNearlyFull = true;
                 status.Reason = $"Almost at weight limit ({status.WeightPercent:P0})";
             }
-            else if (status.WeightPercent >= 0.80f || status.FreeSlots < 3)
+            else if (status.WeightPercent >= NearlyFullWeightFraction || status.FreeSlots < NearlyFullFreeSlotThreshold)
             {
                 status.IsNearlyFull = true;
-                status.Reason = status.WeightPercent >= 0.80f 
+                status.Reason = status.WeightPercent >= NearlyFullWeightFraction 
                     ? $"Heavy ({status.WeightPercent:P0})" 
                     : $"Few slots left ({status.FreeSlots})";
             }

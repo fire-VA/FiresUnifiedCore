@@ -50,16 +50,16 @@ namespace FiresCore.UI.ContextMenu
             BuildCanvas();
 
             float height = Pad * 2f + (string.IsNullOrEmpty(title) ? 0f : HeaderPx + 4f);
-            foreach (var it in items) height += it.IsSeparator ? SepPx : RowPx;
+            foreach (var item in items) height += item.IsSeparator ? SepPx : RowPx;
 
             _panel = NewRect("Panel", _canvasRect);
             _panel.anchorMin = _panel.anchorMax = new Vector2(0.5f, 0.5f);
             _panel.pivot = new Vector2(0f, 1f); // top-left, refined in PositionAtCursor
             _panel.sizeDelta = new Vector2(Width, height);
-            var bg = _panel.gameObject.AddComponent<Image>();
-            bg.sprite = FiresRoundedSkin.RoundedSprite(10, PanelBg, PanelEdge, 1);
-            bg.type = Image.Type.Sliced;
-            bg.color = Color.white;
+            var image = _panel.gameObject.AddComponent<Image>();
+            image.sprite = FiresRoundedSkin.RoundedSprite(10, PanelBg, PanelEdge, 1);
+            image.type = Image.Type.Sliced;
+            image.color = Color.white;
 
             float y = -Pad;
 
@@ -78,9 +78,9 @@ namespace FiresCore.UI.ContextMenu
                 y -= HeaderPx + 4f;
             }
 
-            foreach (var it in items)
+            foreach (var item in items)
             {
-                if (it.IsSeparator)
+                if (item.IsSeparator)
                 {
                     var line = UIBuilderHelper.CreateImage(_panel, "Sep", Vector2.zero, Vector2.one, PanelEdge);
                     line.raycastTarget = false;
@@ -94,15 +94,15 @@ namespace FiresCore.UI.ContextMenu
                 var img = rowRect.gameObject.AddComponent<Image>();
                 img.sprite = FiresRoundedSkin.RoundedSprite(7, Color.white);
                 img.type = Image.Type.Sliced;
-                img.color = it.Enabled ? RowBg : RowDisabled;
+                img.color = item.Enabled ? RowBg : RowDisabled;
 
-                var lbl = UIBuilderHelper.CreateLabel(rowRect, "Label", it.Label, 13,
-                    it.Enabled ? TextLight : TextDim, Vector2.zero, Vector2.one, TextAlignmentOptions.MidlineLeft);
+                var lbl = UIBuilderHelper.CreateLabel(rowRect, "Label", item.Label, 13,
+                    item.Enabled ? TextLight : TextDim, Vector2.zero, Vector2.one, TextAlignmentOptions.MidlineLeft);
                 lbl.rectTransform.offsetMin = new Vector2(10f, 0f);
                 lbl.rectTransform.offsetMax = new Vector2(-6f, 0f);
 
-                if (it.Enabled)
-                    _rows.Add(new Row { Rect = rowRect, Bg = img, Label = lbl, Item = it });
+                if (item.Enabled)
+                    _rows.Add(new Row { Rect = rowRect, Bg = img, Label = lbl, Item = item });
                 y -= RowPx;
             }
 
@@ -130,11 +130,11 @@ namespace FiresCore.UI.ContextMenu
 
             for (int i = 0; i < _rows.Count; i++)
             {
-                var r = _rows[i];
-                if (r.Bg == null) continue;
-                bool hot = RectTransformUtility.RectangleContainsScreenPoint(r.Rect, mouse, null);
-                r.Bg.color = hot ? RowHover : RowBg;
-                if (r.Label != null) r.Label.color = hot ? TextGold : TextLight;
+                var row = _rows[i];
+                if (row.Bg == null) continue;
+                bool hot = RectTransformUtility.RectangleContainsScreenPoint(row.Rect, mouse, null);
+                row.Bg.color = hot ? RowHover : RowBg;
+                if (row.Label != null) row.Label.color = hot ? TextGold : TextLight;
             }
         }
 
@@ -143,11 +143,11 @@ namespace FiresCore.UI.ContextMenu
         {
             for (int i = 0; i < _rows.Count; i++)
             {
-                var r = _rows[i];
-                if (r.Rect == null || r.Item == null) continue;
-                if (RectTransformUtility.RectangleContainsScreenPoint(r.Rect, mouse, null))
+                var row = _rows[i];
+                if (row.Rect == null || row.Item == null) continue;
+                if (RectTransformUtility.RectangleContainsScreenPoint(row.Rect, mouse, null))
                 {
-                    var act = r.Item.OnPick;
+                    var act = row.Item.OnPick;
                     Close();
                     act?.Invoke();
                     return;
@@ -218,13 +218,13 @@ namespace FiresCore.UI.ContextMenu
 
         // Stacks a child against the panel top: yTop is measured downward from the top edge (0 at top, negative
         // going down); height is the slot height.
-        private static void PlaceTop(RectTransform rt, float yTop, float height, float sidePad)
+        private static void PlaceTop(RectTransform rect, float yTop, float height, float sidePad)
         {
-            rt.anchorMin = new Vector2(0f, 1f);
-            rt.anchorMax = new Vector2(1f, 1f);
-            rt.pivot = new Vector2(0.5f, 1f);
-            rt.offsetMin = new Vector2(sidePad, yTop - height);
-            rt.offsetMax = new Vector2(-sidePad, yTop);
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(1f, 1f);
+            rect.pivot = new Vector2(0.5f, 1f);
+            rect.offsetMin = new Vector2(sidePad, yTop - height);
+            rect.offsetMax = new Vector2(-sidePad, yTop);
         }
 
         private void PositionAtCursor(Vector2 screenPos)

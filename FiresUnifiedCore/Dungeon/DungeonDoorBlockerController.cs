@@ -5,21 +5,11 @@ using UnityEngine;
 namespace FiresCore.Dungeon
 {
     /// <summary>
-    /// Per-ROOM doorway blocker resolver, attached to every dungeon room prefab at ZNetScene registration time so
-    /// it rides every spawned clone on the SERVER AND EVERY CLIENT. Rooms are NOT ZNetView network objects (they
-    /// are plain GameObject children of the DG), and DungeonGenerator.Generate is server-only, so the open-vs-
-    /// connected decision MUST be made locally and deterministically on every peer with NO RPC. RoomConnection
-    /// world positions are identical on every peer (same baked prefab, same DG-relative transforms), so the pass
-    /// is desync-free.
-    ///
-    /// Each room bakes ONE solid blocker wall as a CHILD of each RoomConnection (child name = BlockerChildName).
-    /// Blockers are baked ENABLED (solid). On every peer this controller, over a short re-check window (neighbour
-    /// rooms stream in slightly after this one), OPENS (SetActive(false)) the blocker at any connection that is
-    ///   • m_entrance == true (the player entry doorway is never blocked), OR
-    ///   • coincident (RoomConnection.TestContact, < 0.1m) with ANOTHER room's connection (a paired passage).
-    /// Every remaining blocker stays ENABLED (solid) so the player can't walk through an unused doorway into the
-    /// y+5000 void. Idempotent: re-running only ever DISABLES blockers, never re-enables, so a late-streaming
-    /// neighbour cleanly opens a doorway that was momentarily solid.
+    /// Resolves doorway blockers for one dungeon room on every peer. Rooms are not network objects and generation
+    /// is server-only, so each peer decides locally from identical baked positions, with no RPC. Every room
+    /// connection bakes a solid blocker child; over a short re-check window, while neighbouring rooms stream in,
+    /// this opens the blocker at the entrance and at any connection touching another room's, leaving unused
+    /// doorways solid over the void. It only ever opens blockers, so a late neighbour cleanly opens its passage.
     /// </summary>
     public sealed class DungeonDoorBlockerController : MonoBehaviour
     {
@@ -62,12 +52,12 @@ namespace FiresCore.Dungeon
         // connection registers. Only ever DISABLES blockers => idempotent + monotonic, no flicker, no re-block.
         private IEnumerator ResolveLoop()
         {
-            float t = 0f;
+            float elapsed = 0f;
             ResolveOnce();
-            while (t < ReCheckSeconds)
+            while (elapsed < ReCheckSeconds)
             {
                 yield return new WaitForSeconds(ReCheckStep);
-                t += ReCheckStep;
+                elapsed += ReCheckStep;
                 ResolveOnce();
             }
         }
@@ -92,12 +82,12 @@ namespace FiresCore.Dungeon
         // True if some OTHER room's connection sits within the snap distance of this one (a real passage).
         private static bool HasPartner(RoomConnection conn)
         {
-            Vector3 p = conn.transform.position;
+            Vector3 connectionPosition = conn.transform.position;
             for (int i = 0; i < _allConnections.Count; i++)
             {
-                RoomConnection o = _allConnections[i];
-                if (o == null || o == conn) continue;
-                if ((o.transform.position - p).sqrMagnitude < CoincidentSqr) return true;
+                RoomConnection other = _allConnections[i];
+                if (other == null || other == conn) continue;
+                if ((other.transform.position - connectionPosition).sqrMagnitude < CoincidentSqr) return true;
             }
             return false;
         }

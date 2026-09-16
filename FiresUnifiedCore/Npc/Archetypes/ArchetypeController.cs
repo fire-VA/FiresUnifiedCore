@@ -6,27 +6,41 @@ using FiresCore.Npc.Combat;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Component that manages archetype-specific behavior for a companion.
-    /// Attached to each companion to handle their role in the group.
-    /// 
-    /// RESPONSIBILITIES:
-    /// - Determines and tracks the companion's archetype (ArchetypeClass)
-    /// - Applies archetype-specific stat modifiers (stamina, damage, etc.)
-    /// - Handles archetype-specific abilities (taunt, berserk, backstab, etc.)
-    /// - Tracks archetype statistics for UI display
-    /// - Coordinates with combat/movement systems for role-appropriate behavior
-    /// 
-    /// STAT MODIFIERS:
-    /// - Tank: +25% max stamina, +15% stamina regen, -30% block cost, parry restores stamina
-    /// - Berserker: +25% damage when low health, +15% attack speed
-    /// - Rogue: +50% backstab damage, +30% dodge distance
-    /// - Ranger: +10% draw speed, +kiting behavior
-    /// - Mage: +30% eitr, -15% eitr cost
-    /// - Healer: +30% eitr regen, can heal allies
-    /// - Paladin: Balanced tank/healer hybrid
+    /// Per-companion archetype role: resolves the archetype, applies its stat modifiers and abilities (taunt,
+    /// berserk, backstab and so on), tracks its statistics for the UI, and steers combat and movement toward the
+    /// role.
     /// </summary>
     public class ArchetypeController : MonoBehaviour
     {
+        #region Constants
+
+        private const float BackupTankLoadoutAffinity = 15f;
+        private const float FullWeightMultiplier = 10f;
+        private const float ShieldTankAffinity = 10f;
+        private const float ShieldPaladinAffinity = 5f;
+        private const float RangedWeaponAffinity = 10f;
+        private const float KnifeAffinity = 10f;
+        private const float ClubMonkAffinity = 5f;
+        private const float ClubPaladinAffinity = 5f;
+        private const float TwoHandedBerserkerAffinity = 8f;
+        private const float OffensiveStaffAffinity = 10f;
+        private const float SupportStaffAffinity = 10f;
+        private const float OneHandedBerserkerAffinity = 5f;
+        private const float OneHandedTankAffinity = 3f;
+        private const float MinSubArchetypeScoreThreshold = 5f;
+        private const float CritChancePerLevel = 0.005f;
+        private const float PaladinBlockPriorityScale = 0.8f;
+        private const float RangerAttackRange = 18f;
+        private const float MageAttackRange = 15f;
+        private const int TauntWorthyEnemyCount = 3;
+        private const float SupportHurtHealthThreshold = 0.7f;
+        private const int BossHealthThreshold = 2000;
+        private const int HighThreatHealthThreshold = 500;
+        private const int MediumThreatHealthThreshold = 150;
+        private const float DefaultAttackPriorityMultiplier = 0.8f;
+
+        #endregion
+
         [Header("Archetype State")]
         [SerializeField] private ArchetypeClass _currentArchetype = ArchetypeClass.None;
         [SerializeField] private ArchetypeClass _subArchetype = ArchetypeClass.None;
@@ -81,7 +95,7 @@ namespace FiresCore.Npc.Archetypes
         private ArchetypeStatistics _statistics;
         private float _blockingStartTime;
         
-        // Group combat directive ï¿½ set by GroupCombatCoordinator via CombatRoleDirector
+        // Group combat directive - set by GroupCombatCoordinator via CombatRoleDirector
         private CombatRoleDirector.RoleDirective _currentDirective;
         
         // Tank state
@@ -193,7 +207,7 @@ namespace FiresCore.Npc.Archetypes
             if (_companion == null || !_companion.isTamed) return;
             if (_currentArchetype == ArchetypeClass.None) return;
             
-            // Read latest directive from GroupCombatCoordinator (cheap ï¿½ just a dictionary lookup)
+            // Read latest directive from GroupCombatCoordinator (cheap - just a dictionary lookup)
             var coordinator = GroupCombatCoordinator.Instance;
             if (coordinator != null)
             {
@@ -248,8 +262,8 @@ namespace FiresCore.Npc.Archetypes
         // Archetype persistence tracking
         private float _lastArchetypeChangeTime = 0f;
         private int _archetypeChangeCount = 0;
-        private const float ARCHETYPE_CHANGE_COOLDOWN = 60f; // Don't change archetype more than once per minute
-        private const int MAX_ARCHETYPE_CHANGES_PER_SESSION = 3; // Limit total changes
+        private const float ArchetypeChangeCooldown = 60f; // Don't change archetype more than once per minute
+        private const int MaxArchetypeChangesPerSession = 3; // Limit total changes
         
         /// <summary>
         /// Evaluates and assigns the appropriate archetype for this companion.
@@ -280,17 +294,17 @@ namespace FiresCore.Npc.Archetypes
                     float timeSinceLastChange = Time.time - _lastArchetypeChangeTime;
                     
                     // Don't change if cooldown hasn't passed
-                    if (timeSinceLastChange < ARCHETYPE_CHANGE_COOLDOWN)
+                    if (timeSinceLastChange < ArchetypeChangeCooldown)
                     {
                         if (VerboseLogging)
                         {
-                            Debug.Log($"[Archetype] {_companion?.companionName} keeping {_currentArchetype} (cooldown: {ARCHETYPE_CHANGE_COOLDOWN - timeSinceLastChange:F0}s remaining)");
+                            Debug.Log($"[Archetype] {_companion?.companionName} keeping {_currentArchetype} (cooldown: {ArchetypeChangeCooldown - timeSinceLastChange:F0}s remaining)");
                         }
                         return;
                     }
                     
                     // Don't change if we've changed too many times
-                    if (_archetypeChangeCount >= MAX_ARCHETYPE_CHANGES_PER_SESSION)
+                    if (_archetypeChangeCount >= MaxArchetypeChangesPerSession)
                     {
                         if (VerboseLogging)
                         {
@@ -364,17 +378,9 @@ namespace FiresCore.Npc.Archetypes
         }
         
         /// <summary>
-        /// Evaluates the best archetype based on CURRENTLY EQUIPPED items.
-        /// Priority order matters! Shield+Melee beats having a bow in backup.
-        /// 
-        /// DETECTION PRIORITY:
-        /// 1. Support Staff EQUIPPED in hand ? Healer
-        /// 2. Shield EQUIPPED + Melee EQUIPPED ? Tank/Paladin (giants favor Tank)
-        /// 3. Offensive Staff EQUIPPED ? Mage
-        /// 4. Bow/Crossbow EQUIPPED in hand ? Ranger
-        /// 5. Knives EQUIPPED ? Rogue
-        /// 6. Unarmed/Clubs EQUIPPED ? Monk
-        /// 7. Two-handed or other melee ? Berserker
+        /// Picks the archetype from what is currently equipped, in priority order: support staff (Healer), shield with a
+        /// melee weapon (Tank or Paladin, giants favoring Tank), offensive staff (Mage), bow or crossbow (Ranger), knives
+        /// (Rogue), unarmed or clubs (Monk), anything else (Berserker).
         /// </summary>
         private ArchetypeClass EvaluateBestArchetype()
         {
@@ -392,14 +398,14 @@ namespace FiresCore.Npc.Archetypes
                 Debug.Log($"[Archetype] Evaluating {_companion?.companionName}: RightHand={rhName}, LeftHand={lhName}");
             }
             
-            // 1. SUPPORT STAFF EQUIPPED ? HEALER (highest priority for support role)
+            // 1. SUPPORT STAFF EQUIPPED -> HEALER (highest priority for support role)
             if (HasSupportStaffEquipped())
             {
                 Debug.Log($"[Archetype] {_companion?.companionName} detected as HEALER (support staff equipped)");
                 return ArchetypeClass.Healer;
             }
             
-            // 2. SHIELD + MELEE EQUIPPED ? TANK or PALADIN
+            // 2. SHIELD + MELEE EQUIPPED -> TANK or PALADIN
             // This takes priority over having a bow in backup!
             bool shieldEquipped = leftHand?.m_shared?.m_itemType == ItemDrop.ItemData.ItemType.Shield;
             bool meleeEquipped = rightHand != null && IsMeleeWeaponItem(rightHand);
@@ -424,14 +430,14 @@ namespace FiresCore.Npc.Archetypes
                 return ArchetypeClass.Tank;
             }
             
-            // 3. OFFENSIVE STAFF EQUIPPED ? MAGE
+            // 3. OFFENSIVE STAFF EQUIPPED -> MAGE
             if (HasOffensiveStaff())
             {
                 Debug.Log($"[Archetype] {_companion?.companionName} detected as MAGE (offensive staff equipped)");
                 return ArchetypeClass.Mage;
             }
             
-            // 4. BOW/CROSSBOW EQUIPPED ? RANGER
+            // 4. BOW/CROSSBOW EQUIPPED -> RANGER
             // Only if bow is in LEFT HAND (equipped) or if they have no shield
             bool bowEquipped = (leftHand?.m_shared?.m_itemType == ItemDrop.ItemData.ItemType.Bow) ||
                                (rightHand?.m_shared?.m_skillType == Skills.SkillType.Bows) ||
@@ -443,21 +449,21 @@ namespace FiresCore.Npc.Archetypes
                 return ArchetypeClass.Ranger;
             }
             
-            // 5. KNIVES EQUIPPED ? ROGUE
+            // 5. KNIVES EQUIPPED -> ROGUE
             if (rightHand?.m_shared?.m_skillType == Skills.SkillType.Knives)
             {
                 Debug.Log($"[Archetype] {_companion?.companionName} detected as ROGUE (knives equipped)");
                 return ArchetypeClass.Rogue;
             }
             
-            // 6. UNARMED OR CLUBS (fists) ? MONK
+            // 6. UNARMED OR CLUBS (fists) -> MONK
             if (HasUnarmedOrClubs())
             {
                 Debug.Log($"[Archetype] {_companion?.companionName} detected as MONK (unarmed/clubs)");
                 return ArchetypeClass.Monk;
             }
             
-            // 7. TWO-HANDED OR OTHER MELEE ? BERSERKER
+            // 7. TWO-HANDED OR OTHER MELEE -> BERSERKER
             if (HasTwoHandedWeapon() || HasMeleeWeapon())
             {
                 Debug.Log($"[Archetype] {_companion?.companionName} detected as BERSERKER (melee weapon)");
@@ -664,7 +670,7 @@ namespace FiresCore.Npc.Archetypes
             if (hasBackupShield && hasBackupMelee)
             {
                 // This is a tank loadout in backup - give it a strong score
-                AddScore(archetypeScores, ArchetypeClass.Tank, 15f);
+                AddScore(archetypeScores, ArchetypeClass.Tank, BackupTankLoadoutAffinity);
                 if (VerboseLogging)
                 {
                     Debug.Log($"[Archetype] {_companion?.companionName} has Tank loadout in backup (shield+melee)");
@@ -675,11 +681,11 @@ namespace FiresCore.Npc.Archetypes
                 // Score backup items individually
                 if (rightBack != null)
                 {
-                    ScoreItemForArchetype(rightBack, archetypeScores, 10f); // Full weight for backup slots
+                    ScoreItemForArchetype(rightBack, archetypeScores, FullWeightMultiplier); // Full weight for backup slots
                 }
                 if (leftBack != null)
                 {
-                    ScoreItemForArchetype(leftBack, archetypeScores, 10f);
+                    ScoreItemForArchetype(leftBack, archetypeScores, FullWeightMultiplier);
                 }
             }
             
@@ -697,48 +703,48 @@ namespace FiresCore.Npc.Archetypes
                     // Shield suggests Tank potential
                     if (itemType == ItemDrop.ItemData.ItemType.Shield)
                     {
-                        AddScore(archetypeScores, ArchetypeClass.Tank, 10f);
-                        AddScore(archetypeScores, ArchetypeClass.Paladin, 5f);
+                        AddScore(archetypeScores, ArchetypeClass.Tank, ShieldTankAffinity);
+                        AddScore(archetypeScores, ArchetypeClass.Paladin, ShieldPaladinAffinity);
                     }
-                    
+
                     // Bow/Crossbow suggests Ranger
                     if (itemType == ItemDrop.ItemData.ItemType.Bow ||
                         skillType == Skills.SkillType.Bows ||
                         skillType == Skills.SkillType.Crossbows)
                     {
-                        AddScore(archetypeScores, ArchetypeClass.Ranger, 10f);
+                        AddScore(archetypeScores, ArchetypeClass.Ranger, RangedWeaponAffinity);
                     }
                     
                     // Knives suggest Rogue
                     if (skillType == Skills.SkillType.Knives)
                     {
-                        AddScore(archetypeScores, ArchetypeClass.Rogue, 10f);
+                        AddScore(archetypeScores, ArchetypeClass.Rogue, KnifeAffinity);
                     }
                     
                     // Clubs suggest Monk or Paladin
                     if (skillType == Skills.SkillType.Clubs)
                     {
-                        AddScore(archetypeScores, ArchetypeClass.Monk, 5f);
-                        AddScore(archetypeScores, ArchetypeClass.Paladin, 5f);
+                        AddScore(archetypeScores, ArchetypeClass.Monk, ClubMonkAffinity);
+                        AddScore(archetypeScores, ArchetypeClass.Paladin, ClubPaladinAffinity);
                     }
                     
                     // Two-handed weapons suggest Berserker
                     if (itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
                         itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft)
                     {
-                        AddScore(archetypeScores, ArchetypeClass.Berserker, 8f);
+                        AddScore(archetypeScores, ArchetypeClass.Berserker, TwoHandedBerserkerAffinity);
                     }
                     
                     // Offensive staff suggests Mage
                     if (ArchetypeUtils.IsOffensiveStaff(item))
                     {
-                        AddScore(archetypeScores, ArchetypeClass.Mage, 10f);
+                        AddScore(archetypeScores, ArchetypeClass.Mage, OffensiveStaffAffinity);
                     }
                     
                     // Support staff suggests Healer
                     if (ArchetypeUtils.IsSupportStaff(item))
                     {
-                        AddScore(archetypeScores, ArchetypeClass.Healer, 10f);
+                        AddScore(archetypeScores, ArchetypeClass.Healer, SupportStaffAffinity);
                     }
                     
                     // Swords/Axes suggest melee DPS
@@ -746,7 +752,7 @@ namespace FiresCore.Npc.Archetypes
                         skillType == Skills.SkillType.Axes ||
                         skillType == Skills.SkillType.Polearms)
                     {
-                        AddScore(archetypeScores, ArchetypeClass.Berserker, 5f);
+                        AddScore(archetypeScores, ArchetypeClass.Berserker, OneHandedBerserkerAffinity);
                     }
                 }
             }
@@ -768,7 +774,7 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Only assign sub-archetype if there's meaningful equipment for it
-            if (bestScore >= 5f)
+            if (bestScore >= MinSubArchetypeScoreThreshold)
             {
                 _subArchetype = bestSub;
                 _subDefinition = ArchetypeRegistry.GetDefinition(bestSub);
@@ -826,8 +832,8 @@ namespace FiresCore.Npc.Archetypes
             // Shield suggests Tank/Paladin
             if (itemType == ItemDrop.ItemData.ItemType.Shield)
             {
-                AddScore(scores, ArchetypeClass.Tank, 10f * multiplier / 10f);
-                AddScore(scores, ArchetypeClass.Paladin, 5f * multiplier / 10f);
+                AddScore(scores, ArchetypeClass.Tank, ShieldTankAffinity * multiplier / FullWeightMultiplier);
+                AddScore(scores, ArchetypeClass.Paladin, ShieldPaladinAffinity * multiplier / FullWeightMultiplier);
             }
             
             // Bow/Crossbow suggests Ranger
@@ -835,39 +841,39 @@ namespace FiresCore.Npc.Archetypes
                 skillType == Skills.SkillType.Bows ||
                 skillType == Skills.SkillType.Crossbows)
             {
-                AddScore(scores, ArchetypeClass.Ranger, 10f * multiplier / 10f);
+                AddScore(scores, ArchetypeClass.Ranger, RangedWeaponAffinity * multiplier / FullWeightMultiplier);
             }
             
             // Knives suggest Rogue
             if (skillType == Skills.SkillType.Knives)
             {
-                AddScore(scores, ArchetypeClass.Rogue, 10f * multiplier / 10f);
+                AddScore(scores, ArchetypeClass.Rogue, KnifeAffinity * multiplier / FullWeightMultiplier);
             }
             
             // Clubs suggest Monk or Paladin
             if (skillType == Skills.SkillType.Clubs)
             {
-                AddScore(scores, ArchetypeClass.Monk, 5f * multiplier / 10f);
-                AddScore(scores, ArchetypeClass.Paladin, 5f * multiplier / 10f);
+                AddScore(scores, ArchetypeClass.Monk, ClubMonkAffinity * multiplier / FullWeightMultiplier);
+                AddScore(scores, ArchetypeClass.Paladin, ClubPaladinAffinity * multiplier / FullWeightMultiplier);
             }
             
             // Offensive staff suggests Mage
             if (ArchetypeUtils.IsOffensiveStaff(item))
             {
-                AddScore(scores, ArchetypeClass.Mage, 10f * multiplier / 10f);
+                AddScore(scores, ArchetypeClass.Mage, OffensiveStaffAffinity * multiplier / FullWeightMultiplier);
             }
             
             // Support staff suggests Healer
             if (ArchetypeUtils.IsSupportStaff(item))
             {
-                AddScore(scores, ArchetypeClass.Healer, 10f * multiplier / 10f);
+                AddScore(scores, ArchetypeClass.Healer, SupportStaffAffinity * multiplier / FullWeightMultiplier);
             }
             
             // Two-handed weapons suggest Berserker
             if (itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
                 itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft)
             {
-                AddScore(scores, ArchetypeClass.Berserker, 8f * multiplier / 10f);
+                AddScore(scores, ArchetypeClass.Berserker, TwoHandedBerserkerAffinity * multiplier / FullWeightMultiplier);
             }
             
             // Swords/Axes/Polearms (one-handed melee) suggest Berserker or Tank (if paired with shield)
@@ -1026,7 +1032,7 @@ namespace FiresCore.Npc.Archetypes
                 _equipmentData.SetArchetypeArmorMultiplier(_currentDefinition.GetScaledBonus(_currentDefinition.ArmorMultiplier, level));
                 _equipmentData.SetArchetypeAttackSpeedMultiplier(_currentDefinition.GetScaledBonus(_currentDefinition.AttackSpeedMultiplier, level));
                 _equipmentData.SetArchetypeCrit(
-                    _currentDefinition.CriticalChanceBonus + (level * 0.005f),
+                    _currentDefinition.CriticalChanceBonus + (level * CritChancePerLevel),
                     _currentDefinition.GetScaledBonus(_currentDefinition.CriticalDamageMultiplier, level));
             }
         }
@@ -1053,7 +1059,7 @@ namespace FiresCore.Npc.Archetypes
         {
             if (_combat != null)
             {
-                _combat.blockChance *= blockPriorityMultiplier * 0.8f;
+                _combat.blockChance *= blockPriorityMultiplier * PaladinBlockPriorityScale;
             }
             
             EnsureTankLoadout();
@@ -1086,7 +1092,7 @@ namespace FiresCore.Npc.Archetypes
         {
             if (_combat != null)
             {
-                _combat.attackRange = 18f; // Prefer range
+                _combat.attackRange = RangerAttackRange; // Prefer range
             }
             
             if (VerboseLogging)
@@ -1099,7 +1105,7 @@ namespace FiresCore.Npc.Archetypes
         {
             if (_combat != null)
             {
-                _combat.attackRange = 15f;
+                _combat.attackRange = MageAttackRange;
             }
             
             if (VerboseLogging)
@@ -1202,11 +1208,11 @@ namespace FiresCore.Npc.Archetypes
                         break;
                         
                     case CombatRoleDirector.CombatDirective.HoldPosition:
-                        // Don't chase ï¿½ stay and block
+                        // Don't chase - stay and block
                         break;
                         
                     case CombatRoleDirector.CombatDirective.Regroup:
-                        // Handled by movement system ï¿½ tank should still protect player
+                        // Handled by movement system - tank should still protect player
                         break;
                 }
                 // Still run normal tank logic (taunt cooldown check, intercept) as a fallback
@@ -1246,11 +1252,11 @@ namespace FiresCore.Npc.Archetypes
             var allies = new System.Collections.Generic.List<Character>();
             if (owner != null) allies.Add(owner);
             
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != _companion.ownerPlayerId) continue;
-                var compChar = comp.GetCharacter();
+                if (companion == null || companion.isDefeated) continue;
+                if (companion.ownerPlayerId != _companion.ownerPlayerId) continue;
+                var compChar = companion.GetCharacter();
                 if (compChar != null && !compChar.IsDead())
                 {
                     allies.Add(compChar);
@@ -1524,15 +1530,15 @@ namespace FiresCore.Npc.Archetypes
                 {
                     case CombatRoleDirector.CombatDirective.HealTarget:
                         // TODO: Direct healing to specific target when heal system is implemented
-                        // For now, the directive informs priority ï¿½ CheckAndHealAllies handles it
+                        // For now, the directive informs priority - CheckAndHealAllies handles it
                         break;
                         
                     case CombatRoleDirector.CombatDirective.StayProtected:
-                        // TODO: Position behind tank/player ï¿½ handled by combat movement in Phase 5
+                        // TODO: Position behind tank/player - handled by combat movement in Phase 5
                         break;
                         
                     case CombatRoleDirector.CombatDirective.Regroup:
-                        // Emergency ï¿½ handled by movement system
+                        // Emergency - handled by movement system
                         break;
                 }
             }
@@ -1758,7 +1764,7 @@ namespace FiresCore.Npc.Archetypes
                     break;
                     
                 case CombatRoleDirector.CombatDirective.Regroup:
-                    // Emergency regroup ï¿½ stop chasing and return to player
+                    // Emergency regroup - stop chasing and return to player
                     // Movement system handles the actual repositioning
                     break;
                     
@@ -1882,7 +1888,7 @@ namespace FiresCore.Npc.Archetypes
         
         /// <summary>
         /// Sets the current combat directive from the GroupCombatCoordinator.
-        /// Directives are suggestions ï¿½ if expired or null, archetype falls back to independent behavior.
+        /// Directives are suggestions - if expired or null, archetype falls back to independent behavior.
         /// Called once per coordinator tick (0.3s).
         /// </summary>
         public void SetDirective(CombatRoleDirector.RoleDirective directive)

@@ -6,34 +6,12 @@ using UnityEngine;
 
 namespace FiresCore.Input
 {
-    // Lightweight TEXT-CAPTURE input gate, shared across the Fires mod family.
-    // While any Fires UI text field is focused (or a Fires modal claims input),
-    // this swallows hotkey TRIGGERS so neither vanilla nor other mods act on the
-    // keys you are typing into a Fires field.
-    //
-    // Distinct from FiresCore.UI.InputBlock (the heavy MODAL block that pins the
-    // camera, frees the cursor and gates the minimap/inventory). This one does
-    // NOT touch the camera or cursor — the build menu stays interactive behind a
-    // focused search bar — it only short-circuits input READS:
-    //   * Player.TakeInput                       -> false   (vanilla move/use/attack/hotbar/place)
-    //   * ZInput Get{Button,Key,MouseButton}{Down,Up} -> false
-    //       (other mods' hotkeys routed through Valheim's ZInput layer, plus
-    //        vanilla chat/console open which polls ZInput directly)
-    //   * BepInEx KeyboardShortcut IsDown/IsUp/IsPressed -> false
-    //       (the standard ConfigEntry<KeyboardShortcut> mod-hotkey path — these are
-    //        MANAGED wrappers, so they ARE patchable even though raw Input is not)
-    //
-    // Coverage limit (by design): mods that poll UnityEngine.Input.GetKeyDown
-    // DIRECTLY (not via KeyboardShortcut) cannot be blocked — UnityEngine.Input.* is
-    // an extern native call Harmony can't patch, and that same raw-Input path is what
-    // every Fires UI uses for its own ESC-to-close, so it must stay live. Held-state
-    // reads (GetButton/GetKey/GetMouseButton) and the analog mouse-delta are
-    // intentionally NOT gated so camera/analog UI don't freeze; only the press/release
-    // EDGES (plus the KeyboardShortcut triggers above) are suppressed.
-    //
-    // Usage (refcounted by an opaque token — a window instance or a stable field
-    // key): Acquire(token) when a field gains focus / a modal opens, Release(token)
-    // when it blurs / closes. ReleaseAll() force-clears on teardown.
+    // Text-capture input gate for the Fires family: while a Fires text field is focused or a Fires modal claims
+    // input, hotkey edges are swallowed so neither vanilla nor other mods act on typed keys. It blocks
+    // Player.TakeInput, ZInput's Down/Up reads and BepInEx KeyboardShortcut triggers, but leaves the camera,
+    // cursor, held-state reads and mouse deltas alone. Raw UnityEngine.Input polling cannot be patched and stays
+    // live, which Fires UIs rely on for ESC. Callers Acquire and Release a token; ReleaseAll clears on teardown.
+    // The heavier modal block that pins the camera is FiresCore.UI.InputBlock.
     public static class FiresInputBlock
     {
         private static readonly HashSet<object> _tokens = new HashSet<object>();
@@ -76,7 +54,7 @@ namespace FiresCore.Input
             }
         }
 
-        private static bool Contains(HashSet<MethodBase> set, MethodBase m) => m != null && set.Contains(m);
+        private static bool Contains(HashSet<MethodBase> set, MethodBase candidate) => candidate != null && set.Contains(candidate);
 
         internal static void LogZInputSuppressOnce()
         {
@@ -231,8 +209,8 @@ namespace FiresCore.Input
 
         private static bool IsTextFieldFocused()
         {
-            var es = UnityEngine.EventSystems.EventSystem.current;
-            var go = es != null ? es.currentSelectedGameObject : null;
+            var eventSystem = UnityEngine.EventSystems.EventSystem.current;
+            var go = eventSystem != null ? eventSystem.currentSelectedGameObject : null;
             if (go == null) return false;
 
             bool focused;

@@ -9,26 +9,9 @@ using System.Linq;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Idle sub-behavior that deposits items from companion inventory into nearby chests.
-    /// Triggers automatically when inventory is near capacity or weight limit.
-    /// 
-    /// FLOW:
-    /// 1. Detect that inventory is getting full (slots or weight)
-    /// 2. Scan for nearby chests (within 15m)
-    /// 3. Walk to nearest suitable chest
-    /// 4. SCAN ALL chests within 10m radius of that chest
-    /// 5. Deposit items - STACKING with existing items across ALL nearby chests
-    /// 6. ORGANIZE: Move items between chests to consolidate stacks
-    /// 7. Complete and notify owner via chat
-    /// 
-    /// DEPOSIT PRIORITY:
-    /// 1. Stack with existing items in ANY chest within range (matching items first)
-    /// 2. Materials and resources (always deposit)
-    /// 3. Trophies (deposit to trophy-containing chests)
-    /// 4. Keep equipped items and consumables companion might need
-    /// 
-    /// ORGANIZATION:
-    /// When depositing, also scans nearby chests and consolidates partial stacks.
+    /// Empties a nearly full companion into nearby chests: walks to the nearest suitable chest, deposits across
+    /// every chest in range by stacking onto matching items first, then materials and trophies, keeps equipped
+    /// items and useful consumables, consolidates partial stacks between chests and tells the owner.
     /// </summary>
     public class ChestDepositBehavior : IdleSubBehavior
     {
@@ -44,12 +27,12 @@ namespace FiresCore.Npc.IdleBehaviors
         // Use centralized settings from CompanionSettings
         private float CHEST_DETECTION_RANGE => CompanionSettings.ChestSearchRadius;
         private float CHEST_CLUSTER_RANGE => CompanionSettings.ChestAutoSortRadius;
-        private const float INTERACTION_RANGE = 2.5f;
-        private const float MAX_DEPOSIT_TIME = 90f;  // Increased for organization
+        private const float InteractionRange = 2.5f;
+        private const float MaxDepositTime = 90f;  // Increased for organization
         
         // Thresholds for triggering deposit behavior
-        private const float WEIGHT_THRESHOLD_PERCENT = 0.60f;  // 60% of max carry weight
-        private const float SLOT_THRESHOLD_PERCENT = 0.60f;    // 60% of slots used
+        private const float WeightThresholdPercent = 0.60f;  // 60% of max carry weight
+        private const float SlotThresholdPercent = 0.60f;    // 60% of slots used
         
         // Item types to deposit (materials, trophies, misc resources)
         private static readonly HashSet<ItemDrop.ItemData.ItemType> DepositableTypes = new HashSet<ItemDrop.ItemData.ItemType>
@@ -80,9 +63,9 @@ namespace FiresCore.Npc.IdleBehaviors
         
         // Minimum counts of each essential item type to keep
         // Companions should always keep at least one primary weapon and optionally one ranged
-        private const int MIN_MELEE_WEAPONS_TO_KEEP = 1;
-        private const int MIN_RANGED_WEAPONS_TO_KEEP = 1;
-        private const int MIN_FOOD_STACKS_TO_KEEP = 2;
+        private const int MinMeleeWeaponsToKeep = 1;
+        private const int MinRangedWeaponsToKeep = 1;
+        private const int MinFoodStacksToKeep = 2;
         
         #endregion
         
@@ -141,7 +124,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _zanim = companion.GetComponent<ZSyncAnimation>();
             _rigidbody = companion.GetComponent<Rigidbody>();
             
-            MaxDuration = MAX_DEPOSIT_TIME;
+            MaxDuration = MaxDepositTime;
         }
         
         public override bool CanStart()
@@ -332,7 +315,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float dist = Vector3.Distance(Transform.position, _targetChest.transform.position);
             
-            if (dist < INTERACTION_RANGE)
+            if (dist < InteractionRange)
             {
                 StopMovement();
                 FaceTarget(_targetChest.transform.position);
@@ -519,7 +502,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check weight
             float currentWeight = _inventory.GetTotalWeight();
             float maxWeight = _inventory.GetMaxCarryWeight();
-            if (currentWeight / maxWeight >= WEIGHT_THRESHOLD_PERCENT)
+            if (currentWeight / maxWeight >= WeightThresholdPercent)
             {
                 return true;
             }
@@ -528,7 +511,7 @@ namespace FiresCore.Npc.IdleBehaviors
             int totalSlots = storageInv.GetWidth() * storageInv.GetHeight();
             int emptySlots = storageInv.GetEmptySlots();
             int usedSlots = totalSlots - emptySlots;
-            if ((float)usedSlots / totalSlots >= SLOT_THRESHOLD_PERCENT)
+            if ((float)usedSlots / totalSlots >= SlotThresholdPercent)
             {
                 return true;
             }
@@ -592,14 +575,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 bool isRanged = IsRangedWeapon(item);
                 
-                if (isRanged && rangedCount <= MIN_RANGED_WEAPONS_TO_KEEP)
+                if (isRanged && rangedCount <= MinRangedWeaponsToKeep)
                 {
                     if (CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[ChestDeposit] Keeping ranged weapon {item.m_shared?.m_name} - only have {rangedCount}");
                     return false;
                 }
                 
-                if (!isRanged && meleeCount <= MIN_MELEE_WEAPONS_TO_KEEP)
+                if (!isRanged && meleeCount <= MinMeleeWeaponsToKeep)
                 {
                     if (CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[ChestDeposit] Keeping melee weapon {item.m_shared?.m_name} - only have {meleeCount}");

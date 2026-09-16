@@ -3,28 +3,10 @@ using UnityEngine;
 
 namespace FiresCore.Services
 {
-    // Cross-mod bridge for "give this captured vanilla water material the
-    // custom water look." The shader mod (FiresTossinShade) owns the actual
-    // wrap — it alone knows the FiresWater shader's properties (foam globals,
-    // wind, depth array, underwater tint). Gameplay mods that build custom
-    // water/ice/snow meshes (e.g. FiresAdminTerrain) capture the vanilla water
-    // material and call Wrap() to get the FiresWater-shaded version WITHOUT
-    // referencing the shader mod, its bundle, or its shader.
-    //
-    // Stays a complete no-op until the shader mod registers a wrapper: Wrap()
-    // returns the source material unchanged, so an install WITHOUT the shader
-    // mod renders plain vanilla water (independent install). With the shader
-    // mod present, it registers on load:
-    //
-    //   // shader mod (FiresTossinShade), on load and whenever its toggle flips:
-    //   WaterShaderBridge.Register(FiresWaterShaderLoader.MaybeWrap);
-    //
-    //   // gameplay mod (FiresAdminTerrain), per captured material:
-    //   var mat = WaterShaderBridge.Wrap(capturedVanillaWater);
-    //
-    // Unlike ShaderSwapper/MaterialSwapper (static lookup tables), the wrap is
-    // dynamic — it builds a fresh material from the specific captured instance
-    // handed in — so this is a registered delegate rather than a registry.
+    // Lets gameplay mods that build water, ice or snow meshes get the FiresWater look for a captured vanilla water
+    // material without referencing the shader mod: FiresTossinShade registers a wrap delegate and callers use
+    // Wrap(material). With no delegate registered Wrap returns the material unchanged, so vanilla water renders.
+    // A delegate rather than a lookup table, because each wrap builds a fresh material from the instance passed in.
     public static class WaterShaderBridge
     {
         // Set by the shader mod. Takes a source (captured vanilla) material and

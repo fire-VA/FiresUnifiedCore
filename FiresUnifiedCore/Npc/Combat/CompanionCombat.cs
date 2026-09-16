@@ -8,29 +8,16 @@ using FiresCore.Npc.Archetypes.StatusEffects;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Handles combat mechanics for companion NPCs.
-    /// Manages weapon attacks, armor stats, and combat animations.
-    /// Delegates weapon-specific behavior to WeaponBehavior subclasses.
-    /// Uses CompanionEquipmentData for all equipment information.
-    /// 
-    /// ATTACK COMBOS:
-    /// Weapons with multiple chain levels execute proper combos (swing_0 -> swing_1 -> swing_2).
-    /// Combos reset if too much time passes between attacks.
-    /// 
-    /// SECONDARY ATTACKS:
-    /// Weapons with secondary attacks use them tactically:
-    /// - Target staggered (guaranteed hit)
-    /// - Target blocking (guard break)
-    /// - Random chance for variety
-    /// 
-    /// WEAPON SWAPPING:
-    /// Companions intelligently swap between melee/ranged based on:
-    /// - Target distance and accessibility
-    /// - Elevation differences
-    /// - Combat situation
+    /// Companion combat: attacks, armor and animations, delegating weapon specifics to WeaponBehavior subclasses
+    /// and reading equipment through CompanionEquipmentData. Multi-chain weapons combo until a gap resets them,
+    /// secondary attacks go to staggered or blocking targets and occasionally for variety, and weapons swap
+    /// between melee and ranged by distance, reachability and elevation.
     /// </summary>
     public class CompanionCombat : MonoBehaviour
     {
+        private const float BackstabDotThreshold = 0.2f;
+        private const float BackstabRangeMultiplier = 1.5f;
+
       // ...existing code until after [Header("Debug")] and VerboseLogging...
      [Header("Combat Settings")]
         public float baseAttackCooldown = 2f;
@@ -118,7 +105,7 @@ namespace FiresCore.Npc
         private float _lastSeenThreatTime;
 
         // CompanionAI doesn't need an AI-settings backup the way
-        // MonsterAI did â€” we control every relevant setting directly each
+        // MonsterAI did — we control every relevant setting directly each
         // frame. The original backup fields and the _aiSettingsBackedUp
         // guard were removed in the warnings cleanup pass; BackupAISettings
         // is now a no-op kept for symmetry with the call site.
@@ -433,7 +420,7 @@ if (characterInParent == null)
 
         private void BackupAISettings()
         {
-            // No-op â€” see field-region comment for why.
+            // No-op — see field-region comment for why.
         }
 
         #endregion
@@ -476,7 +463,7 @@ if (characterInParent == null)
         private void UpdateCombat()
         {
             // Throttled equipment checks - don't run every frame
-            if (Time.time - _lastEquipmentChangeCheckTime >= EQUIPMENT_CHECK_INTERVAL)
+            if (Time.time - _lastEquipmentChangeCheckTime >= EquipmentCheckInterval)
             {
                 _lastEquipmentChangeCheckTime = Time.time;
                 // Check if equipment needs refresh (inventory might have changed)
@@ -484,7 +471,7 @@ if (characterInParent == null)
             }
             
             // Throttled weapon selection checks - only check periodically
-            if (Time.time - _lastWeaponCheckTime >= WEAPON_CHECK_INTERVAL)
+            if (Time.time - _lastWeaponCheckTime >= WeaponCheckInterval)
             {
                 _lastWeaponCheckTime = Time.time;
                 // Check if we're using a gathering tool and need to swap to a real weapon
@@ -554,11 +541,11 @@ if (characterInParent == null)
             // We consider "backstab position" as being behind or to the side-rear
             // dot < 0.2 means we're in roughly the back 144 degrees (generous for gameplay)
             // This allows attacks from the side-back, not just directly behind
-            bool isBehind = dot < 0.2f;
+            bool isBehind = dot < BackstabDotThreshold;
             
             // Also check distance - must be close enough to attack
             float dist = Vector3.Distance(transform.position, target.transform.position);
-            bool inRange = dist <= attackRange * 1.5f; // Slightly generous range check
+            bool inRange = dist <= attackRange * BackstabRangeMultiplier; // Slightly generous range check
             
             if (VerboseLogging && IsStealthed())
             {
@@ -570,13 +557,13 @@ if (characterInParent == null)
         
         // Track if we've already logged the unarmed warning for this combat session
         private float _lastUnarmedLogTime;
-        private const float UNARMED_LOG_COOLDOWN = 30f;
+        private const float UnarmedLogCooldown = 30f;
         
         // Throttle timers for weapon selection checks
         private float _lastWeaponCheckTime;
-        private const float WEAPON_CHECK_INTERVAL = 0.5f;
+        private const float WeaponCheckInterval = 0.5f;
         private float _lastEquipmentChangeCheckTime;
-        private const float EQUIPMENT_CHECK_INTERVAL = 0.3f;
+        private const float EquipmentCheckInterval = 0.3f;
         
         /// <summary>
         /// Checks if companion is unarmed but has weapons available in back slots or storage.
@@ -604,7 +591,7 @@ if (characterInParent == null)
             var leftBack = _inventory?.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack);
             
             // Log once every few seconds to avoid spam.
-            bool shouldLog = Time.time - _lastUnarmedLogTime > UNARMED_LOG_COOLDOWN;
+            bool shouldLog = Time.time - _lastUnarmedLogTime > UnarmedLogCooldown;
             if (shouldLog)
             {
                 _lastUnarmedLogTime = Time.time;
@@ -772,10 +759,10 @@ if (characterInParent == null)
                 return;
             }
             
-            // â”€â”€ LAST-RESORT STORAGE SCAN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── LAST-RESORT STORAGE SCAN ──────────────────────────────────────
             // Back slots had nothing usable. Walk the storage inventory and
             // pull the first weapon we find. WeaponSwapManager.ScanStorageInventory
-            // *should* have caught this earlier â€” if we're here it didn't, and
+            // *should* have caught this earlier — if we're here it didn't, and
             // the user has explicitly said "we should always find it." This is
             // the unconditional safety net.
             if (TryEquipFirstWeaponFromStorage()) return;
@@ -792,7 +779,7 @@ if (characterInParent == null)
         /// <summary>
         /// Final fallback when neither WeaponSwapManager nor back slots produced a
         /// weapon: scan storage for any usable weapon and equip it. Returns true if
-        /// something was equipped. Permissive â€” accepts any item that <c>IsWeapon()</c>
+        /// something was equipped. Permissive — accepts any item that <c>IsWeapon()</c>
         /// reports true for, minus shields and gathering tools, minus broken types.
         /// </summary>
         private bool TryEquipFirstWeaponFromStorage()
@@ -847,8 +834,8 @@ if (characterInParent == null)
             if (item?.m_shared == null) return false;
             // Pickaxes are PickAxe item type; harvesting axes are tagged via skill.
             if (item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Tool) return true;
-            string n = item.m_shared.m_name?.ToLowerInvariant() ?? "";
-            if (n.Contains("pickaxe") || n.Contains("hoe") || n.Contains("cultivator")) return true;
+            string itemName = item.m_shared.m_name?.ToLowerInvariant() ?? "";
+            if (itemName.Contains("pickaxe") || itemName.Contains("hoe") || itemName.Contains("cultivator")) return true;
             return false;
         }
         
@@ -1088,15 +1075,15 @@ if (characterInParent == null)
         #region Threat Detection
 
     // Reduced threat range when doing chores/commands - only react to immediate threats
-    private const float COMMAND_MODE_THREAT_RANGE = 5f;
+    private const float CommandModeThreatRange = 5f;
     
     // Relaxed mode threat range - only alert when enemies are close
     // Used for following companions NOT in active combat
     // Set to half of the default threatDetectionRange (30m / 2 = 15m)
-    private const float RELAXED_MODE_THREAT_RANGE = 15f;
+    private const float RelaxedModeThreatRange = 15f;
     
     // Time window to consider "recently damaged" for alert state
-    private const float RECENTLY_DAMAGED_WINDOW = 10f;
+    private const float RecentlyDamagedWindow = 10f;
     
     // Track last damage time for relaxed mode detection
     private float _lastDamageReceivedTime = 0f;
@@ -1129,11 +1116,11 @@ private void UpdateThreatDetection()
     float effectiveThreatRange;
     if (isDoingCommandOrChore)
     {
-        effectiveThreatRange = COMMAND_MODE_THREAT_RANGE;
+        effectiveThreatRange = CommandModeThreatRange;
     }
     else if (isInRelaxedMode)
     {
-        effectiveThreatRange = RELAXED_MODE_THREAT_RANGE;
+        effectiveThreatRange = RelaxedModeThreatRange;
     }
     else
     {
@@ -1197,7 +1184,7 @@ _currentThreat = newThreat;
         }
         
         // If recently damaged, don't use relaxed mode
-        if (Time.time - _lastDamageReceivedTime < RECENTLY_DAMAGED_WINDOW)
+        if (Time.time - _lastDamageReceivedTime < RecentlyDamagedWindow)
         {
             return false;
         }

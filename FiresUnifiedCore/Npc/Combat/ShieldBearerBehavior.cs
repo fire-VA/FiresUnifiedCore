@@ -7,27 +7,10 @@ using FiresCore.Npc.Archetypes;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Combat behavior for shield-bearing tank companions.
-    /// Triggers when companion has a SHIELD equipped (with any one-handed weapon).
-    /// Unlike regular melee which kites and retreats, tanks:
-    /// - Stay close to the action (reduced retreat distance)
-    /// - Hold ground when taunting
-    /// - Prioritize blocking over dodging
-    /// - Only retreat when health is critical AND no healer available
-    /// - Try to stay between enemies and squishier allies
-    /// 
-    /// DETECTION: Companion has Shield in left hand + any weapon in right hand
-    /// 
-    /// TANK POSITIONING PHILOSOPHY:
-    /// - "Center of the group" - stay near the average position of allies
-    /// - "Face the danger" - orient toward the most threatening enemies
-    /// - "Hold the line" - don't retreat unless absolutely necessary
-    /// - "Shield the weak" - intercept threats targeting squishier allies
-    /// 
-    /// MOVEMENT REQUEST SYSTEM:
-    /// Like BowBehavior and StaffBehavior, this behavior fires OnMovementRequested
-    /// events that CompanionCombatMovement subscribes to. This ensures consistent
-    /// movement handling across all weapon types.
+    /// Tank combat for a companion carrying a shield with a one-handed weapon. Unlike regular melee it stays
+    /// in the fight, holds ground while taunting, prefers blocking to dodging, stays between enemies and weaker
+    /// allies, and only retreats at critical health with no healer. Movement goes through OnMovementRequested
+    /// like the other weapon behaviors.
     /// </summary>
     public class ShieldBearerBehavior : MeleeBehavior
     {
@@ -61,23 +44,28 @@ namespace FiresCore.Npc.Combat
         #region Constants
         
         // Tank positioning - closer engagement than other melee
-        private const float OPTIMAL_ENGAGEMENT_RANGE = 2.5f;   // Sweet spot for melee
-        private const float MAX_ENGAGEMENT_RANGE = 4f;         // Start approaching if further
-        private const float MIN_ENGAGEMENT_RANGE = 1.5f;       // Too close, adjust slightly
+        private const float OptimalEngagementRange = 2.5f;   // Sweet spot for melee
+        private const float MaxEngagementRange = 4f;         // Start approaching if further
+        private const float MinEngagementRange = 1.5f;       // Too close, adjust slightly
         
         // Health thresholds for retreat decisions
-        private const float CRITICAL_HEALTH_WITH_HEALER = 0.15f;    // Only retreat at 15% if healer present
-        private const float CRITICAL_HEALTH_NO_HEALER = 0.30f;      // Retreat at 30% if no healer
+        private const float CriticalHealthWithHealer = 0.15f;    // Only retreat at 15% if healer present
+        private const float CriticalHealthNoHealer = 0.30f;      // Retreat at 30% if no healer
         
         // Group positioning
-        private const float MAX_DISTANCE_FROM_GROUP = 15f;     // Don't stray too far from allies
-        private const float INTERCEPTION_TRIGGER_DIST = 8f;    // Distance to ally before intercepting threat
+        private const float MaxDistanceFromGroup = 15f;     // Don't stray too far from allies
+        private const float InterceptionTriggerDist = 8f;    // Distance to ally before intercepting threat
         
         // Timing
-        private const float THREAT_CHECK_INTERVAL = 0.25f;
-        private const float GROUP_CENTER_UPDATE_INTERVAL = 1f;
-        private const float HOLD_GROUND_DURATION = 3f;         // Hold position after taunt
-        
+        private const float ThreatCheckInterval = 0.25f;
+        private const float GroupCenterUpdateInterval = 1f;
+        private const float HoldGroundDuration = 3f;         // Hold position after taunt
+
+        private const float OwnerTargetedThreat = 100f;
+        private const float HealerTargetedThreat = 80f;
+        private const float CompanionTargetedThreat = 50f;
+        private const float RetreatRecoveryHealthMargin = 0.1f;
+
         #endregion
         
         #region State
@@ -104,7 +92,7 @@ namespace FiresCore.Npc.Combat
         // Strafe state
         private int _strafeDirection = 1;
         private float _lastStrafeChange;
-        private const float STRAFE_CHANGE_INTERVAL = 2f;
+        private const float StrafeChangeInterval = 2f;
         
         public static bool VerboseLogging = false;
         
@@ -144,12 +132,12 @@ namespace FiresCore.Npc.Combat
             base.ConfigureAI();
             
             // Tanks prefer closer engagement
-            Context.AttackRange = MAX_ENGAGEMENT_RANGE;
+            Context.AttackRange = MaxEngagementRange;
             
             if (VerboseLogging)
             {
                 Debug.Log($"[ShieldBearerBehavior] Configured for TANK combat: " +
-                    $"engageRange={OPTIMAL_ENGAGEMENT_RANGE}m, hasHealer={_hasHealerInGroup}");
+                    $"engageRange={OptimalEngagementRange}m, hasHealer={_hasHealerInGroup}");
             }
         }
         
@@ -171,7 +159,7 @@ namespace FiresCore.Npc.Combat
             }
             
             // Update group awareness periodically
-            if (Time.time - _lastGroupCenterUpdate >= GROUP_CENTER_UPDATE_INTERVAL)
+            if (Time.time - _lastGroupCenterUpdate >= GroupCenterUpdateInterval)
             {
                 _lastGroupCenterUpdate = Time.time;
                 UpdateGroupAwareness();
@@ -193,7 +181,7 @@ namespace FiresCore.Npc.Combat
             _lastKnownTargetDistance = Vector3.Distance(Context.Transform.position, target.transform.position);
             
             // Check threats
-            if (Time.time - _lastThreatCheck >= THREAT_CHECK_INTERVAL)
+            if (Time.time - _lastThreatCheck >= ThreatCheckInterval)
             {
                 _lastThreatCheck = Time.time;
                 CheckThreatsToAllies();
@@ -222,11 +210,11 @@ namespace FiresCore.Npc.Combat
                     {
                         // Just started taunting - enter hold ground phase
                         SetPhase(TankCombatPhase.HoldingGround);
-                        _tauntEndTime = Time.time + HOLD_GROUND_DURATION;
+                        _tauntEndTime = Time.time + HoldGroundDuration;
                         
                         if (VerboseLogging)
                         {
-                            Debug.Log($"[ShieldBearerBehavior] Taunt started - holding ground for {HOLD_GROUND_DURATION}s");
+                            Debug.Log($"[ShieldBearerBehavior] Taunt started - holding ground for {HoldGroundDuration}s");
                         }
                     }
                 }
@@ -252,19 +240,19 @@ namespace FiresCore.Npc.Combat
             _hasHealerInGroup = false;
             _healerCharacter = null;
             
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var ally in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != companion.ownerPlayerId) continue;
+                if (ally == null || ally.isDefeated) continue;
+                if (ally.ownerPlayerId != companion.ownerPlayerId) continue;
                 
-                var compChar = comp.GetCharacter();
+                var compChar = ally.GetCharacter();
                 if (compChar != null && !compChar.IsDead())
                 {
-                    totalPos += comp.transform.position;
+                    totalPos += ally.transform.position;
                     count++;
                     
                     // Check if this is a healer
-                    var archetypeController = comp.GetComponent<ArchetypeController>();
+                    var archetypeController = ally.GetComponent<ArchetypeController>();
                     if (archetypeController?.CurrentArchetypeClass == ArchetypeClass.Healer)
                     {
                         _hasHealerInGroup = true;
@@ -332,7 +320,7 @@ namespace FiresCore.Npc.Combat
                     if (aiTarget != Context.Character)
                     {
                         float distToTarget = Vector3.Distance(aiTarget.transform.position, character.transform.position);
-                        if (distToTarget < INTERCEPTION_TRIGGER_DIST)
+                        if (distToTarget < InterceptionTriggerDist)
                         {
                             _interceptionTarget = aiTarget as Character;
                         }
@@ -347,7 +335,7 @@ namespace FiresCore.Npc.Combat
             
             // Check health for tactical retreat
             float healthPercent = Context.Character?.GetHealthPercentage() ?? 1f;
-            float criticalThreshold = _hasHealerInGroup ? CRITICAL_HEALTH_WITH_HEALER : CRITICAL_HEALTH_NO_HEALER;
+            float criticalThreshold = _hasHealerInGroup ? CriticalHealthWithHealer : CriticalHealthNoHealer;
             
             if (healthPercent < criticalThreshold && _currentPhase != TankCombatPhase.TacticalRetreat)
             {
@@ -403,12 +391,12 @@ namespace FiresCore.Npc.Combat
             }
             
             // Standard tank engagement
-            if (_lastKnownTargetDistance > MAX_ENGAGEMENT_RANGE)
+            if (_lastKnownTargetDistance > MaxEngagementRange)
             {
                 SetPhase(TankCombatPhase.Approaching);
                 RequestMovement(MovementRequest.Approach, GetDirectionToTarget(target));
             }
-            else if (_lastKnownTargetDistance <= OPTIMAL_ENGAGEMENT_RANGE)
+            else if (_lastKnownTargetDistance <= OptimalEngagementRange)
             {
                 SetPhase(TankCombatPhase.Engaging);
                 RequestMovement(MovementRequest.Stop, Vector3.zero);
@@ -423,7 +411,7 @@ namespace FiresCore.Npc.Combat
         
         private void UpdateApproaching(Character target)
         {
-            if (_lastKnownTargetDistance <= OPTIMAL_ENGAGEMENT_RANGE)
+            if (_lastKnownTargetDistance <= OptimalEngagementRange)
             {
                 SetPhase(TankCombatPhase.Engaging);
                 RequestMovement(MovementRequest.Stop, Vector3.zero);
@@ -438,7 +426,7 @@ namespace FiresCore.Npc.Combat
             // Tanks hold position and fight
             // Only move for slight repositioning or to maintain engagement
             
-            if (_lastKnownTargetDistance > MAX_ENGAGEMENT_RANGE)
+            if (_lastKnownTargetDistance > MaxEngagementRange)
             {
                 // Target moved away - follow
                 SetPhase(TankCombatPhase.Approaching);
@@ -446,7 +434,7 @@ namespace FiresCore.Npc.Combat
                 return;
             }
             
-            if (_lastKnownTargetDistance < MIN_ENGAGEMENT_RANGE)
+            if (_lastKnownTargetDistance < MinEngagementRange)
             {
                 // Too close - slight strafe to adjust
                 UpdateStrafeDirection();
@@ -490,7 +478,7 @@ namespace FiresCore.Npc.Combat
             
             float distToThreat = Vector3.Distance(Context.Transform.position, _mostThreateningEnemy.transform.position);
             
-            if (distToThreat <= OPTIMAL_ENGAGEMENT_RANGE)
+            if (distToThreat <= OptimalEngagementRange)
             {
                 // Reached interception target - engage
                 SetPhase(TankCombatPhase.Engaging);
@@ -559,14 +547,14 @@ namespace FiresCore.Npc.Combat
         {
             if (target == null) return Context.Transform.position;
             
-            // Ideal position: OPTIMAL_ENGAGEMENT_RANGE from target, toward group center
+            // Ideal position: OptimalEngagementRange from target, toward group center
             Vector3 dirFromTargetToGroup = (_groupCenterPosition - target.transform.position).normalized;
             if (dirFromTargetToGroup == Vector3.zero)
             {
                 dirFromTargetToGroup = -target.transform.forward;
             }
             
-            return target.transform.position + dirFromTargetToGroup * OPTIMAL_ENGAGEMENT_RANGE;
+            return target.transform.position + dirFromTargetToGroup * OptimalEngagementRange;
         }
         
         #endregion
@@ -575,7 +563,7 @@ namespace FiresCore.Npc.Combat
         
         private void UpdateStrafeDirection()
         {
-            if (Time.time - _lastStrafeChange > STRAFE_CHANGE_INTERVAL)
+            if (Time.time - _lastStrafeChange > StrafeChangeInterval)
             {
                 _strafeDirection = Random.value > 0.5f ? 1 : -1;
                 _lastStrafeChange = Time.time;
@@ -631,7 +619,7 @@ namespace FiresCore.Npc.Combat
         /// </summary>
         public float GetPreferredRange()
         {
-            return OPTIMAL_ENGAGEMENT_RANGE;
+            return OptimalEngagementRange;
         }
         
         /// <summary>
@@ -650,7 +638,7 @@ namespace FiresCore.Npc.Combat
         public void OnTauntStarted()
         {
             _isTaunting = true;
-            _tauntEndTime = Time.time + HOLD_GROUND_DURATION;
+            _tauntEndTime = Time.time + HoldGroundDuration;
             SetPhase(TankCombatPhase.HoldingGround);
         }
         

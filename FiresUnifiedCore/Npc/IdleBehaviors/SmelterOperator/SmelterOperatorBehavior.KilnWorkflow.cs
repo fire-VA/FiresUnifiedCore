@@ -42,7 +42,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float dist = Vector3.Distance(Transform.position, _nearbyKiln.transform.position);
             
-            if (dist < INTERACTION_DISTANCE)
+            if (dist < InteractionDistance)
             {
                 StopMovement();
                 
@@ -206,7 +206,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // CRITICAL: Lock movement during waiting to prevent jitter from AI systems
             if (_combatMovement != null && !_combatMovement.IsMovementLocked)
             {
-                _combatMovement.LockMovement("SmelterOperator_WaitingForKilnOutput", OUTPUT_WAIT_TIME + 5f);
+                _combatMovement.LockMovement("SmelterOperator_WaitingForKilnOutput", OutputWaitTime + 5f);
             }
             
             StopMovement();
@@ -218,7 +218,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // IMPORTANT: Check for smelter output periodically during kiln workflow
             // This prevents ignoring smelter output while tending the kiln
-            if (_primarySmelter != null && Time.time - _lastSmelterOutputCheck >= SMELTER_OUTPUT_CHECK_INTERVAL)
+            if (_primarySmelter != null && Time.time - _lastSmelterOutputCheck >= SmelterOutputCheckInterval)
             {
                 _lastSmelterOutputCheck = Time.time;
                 
@@ -261,7 +261,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Periodically check if kiln is done
-            if (Time.time - _lastOperationCheck >= OPERATION_CHECK_INTERVAL)
+            if (Time.time - _lastOperationCheck >= OperationCheckInterval)
             {
                 _lastOperationCheck = Time.time;
                 
@@ -300,7 +300,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // FAILSAFE: Timeout - don't wait forever
-            if (Time.time - _phaseStartTime > OUTPUT_WAIT_TIME)
+            if (Time.time - _phaseStartTime > OutputWaitTime)
             {
                 if (CompanionIdleBehavior.VerboseLogging)
                     Debug.Log($"[SmelterOperator] Kiln wait timeout - forcing collection check");
@@ -360,7 +360,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 float dist = Vector3.Distance(Transform.position, _currentPickupTargetPosition);
                 
-                if (dist > PICKUP_DISTANCE)
+                if (dist > PickupDistance)
                 {
                     // CRITICAL FIX (Bug #11): Continue movement every frame!
                     TryMoveToPosition(_currentPickupTargetPosition, walk: true, run: false);
@@ -459,12 +459,12 @@ namespace FiresCore.Npc.IdleBehaviors
             float dist = Vector3.Distance(Transform.position, smelterPos);
             
             // CRITICAL FIX (Bug #11): Continue movement every frame!
-            if (dist > INTERACTION_DISTANCE)
+            if (dist > InteractionDistance)
             {
                 TryMoveToPosition(smelterPos, walk: true, run: false);
             }
             
-            if (dist < INTERACTION_DISTANCE)
+            if (dist < InteractionDistance)
             {
                 StopMovement();
                 

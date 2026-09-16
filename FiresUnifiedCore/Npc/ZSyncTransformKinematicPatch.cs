@@ -4,19 +4,10 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Vanilla <see cref="ZSyncTransform"/> caches whether its Rigidbody is kinematic ONCE at init
-    /// (<c>m_isKinematicBody = m_body.isKinematic</c>) and never refreshes it. A body's kinematic state,
-    /// however, changes at runtime: vanilla <c>Character</c> flips <c>m_body.isKinematic = true</c> for
-    /// sleeping creatures (the <c>m_disableWhileSleeping</c> optimisation) and companion code toggles it for
-    /// defeat / teleport. Once a body goes kinematic while the cache still reads <c>false</c>, the non-owner
-    /// <c>ClientSync</c> path keeps writing <c>linearVelocity</c>/<c>angularVelocity</c> to it every
-    /// FixedUpdate, which Unity rejects with "Setting linear/angular velocity of a kinematic body is not
-    /// supported" — one pair per tick, on every non-owner machine (client and non-owner server), indefinitely.
-    ///
-    /// Refreshing the cached flag from the live body before each sync makes ClientSync take vanilla's own
-    /// kinematic branch (<c>MovePosition</c>/<c>MoveRotation</c>), which drives the body correctly with no
-    /// velocity writes. The field is meant to track the body state, so this is strictly more correct than the
-    /// stale cache and applies to every entity — it also closes the same latent case for vanilla sleepers.
+    /// Refreshes ZSyncTransform's cached kinematic flag from the live body before each ClientSync. Vanilla caches it
+    /// once at init, but bodies turn kinematic at runtime (sleeping creatures, companion defeat and teleport), and
+    /// the stale flag made non-owners write velocities to kinematic bodies every tick, which Unity rejects with a
+    /// warning. With the live flag, vanilla takes its own kinematic MovePosition path.
     /// </summary>
     [HarmonyPatch(typeof(ZSyncTransform), "ClientSync")]
     internal static class ZSyncTransformKinematicRefreshPatch

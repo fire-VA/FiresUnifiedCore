@@ -17,14 +17,14 @@ namespace FiresCore.Storage
             try
             {
                 using var db = VaultDatabase.Open();
-                var col = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId);
-                col.EnsureIndex(x => x.Owner);
+                var collection = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId);
+                collection.EnsureIndex(x => x.Owner);
 
-                var entry = col.FindOne(e => e.Owner == ownerKey);
+                var entry = collection.FindOne(e => e.Owner == ownerKey);
                 if (entry != null) return entry;
 
                 entry = new LeaderboardEntry { Owner = ownerKey, PlayerName = playerName };
-                col.Insert(entry);
+                collection.Insert(entry);
                 return entry;
             }
             catch (Exception ex)
@@ -234,13 +234,13 @@ namespace FiresCore.Storage
                 int current = ReadSeasonMeta(db);
                 if (season >= current)
                 {
-                    foreach (var e in db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId).FindAll())
-                        all[e.Owner] = e;
+                    foreach (var entry in db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId).FindAll())
+                        all[entry.Owner] = entry;
                 }
                 else
                 {
-                    foreach (var e in db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardArchiveCollection, BsonAutoId.ObjectId).Find(x => x.Season == season))
-                        all[e.Owner] = e;
+                    foreach (var entry in db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardArchiveCollection, BsonAutoId.ObjectId).Find(x => x.Season == season))
+                        all[entry.Owner] = entry;
                 }
             }
             catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} GetSeasonEntries failed: {ex.Message}"); }
@@ -253,51 +253,51 @@ namespace FiresCore.Storage
         /// the merged dictionaries exactly like a single season.</summary>
         public static Dictionary<string, LeaderboardEntry> GetOverallEntries()
         {
-            var agg = new Dictionary<string, LeaderboardEntry>();
+            var merged = new Dictionary<string, LeaderboardEntry>();
             try
             {
                 using var db = VaultDatabase.Open();
                 var live = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId).FindAll();
                 var archived = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardArchiveCollection, BsonAutoId.ObjectId).FindAll();
-                foreach (var e in live.Concat(archived))
+                foreach (var entry in live.Concat(archived))
                 {
-                    if (e == null || string.IsNullOrEmpty(e.Owner)) continue;
-                    if (!agg.TryGetValue(e.Owner, out var acc))
+                    if (entry == null || string.IsNullOrEmpty(entry.Owner)) continue;
+                    if (!merged.TryGetValue(entry.Owner, out var acc))
                     {
-                        acc = new LeaderboardEntry { Owner = e.Owner, PlayerName = e.PlayerName };
-                        agg[e.Owner] = acc;
+                        acc = new LeaderboardEntry { Owner = entry.Owner, PlayerName = entry.PlayerName };
+                        merged[entry.Owner] = acc;
                     }
-                    if (!string.IsNullOrEmpty(e.PlayerName)) acc.PlayerName = e.PlayerName;
-                    MergeInto(acc, e);
+                    if (!string.IsNullOrEmpty(entry.PlayerName)) acc.PlayerName = entry.PlayerName;
+                    MergeInto(acc, entry);
                 }
             }
             catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} GetOverallEntries failed: {ex.Message}"); }
-            return agg;
+            return merged;
         }
 
-        private static void MergeInto(LeaderboardEntry acc, LeaderboardEntry e)
+        private static void MergeInto(LeaderboardEntry acc, LeaderboardEntry entry)
         {
-            MergeDict(acc.KilledCreatures, e.KilledCreatures);
-            MergeDict(acc.BuiltStructures, e.BuiltStructures);
-            MergeDict(acc.ItemsCrafted, e.ItemsCrafted);
-            MergeDict(acc.KilledBy, e.KilledBy);
-            MergeDict(acc.Harvested, e.Harvested);
-            MergeDict(acc.WeaponKills, e.WeaponKills);
-            MergeDict(acc.BiomesReached, e.BiomesReached);
-            acc.DeathAmount += e.DeathAmount;
-            acc.Tamed += e.Tamed;
-            acc.Terraformed += e.Terraformed;
-            acc.Cultivated += e.Cultivated;
-            if (e.MapExplored > acc.MapExplored) acc.MapExplored = e.MapExplored;
-            if (e.Skills != null)
-                foreach (var kv in e.Skills)
-                    if (!acc.Skills.TryGetValue(kv.Key, out var cur) || kv.Value > cur) acc.Skills[kv.Key] = kv.Value;
+            MergeDict(acc.KilledCreatures, entry.KilledCreatures);
+            MergeDict(acc.BuiltStructures, entry.BuiltStructures);
+            MergeDict(acc.ItemsCrafted, entry.ItemsCrafted);
+            MergeDict(acc.KilledBy, entry.KilledBy);
+            MergeDict(acc.Harvested, entry.Harvested);
+            MergeDict(acc.WeaponKills, entry.WeaponKills);
+            MergeDict(acc.BiomesReached, entry.BiomesReached);
+            acc.DeathAmount += entry.DeathAmount;
+            acc.Tamed += entry.Tamed;
+            acc.Terraformed += entry.Terraformed;
+            acc.Cultivated += entry.Cultivated;
+            if (entry.MapExplored > acc.MapExplored) acc.MapExplored = entry.MapExplored;
+            if (entry.Skills != null)
+                foreach (var kv in entry.Skills)
+                    if (!acc.Skills.TryGetValue(kv.Key, out var existing) || kv.Value > existing) acc.Skills[kv.Key] = kv.Value;
         }
 
         private static void MergeDict(Dictionary<string, int> into, Dictionary<string, int> from)
         {
             if (into == null || from == null) return;
-            foreach (var kv in from) { into.TryGetValue(kv.Key, out int cur); into[kv.Key] = cur + kv.Value; }
+            foreach (var kv in from) { into.TryGetValue(kv.Key, out int existing); into[kv.Key] = existing + kv.Value; }
         }
 
         private static void Mutate(string ownerKey, string playerName, Action<LeaderboardEntry> mutate)
@@ -306,21 +306,21 @@ namespace FiresCore.Storage
             try
             {
                 using var db = VaultDatabase.Open();
-                var col = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId);
-                col.EnsureIndex(x => x.Owner);
+                var collection = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId);
+                collection.EnsureIndex(x => x.Owner);
 
-                var entry = col.FindOne(e => e.Owner == ownerKey);
+                var entry = collection.FindOne(e => e.Owner == ownerKey);
                 if (entry == null)
                 {
                     entry = new LeaderboardEntry { Owner = ownerKey, PlayerName = playerName };
                     mutate(entry);
-                    col.Insert(entry);
+                    collection.Insert(entry);
                 }
                 else
                 {
                     if (!string.IsNullOrEmpty(playerName)) entry.PlayerName = playerName;
                     mutate(entry);
-                    col.Update(entry);
+                    collection.Update(entry);
                 }
             }
             catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} Mutate failed: {ex.Message}"); }

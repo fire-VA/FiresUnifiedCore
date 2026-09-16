@@ -7,30 +7,9 @@ using FiresCore.Lifecycle;
 namespace FiresCore.Npc.Vault
 {
     /// <summary>
-    /// Read/write helpers for the per-player companion roster stored on
-    /// <c>Player.m_customData</c>. This is the single point of contact
-    /// for the new save layer; nothing outside this class should touch
-    /// the underlying customData key directly.
-    /// 
-    /// THREADING
-    /// ---------
-    /// All methods run on the Unity main thread (where Player /
-    /// m_customData live). No locking ï¿½ single-threaded callers.
-    /// 
-    /// PHASE 1 STATUS
-    /// --------------
-    /// This class is delivered without any production call sites. Tests
-    /// and Phase 3+ glue code will add callers. Until then it is dead
-    /// code that compiles cleanly and ships safely alongside the existing
-    /// vault flow.
-    /// 
-    /// FAILURE MODE
-    /// ------------
-    /// Any I/O failure (corrupt JSON, schema version we don't recognise,
-    /// missing player) is logged at Warning and degrades to "no roster
-    /// stored". Callers that need to distinguish "no entry" from "couldn't
-    /// read" should use <see cref="TryGetRoster"/> which returns false on
-    /// the latter; the convenience methods auto-coerce to empty.
+    /// The only code that touches the companion roster key in Player.m_customData. Main thread only. A read
+    /// failure (corrupt JSON, unknown schema, missing player) is logged and treated as no roster;
+    /// <see cref="TryGetRoster"/> returns false for it when a caller needs to tell the two apart.
     /// </summary>
     public static class PlayerCompanionStorage
     {
@@ -43,6 +22,7 @@ namespace FiresCore.Npc.Vault
         public const string CustomDataKey = "FiresRPGmaker_CompanionRoster_v1";
 
         private const string LogPrefix = "[PlayerCompanionStorage]";
+        private const float SpawnGateTimeoutSeconds = 30f;
 
         /// <summary>
         /// Diagnostic flag. Set to true at runtime via debug commands to
@@ -51,7 +31,7 @@ namespace FiresCore.Npc.Vault
         /// </summary>
         public static bool VerboseLogging = false;
 
-        // ?????????????????????????????? READ ??????????????????????????????
+        // READ
 
         /// <summary>
         /// Reads the roster from the player's customData.
@@ -110,11 +90,11 @@ namespace FiresCore.Npc.Vault
         /// <summary>
         /// Convenience read that returns an empty roster on any failure.
         /// Use when you don't care about distinguishing "no data" from
-        /// "couldn't read data" ï¿½ most call sites just want a usable list.
+        /// "couldn't read data" - most call sites just want a usable list.
         /// </summary>
         public static PlayerCompanionRoster GetRosterOrEmpty(Player player)
         {
-            return TryGetRoster(player, out var r) ? r : NewEmpty();
+            return TryGetRoster(player, out var roster) ? roster : NewEmpty();
         }
 
         /// <summary>
@@ -132,21 +112,21 @@ namespace FiresCore.Npc.Vault
 
         /// <summary>
         /// Finds the entry inside an already-read roster. O(n) over the
-        /// entries list, which is fine for typical sizes (? 50).
+        /// entries list, which is fine for typical sizes (up to 50).
         /// </summary>
         public static PlayerCompanionRosterEntry FindEntry(PlayerCompanionRoster roster, string companionId)
         {
             if (roster == null || roster.Entries == null || string.IsNullOrEmpty(companionId)) return null;
             for (int i = 0; i < roster.Entries.Count; i++)
             {
-                var e = roster.Entries[i];
-                if (e != null && string.Equals(e.CompanionId, companionId, StringComparison.Ordinal))
-                    return e;
+                var entry = roster.Entries[i];
+                if (entry != null && string.Equals(entry.CompanionId, companionId, StringComparison.Ordinal))
+                    return entry;
             }
             return null;
         }
 
-        // ?????????????????????????????? WRITE ?????????????????????????????
+        // WRITE
 
         /// <summary>
         /// Saves the roster back to the player's customData.
@@ -157,7 +137,7 @@ namespace FiresCore.Npc.Vault
         {
             if (player == null || roster == null) return false;
 
-            // Defence in depth ï¿½ never serialise a roster with an out-of-band
+            // Defence in depth - never serialise a roster with an out-of-band
             // schema version. Always force-stamp the current version on write.
             roster.SchemaVersion = PlayerCompanionRoster.CurrentSchemaVersion;
             if (roster.Entries == null) roster.Entries = new List<PlayerCompanionRosterEntry>();
@@ -175,12 +155,12 @@ namespace FiresCore.Npc.Vault
 
             // Defer the write through the spawn gate so a roster save during the
             // player's respawn / teleport teardown doesn't race engine teardown.
-            // Return value reflects serialise success only â€” the actual write may
+            // Return value reflects serialise success only — the actual write may
             // run a frame later.
             string capturedJson = json;
             int entryCount = roster.Entries.Count;
             string playerName = SafePlayerName(player);
-            PlayerSpawnGate.RunWhenReady(player, 30f, p =>
+            PlayerSpawnGate.RunWhenReady(player, SpawnGateTimeoutSeconds, p =>
             {
                 try
                 {
@@ -203,7 +183,7 @@ namespace FiresCore.Npc.Vault
         /// <see cref="PlayerCompanionRosterEntry.LastUpdatedUtcTicks"/>
         /// to <c>DateTime.UtcNow</c>.
         /// 
-        /// Reads + writes the full roster ï¿½ fine for ? 50 entries; bulk
+        /// Reads + writes the full roster - fine for up to 50 entries; bulk
         /// operations should call <see cref="SaveRoster"/> directly with a
         /// pre-mutated roster.
         /// </summary>
@@ -215,7 +195,7 @@ namespace FiresCore.Npc.Vault
 
             // Contract: pending-respawn entries MUST carry a snapshot. If
             // we're asked to upsert one without a snapshot, that's a bug
-            // in the caller ï¿½ log loudly and refuse rather than allowing
+            // in the caller - log loudly and refuse rather than allowing
             // a structurally-invalid entry to be persisted.
             if (entry.IsPendingRespawn && entry.Snapshot == null)
             {
@@ -230,8 +210,8 @@ namespace FiresCore.Npc.Vault
             int existingIndex = -1;
             for (int i = 0; i < roster.Entries.Count; i++)
             {
-                var e = roster.Entries[i];
-                if (e != null && string.Equals(e.CompanionId, entry.CompanionId, StringComparison.Ordinal))
+                var existing = roster.Entries[i];
+                if (existing != null && string.Equals(existing.CompanionId, entry.CompanionId, StringComparison.Ordinal))
                 {
                     existingIndex = i;
                     break;
@@ -260,13 +240,13 @@ namespace FiresCore.Npc.Vault
             int removed = 0;
             for (int i = roster.Entries.Count - 1; i >= 0; i--)
             {
-                var e = roster.Entries[i];
+                var entry = roster.Entries[i];
                 // Remove null tombstone entries OR entries whose ID matches.
                 // Previously the condition was `e == null || string.Equals(...)`,
-                // which is equivalent ï¿½ but keeping them separate makes intent clear
+                // which is equivalent - but keeping them separate makes intent clear
                 // and avoids any future short-circuit confusion.
-                bool isNull = e == null;
-                bool idMatch = !isNull && string.Equals(e.CompanionId, companionId, StringComparison.Ordinal);
+                bool isNull = entry == null;
+                bool idMatch = !isNull && string.Equals(entry.CompanionId, companionId, StringComparison.Ordinal);
                 if (isNull || idMatch)
                 {
                     roster.Entries.RemoveAt(i);
@@ -279,7 +259,7 @@ namespace FiresCore.Npc.Vault
             return SaveRoster(player, roster);
         }
 
-        // ?????????????????????????????? HELPERS ???????????????????????????
+        // HELPERS
 
         /// <summary>
         /// Resolves the world UID of the currently-loaded server, or 0 if
@@ -310,7 +290,7 @@ namespace FiresCore.Npc.Vault
         {
             if (entry == null) return false;
             long current = GetCurrentServerWorldUid();
-            // 0 means "current server unknown" ï¿½ be permissive in that
+            // 0 means "current server unknown" - be permissive in that
             // case so single-player or pre-network-ready spawns aren't
             // accidentally denied. The wrong-server check kicks in only
             // when both sides are known.
@@ -327,9 +307,9 @@ namespace FiresCore.Npc.Vault
             };
         }
 
-        private static string SafePlayerName(Player p)
+        private static string SafePlayerName(Player player)
         {
-            try { return p != null ? (p.GetPlayerName() ?? "<null-name>") : "<null-player>"; }
+            try { return player != null ? (player.GetPlayerName() ?? "<null-name>") : "<null-player>"; }
             catch { return "<player-name-throw>"; }
         }
     }

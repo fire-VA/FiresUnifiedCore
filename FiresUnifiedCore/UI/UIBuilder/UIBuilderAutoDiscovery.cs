@@ -35,7 +35,7 @@ namespace FiresCore.UI
     {
         private static List<DiscoveredUITarget> _lastDiscovery;
 
-        // Names of our editor canvases — always excluded from discovery
+        // Names of our editor canvases â€” always excluded from discovery
         private static readonly HashSet<string> EditorCanvasNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "UIBuilder_Workspace",
@@ -61,7 +61,7 @@ namespace FiresCore.UI
             "assembly_googleanalytics"
         };
 
-        // Unity engine assembly prefixes — always ignored for source detection
+        // Unity engine assembly prefixes â€” always ignored for source detection
         private static readonly string[] UnityAssemblyPrefixes =
         {
             "UnityEngine",
@@ -176,9 +176,9 @@ namespace FiresCore.UI
             // Sort: Ours first, then Vanilla, then Modded. Within each group, sort by name.
             results.Sort((a, b) =>
             {
-                int catA = CategoryOrder(a.SourceCategory);
-                int catB = CategoryOrder(b.SourceCategory);
-                if (catA != catB) return catA.CompareTo(catB);
+                int categoryA = CategoryOrder(a.SourceCategory);
+                int categoryB = CategoryOrder(b.SourceCategory);
+                if (categoryA != categoryB) return categoryA.CompareTo(categoryB);
                 return string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase);
             });
 
@@ -206,18 +206,18 @@ namespace FiresCore.UI
 
             for (int i = 0; i < components.Length; i++)
             {
-                var comp = components[i];
-                if (comp == null) continue;
+                var behaviour = components[i];
+                if (behaviour == null) continue;
 
-                Type compType = comp.GetType();
-                string ns = compType.Namespace ?? "";
+                Type compType = behaviour.GetType();
+                string componentNamespace = compType.Namespace ?? "";
                 string asmName = compType.Assembly?.GetName()?.Name ?? "";
 
                 // Skip Unity engine types
                 if (IsUnityAssembly(asmName)) continue;
 
                 // Check for our namespace
-                if (ns.StartsWith("VerdantsAscent", StringComparison.OrdinalIgnoreCase))
+                if (componentNamespace.StartsWith("VerdantsAscent", StringComparison.OrdinalIgnoreCase))
                 {
                     foundOurs = true;
                     break; // Our mod takes priority
@@ -269,7 +269,7 @@ namespace FiresCore.UI
             }
             else
             {
-                // No MonoBehaviours found — check GO name against known vanilla names
+                // No MonoBehaviours found â€” check GO name against known vanilla names
                 if (VanillaRootNames.Contains(root.name))
                 {
                     category = "Vanilla";
@@ -283,18 +283,9 @@ namespace FiresCore.UI
         }
 
         /// <summary>
-        /// Checks if a sprite should be cached to disk during capture.
-        /// Used to decide whether to clone the sprite's pixels to a PNG file.
-        ///
-        /// Strategy: Cache ALL sprites except Unity built-in ones that are guaranteed
-        /// to always be available at runtime. This is intentionally aggressive because:
-        /// - Mods like Azumatt's Minimal UI replace vanilla sprites with custom ones
-        /// - We cannot reliably distinguish vanilla sprites from modded replacements
-        /// - At render time, the original mod may not be loaded, so FindLoadedSprite fails
-        /// - Caching a few extra PNGs is harmless; missing a sprite breaks the layout
-        ///
-        /// The only sprites we skip are Unity's built-in UI sprites (UISprite, Background,
-        /// Checkmark, etc.) which are always present in every Unity application.
+        /// Whether a captured sprite should be cached to disk. Everything except Unity's built-in UI sprites is: a
+        /// modded replacement can't be told apart from vanilla, and a missing sprite breaks a layout while an extra
+        /// PNG costs nothing.
         /// </summary>
         public static bool IsSpriteFromMod(Sprite sprite)
         {
@@ -303,7 +294,7 @@ namespace FiresCore.UI
             string name = sprite.name;
             if (string.IsNullOrEmpty(name)) return false;
 
-            // Known Unity built-in sprite names — always available in every Unity app, never need caching
+            // Known Unity built-in sprite names â€” always available in every Unity app, never need caching
             if (name == "UISprite" || name == "Background" || name == "InputFieldBackground" ||
                 name == "Checkmark" || name == "Knob" || name == "UIMask" ||
                 name == "UISpriteLegacy" || name == "DropdownArrow" || name == "UnitySplash")
@@ -315,7 +306,7 @@ namespace FiresCore.UI
             if (ours != null && ours == sprite)
                 return false;
 
-            // Cache everything else — vanilla Valheim sprites, modded sprites, all of it.
+            // Cache everything else â€” vanilla Valheim sprites, modded sprites, all of it.
             // Mods can replace vanilla sprites at runtime (e.g., Minimal UI replacing HUD icons),
             // and we cannot tell the difference between the original and the replacement.
             // At render/preview time the mod may not be loaded, so we must have the pixels on disk.
@@ -351,9 +342,7 @@ namespace FiresCore.UI
             return false;
         }
 
-        // ???????????????????????????????????????
         //  Helpers
-        // ???????????????????????????????????????
 
         private static bool IsUnityAssembly(string assemblyName)
         {
@@ -372,24 +361,24 @@ namespace FiresCore.UI
             return root != null ? root.gameObject.GetInstanceID() : canvas.gameObject.GetInstanceID();
         }
 
-        private static int CountRectTransformChildren(Transform t)
+        private static int CountRectTransformChildren(Transform root)
         {
             int count = 0;
-            for (int i = 0; i < t.childCount; i++)
+            for (int i = 0; i < root.childCount; i++)
             {
-                if (t.GetChild(i).GetComponent<RectTransform>() != null)
+                if (root.GetChild(i).GetComponent<RectTransform>() != null)
                     count++;
             }
             return count;
         }
 
-        private static int EstimateTotalNodes(Transform t, int maxDepth)
+        private static int EstimateTotalNodes(Transform root, int maxDepth)
         {
             if (maxDepth <= 0) return 1;
             int count = 1;
-            for (int i = 0; i < t.childCount; i++)
+            for (int i = 0; i < root.childCount; i++)
             {
-                var child = t.GetChild(i);
+                var child = root.GetChild(i);
                 if (child.GetComponent<RectTransform>() != null)
                     count += EstimateTotalNodes(child, maxDepth - 1);
             }
@@ -400,12 +389,12 @@ namespace FiresCore.UI
         {
             if (go == null) return "";
             string path = go.name;
-            var t = go.transform.parent;
+            var parent = go.transform.parent;
             int depth = 0;
-            while (t != null && depth < 5)
+            while (parent != null && depth < 5)
             {
-                path = t.name + "/" + path;
-                t = t.parent;
+                path = parent.name + "/" + path;
+                parent = parent.parent;
                 depth++;
             }
             return path;

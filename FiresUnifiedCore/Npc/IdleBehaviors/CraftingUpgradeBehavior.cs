@@ -8,24 +8,8 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Handles companion auto-upgrading of their own equipment at workbenches.
-    /// When idle near a workbench with sufficient materials, companion will upgrade their gear.
-    /// 
-    /// FEATURES:
-    /// - Scans companion's equipped items for possible upgrades
-    /// - Checks companion's storage inventory for required materials
-    /// - Upgrades equipment at appropriate crafting station
-    /// - Notifies owner when upgrades are completed
-    /// 
-    /// REQUIREMENTS:
-    /// - Must be near appropriate crafting station (workbench, forge, etc.)
-    /// - Must have upgrade materials in storage inventory
-    /// - Equipment must not be at max level
-    /// 
-    /// PRIORITY:
-    /// 1. Weapons (most important for combat effectiveness)
-    /// 2. Armor (protection)
-    /// 3. Tools (utility)
+    /// Upgrades the companion's own gear at a suitable station when its storage holds the materials, weapons
+    /// first, then armor, then tools, and tells the owner.
     /// </summary>
     public class CraftingUpgradeBehavior : IdleSubBehavior
     {
@@ -33,13 +17,13 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float WORKSTATION_DETECTION_RANGE = 8f;
-        private const float INTERACTION_DISTANCE = 2f;
-        private const float UPGRADE_ANIMATION_DURATION = 2f;
-        private const float MAX_UPGRADE_TIME = 60f;
+        private const float WorkstationDetectionRange = 8f;
+        private const float InteractionDistance = 2f;
+        private const float UpgradeAnimationDuration = 2f;
+        private const float MaxUpgradeTime = 60f;
         
         // Chance to attempt upgrade when conditions are met
-        private const float UPGRADE_ATTEMPT_CHANCE = 0.3f;
+        private const float UpgradeAttemptChance = 0.3f;
         
         #endregion
         
@@ -90,7 +74,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _rigidbody = companion.GetComponent<Rigidbody>();
             _zanim = companion.GetComponent<ZSyncAnimation>();
             
-            MaxDuration = MAX_UPGRADE_TIME + 30f;
+            MaxDuration = MaxUpgradeTime + 30f;
         }
         
         public override bool CanStart()
@@ -98,7 +82,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Companion == null || _inventory == null) return false;
             
             // Random chance to attempt
-            if (Random.value > UPGRADE_ATTEMPT_CHANCE) return false;
+            if (Random.value > UpgradeAttemptChance) return false;
             
             // Check for nearby workstation
             var station = FindNearbyWorkstation();
@@ -233,7 +217,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float dist = Vector3.Distance(Transform.position, _workPosition);
             
-            if (dist < INTERACTION_DISTANCE)
+            if (dist < InteractionDistance)
             {
                 StopMovement();
                 SetPhase(UpgradePhase.Upgrading);
@@ -270,7 +254,7 @@ namespace FiresCore.Npc.IdleBehaviors
             PlayCraftAnimation();
             
             // Wait for animation
-            if (Time.time - _phaseStartTime < UPGRADE_ANIMATION_DURATION)
+            if (Time.time - _phaseStartTime < UpgradeAnimationDuration)
             {
                 return false;
             }
@@ -314,13 +298,13 @@ namespace FiresCore.Npc.IdleBehaviors
             int bestLevel = -1;
             float bestDist = float.MaxValue;
             
-            var colliders = Physics.OverlapSphere(Transform.position, WORKSTATION_DETECTION_RANGE);
+            var colliders = Physics.OverlapSphere(Transform.position, WorkstationDetectionRange);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var station = col.GetComponent<CraftingStation>() ?? col.GetComponentInParent<CraftingStation>();
+                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
                 if (station == null) continue;
                 
                 // Check station level - prefer higher level stations

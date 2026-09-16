@@ -7,25 +7,21 @@ using FiresCore.Npc.Archetypes.StatusEffects.Healer;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Centralized stat calculation for companion NPCs.
-    /// All UI screens and systems should use this class to get consistent stat values.
-    /// 
-    /// This class aggregates stats from:
-    /// - Base character stats (prefab configured)
-    /// - Attribute bonuses (from CompanionProgression)
-    /// - Food bonuses (from CompanionConsumables)
-    /// - Equipment bonuses (from CompanionInventory)
-    /// - Status effect bonuses (from active effects like Fortify, Sanctuary, etc.)
-    /// 
-    /// USAGE:
-    /// var calc = new CompanionStatCalculator(companion);
-    /// float maxHealth = calc.MaxHealth;
-    /// float currentStamina = calc.CurrentStamina;
+    /// The single place UI and systems read a companion's stats, combining base stats, attribute bonuses
+    /// (CompanionProgression), food (CompanionConsumables), equipment (CompanionInventory) and active status effects.
     /// </summary>
     public class CompanionStatCalculator
     {
         #region Fields
         
+        private const float DivineProtectionDamageTakenMultiplier = 0.8f;
+        private const float BerserkRageDamageMultiplier = 1.5f;
+        private const float WarcryDamageMultiplier = 1.15f;
+        private const float ElementalInfusionDamageMultiplier = 1.25f;
+        private const float ChiStrikeDamageMultiplier = 1.3f;
+        private const float HolySmiteDamageMultiplier = 1.2f;
+        private const float InnerPeaceHealthRegen = 5f;
+
         private readonly CompanionController _companion;
         private readonly CompanionStats _stats;
         private readonly CompanionProgression _progression;
@@ -290,7 +286,7 @@ namespace FiresCore.Npc
                 if (divineProtection != null)
                 {
                     // Divine Protection gives 20% damage reduction
-                    multiplier *= 0.8f;
+                    multiplier *= DivineProtectionDamageTakenMultiplier;
                 }
                 
                 return multiplier;
@@ -316,7 +312,7 @@ namespace FiresCore.Npc
                 if (berserk != null)
                 {
                     // Berserk gives 50% damage bonus
-                    multiplier *= 1.5f;
+                    multiplier *= BerserkRageDamageMultiplier;
                 }
                 
                 // Check for Warcry effect
@@ -324,7 +320,7 @@ namespace FiresCore.Npc
                 if (warcry != null)
                 {
                     // Warcry gives 15% damage bonus
-                    multiplier *= 1.15f;
+                    multiplier *= WarcryDamageMultiplier;
                 }
                 
                 // Check for Elemental Infusion effect
@@ -332,7 +328,7 @@ namespace FiresCore.Npc
                 if (elementalInfusion != null)
                 {
                     // Elemental Infusion gives 25% magic damage bonus
-                    multiplier *= 1.25f;
+                    multiplier *= ElementalInfusionDamageMultiplier;
                 }
                 
                 // Check for Chi Strike effect
@@ -340,7 +336,7 @@ namespace FiresCore.Npc
                 if (chiStrike != null)
                 {
                     // Chi Strike gives 30% unarmed damage bonus
-                    multiplier *= 1.3f;
+                    multiplier *= ChiStrikeDamageMultiplier;
                 }
                 
                 // Check for Holy Smite effect
@@ -348,7 +344,7 @@ namespace FiresCore.Npc
                 if (holySmite != null)
                 {
                     // Holy Smite gives 20% spirit damage bonus
-                    multiplier *= 1.2f;
+                    multiplier *= HolySmiteDamageMultiplier;
                 }
                 
                 return multiplier;
@@ -381,7 +377,7 @@ namespace FiresCore.Npc
                 if (innerPeace != null)
                 {
                     // Inner Peace gives 5 HP/s regen
-                    regen += 5f;
+                    regen += InnerPeaceHealthRegen;
                 }
                 
                 return regen;

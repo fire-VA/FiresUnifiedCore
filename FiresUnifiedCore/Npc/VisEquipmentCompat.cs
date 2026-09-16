@@ -6,22 +6,9 @@ using HarmonyLib;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Backwards-compatible dispatcher for VisEquipment.Set*Item methods.
-    ///
-    /// In the upcoming Valheim build the visual-equipment slot setters were
-    /// retyped from <c>(string name, â€¦)</c> to <c>(int itemHash, â€¦)</c>.
-    /// Calling <c>SetHelmetItem(string)</c> directly throws
-    /// <c>MissingMethodException</c> on the new build, while calling
-    /// <c>SetHelmetItem(int)</c> directly fails to compile against the current
-    /// live build.
-    ///
-    /// Each helper here resolves the real <see cref="MethodInfo"/> on first use
-    /// (preferring the int overload, falling back to string) and caches it.
-    /// String inputs are converted to <c>GetStableHashCode()</c> when the int
-    /// overload is in use; empty/null strings map to 0 to preserve the old
-    /// "clear slot" semantics.
-    ///
-    /// Same DLL ships across both builds.
+    /// Calls VisEquipment's Set*Item slot setters through cached reflection, preferring the int item-hash
+    /// overloads Valheim 1.0 uses and falling back to the older string ones, so one DLL runs on either. Strings
+    /// become stable hashes for the int form, and an empty name maps to 0 to clear the slot.
     /// </summary>
     internal static class VisEquipmentCompat
     {
@@ -39,40 +26,40 @@ namespace FiresCore.Npc
             lock (_lock)
             {
                 if (_cache.TryGetValue(key, out var cached)) return cached;
-                var t = typeof(VisEquipment);
-                // Prefer the new (int â€¦) overload â€” that's what the upcoming
+                var type = typeof(VisEquipment);
+                // Prefer the new (int …) overload — that's what the upcoming
                 // build exposes, and the patcher does not shim these.
-                var m = t.GetMethod(methodName, newSig)
-                        ?? t.GetMethod(methodName, oldSig);
-                _cache[key] = m;
-                return m;
+                var method = type.GetMethod(methodName, newSig)
+                        ?? type.GetMethod(methodName, oldSig);
+                _cache[key] = method;
+                return method;
             }
         }
 
         private static void DispatchSimple(VisEquipment vis, string methodName, string name)
         {
             if (vis == null) return;
-            var m = Resolve(methodName,
+            var method = Resolve(methodName,
                 newSig: new[] { typeof(int) },
                 oldSig: new[] { typeof(string) });
-            if (m == null) return;
-            object arg = m.GetParameters()[0].ParameterType == typeof(int)
+            if (method == null) return;
+            object arg = method.GetParameters()[0].ParameterType == typeof(int)
                 ? (object)Hash(name)
                 : (object)(name ?? "");
-            m.Invoke(vis, new[] { arg });
+            method.Invoke(vis, new[] { arg });
         }
 
         private static void DispatchWithVariant(VisEquipment vis, string methodName, string name, int variant)
         {
             if (vis == null) return;
-            var m = Resolve(methodName,
+            var method = Resolve(methodName,
                 newSig: new[] { typeof(int), typeof(int) },
                 oldSig: new[] { typeof(string), typeof(int) });
-            if (m == null) return;
-            object arg0 = m.GetParameters()[0].ParameterType == typeof(int)
+            if (method == null) return;
+            object arg0 = method.GetParameters()[0].ParameterType == typeof(int)
                 ? (object)Hash(name)
                 : (object)(name ?? "");
-            m.Invoke(vis, new object[] { arg0, variant });
+            method.Invoke(vis, new object[] { arg0, variant });
         }
 
         // Single-arg slot setters
@@ -93,11 +80,11 @@ namespace FiresCore.Npc
 
         /// <summary>
         /// Copies a "type-shifted" identifier field (whose backing-field type
-        /// changed stringâ†’int across builds) from one VisEquipment to another.
+        /// changed string→int across builds) from one VisEquipment to another.
         /// Reads the field reflectively, then invokes the Set*Item overload
         /// whose first parameter matches the field's runtime type. Same-build
         /// guarantees src.field and dst.Set*Item agree, so no conversion is
-        /// performed â€” the value passes through verbatim.
+        /// performed — the value passes through verbatim.
         /// </summary>
         public static void CopyTypeShiftedField(
             VisEquipment src,
@@ -106,15 +93,15 @@ namespace FiresCore.Npc
             string setMethodName)
         {
             if (src == null || dst == null) return;
-            var f = typeof(VisEquipment).GetField(
+            var field = typeof(VisEquipment).GetField(
                 fieldName,
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-            if (f == null) return;
-            object value = f.GetValue(src);
+            if (field == null) return;
+            object value = field.GetValue(src);
 
-            var m = typeof(VisEquipment).GetMethod(setMethodName, new[] { f.FieldType });
-            if (m == null) return;
-            m.Invoke(dst, new[] { value });
+            var method = typeof(VisEquipment).GetMethod(setMethodName, new[] { field.FieldType });
+            if (method == null) return;
+            method.Invoke(dst, new[] { value });
         }
 
         public static void CopyHairItem(VisEquipment src, VisEquipment dst)
@@ -123,27 +110,10 @@ namespace FiresCore.Npc
         public static void CopyBeardItem(VisEquipment src, VisEquipment dst)
             => CopyTypeShiftedField(src, dst, "m_beardItem", "SetBeardItem");
 
-        // ──────────────────────────────────────────────────────────────────
-        //  ZDO-free, hash-aware slot dressing for the mannequin preview.
-        //
-        //  The vanilla Set*Item methods write the desired hash to the ZNetView
-        //  ZDO (m_nview.GetZDO()) — they NRE when the VisEquipment has no live
-        //  ZDO, which is exactly the case for the static mannequin. So instead
-        //  of going through them, we write the STRING backing field
-        //  (m_leftItem / m_chestItem / …) directly. With no ZDO present,
-        //  VisEquipment.UpdateEquipmentVisuals() reads those string fields and
-        //  hashes them itself (GetStableHashCode → ObjectDB.GetItemPrefab(hash)),
-        //  so the attach result is identical to the networked path.
-        //
-        //  Token forms (Phase-1 capture wrote each as a token string):
-        //    • prefab NAME  ("ArmorIronChest")  → set the name verbatim.
-        //    • literal HASH ("-1234567")        → all-digit (optionally leading
-        //      '-') token == the int stable hash. We reverse-resolve it to the
-        //      prefab name via ObjectDB so the string field hashes back to the
-        //      SAME value. If ObjectDB can't resolve it (not loaded / unknown
-        //      hash) the slot is left empty rather than mis-hashing a numeric
-        //      string into garbage.
-        // ──────────────────────────────────────────────────────────────────
+        // Dresses mannequin slots without a ZDO. Vanilla's Set*Item methods write through the ZDO and NRE without
+        // one, so the string backing fields are set directly and UpdateEquipmentVisuals hashes them itself. A
+        // token is either a prefab name, used as is, or an all-digit stable hash, which is resolved back to its
+        // prefab name through ObjectDB; an unresolvable hash leaves the slot empty.
 
         private static readonly Dictionary<string, FieldInfo> _itemFieldCache =
             new Dictionary<string, FieldInfo>();
@@ -153,10 +123,10 @@ namespace FiresCore.Npc
             lock (_lock)
             {
                 if (_itemFieldCache.TryGetValue(fieldName, out var cached)) return cached;
-                var f = AccessTools.Field(typeof(VisEquipment), fieldName);
-                if (f != null && f.FieldType != typeof(string)) f = null;
-                _itemFieldCache[fieldName] = f;
-                return f;
+                var field = AccessTools.Field(typeof(VisEquipment), fieldName);
+                if (field != null && field.FieldType != typeof(string)) field = null;
+                _itemFieldCache[fieldName] = field;
+                return field;
             }
         }
 
@@ -201,11 +171,11 @@ namespace FiresCore.Npc
         public static bool SetItemFieldDirect(VisEquipment vis, string fieldName, string token)
         {
             if (vis == null) return false;
-            var f = ItemField(fieldName);
-            if (f == null) return false;
+            var field = ItemField(fieldName);
+            if (field == null) return false;
             try
             {
-                f.SetValue(vis, ResolveTokenToName(token) ?? "");
+                field.SetValue(vis, ResolveTokenToName(token) ?? "");
                 return true;
             }
             catch { return false; }

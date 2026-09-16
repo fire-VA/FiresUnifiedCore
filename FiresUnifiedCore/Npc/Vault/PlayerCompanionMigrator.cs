@@ -5,33 +5,10 @@ using UnityEngine;
 namespace FiresCore.Npc.Vault
 {
     /// <summary>
-    /// Phase 7 of the companion-save refactor: one-shot migration from the
-    /// legacy <see cref="VaultOfKnowledge"/> JSON store into the per-player
-    /// roster on <see cref="Player.m_customData"/>.
-    ///
-    /// CONTRACT
-    /// --------
-    /// On the first login of a player whose roster is empty but whose
-    /// vault still holds companion entries, copy each vault entry into a
-    /// fresh <see cref="PlayerCompanionRosterEntry"/>. After this runs once
-    /// the resolver (Phase 4) reads exclusively from the roster; the vault
-    /// becomes a debug mirror written by <see cref="CompanionVault.FlushDebugMirror"/>
-    /// (Phase 6).
-    ///
-    /// IDEMPOTENCY
-    /// -----------
-    /// The migration gate is "roster empty AND vault non-empty". Once the
-    /// migration writes any entries the roster is no longer empty and the
-    /// migrator self-skips on subsequent invocations. There is no separate
-    /// "migrated" flag to track.
-    ///
-    /// FAILURE MODE
-    /// ------------
-    /// All exceptions are caught and logged; a partially-failed migration
-    /// leaves the vault untouched and the resolver's vault-fallback path
-    /// keeps the player functional in the meantime. Re-running the
-    /// migration on the next login will pick up any vault entries that
-    /// didn't make it across.
+    /// One-shot migration from the legacy JSON vault into the per-player roster, run on a login where the
+    /// roster is empty and the vault is not. Writing any entry makes the roster non-empty, so it never runs
+    /// twice. Failures are logged, leave the vault untouched and are retried on the next login, with the
+    /// resolver's vault fallback covering the gap.
     /// </summary>
     public static class PlayerCompanionMigrator
     {
@@ -44,7 +21,7 @@ namespace FiresCore.Npc.Vault
         public static bool VerboseLogging = false;
 
         /// <summary>
-        /// Run the vault ? roster import for this player if their roster
+        /// Run the vault - roster import for this player if their roster
         /// is currently empty. No-op when the roster already has entries
         /// or when the vault is unavailable / empty.
         ///
@@ -100,12 +77,12 @@ namespace FiresCore.Npc.Vault
 
                 int imported = 0;
                 int skipped = 0;
-                foreach (var sd in vaultCompanions)
+                foreach (var saveData in vaultCompanions)
                 {
-                    if (sd == null) { skipped++; continue; }
-                    if (string.IsNullOrEmpty(sd.CompanionId)) { skipped++; continue; }
+                    if (saveData == null) { skipped++; continue; }
+                    if (string.IsNullOrEmpty(saveData.CompanionId)) { skipped++; continue; }
 
-                    var entry = BuildEntryFromVault(sd, currentWorldUid, nowTicks);
+                    var entry = BuildEntryFromVault(saveData, currentWorldUid, nowTicks);
                     if (entry == null) { skipped++; continue; }
 
                     roster.Entries.Add(entry);
@@ -138,22 +115,22 @@ namespace FiresCore.Npc.Vault
             }
         }
 
-        private static PlayerCompanionRosterEntry BuildEntryFromVault(CompanionSaveData sd, long currentWorldUid, long nowTicks)
+        private static PlayerCompanionRosterEntry BuildEntryFromVault(CompanionSaveData saveData, long currentWorldUid, long nowTicks)
         {
             // Map the legacy boolean flags onto the new tri-state follow
             // intent. The legacy vault never carried a Dismissed concept,
             // so a non-stationed, non-following live companion maps to
             // Staying — the safest "in-world but parked" default.
             CompanionFollowState followState;
-            if (sd.IsStationedAsNpc)
+            if (saveData.IsStationedAsNpc)
                 followState = CompanionFollowState.Stationed;
-            else if (sd.IsFollowing)
+            else if (saveData.IsFollowing)
                 followState = CompanionFollowState.Following;
             else
                 followState = CompanionFollowState.Staying;
 
             long deadlineTicks = 0;
-            if (sd.IsPendingRespawn)
+            if (saveData.IsPendingRespawn)
             {
                 // Prefer the absolute death-timestamp + respawn-delay if we
                 // have it (gives us a real wall-clock deadline that
@@ -164,9 +141,9 @@ namespace FiresCore.Npc.Vault
                 // one-shot migration.
                 try
                 {
-                    if (sd.RespawnTimeRemaining > 0f)
+                    if (saveData.RespawnTimeRemaining > 0f)
                     {
-                        deadlineTicks = nowTicks + TimeSpan.FromSeconds(sd.RespawnTimeRemaining).Ticks;
+                        deadlineTicks = nowTicks + TimeSpan.FromSeconds(saveData.RespawnTimeRemaining).Ticks;
                     }
                 }
                 catch
@@ -177,12 +154,12 @@ namespace FiresCore.Npc.Vault
 
             var entry = new PlayerCompanionRosterEntry
             {
-                CompanionId = sd.CompanionId,
+                CompanionId = saveData.CompanionId,
                 ServerWorldUid = currentWorldUid,
                 FollowState = followState,
-                IsPendingRespawn = sd.IsPendingRespawn,
+                IsPendingRespawn = saveData.IsPendingRespawn,
                 RespawnDeadlineUtcTicks = deadlineTicks,
-                Snapshot = sd,
+                Snapshot = saveData,
                 LastUpdatedUtcTicks = nowTicks,
             };
 

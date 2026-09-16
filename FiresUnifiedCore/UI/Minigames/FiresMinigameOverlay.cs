@@ -61,17 +61,17 @@ namespace FiresCore.UI.Minigames
 
             var dim = NewImage(go.transform, "Dim", new Color(0f, 0f, 0f, Mathf.Clamp01(dimAlpha)));
             dim.raycastTarget = dimAlpha > 0.001f;
-            var drt = dim.rectTransform; drt.anchorMin = Vector2.zero; drt.anchorMax = Vector2.one; drt.offsetMin = drt.offsetMax = Vector2.zero;
+            var dimRect = dim.rectTransform; dimRect.anchorMin = Vector2.zero; dimRect.anchorMax = Vector2.one; dimRect.offsetMin = dimRect.offsetMax = Vector2.zero;
 
-            var pf = new GameObject("PlayField", typeof(RectTransform)).GetComponent<RectTransform>();
-            pf.SetParent(go.transform, false);
-            pf.anchorMin = pf.anchorMax = new Vector2(0.5f, 0.5f); pf.pivot = new Vector2(0.5f, 0.5f);
-            pf.anchoredPosition = Vector2.zero; pf.sizeDelta = Vector2.zero;
-            overlay.PlayField = pf;
+            var playField = new GameObject("PlayField", typeof(RectTransform)).GetComponent<RectTransform>();
+            playField.SetParent(go.transform, false);
+            playField.anchorMin = playField.anchorMax = new Vector2(0.5f, 0.5f); playField.pivot = new Vector2(0.5f, 0.5f);
+            playField.anchoredPosition = Vector2.zero; playField.sizeDelta = Vector2.zero;
+            overlay.PlayField = playField;
 
             var flash = NewImage(go.transform, "Flash", new Color(1f, 1f, 1f, 0f));
             flash.raycastTarget = false;
-            var frt = flash.rectTransform; frt.anchorMin = Vector2.zero; frt.anchorMax = Vector2.one; frt.offsetMin = frt.offsetMax = Vector2.zero;
+            var flashRect = flash.rectTransform; flashRect.anchorMin = Vector2.zero; flashRect.anchorMax = Vector2.one; flashRect.offsetMin = flashRect.offsetMax = Vector2.zero;
             overlay._flash = flash;
 
             overlay.AcquireModal();
@@ -83,7 +83,7 @@ namespace FiresCore.UI.Minigames
         public void ApplyFont()
         {
             var averia = UIFontConfig.GetFont(UIFontConfig.FontStyle.AveriaLibre);
-            if (averia != null) foreach (var t in GetComponentsInChildren<TMPro.TMP_Text>(true)) t.font = averia;
+            if (averia != null) foreach (var text in GetComponentsInChildren<TMPro.TMP_Text>(true)) text.font = averia;
         }
 
         /// <summary>Full-screen colour flash that fades over <paramref name="dur"/> (gold on a win, red on a break…).</summary>
@@ -105,8 +105,8 @@ namespace FiresCore.UI.Minigames
 
             if (_flash != null)
             {
-                float a = _flashT > 0f ? _flashPeak * (_flashT / _flashDur) : 0f;
-                _flash.color = new Color(_flashColor.r, _flashColor.g, _flashColor.b, a);
+                float alpha = _flashT > 0f ? _flashPeak * (_flashT / _flashDur) : 0f;
+                _flash.color = new Color(_flashColor.r, _flashColor.g, _flashColor.b, alpha);
                 if (_flashT > 0f) _flashT -= Time.deltaTime;
             }
 
@@ -114,8 +114,8 @@ namespace FiresCore.UI.Minigames
             {
                 if (_shakeT > 0f)
                 {
-                    float k = _shakeAmp * (_shakeT / _shakeDur);
-                    PlayField.anchoredPosition = new Vector2(Mathf.Sin(Time.time * 71f), Mathf.Cos(Time.time * 47f)) * k;
+                    float shakeStrength = _shakeAmp * (_shakeT / _shakeDur);
+                    PlayField.anchoredPosition = new Vector2(Mathf.Sin(Time.time * 71f), Mathf.Cos(Time.time * 47f)) * shakeStrength;
                     _shakeT -= Time.deltaTime;
                 }
                 else PlayField.anchoredPosition = Vector2.zero;
@@ -147,16 +147,16 @@ namespace FiresCore.UI.Minigames
             FiresInputBlock.Release(_token);
             if (_blocked) { InputBlock.Block(false); _blocked = false; }
             if (_current == this) _current = null;
-            var cb = OnClosed; OnClosed = null;
-            try { cb?.Invoke(); } catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresMinigame] OnClosed threw: {ex.Message}"); }
+            var callback = OnClosed; OnClosed = null;
+            try { callback?.Invoke(); } catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresMinigame] OnClosed threw: {ex.Message}"); }
             if (gameObject != null) UnityEngine.Object.Destroy(gameObject);
         }
 
-        private static Image NewImage(Transform parent, string name, Color c)
+        private static Image NewImage(Transform parent, string name, Color color)
         {
             var go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent, false);
-            var img = go.AddComponent<Image>(); img.color = c; return img;
+            var img = go.AddComponent<Image>(); img.color = color; return img;
         }
 
         // Force-clear on logout so a modal open at logout can't leak the input block (matches EntryDoorPanel's guard).

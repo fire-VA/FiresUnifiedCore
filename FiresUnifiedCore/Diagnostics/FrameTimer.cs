@@ -5,28 +5,9 @@ using BepInEx.Logging;
 
 namespace FiresCore.Diagnostics
 {
-    // Per-second aggregator for Harmony-probed method timings + per-frame
-    // deltaTime histogram. Single-threaded — Unity main thread only — no
-    // locks.
-    //
-    // Accumulates Stopwatch.GetTimestamp() ticks per labeled probe across
-    // one dump window (typically 1 second), then logs a sorted top-N
-    // report and resets. Reads as "this method ate N of the last 1000 ms"
-    // — directly actionable for narrowing the main-thread bottleneck.
-    //
-    // Typical probe pattern in consumer mod:
-    //   [HarmonyPatch(typeof(Hud), nameof(Hud.UpdateBuild))]
-    //   static class HudUpdateBuildProbe
-    //   {
-    //     static long _start;
-    //     static void Prefix() => _start = FrameTimer.Enabled ? Stopwatch.GetTimestamp() : 0;
-    //     static void Postfix() {
-    //       if (_start == 0) return;
-    //       FrameTimer.Record("Hud.UpdateBuild", Stopwatch.GetTimestamp() - _start);
-    //     }
-    //   }
-    //
-    // Then a 1-Hz Coroutine calls FrameTimer.DumpAndReset(logger, 20, 1.0).
+    // Per-second profiler for Harmony-probed methods plus a frame-time histogram, main thread only. Probes call
+    // Record(label, elapsedTicks) from a prefix/postfix pair, and a once-a-second coroutine calls DumpAndReset to
+    // log the top methods by time spent in the last window.
     public static class FrameTimer
     {
         private const int MaxLabelDisplayWidth = 50;
@@ -172,12 +153,12 @@ namespace FiresCore.Diagnostics
 
             for (int i = 0; i < frames; i++)
             {
-                float d = FrameDeltas[i];
-                total += d;
-                if (d > worst) worst = d;
-                if (d < best)  best  = d;
-                if (d * 1000f > FrameSevereMs) overSevere++;
-                if (d * 1000f > FrameWarningMs) overWarning++;
+                float delta = FrameDeltas[i];
+                total += delta;
+                if (delta > worst) worst = delta;
+                if (delta < best)  best  = delta;
+                if (delta * 1000f > FrameSevereMs) overSevere++;
+                if (delta * 1000f > FrameWarningMs) overWarning++;
             }
 
             float avgMs = (total / frames) * 1000f;
@@ -195,15 +176,15 @@ namespace FiresCore.Diagnostics
             log.LogMessage(
                 $"  {"label",-50}  {"ms/sec",10}  {"calls",8}  {"avg(ms)",10}  {"max(ms)",10}");
 
-            int n = topN < _lastWindow.Count ? topN : _lastWindow.Count;
-            for (int i = 0; i < n; i++)
+            int count = topN < _lastWindow.Count ? topN : _lastWindow.Count;
+            for (int i = 0; i < count; i++)
             {
-                LabelTiming t = _lastWindow[i];
-                string label = t.Label.Length > MaxLabelDisplayWidth
-                    ? t.Label.Substring(0, MaxLabelDisplayWidth)
-                    : t.Label;
+                LabelTiming timing = _lastWindow[i];
+                string label = timing.Label.Length > MaxLabelDisplayWidth
+                    ? timing.Label.Substring(0, MaxLabelDisplayWidth)
+                    : timing.Label;
                 log.LogMessage(
-                    $"  {label,-50}  {t.TotalMs,10:F2}  {t.Calls,8}  {t.AvgMs,10:F3}  {t.MaxMs,10:F2}");
+                    $"  {label,-50}  {timing.TotalMs,10:F2}  {timing.Calls,8}  {timing.AvgMs,10:F3}  {timing.MaxMs,10:F2}");
             }
         }
     }

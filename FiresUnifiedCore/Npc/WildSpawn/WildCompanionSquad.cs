@@ -40,10 +40,10 @@ namespace FiresCore.Npc.WildSpawn
 
             for (int i = 0; i < hits; i++)
             {
-                var col = buffer[i];
-                if (col == null) continue;
+                var collider = buffer[i];
+                if (collider == null) continue;
 
-                var otherDresser = col.GetComponentInParent<WildCompanionDresser>();
+                var otherDresser = collider.GetComponentInParent<WildCompanionDresser>();
                 if (otherDresser == null || otherDresser == self) continue;
 
                 var otherSeed = otherDresser.GetComponent<WildCompanionSeed>();
@@ -59,9 +59,9 @@ namespace FiresCore.Npc.WildSpawn
                 int otherHash = otherZdo.m_uid.GetHashCode();
 
                 bool seen = false;
-                for (int c = 0; c < candidates.Count; c++)
+                for (int candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
                 {
-                    if (candidates[c].hash == otherHash) { seen = true; break; }
+                    if (candidates[candidateIndex].hash == otherHash) { seen = true; break; }
                 }
                 if (seen) continue;
 
@@ -78,9 +78,9 @@ namespace FiresCore.Npc.WildSpawn
 
             for (int i = 0; i < candidates.Count; i++)
             {
-                var c = candidates[i];
-                c.zdo.Set(ZDO_SQUAD_ID,   leaderHash);
-                c.zdo.Set(ZDO_SQUAD_ROLE, c.hash == leaderHash ? 1 : 0);
+                var candidate = candidates[i];
+                candidate.zdo.Set(ZDO_SQUAD_ID,   leaderHash);
+                candidate.zdo.Set(ZDO_SQUAD_ROLE, candidate.hash == leaderHash ? 1 : 0);
             }
 
             if (candidates.Count > 1)
@@ -106,9 +106,7 @@ namespace FiresCore.Npc.WildSpawn
 
         private CompanionIdleBehavior _idle;
         private ZNetView _nview;
-        private ZDO _cachedZdo;
         private int _cachedSquadId;
-        private bool _isLeader;
         private GameObject _leaderGo;
 
         private void Start()
@@ -171,14 +169,14 @@ namespace FiresCore.Npc.WildSpawn
             var dressers = UnityEngine.Object.FindObjectsByType<WildCompanionDresser>(UnityEngine.FindObjectsSortMode.None);
             for (int i = 0; i < dressers.Length; i++)
             {
-                var d = dressers[i];
-                if (d == null) continue;
-                var view = d.GetComponent<ZNetView>();
+                var dresser = dressers[i];
+                if (dresser == null) continue;
+                var view = dresser.GetComponent<ZNetView>();
                 if (view == null || !view.IsValid()) continue;
                 var zdo = view.GetZDO();
                 if (zdo == null) continue;
                 if (zdo.m_uid.GetHashCode() == squadLeaderHash)
-                    return d.gameObject;
+                    return dresser.gameObject;
             }
             return null;
         }

@@ -6,25 +6,19 @@ using FiresCore.Npc.Archetypes.StatusEffects;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Intelligent skill decision system for companions.
-    /// Instead of using abilities immediately on combat entry, this system
-    /// evaluates the combat situation and uses abilities situationally.
-    /// 
-    /// DESIGN PHILOSOPHY:
-    /// - Opening buffs/debuffs: Use at combat start to set up the fight
-    /// - Heals: Wait until someone actually takes damage
-    /// - Taunts: Delay slightly so enemies commit to targets first
-    /// - Evasion: Use reactively when in danger
-    /// - Damage cooldowns: Use when good opportunities arise
-    /// 
-    /// SKILL CATEGORIES:
-    /// - Opener: Used at fight start (buffs, debuffs, marks)
-    /// - Reactive: Used in response to events (heals, evasion, emergency)
-    /// - Sustained: Used throughout combat (damage abilities)
-    /// - Situational: Used when specific conditions are met
+    /// Uses abilities when the fight calls for them rather than all at once on engage: openers set up the fight,
+    /// heals wait for damage, taunts wait for enemies to commit, evasion reacts to danger, and damage cooldowns
+    /// wait for an opening.
     /// </summary>
     public class SkillDecisionSystem : MonoBehaviour
     {
+        private const float LowHealthFraction = 0.4f;
+        private const float CriticalHealthFraction = 0.2f;
+        private const float UrgentHealthFraction = 0.6f;
+        private const float AoeEnemySearchRange = 10f;
+        private const float SurroundedRange = 5f;
+        private const int SurroundedEnemyCount = 3;
+
         #region Skill Categories
         
         public enum SkillCategory
@@ -392,7 +386,7 @@ namespace FiresCore.Npc.Archetypes
             QueueSkillsForTrigger(SkillTrigger.SelfDamaged);
             
             // Check for low health triggers
-            if (_character.GetHealthPercentage() < 0.4f)
+            if (_character.GetHealthPercentage() < LowHealthFraction)
             {
                 QueueSkillsForTrigger(SkillTrigger.SelfLowHealth);
             }
@@ -417,7 +411,7 @@ namespace FiresCore.Npc.Archetypes
                     if (healthMonitor != null)
                     {
                         // Only trigger heal skills if there's actually an urgent target
-                        var urgentTarget = healthMonitor.GetMostUrgentHealTarget(0.6f);
+                        var urgentTarget = healthMonitor.GetMostUrgentHealTarget(UrgentHealthFraction);
                         if (urgentTarget == null)
                         {
                             // No one is below 60% — just do a mild AllyDamaged trigger
@@ -426,11 +420,11 @@ namespace FiresCore.Npc.Archetypes
                         }
                         
                         // Someone urgent — check severity
-                        if (urgentTarget.HealthPercent < 0.2f)
+                        if (urgentTarget.HealthPercent < CriticalHealthFraction)
                         {
                             QueueSkillsForTrigger(SkillTrigger.AllyCritical);
                         }
-                        else if (urgentTarget.HealthPercent < 0.4f)
+                        else if (urgentTarget.HealthPercent < LowHealthFraction)
                         {
                             QueueSkillsForTrigger(SkillTrigger.AllyLowHealth);
                         }
@@ -447,11 +441,11 @@ namespace FiresCore.Npc.Archetypes
             QueueSkillsForTrigger(SkillTrigger.AllyDamaged);
             
             float allyHealth = ally?.GetHealthPercentage() ?? 1f;
-            if (allyHealth < 0.4f)
+            if (allyHealth < LowHealthFraction)
             {
                 QueueSkillsForTrigger(SkillTrigger.AllyLowHealth);
             }
-            if (allyHealth < 0.2f)
+            if (allyHealth < CriticalHealthFraction)
             {
                 QueueSkillsForTrigger(SkillTrigger.AllyCritical);
             }
@@ -474,9 +468,9 @@ namespace FiresCore.Npc.Archetypes
                 
                 // Check if this skill matches the trigger
                 bool matchesTrigger = false;
-                foreach (var t in timing.Triggers)
+                foreach (var timingTrigger in timing.Triggers)
                 {
-                    if (t == trigger)
+                    if (timingTrigger == trigger)
                     {
                         matchesTrigger = true;
                         break;
@@ -600,7 +594,7 @@ namespace FiresCore.Npc.Archetypes
             // Check enemy count for AoE skills
             if (timing.MinEnemiesNearby > 0)
             {
-                int enemyCount = CountEnemiesNearby(10f);
+                int enemyCount = CountEnemiesNearby(AoeEnemySearchRange);
                 if (enemyCount < timing.MinEnemiesNearby) return false;
             }
             
@@ -631,7 +625,7 @@ namespace FiresCore.Npc.Archetypes
         // Communication with ArchetypeAbilitySystem
         private string _recommendedSkill;
         private float _recommendedSkillTime;
-        private const float RECOMMENDATION_VALIDITY = 2f; // Recommendation expires after 2 seconds
+        private const float RecommendationValidity = 2f; // Recommendation expires after 2 seconds
         
         /// <summary>
         /// Called by ArchetypeAbilitySystem to check if this system recommends using a specific skill now.
@@ -639,7 +633,7 @@ namespace FiresCore.Npc.Archetypes
         public bool ShouldUseSkillNow(string skillName)
         {
             if (string.IsNullOrEmpty(_recommendedSkill)) return false;
-            if (Time.time - _recommendedSkillTime > RECOMMENDATION_VALIDITY) return false;
+            if (Time.time - _recommendedSkillTime > RecommendationValidity) return false;
             
             if (_recommendedSkill.Equals(skillName, System.StringComparison.OrdinalIgnoreCase))
             {
@@ -656,7 +650,7 @@ namespace FiresCore.Npc.Archetypes
         public string GetRecommendedSkill()
         {
             if (string.IsNullOrEmpty(_recommendedSkill)) return null;
-            if (Time.time - _recommendedSkillTime > RECOMMENDATION_VALIDITY) return null;
+            if (Time.time - _recommendedSkillTime > RecommendationValidity) return null;
             return _recommendedSkill;
         }
         
@@ -677,8 +671,8 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Check if surrounded
-            int nearbyEnemies = CountEnemiesNearby(5f);
-            if (nearbyEnemies >= 3)
+            int nearbyEnemies = CountEnemiesNearby(SurroundedRange);
+            if (nearbyEnemies >= SurroundedEnemyCount)
             {
                 QueueSkillsForTrigger(SkillTrigger.Surrounded);
             }
@@ -764,15 +758,15 @@ namespace FiresCore.Npc.Archetypes
         {
             if (_companion == null) return false;
             
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != _companion.ownerPlayerId) continue;
+                if (companion == null || companion.isDefeated) continue;
+                if (companion.ownerPlayerId != _companion.ownerPlayerId) continue;
                 
-                var archController = comp.GetArchetypeController();
+                var archController = companion.GetArchetypeController();
                 if (archController != null && archController.IsTank)
                 {
-                    var tankChar = comp.GetCharacter();
+                    var tankChar = companion.GetCharacter();
                     if (tankChar != null)
                     {
                         var seman = tankChar.GetSEMan();

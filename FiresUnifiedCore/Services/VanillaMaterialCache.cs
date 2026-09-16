@@ -37,7 +37,7 @@ namespace FiresCore.Services
             if (scene == null || scene.m_prefabs == null || scene.m_prefabs.Count == 0)
                 return; // not ready yet
 
-            var sw = Stopwatch.StartNew();
+            var stopwatch = Stopwatch.StartNew();
             var prefabs = scene.m_prefabs;
             for (int i = 0; i < prefabs.Count; i++)
             {
@@ -46,22 +46,22 @@ namespace FiresCore.Services
                 CacheFromPrefab(prefab);
             }
             _built = true;
-            sw.Stop();
-            Debug.Log($"[FiresCore] VanillaMaterialCache: scanned {prefabs.Count} prefabs → {ByName.Count} vanilla materials in {sw.ElapsedMilliseconds} ms (built ONCE, shared across all mods).");
+            stopwatch.Stop();
+            Debug.Log($"[FiresCore] VanillaMaterialCache: scanned {prefabs.Count} prefabs → {ByName.Count} vanilla materials in {stopwatch.ElapsedMilliseconds} ms (built ONCE, shared across all mods).");
         }
 
         private static void CacheFromPrefab(GameObject prefab)
         {
             var renderers = prefab.GetComponentsInChildren<Renderer>(true);
-            for (int r = 0; r < renderers.Length; r++)
+            for (int rendererIndex = 0; rendererIndex < renderers.Length; rendererIndex++)
             {
-                var renderer = renderers[r];
+                var renderer = renderers[rendererIndex];
                 if (renderer == null) continue;
 
                 var mats = renderer.sharedMaterials;
-                for (int m = 0; m < mats.Length; m++)
+                for (int materialIndex = 0; materialIndex < mats.Length; materialIndex++)
                 {
-                    var mat = mats[m];
+                    var mat = mats[materialIndex];
                     if (mat == null) continue;
 
                     string matName = mat.name.Replace(" (Instance)", "").Trim();

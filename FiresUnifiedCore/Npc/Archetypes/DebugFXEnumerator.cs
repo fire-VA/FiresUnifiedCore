@@ -7,18 +7,8 @@ using System.Reflection;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Debug utility to enumerate all available VFX, SFX, and Emotes in Valheim.
-    /// 
-    /// USAGE:
-    /// 1. Open console (~)
-    /// 2. Type command:
-    ///    - listfx          - Dump all VFX to fx_dump.txt
-    ///    - listsfx         - Dump all SFX to sfx_dump.txt  
-    ///    - listemotes      - Dump all emotes/animations to emotes_dump.txt
-    ///    - testfx <name>   - Spawn test effect
-    ///    - testsfx <name>  - Play test sound
-    ///    - testemote <name> - Play emote on player
-    /// 3. Check BepInEx/config/FiresRPGmaker/
+    /// Console tools for finding effects: listfx, listsfx and listemotes dump every VFX, SFX and emote to files in the
+    /// FiresRPGmaker config folder, and testfx, testsfx and testemote play one by name.
     /// </summary>
     public static class DebugFXEnumerator
     {
@@ -375,8 +365,8 @@ namespace FiresCore.Npc.Archetypes
                 components.Add("Light");
             if (prefab.GetComponent<TimedDestruction>() != null)
             {
-                var td = prefab.GetComponent<TimedDestruction>();
-                components.Add($"Duration:{td.m_timeout:F1}s");
+                var timedDestruction = prefab.GetComponent<TimedDestruction>();
+                components.Add($"Duration:{timedDestruction.m_timeout:F1}s");
             }
             if (prefab.GetComponent<ZSFX>() != null)
                 components.Add("Sound");
@@ -398,9 +388,9 @@ namespace FiresCore.Npc.Archetypes
         {
             // Use reflection or component search to avoid direct ParticleSystem reference
             var allComponents = prefab.GetComponentsInChildren<Component>(true);
-            foreach (var comp in allComponents)
+            foreach (var component in allComponents)
             {
-                if (comp != null && comp.GetType().Name == "ParticleSystem")
+                if (component != null && component.GetType().Name == "ParticleSystem")
                     return true;
             }
             return false;
@@ -682,10 +672,10 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Check for TimedDestruction
-            var td = prefab.GetComponent<TimedDestruction>();
-            if (td != null)
+            var timedDestruction = prefab.GetComponent<TimedDestruction>();
+            if (timedDestruction != null)
             {
-                info.Duration = td.m_timeout;
+                info.Duration = timedDestruction.m_timeout;
                 info.Components.Add($"TimedDestruction");
             }
             
@@ -727,9 +717,9 @@ namespace FiresCore.Npc.Archetypes
         
         private static bool IsUISFX(string name)
         {
-            string[] ui = { "gui", "menu", "click", "select", "equip", "pickup", "drop",
+            string[] uiKeywords = { "gui", "menu", "click", "select", "equip", "pickup", "drop",
                 "inventory", "craft", "repair", "upgrade" };
-            return ui.Any(u => name.Contains(u));
+            return uiKeywords.Any(u => name.Contains(u));
         }
         
         private static bool IsFootstepSFX(string name)

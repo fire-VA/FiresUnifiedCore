@@ -13,26 +13,10 @@ using FiresCoreRoot = FiresCore.FiresUnifiedCore;
 
 namespace FiresCore.Sync
 {
-    // Generic admin → server config push. Lets an admin edit ANY mod's config
-    // file(s) locally (ExpandWorld spawns/locations/events yaml, EWP rules, any
-    // .cfg/.yaml/.json) and push them UP to a dedicated server without FTP.
-    //
-    //   pushconfigs expand_world_spawns.yaml   — one exact file
-    //   pushconfigs expand_world               — a whole folder (recursive)
-    //   pushconfigs expand_world*              — wildcard: every matching folder + file
-    //
-    // Cascade-free BY DESIGN. The push is client → SERVER ONLY
-    // (InvokeRoutedRPC(0L, …)); the server writes the file and STOPS. It never
-    // rebroadcasts, so the sending admin never receives an echo that would
-    // re-trip their own file watcher and bounce the push back — the reload
-    // cascade the ad-hoc SyncFiles path has to guard against with per-file
-    // "admin-synced" exclusion markers can't happen here at all. The owning mod
-    // (EWD/EWS/EWL/EWP, etc.) reloads server-side via its OWN file watcher.
-    //
-    // Security: the RPC verifies the sender is a server admin
-    // (AdminSyncing.IsAdmin) and clamps the write to BepInEx/config with a
-    // config-extension allowlist and traversal rejection — an admin can
-    // overwrite configs, never arbitrary server files.
+    // Admin config push: "pushconfigs <file | folder | wildcard>" sends locally edited config files to the server
+    // without FTP. The push goes to the server only and the server just writes the file, so the owning mod's own
+    // file watcher reloads it and no echo can bounce back to the sender. The server checks the sender is an admin
+    // and confines writes to BepInEx/config with an extension allowlist and traversal rejection.
     public static class ConfigPushService
     {
         private const string RpcName = "FiresCore_PushConfig";
@@ -137,7 +121,7 @@ namespace FiresCore.Sync
             }
 
             Reply($"[ConfigPush] Pushing {matches.Count} file(s) to the server:");
-            foreach (var m in matches) Reply("   " + m.rel);
+            foreach (var match in matches) Reply("   " + match.rel);
             // Route the server's per-file merge outcomes back to this console.
             ConfigPullService.SetReplyTerminal(args.Context);
 
@@ -226,12 +210,12 @@ namespace FiresCore.Sync
                         AddFolder(root, dir, results);
                 }
                 // Files whose relpath OR filename matches.
-                foreach (var f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                foreach (var filePath in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
                 {
-                    if (!IsAllowed(f)) continue;
-                    string rel = Rel(root, f);
-                    if (regex.IsMatch(rel) || regex.IsMatch(Path.GetFileName(f)))
-                        AddFile(root, f, results);
+                    if (!IsAllowed(filePath)) continue;
+                    string rel = Rel(root, filePath);
+                    if (regex.IsMatch(rel) || regex.IsMatch(Path.GetFileName(filePath)))
+                        AddFile(root, filePath, results);
                 }
             }
             catch (Exception ex) { FiresLogger.LogWarning($"[ConfigPush] enumerate failed: {ex.Message}"); }
@@ -243,8 +227,8 @@ namespace FiresCore.Sync
         {
             try
             {
-                foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
-                    if (IsAllowed(f)) AddFile(root, f, results);
+                foreach (var filePath in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                    if (IsAllowed(filePath)) AddFile(root, filePath, results);
             }
             catch (Exception ex) { FiresLogger.LogWarning($"[ConfigPush] folder enum '{dir}' failed: {ex.Message}"); }
         }
@@ -304,8 +288,8 @@ namespace FiresCore.Sync
                     opts.Add(name);
                     opts.Add(name + "*");
                 }
-                foreach (var f in Directory.EnumerateFiles(root))
-                    if (IsAllowed(f)) opts.Add(Path.GetFileName(f));
+                foreach (var filePath in Directory.EnumerateFiles(root))
+                    if (IsAllowed(filePath)) opts.Add(Path.GetFileName(filePath));
             }
             catch { }
             return opts;
@@ -403,22 +387,10 @@ namespace FiresCore.Sync
             return full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
         }
 
-        // ──────────────────────────────────────────────────────────────
-        //  Applying an incoming push: merge / skip-identical / replace
-        // ──────────────────────────────────────────────────────────────
-        //
-        // "As if the admin edited the server directly" — so a push must never blow away
-        // server-side entries the admin didn't touch, and must never rewrite a file whose
-        // content didn't actually change (an identical write still trips the owning mod's
-        // FileSystemWatcher and causes a pointless reload — exactly the cascade we avoid).
-        //
-        //   .cfg/.ini  → real entry-level MERGE: the admin's values overwrite matching
-        //                section/key entries, missing ones are inserted, and every
-        //                server-only key/section/comment is preserved untouched.
-        //   other      → whole-file replace. A structural merge of yaml/json/xml can't be
-        //                done safely without per-file identity rules (guessing one would
-        //                risk corrupting ExpandWorld data), so those stay whole-file —
-        //                pull → edit → push keeps them honest.
+        // An incoming push should look like the admin edited the server directly. .cfg and .ini files merge per
+        // entry, keeping server-only keys, sections and comments; other formats are replaced whole, since a
+        // structural merge of yaml or json can't be done safely. Identical content is never rewritten, so the owning
+        // mod's file watcher doesn't reload for nothing.
         private static string ApplyIncoming(string relPath, byte[] incoming)
         {
             string abs = Path.Combine(Paths.ConfigPath, relPath.Replace('/', Path.DirectorySeparatorChar));
@@ -470,23 +442,23 @@ namespace FiresCore.Sync
         private static string ReadText(byte[] bytes)
         {
             using (var ms = new MemoryStream(bytes))
-            using (var sr = new StreamReader(ms, new UTF8Encoding(false), detectEncodingFromByteOrderMarks: true))
-                return sr.ReadToEnd();
+            using (var reader = new StreamReader(ms, new UTF8Encoding(false), detectEncodingFromByteOrderMarks: true))
+                return reader.ReadToEnd();
         }
 
         private static List<(string section, string key, string value)> ParseCfg(string text)
         {
             var res = new List<(string, string, string)>();
-            string cur = "";
+            string section = "";
             foreach (var raw in text.Replace("\r\n", "\n").Split('\n'))
             {
-                string t = raw.Trim();
-                if (t.Length == 0 || t.StartsWith("#", StringComparison.Ordinal)) continue;
-                if (t.StartsWith("[", StringComparison.Ordinal) && t.EndsWith("]", StringComparison.Ordinal))
-                { cur = t.Substring(1, t.Length - 2).Trim(); continue; }
-                int eq = t.IndexOf('=');
-                if (eq <= 0) continue;
-                res.Add((cur, t.Substring(0, eq).Trim(), t.Substring(eq + 1).Trim()));
+                string trimmed = raw.Trim();
+                if (trimmed.Length == 0 || trimmed.StartsWith("#", StringComparison.Ordinal)) continue;
+                if (trimmed.StartsWith("[", StringComparison.Ordinal) && trimmed.EndsWith("]", StringComparison.Ordinal))
+                { section = trimmed.Substring(1, trimmed.Length - 2).Trim(); continue; }
+                int equalsIndex = trimmed.IndexOf('=');
+                if (equalsIndex <= 0) continue;
+                res.Add((section, trimmed.Substring(0, equalsIndex).Trim(), trimmed.Substring(equalsIndex + 1).Trim()));
             }
             return res;
         }
@@ -505,36 +477,36 @@ namespace FiresCore.Sync
             // Index the server file: (sectionkey) → line, section → last line of that section.
             var keyLine = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var sectionEnd = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            string cur = "";
+            string section = "";
             sectionEnd[""] = -1;
             for (int i = 0; i < lines.Count; i++)
             {
-                string t = lines[i].Trim();
-                if (t.StartsWith("[", StringComparison.Ordinal) && t.EndsWith("]", StringComparison.Ordinal))
-                { cur = t.Substring(1, t.Length - 2).Trim(); sectionEnd[cur] = i; continue; }
-                if (t.Length == 0 || t.StartsWith("#", StringComparison.Ordinal)) continue;
-                int eq = t.IndexOf('=');
-                if (eq <= 0) continue;
-                keyLine[cur + "" + t.Substring(0, eq).Trim()] = i;
-                sectionEnd[cur] = i;
+                string trimmed = lines[i].Trim();
+                if (trimmed.StartsWith("[", StringComparison.Ordinal) && trimmed.EndsWith("]", StringComparison.Ordinal))
+                { section = trimmed.Substring(1, trimmed.Length - 2).Trim(); sectionEnd[section] = i; continue; }
+                if (trimmed.Length == 0 || trimmed.StartsWith("#", StringComparison.Ordinal)) continue;
+                int equalsIndex = trimmed.IndexOf('=');
+                if (equalsIndex <= 0) continue;
+                keyLine[section + "" + trimmed.Substring(0, equalsIndex).Trim()] = i;
+                sectionEnd[section] = i;
             }
 
             bool changed = false;
             var pendingInserts = new Dictionary<int, List<string>>();   // insert-after line → new lines
             var newSections = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var e in adminEntries)
+            foreach (var entry in adminEntries)
             {
-                string line = e.key + " = " + e.value;
-                if (keyLine.TryGetValue(e.section + "" + e.key, out int idx))
+                string line = entry.key + " = " + entry.value;
+                if (keyLine.TryGetValue(entry.section + "" + entry.key, out int idx))
                 {
-                    int eq = lines[idx].IndexOf('=');
-                    string keyText = eq > 0 ? lines[idx].Substring(0, eq).TrimEnd() : e.key;
-                    string newLine = keyText + " = " + e.value;
+                    int equalsIndex = lines[idx].IndexOf('=');
+                    string keyText = equalsIndex > 0 ? lines[idx].Substring(0, equalsIndex).TrimEnd() : entry.key;
+                    string newLine = keyText + " = " + entry.value;
                     if (!string.Equals(lines[idx], newLine, StringComparison.Ordinal))
                     { lines[idx] = newLine; updated++; changed = true; }
                 }
-                else if (sectionEnd.TryGetValue(e.section, out int endIdx))
+                else if (sectionEnd.TryGetValue(entry.section, out int endIdx))
                 {
                     if (!pendingInserts.TryGetValue(endIdx, out var list)) pendingInserts[endIdx] = list = new List<string>();
                     list.Add(line);
@@ -542,7 +514,7 @@ namespace FiresCore.Sync
                 }
                 else
                 {
-                    if (!newSections.TryGetValue(e.section, out var list)) newSections[e.section] = list = new List<string>();
+                    if (!newSections.TryGetValue(entry.section, out var list)) newSections[entry.section] = list = new List<string>();
                     list.Add(line);
                     added++; changed = true;
                 }
@@ -554,8 +526,8 @@ namespace FiresCore.Sync
             var insertAt = new List<int>(pendingInserts.Keys);
             insertAt.Sort();
             insertAt.Reverse();
-            foreach (var at in insertAt)
-                lines.InsertRange(Math.Min(at + 1, lines.Count), pendingInserts[at]);
+            foreach (var insertIndex in insertAt)
+                lines.InsertRange(Math.Min(insertIndex + 1, lines.Count), pendingInserts[insertIndex]);
 
             foreach (var kv in newSections)
             {
@@ -587,7 +559,7 @@ namespace FiresCore.Sync
             foreach (var kv in _inbound)
                 if (now - kv.Value.LastTouchTicks > ReassemblyTtlTicks)
                     (stale ??= new List<string>()).Add(kv.Key);
-            if (stale != null) foreach (var k in stale) _inbound.Remove(k);
+            if (stale != null) foreach (var staleKey in stale) _inbound.Remove(staleKey);
         }
     }
 }

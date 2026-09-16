@@ -7,38 +7,10 @@ using UnityEngine;
 
 namespace FiresCore.Services
 {
-    // Globally redirects `AssetBundle.LoadFromMemory(byte[])` calls to
-    // `AssetBundle.LoadFromFile(path)` whenever the byte[] originated
-    // from a recent `File.ReadAllBytes(path)` call.
-    //
-    // Why it matters:
-    //   The common slow mod pattern is
-    //       byte[] data = File.ReadAllBytes(path);
-    //       var bundle  = AssetBundle.LoadFromMemory(data);
-    //   which double-copies the bundle: managed byte[] (one full read) →
-    //   then a managed→native copy inside LoadFromMemory. LoadFromFile
-    //   mmaps the file directly into native bundle storage in one pass
-    //   — typically 5-10x faster on large bundles with half the peak
-    //   memory usage. No mod code needs to change; our patches transparently
-    //   swap to the fast path when the call shape matches.
-    //
-    // Scope:
-    //   Only catches mods that load AFTER FUC's Harmony.PatchAll runs.
-    //   Mods loaded earlier in the BepInEx chainloader order (e.g.
-    //   HDValheimTextures, ValheimHDTerrain) have already done their
-    //   bundle loads by the time our patches attach — those have to be
-    //   handled separately (BepInEx preloader patch, or manual mod patches).
-    //
-    // Safety:
-    //   - ConditionalWeakTable keyed by the byte[] reference: entries
-    //     auto-GC when the array is collected, so the table stays bounded
-    //     by what mods are actively holding.
-    //   - LoadFromFile failure (file missing, locked, corrupt) falls back
-    //     to the original LoadFromMemory path. Never returns null from a
-    //     successful call without delivering a bundle.
-    //   - Verbose mode + counters surface hits / misses / failures via the
-    //     FiresLogger summary so consumers can see how much work the
-    //     interceptor is actually saving.
+    // Redirects AssetBundle.LoadFromMemory(bytes) to LoadFromFile(path) when the bytes came from a recent
+    // File.ReadAllBytes(path), skipping the managed read and native copy that the common mod pattern pays for.
+    // Only mods that load bundles after Core's patches attach benefit. Arrays are tracked in a
+    // ConditionalWeakTable, and any LoadFromFile failure falls back to the original call.
     public static class BundleLoadInterceptor
     {
         private const int HitSummaryInterval = 10;
@@ -87,10 +59,10 @@ namespace FiresCore.Services
 
         internal static void RecordHit()
         {
-            int n = Interlocked.Increment(ref _hits);
-            if (n == 1 || n % HitSummaryInterval == 0)
+            int hitCount = Interlocked.Increment(ref _hits);
+            if (hitCount == 1 || hitCount % HitSummaryInterval == 0)
             {
-                Debug.Log($"[FiresCore.BundleLoadInterceptor] Redirected {n} AssetBundle.LoadFromMemory call(s) to LoadFromFile fast path ({_misses} miss(es), {_failures} failure(s)).");
+                Debug.Log($"[FiresCore.BundleLoadInterceptor] Redirected {hitCount} AssetBundle.LoadFromMemory call(s) to LoadFromFile fast path ({_misses} miss(es), {_failures} failure(s)).");
             }
         }
 

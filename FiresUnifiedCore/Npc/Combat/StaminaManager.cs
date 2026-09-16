@@ -4,21 +4,8 @@ using System;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Manages stamina for companion combat decisions.
-    /// Prevents the AI from exhausting itself and being unable to dodge/block.
-    /// 
-    /// DESIGN PRINCIPLE:
-    /// Good players always keep stamina reserve for defensive actions.
-    /// This system ensures companions don't spam attacks until they can't dodge.
-    /// 
-    /// STAMINA BUDGET:
-    /// - Always reserve enough for 1 dodge
-    /// - Don't attack if we can't also block afterward
-    /// - Sprint only when necessary, not by default
-    /// - Regenerate awareness (pause attacks when low)
-    /// 
-    /// THROTTLING:
-    /// Prevents rapid stamina-consuming actions to avoid exhaustion.
+    /// Keeps a stamina reserve for defense: always enough for a dodge, no attack that would leave nothing to block
+    /// with, sprinting only when needed, and a pause in attacks while stamina recovers.
     /// </summary>
 public class StaminaManager : MonoBehaviour
   {
@@ -128,9 +115,9 @@ public class StaminaManager : MonoBehaviour
         private bool _isInCriticalRecovery;  // True when stamina hit critical, need to fully retreat
         private float _criticalRecoveryStartTime;
         private float _normalRecoveryStartTime;
-        private const float CRITICAL_RECOVERY_MIN_TIME = 4f;  // Minimum time to stay in critical recovery
-        private const float NORMAL_RECOVERY_MIN_TIME = 2f;    // Minimum time in normal recovery before exiting
-        private const float CRITICAL_STAMINA_THRESHOLD = 0.15f;  // Enter critical below this (was 0.05)
+        private const float CriticalRecoveryMinTime = 4f;  // Minimum time to stay in critical recovery
+        private const float NormalRecoveryMinTime = 2f;    // Minimum time in normal recovery before exiting
+        private const float CriticalStaminaThreshold = 0.15f;  // Enter critical below this (was 0.05)
         
         // Flee state tracking
         private bool _isInFleeState;  // True when companion is actively fleeing
@@ -150,7 +137,6 @@ public class StaminaManager : MonoBehaviour
         
         // Attack pacing state
         private int _consecutiveAttacks = 0;
-        private float _lastAttackPacingCheck = 0f;
         private float _nextAllowedAttackTime = 0f;
         
         // Level-adjusted thresholds (cached for performance)
@@ -174,7 +160,7 @@ public class StaminaManager : MonoBehaviour
         
         // Throttle logging to prevent spam
         private float _lastLogTime;
-        private const float LOG_THROTTLE_INTERVAL = 2.0f;
+        private const float LogThrottleInterval = 2.0f;
         private bool _lastLoggedCriticalState;
         private bool _lastLoggedRecoveryState;
 
@@ -265,7 +251,7 @@ public class StaminaManager : MonoBehaviour
             if (_isInCriticalRecovery)
             {
                 // Only log on state change or throttle interval to prevent spam
-                if (CombatFlowLogging && (!_lastLoggedCriticalState || Time.time - _lastLogTime > LOG_THROTTLE_INTERVAL))
+                if (CombatFlowLogging && (!_lastLoggedCriticalState || Time.time - _lastLogTime > LogThrottleInterval))
                 {
                     Debug.Log($"[StaminaManager] CanAttack=FALSE: In critical recovery (stamina={GetStaminaPercent():P0})");
                     _lastLogTime = Time.time;
@@ -278,7 +264,7 @@ public class StaminaManager : MonoBehaviour
             if (_isRecovering)
             {
                 // Only log on state change or throttle interval to prevent spam
-                if (CombatFlowLogging && (!_lastLoggedRecoveryState || Time.time - _lastLogTime > LOG_THROTTLE_INTERVAL))
+                if (CombatFlowLogging && (!_lastLoggedRecoveryState || Time.time - _lastLogTime > LogThrottleInterval))
                 {
                     Debug.Log($"[StaminaManager] CanAttack=FALSE: In recovery mode (stamina={GetStaminaPercent():P0})");
                     _lastLogTime = Time.time;
@@ -436,7 +422,7 @@ public class StaminaManager : MonoBehaviour
         /// </summary>
         public bool IsStaminaCriticallyLow()
         {
-            return _isInCriticalRecovery || GetStaminaPercent() < CRITICAL_STAMINA_THRESHOLD;
+            return _isInCriticalRecovery || GetStaminaPercent() < CriticalStaminaThreshold;
         }
         
         /// <summary>
@@ -450,7 +436,7 @@ public class StaminaManager : MonoBehaviour
         public bool ShouldTreatAsLowHealth()
         {
             // Critical recovery = always treat as emergency
-            // This is set when stamina drops below CRITICAL_STAMINA_THRESHOLD (15%)
+            // This is set when stamina drops below CriticalStaminaThreshold (15%)
             if (_isInCriticalRecovery) return true;
             
             // Very low stamina (can't even dodge once) = emergency
@@ -671,8 +657,8 @@ public class StaminaManager : MonoBehaviour
             {
                 // Calculate delay based on how low stamina is
                 // Lower stamina = longer delay to allow more regeneration
-                float t = Mathf.InverseLerp(minStaminaToAttack, conservativeAttackThreshold, staminaPercent);
-                float delay = Mathf.Lerp(conservativeAttackDelay, conservativeAttackDelay * 0.5f, t);
+                float blend = Mathf.InverseLerp(minStaminaToAttack, conservativeAttackThreshold, staminaPercent);
+                float delay = Mathf.Lerp(conservativeAttackDelay, conservativeAttackDelay * 0.5f, blend);
                 _nextAllowedAttackTime = Time.time + delay;
                 
                 if (CombatFlowLogging)
@@ -972,7 +958,7 @@ public class StaminaManager : MonoBehaviour
                 // Exit critical recovery only when:
                 // 1. Stamina is nearly full (90%+)
                 // 2. Minimum time has passed (to let stamina fully regen)
-                if (percent >= 0.90f && timeSinceCritical >= CRITICAL_RECOVERY_MIN_TIME)
+                if (percent >= 0.90f && timeSinceCritical >= CriticalRecoveryMinTime)
                 {
                     _isInCriticalRecovery = false;
                     _isRecovering = false;
@@ -986,7 +972,7 @@ public class StaminaManager : MonoBehaviour
             }
             
             // Check for critical stamina depletion
-            if (percent < CRITICAL_STAMINA_THRESHOLD)
+            if (percent < CriticalStaminaThreshold)
             {
                 _isInCriticalRecovery = true;
                 _criticalRecoveryStartTime = Time.time;
@@ -995,7 +981,7 @@ public class StaminaManager : MonoBehaviour
                 
                 if (CombatFlowLogging || VerboseLogging)
                 {
-                    Debug.Log($"[StaminaManager] === ENTERING CRITICAL RECOVERY === Stamina: {percent:P0} < {CRITICAL_STAMINA_THRESHOLD:P0}");
+                    Debug.Log($"[StaminaManager] === ENTERING CRITICAL RECOVERY === Stamina: {percent:P0} < {CriticalStaminaThreshold:P0}");
                     Debug.Log($"[StaminaManager] SURVIVAL INSTINCT: Companion MUST retreat - no attacks, no dodges, no blocks!");
                 }
                 return;
@@ -1009,7 +995,7 @@ public class StaminaManager : MonoBehaviour
                 // Exit recovery when:
                 // 1. Stamina is above resume threshold
                 // 2. Minimum recovery time has passed (prevents rapid on/off cycling)
-                if (percent >= _adjustedResumeThreshold && timeSinceRecovery >= NORMAL_RECOVERY_MIN_TIME)
+                if (percent >= _adjustedResumeThreshold && timeSinceRecovery >= NormalRecoveryMinTime)
                 {
                     _isRecovering = false;
                     

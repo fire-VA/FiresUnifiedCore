@@ -78,10 +78,10 @@ namespace FiresCore.UI
         {
             // Build a set of active effect name hashes
             var activeHashes = new HashSet<int>();
-            foreach (var se in effects)
+            foreach (var effect in effects)
             {
-                if (se == null) continue;
-                activeHashes.Add(se.NameHash());
+                if (effect == null) continue;
+                activeHashes.Add(effect.NameHash());
             }
 
             // Remove entries that are no longer active
@@ -96,15 +96,15 @@ namespace FiresCore.UI
 
             // Add entries for new effects
             var existingHashes = new HashSet<int>();
-            foreach (var e in _entries) existingHashes.Add(e.NameHash);
+            foreach (var existing in _entries) existingHashes.Add(existing.NameHash);
 
-            foreach (var se in effects)
+            foreach (var effect in effects)
             {
-                if (se == null) continue;
-                int hash = se.NameHash();
+                if (effect == null) continue;
+                int hash = effect.NameHash();
                 if (existingHashes.Contains(hash)) continue;
 
-                var entry = CreateEffectEntry(se);
+                var entry = CreateEffectEntry(effect);
                 _entries.Add(entry);
                 existingHashes.Add(hash);
             }
@@ -114,23 +114,23 @@ namespace FiresCore.UI
         {
             if (!ShowTimer) return;
 
-            foreach (var se in effects)
+            foreach (var effect in effects)
             {
-                if (se == null) continue;
-                int hash = se.NameHash();
+                if (effect == null) continue;
+                int hash = effect.NameHash();
 
                 for (int i = 0; i < _entries.Count; i++)
                 {
                     if (_entries[i].NameHash != hash) continue;
 
                     // Update icon in case it changes (e.g., some effects cycle)
-                    if (_entries[i].Icon != null && se.m_icon != null)
-                        _entries[i].Icon.sprite = se.m_icon;
+                    if (_entries[i].Icon != null && effect.m_icon != null)
+                        _entries[i].Icon.sprite = effect.m_icon;
 
                     // Update timer text
                     if (_entries[i].TimerText != null)
                     {
-                        float ttl = se.GetRemaningTime();
+                        float ttl = effect.GetRemaningTime();
                         if (ttl > 0f)
                         {
                             _entries[i].TimerText.text = FormatTime(ttl);
@@ -147,22 +147,22 @@ namespace FiresCore.UI
             }
         }
 
-        private StatusEffectEntry CreateEffectEntry(StatusEffect se)
+        private StatusEffectEntry CreateEffectEntry(StatusEffect effect)
         {
-            var go = new GameObject(se.m_name ?? "SE", typeof(RectTransform));
+            var go = new GameObject(effect.m_name ?? "SE", typeof(RectTransform));
             go.transform.SetParent(transform, false);
 
             var rect = go.GetComponent<RectTransform>();
             rect.sizeDelta = new Vector2(IconSize, IconSize);
 
-            var le = go.AddComponent<LayoutElement>();
-            le.preferredWidth = IconSize;
-            le.preferredHeight = IconSize;
+            var layoutElement = go.AddComponent<LayoutElement>();
+            layoutElement.preferredWidth = IconSize;
+            layoutElement.preferredHeight = IconSize;
 
             // Icon
             var iconImg = go.AddComponent<Image>();
-            iconImg.sprite = se.m_icon;
-            iconImg.color = se.m_icon != null ? Color.white : Color.clear;
+            iconImg.sprite = effect.m_icon;
+            iconImg.color = effect.m_icon != null ? Color.white : Color.clear;
             iconImg.raycastTarget = false;
 
             TMP_Text timerText = null;
@@ -185,7 +185,7 @@ namespace FiresCore.UI
 
             return new StatusEffectEntry
             {
-                NameHash = se.NameHash(),
+                NameHash = effect.NameHash(),
                 GO = go,
                 Icon = iconImg,
                 TimerText = timerText
@@ -196,16 +196,16 @@ namespace FiresCore.UI
         {
             if (seconds < 60f)
                 return $"{Mathf.CeilToInt(seconds)}s";
-            int m = Mathf.FloorToInt(seconds / 60f);
-            int s = Mathf.CeilToInt(seconds % 60f);
-            return $"{m}:{s:D2}";
+            int minutes = Mathf.FloorToInt(seconds / 60f);
+            int remainingSeconds = Mathf.CeilToInt(seconds % 60f);
+            return $"{minutes}:{remainingSeconds:D2}";
         }
 
         private void ClearAll()
         {
-            foreach (var e in _entries)
+            foreach (var entry in _entries)
             {
-                if (e.GO != null) Destroy(e.GO);
+                if (entry.GO != null) Destroy(entry.GO);
             }
             _entries.Clear();
         }

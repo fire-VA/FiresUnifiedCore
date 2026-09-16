@@ -5,19 +5,9 @@ using UnityEngine;
 
 namespace FiresCore.Lifecycle
 {
-    // "Is this player safe to mutate right now?" gate plus a deferred-work
-    // queue. Writes to Player.m_customData from inside Player.OnSpawned
-    // (and similar lifecycle windows) hard-crash the game without a
-    // managed exception even when every readiness check passes; the
-    // engine hasn't finished post-spawn finalization at that point.
-    //
-    // Callers wrap their write in RunWhenReady; the work is queued onto a
-    // hidden driver MonoBehaviour that polls each frame and fires the
-    // moment the gate opens (or after a per-call timeout, in which case
-    // the work is dropped with a warning — bounded so a never-ready
-    // player can't grow the queue unbounded).
-    //
-    // All queue operations run on the Unity main thread. Not thread-safe.
+    // Defers work on a player until it is safe: writing Player.m_customData inside OnSpawned hard-crashes the game even
+    // when every readiness check passes. RunWhenReady queues the work on a hidden driver that runs it when the gate opens,
+    // or drops it with a warning after its timeout. Main thread only.
     public static class PlayerSpawnGate
     {
         private const string LogPrefix = "[PlayerSpawnGate]";
@@ -75,18 +65,18 @@ namespace FiresCore.Lifecycle
 
         // The C# reference can survive a frame or two after Unity has torn
         // down the GameObject — `!p` catches that fake-null state.
-        private static bool IsPlayerObjectAlive(Player p)
+        private static bool IsPlayerObjectAlive(Player player)
         {
-            try { return (bool)p; }
+            try { return (bool)player; }
             catch { return false; }
         }
 
-        private static bool IsZNetViewLive(Player p)
+        private static bool IsZNetViewLive(Player player)
         {
             try
             {
-                if (p.m_nview == null) return false;
-                return p.m_nview.IsValid();
+                if (player.m_nview == null) return false;
+                return player.m_nview.IsValid();
             }
             catch { return false; }
         }
@@ -98,22 +88,22 @@ namespace FiresCore.Lifecycle
             return ZNet.GetConnectionStatus() == ZNet.ConnectionStatus.Connected;
         }
 
-        private static bool IsPlayerTeleporting(Player p)
+        private static bool IsPlayerTeleporting(Player player)
         {
-            try { return p.IsTeleporting(); }
+            try { return player.IsTeleporting(); }
             catch { return true; }
         }
 
         // Diagnostic ENTER/EXIT bracket. A queued callback that ENTERs and
         // never EXITs is the login-freeze fingerprint — keep until the
         // freeze is fully characterized in the field.
-        private static void InvokeWork(Player p, Action<Player> work)
+        private static void InvokeWork(Player player, Action<Player> work)
         {
-            string targetDesc = ResolvePlayerName(p);
+            string targetDesc = ResolvePlayerName(player);
             string workDesc = ResolveWorkDescription(work);
 
             FiresLogger.LogInfo($"{DiagnosticPrefix}.InvokeWork ENTER target={targetDesc} work={workDesc}");
-            try { work(p); }
+            try { work(player); }
             catch (Exception ex)
             {
                 FiresLogger.LogWarning($"{LogPrefix} deferred action threw: {ex.Message}");
@@ -121,10 +111,10 @@ namespace FiresCore.Lifecycle
             FiresLogger.LogInfo($"{DiagnosticPrefix}.InvokeWork EXIT target={targetDesc} work={workDesc}");
         }
 
-        private static string ResolvePlayerName(Player p)
+        private static string ResolvePlayerName(Player player)
         {
-            if (p == null) return "<null player>";
-            try { return p.GetPlayerName() ?? "<unnamed>"; }
+            if (player == null) return "<null player>";
+            try { return player.GetPlayerName() ?? "<unnamed>"; }
             catch { return "<unnameable>"; }
         }
 
@@ -187,28 +177,28 @@ namespace FiresCore.Lifecycle
                 // Walk back-to-front so RemoveAt doesn't break iteration.
                 for (int i = _queue.Count - 1; i >= 0; i--)
                 {
-                    var e = _queue[i];
-                    Player target = e.UseLocal ? Player.m_localPlayer : e.Target;
+                    var pending = _queue[i];
+                    Player target = pending.UseLocal ? Player.m_localPlayer : pending.Target;
 
                     if (IsReadyForCustomDataWrite(target))
                     {
                         _queue.RemoveAt(i);
-                        InvokeWork(target, e.Work);
+                        InvokeWork(target, pending.Work);
                         continue;
                     }
 
-                    if (now >= e.DeadlineUnscaled)
-                        DropTimedOutEntry(i, e, target);
+                    if (now >= pending.DeadlineUnscaled)
+                        DropTimedOutEntry(i, pending, target);
                 }
             }
 
-            private void DropTimedOutEntry(int index, Entry e, Player target)
+            private void DropTimedOutEntry(int index, Entry entry, Player target)
             {
                 _queue.RemoveAt(index);
                 if (!VerboseLogging) return;
                 FiresLogger.LogWarning(
                     $"{LogPrefix} deferred action timed out before player became ready " +
-                    $"(useLocal={e.UseLocal}, target={(target == null ? "null" : ResolvePlayerName(target))}) — dropping.");
+                    $"(useLocal={entry.UseLocal}, target={(target == null ? "null" : ResolvePlayerName(target))}) — dropping.");
             }
 
             private struct Entry

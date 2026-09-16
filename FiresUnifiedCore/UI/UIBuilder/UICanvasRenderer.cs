@@ -9,7 +9,7 @@ namespace FiresCore.UI
 {
     /// <summary>
     /// Instantiates a UILayoutDefinition into live Unity GameObjects.
-    /// Read-only renderer � creates the runtime hierarchy from the data model.
+    /// Read-only renderer - creates the runtime hierarchy from the data model.
     /// Every instantiated element gets a UIBuilderElementTag linking it back to its node.
     /// </summary>
     public static class UICanvasRenderer
@@ -71,8 +71,8 @@ namespace FiresCore.UI
 
                 if (node.Children != null)
                 {
-                    for (int c = node.Children.Count - 1; c >= 0; c--)
-                        stack.Push(new System.Tuple<UIElementNode, Transform>(node.Children[c], childParent));
+                    for (int childIndex = node.Children.Count - 1; childIndex >= 0; childIndex--)
+                        stack.Push(new System.Tuple<UIElementNode, Transform>(node.Children[childIndex], childParent));
                 }
 
                 counter++;
@@ -148,9 +148,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Node instantiation (recursive)
-        // ???????????????????????????????????????
 
         private static GameObject InstantiateNode(UIElementNode node, Transform parent,
             UILayoutDefinition layout, Action<string, GameObject> onNodeCreated = null,
@@ -230,8 +228,8 @@ namespace FiresCore.UI
             // Opacity via CanvasGroup
             if (node.Style != null && node.Style.Opacity < 1f)
             {
-                var cg = go.AddComponent<CanvasGroup>();
-                cg.alpha = node.Style.Opacity;
+                var canvasGroup = go.AddComponent<CanvasGroup>();
+                canvasGroup.alpha = node.Style.Opacity;
             }
 
             // Active state
@@ -247,9 +245,7 @@ namespace FiresCore.UI
             return go;
         }
 
-        // ???????????????????????????????????????
         //  Transform
-        // ???????????????????????????????????????
 
         private static void ApplyTransform(RectTransform rect, UIElementNode node)
         {
@@ -265,7 +261,7 @@ namespace FiresCore.UI
 
             if (isStretchX || isStretchY)
             {
-                // Set offsets directly � they define the edges relative to anchored parent area
+                // Set offsets directly - they define the edges relative to anchored parent area
                 rect.offsetMin = node.OffsetMin.ToVector2();
                 rect.offsetMax = node.OffsetMax.ToVector2();
             }
@@ -280,9 +276,7 @@ namespace FiresCore.UI
                 rect.localRotation = Quaternion.Euler(0, 0, node.Rotation);
         }
 
-        // ???????????????????????????????????????
         //  Element builders
-        // ???????????????????????????????????????
 
         private static void BuildPanel(GameObject go, UIElementNode node)
         {
@@ -296,7 +290,7 @@ namespace FiresCore.UI
 
             // If the panel has detailed ImageData (e.g., it was an Image-with-children
             // reclassified as Panel during capture), use ImageData for more accurate
-            // rendering � it preserves the actual sprite, image type, fill center,
+            // rendering - it preserves the actual sprite, image type, fill center,
             // pixels-per-unit, and the precise Image.color including alpha.
             if (node.ImageData != null && !string.IsNullOrEmpty(node.ImageData.SpriteName))
             {
@@ -342,29 +336,29 @@ namespace FiresCore.UI
         private static void BuildText(GameObject go, UIElementNode node)
         {
             var tmp = go.AddComponent<TextMeshProUGUI>();
-            var td = node.TextData;
-            if (td != null)
+            var textData = node.TextData;
+            if (textData != null)
             {
-                tmp.text = td.Text ?? "";
-                tmp.fontSize = td.FontSize;
-                tmp.fontStyle = (FontStyles)td.FontStyle;
-                tmp.color = td.Color.ToColor();
-                tmp.alignment = (TextAlignmentOptions)td.Alignment;
-                tmp.textWrappingMode = td.WordWrap ? TextWrappingModes.Normal : TextWrappingModes.NoWrap;
-                tmp.overflowMode = (TextOverflowModes)td.OverflowMode;
-                tmp.lineSpacing = td.LineSpacing;
-                tmp.margin = new Vector4(td.TextPadding.Left, td.TextPadding.Top, td.TextPadding.Right, td.TextPadding.Bottom);
-                ApplyFont(tmp, td.FontCategory);
-                tmp.enabled = td.ComponentEnabled;
+                tmp.text = textData.Text ?? "";
+                tmp.fontSize = textData.FontSize;
+                tmp.fontStyle = (FontStyles)textData.FontStyle;
+                tmp.color = textData.Color.ToColor();
+                tmp.alignment = (TextAlignmentOptions)textData.Alignment;
+                tmp.textWrappingMode = textData.WordWrap ? TextWrappingModes.Normal : TextWrappingModes.NoWrap;
+                tmp.overflowMode = (TextOverflowModes)textData.OverflowMode;
+                tmp.lineSpacing = textData.LineSpacing;
+                tmp.margin = new Vector4(textData.TextPadding.Left, textData.TextPadding.Top, textData.TextPadding.Right, textData.TextPadding.Bottom);
+                ApplyFont(tmp, textData.FontCategory);
+                tmp.enabled = textData.ComponentEnabled;
             }
             tmp.raycastTarget = node.Style?.RaycastTarget ?? false;
         }
 
         private static void BuildButton(GameObject go, UIElementNode node)
         {
-            var bd = node.ButtonData ?? new UIButtonDef();
+            var buttonData = node.ButtonData ?? new UIButtonDef();
 
-            // Background image � use the actual Image.color captured in ImageData
+            // Background image - use the actual Image.color captured in ImageData
             // if available. This preserves transparency (e.g., dropButton with alpha=0).
             // Fall back to NormalColor only if ImageData wasn't captured.
             var img = go.AddComponent<Image>();
@@ -379,7 +373,7 @@ namespace FiresCore.UI
             }
             else
             {
-                img.color = bd.NormalColor.ToColor();
+                img.color = buttonData.NormalColor.ToColor();
                 if (node.Style != null)
                 {
                     img.type = (Image.Type)node.Style.ImageType;
@@ -392,15 +386,15 @@ namespace FiresCore.UI
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.interactable = node.Interactable;
-            btn.enabled = bd.ComponentEnabled;
+            btn.enabled = buttonData.ComponentEnabled;
 
             var colors = btn.colors;
-            colors.normalColor = bd.NormalColor.ToColor();
-            colors.highlightedColor = bd.HighlightedColor.ToColor();
-            colors.pressedColor = bd.PressedColor.ToColor();
-            colors.selectedColor = bd.SelectedColor.ToColor();
-            colors.disabledColor = bd.DisabledColor.ToColor();
-            colors.fadeDuration = bd.FadeDuration;
+            colors.normalColor = buttonData.NormalColor.ToColor();
+            colors.highlightedColor = buttonData.HighlightedColor.ToColor();
+            colors.pressedColor = buttonData.PressedColor.ToColor();
+            colors.selectedColor = buttonData.SelectedColor.ToColor();
+            colors.disabledColor = buttonData.DisabledColor.ToColor();
+            colors.fadeDuration = buttonData.FadeDuration;
             btn.colors = colors;
 
             // Label text child
@@ -409,35 +403,35 @@ namespace FiresCore.UI
             var textRect = textGo.AddComponent<RectTransform>();
             textRect.anchorMin = Vector2.zero;
             textRect.anchorMax = Vector2.one;
-            textRect.offsetMin = new Vector2(bd.LabelPadding.Left, bd.LabelPadding.Bottom);
-            textRect.offsetMax = new Vector2(-bd.LabelPadding.Right, -bd.LabelPadding.Top);
+            textRect.offsetMin = new Vector2(buttonData.LabelPadding.Left, buttonData.LabelPadding.Bottom);
+            textRect.offsetMax = new Vector2(-buttonData.LabelPadding.Right, -buttonData.LabelPadding.Top);
 
             var tmp = textGo.AddComponent<TextMeshProUGUI>();
-            tmp.text = bd.Label ?? "Button";
-            tmp.fontSize = bd.FontSize;
-            tmp.color = bd.LabelColor.ToColor();
-            tmp.alignment = (TextAlignmentOptions)bd.LabelAlignment;
+            tmp.text = buttonData.Label ?? "Button";
+            tmp.fontSize = buttonData.FontSize;
+            tmp.color = buttonData.LabelColor.ToColor();
+            tmp.alignment = (TextAlignmentOptions)buttonData.LabelAlignment;
             tmp.textWrappingMode = TextWrappingModes.NoWrap;
             tmp.raycastTarget = false;
             ApplyFont(tmp, "Body");
 
             // Hide label by default; only show when explicitly enabled
-            if (!bd.ShowLabel)
+            if (!buttonData.ShowLabel)
                 textGo.SetActive(false);
         }
 
         private static void BuildInputField(GameObject go, UIElementNode node)
         {
-            var ifd = node.InputFieldData ?? new UIInputFieldDef();
+            var inputFieldData = node.InputFieldData ?? new UIInputFieldDef();
 
             // Background
-            var bgImg = go.AddComponent<Image>();
-            bgImg.color = ifd.BackgroundColor.ToColor();
-            bgImg.raycastTarget = true;
+            var background = go.AddComponent<Image>();
+            background.color = inputFieldData.BackgroundColor.ToColor();
+            background.raycastTarget = true;
             if (node.Style != null)
             {
-                bgImg.type = (Image.Type)node.Style.ImageType;
-                ApplySprite(bgImg, node.Style.BackgroundSprite);
+                background.type = (Image.Type)node.Style.ImageType;
+                ApplySprite(background, node.Style.BackgroundSprite);
             }
 
             // Viewport
@@ -445,8 +439,8 @@ namespace FiresCore.UI
             var vpRect = viewport.AddComponent<RectTransform>();
             vpRect.anchorMin = Vector2.zero;
             vpRect.anchorMax = Vector2.one;
-            vpRect.offsetMin = new Vector2(ifd.TextPadding.Left, ifd.TextPadding.Bottom);
-            vpRect.offsetMax = new Vector2(-ifd.TextPadding.Right, -ifd.TextPadding.Top);
+            vpRect.offsetMin = new Vector2(inputFieldData.TextPadding.Left, inputFieldData.TextPadding.Bottom);
+            vpRect.offsetMax = new Vector2(-inputFieldData.TextPadding.Right, -inputFieldData.TextPadding.Top);
             viewport.AddComponent<RectMask2D>();
 
             // Text
@@ -457,60 +451,60 @@ namespace FiresCore.UI
             textRect.offsetMin = Vector2.zero;
             textRect.offsetMax = Vector2.zero;
             var txt = textGo.AddComponent<TextMeshProUGUI>();
-            txt.fontSize = ifd.FontSize;
-            txt.color = ifd.TextColor.ToColor();
-            txt.alignment = (TextAlignmentOptions)ifd.TextAlignment;
-            txt.textWrappingMode = ifd.Multiline ? TextWrappingModes.Normal : TextWrappingModes.NoWrap;
+            txt.fontSize = inputFieldData.FontSize;
+            txt.color = inputFieldData.TextColor.ToColor();
+            txt.alignment = (TextAlignmentOptions)inputFieldData.TextAlignment;
+            txt.textWrappingMode = inputFieldData.Multiline ? TextWrappingModes.Normal : TextWrappingModes.NoWrap;
             txt.raycastTarget = false;
             ApplyFont(txt, "Body");
 
             // Placeholder
-            var phGo = CreateChild(viewport.transform, "Placeholder");
-            var phRect = phGo.AddComponent<RectTransform>();
+            var placeholderGo = CreateChild(viewport.transform, "Placeholder");
+            var phRect = placeholderGo.AddComponent<RectTransform>();
             phRect.anchorMin = Vector2.zero;
             phRect.anchorMax = Vector2.one;
             phRect.offsetMin = Vector2.zero;
             phRect.offsetMax = Vector2.zero;
-            var ph = phGo.AddComponent<TextMeshProUGUI>();
-            ph.text = ifd.PlaceholderText ?? "";
-            ph.fontSize = ifd.FontSize;
-            ph.color = ifd.PlaceholderColor.ToColor();
-            ph.fontStyle = FontStyles.Italic;
-            ph.alignment = (TextAlignmentOptions)ifd.TextAlignment;
-            ph.raycastTarget = false;
-            ApplyFont(ph, "Body");
+            var label = placeholderGo.AddComponent<TextMeshProUGUI>();
+            label.text = inputFieldData.PlaceholderText ?? "";
+            label.fontSize = inputFieldData.FontSize;
+            label.color = inputFieldData.PlaceholderColor.ToColor();
+            label.fontStyle = FontStyles.Italic;
+            label.alignment = (TextAlignmentOptions)inputFieldData.TextAlignment;
+            label.raycastTarget = false;
+            ApplyFont(label, "Body");
 
             // TMP_InputField
             var input = go.AddComponent<TMP_InputField>();
             input.textViewport = vpRect;
             input.textComponent = txt;
-            input.placeholder = ph;
+            input.placeholder = label;
             input.fontAsset = txt.font;
-            input.pointSize = ifd.FontSize;
-            input.lineType = ifd.Multiline ? TMP_InputField.LineType.MultiLineNewline : TMP_InputField.LineType.SingleLine;
-            input.characterLimit = ifd.CharacterLimit;
-            input.contentType = StringToContentType(ifd.ContentType);
-            input.caretColor = ifd.CaretColor.ToColor();
+            input.pointSize = inputFieldData.FontSize;
+            input.lineType = inputFieldData.Multiline ? TMP_InputField.LineType.MultiLineNewline : TMP_InputField.LineType.SingleLine;
+            input.characterLimit = inputFieldData.CharacterLimit;
+            input.contentType = StringToContentType(inputFieldData.ContentType);
+            input.caretColor = inputFieldData.CaretColor.ToColor();
             input.caretWidth = 1;
             input.customCaretColor = true;
-            input.selectionColor = ifd.SelectionColor.ToColor();
+            input.selectionColor = inputFieldData.SelectionColor.ToColor();
             input.interactable = node.Interactable;
-            input.enabled = ifd.ComponentEnabled;
+            input.enabled = inputFieldData.ComponentEnabled;
         }
 
         private static void BuildScrollView(GameObject go, UIElementNode node, UILayoutDefinition layout,
             Action<string, GameObject> onNodeCreated, bool skipChildren)
         {
-            var svd = node.ScrollViewData ?? new UIScrollViewDef();
+            var scrollViewData = node.ScrollViewData ?? new UIScrollViewDef();
 
             // Background on the scroll root
             if (node.Style != null)
             {
-                var bg = go.AddComponent<Image>();
-                bg.color = node.Style.BackgroundColor.ToColor();
-                bg.raycastTarget = node.Style.RaycastTarget;
-                bg.type = (Image.Type)node.Style.ImageType;
-                ApplySprite(bg, node.Style.BackgroundSprite);
+                var image = go.AddComponent<Image>();
+                image.color = node.Style.BackgroundColor.ToColor();
+                image.raycastTarget = node.Style.RaycastTarget;
+                image.type = (Image.Type)node.Style.ImageType;
+                ApplySprite(image, node.Style.BackgroundSprite);
             }
 
             // Viewport
@@ -521,29 +515,29 @@ namespace FiresCore.UI
             vpRect.offsetMin = new Vector2(2, 2);
             vpRect.offsetMax = new Vector2(-2, -2);
             viewport.AddComponent<RectMask2D>();
-            var vpImg = viewport.AddComponent<Image>();
-            vpImg.color = svd.ViewportColor.ToColor();
-            vpImg.raycastTarget = true;
+            var viewportImage = viewport.AddComponent<Image>();
+            viewportImage.color = scrollViewData.ViewportColor.ToColor();
+            viewportImage.raycastTarget = true;
 
             // Content
             var content = CreateChild(viewport.transform, "Content");
-            var cRect = content.AddComponent<RectTransform>();
-            cRect.anchorMin = new Vector2(0, 1);
-            cRect.anchorMax = new Vector2(1, 1);
-            cRect.pivot = new Vector2(0, 1);
-            cRect.anchoredPosition = Vector2.zero;
-            cRect.sizeDelta = new Vector2(0, 0);
+            var contentRect = content.AddComponent<RectTransform>();
+            contentRect.anchorMin = new Vector2(0, 1);
+            contentRect.anchorMax = new Vector2(1, 1);
+            contentRect.pivot = new Vector2(0, 1);
+            contentRect.anchoredPosition = Vector2.zero;
+            contentRect.sizeDelta = new Vector2(0, 0);
 
             // ScrollRect
             var scroll = go.AddComponent<ScrollRect>();
-            scroll.horizontal = svd.Horizontal;
-            scroll.vertical = svd.Vertical;
+            scroll.horizontal = scrollViewData.Horizontal;
+            scroll.vertical = scrollViewData.Vertical;
             scroll.viewport = vpRect;
-            scroll.content = cRect;
-            scroll.movementType = (ScrollRect.MovementType)svd.MovementType;
-            scroll.scrollSensitivity = svd.ScrollSensitivity;
-            scroll.elasticity = svd.Elasticity;
-            scroll.enabled = svd.ComponentEnabled;
+            scroll.content = contentRect;
+            scroll.movementType = (ScrollRect.MovementType)scrollViewData.MovementType;
+            scroll.scrollSensitivity = scrollViewData.ScrollSensitivity;
+            scroll.elasticity = scrollViewData.Elasticity;
+            scroll.enabled = scrollViewData.ComponentEnabled;
             if (!skipChildren && node.Children != null)
             {
                 for (int i = 0; i < node.Children.Count; i++)
@@ -553,16 +547,16 @@ namespace FiresCore.UI
 
         private static void BuildDropdown(GameObject go, UIElementNode node)
         {
-            var dd = node.DropdownData ?? new UIDropdownDef();
+            var dropdownData = node.DropdownData ?? new UIDropdownDef();
 
             // Background
-            var bgImg = go.AddComponent<Image>();
-            bgImg.color = dd.BackgroundColor.ToColor();
-            bgImg.raycastTarget = true;
+            var background = go.AddComponent<Image>();
+            background.color = dropdownData.BackgroundColor.ToColor();
+            background.raycastTarget = true;
             if (node.Style != null)
             {
-                bgImg.type = (Image.Type)node.Style.ImageType;
-                ApplySprite(bgImg, node.Style.BackgroundSprite);
+                background.type = (Image.Type)node.Style.ImageType;
+                ApplySprite(background, node.Style.BackgroundSprite);
             }
 
             var dropdown = go.AddComponent<TMP_Dropdown>();
@@ -575,8 +569,8 @@ namespace FiresCore.UI
             labelRect.offsetMin = new Vector2(6, 2);
             labelRect.offsetMax = new Vector2(-20, -2);
             var labelTmp = labelGo.AddComponent<TextMeshProUGUI>();
-            labelTmp.fontSize = dd.FontSize;
-            labelTmp.color = dd.TextColor.ToColor();
+            labelTmp.fontSize = dropdownData.FontSize;
+            labelTmp.color = dropdownData.TextColor.ToColor();
             labelTmp.alignment = TextAlignmentOptions.MidlineLeft;
             labelTmp.textWrappingMode = TextWrappingModes.NoWrap;
             labelTmp.raycastTarget = false;
@@ -594,7 +588,7 @@ namespace FiresCore.UI
             var arrowTxt = arrowGo.AddComponent<TextMeshProUGUI>();
             arrowTxt.text = "\u25BC";
             arrowTxt.fontSize = 8;
-            arrowTxt.color = dd.TextColor.ToColor();
+            arrowTxt.color = dropdownData.TextColor.ToColor();
             arrowTxt.alignment = TextAlignmentOptions.Center;
             arrowTxt.raycastTarget = false;
             ApplyFont(arrowTxt, "Body");
@@ -606,20 +600,20 @@ namespace FiresCore.UI
             templateRect.anchorMax = new Vector2(1, 0);
             templateRect.pivot = new Vector2(0.5f, 1);
             templateRect.anchoredPosition = Vector2.zero;
-            templateRect.sizeDelta = new Vector2(0, dd.TemplateHeight);
+            templateRect.sizeDelta = new Vector2(0, dropdownData.TemplateHeight);
             var templateBg = template.AddComponent<Image>();
             templateBg.color = new Color(0.08f, 0.08f, 0.1f, 0.98f);
             var templateScroll = template.AddComponent<ScrollRect>();
 
-            var vpGo = CreateChild(template.transform, "Viewport");
-            var vpRt = vpGo.AddComponent<RectTransform>();
-            vpRt.anchorMin = Vector2.zero;
-            vpRt.anchorMax = Vector2.one;
-            vpRt.offsetMin = new Vector2(2, 2);
-            vpRt.offsetMax = new Vector2(-2, -2);
-            vpGo.AddComponent<RectMask2D>();
+            var viewportGo = CreateChild(template.transform, "Viewport");
+            var viewportRect = viewportGo.AddComponent<RectTransform>();
+            viewportRect.anchorMin = Vector2.zero;
+            viewportRect.anchorMax = Vector2.one;
+            viewportRect.offsetMin = new Vector2(2, 2);
+            viewportRect.offsetMax = new Vector2(-2, -2);
+            viewportGo.AddComponent<RectMask2D>();
 
-            var contentGo = CreateChild(vpGo.transform, "Content");
+            var contentGo = CreateChild(viewportGo.transform, "Content");
             var contentRect = contentGo.AddComponent<RectTransform>();
             contentRect.anchorMin = new Vector2(0, 1);
             contentRect.anchorMax = new Vector2(1, 1);
@@ -635,7 +629,7 @@ namespace FiresCore.UI
             var contentFitter = contentGo.AddComponent<ContentSizeFitter>();
             contentFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            templateScroll.viewport = vpRt;
+            templateScroll.viewport = viewportRect;
             templateScroll.content = contentRect;
             templateScroll.horizontal = false;
             templateScroll.vertical = true;
@@ -643,12 +637,12 @@ namespace FiresCore.UI
 
             // Item template
             var itemGo = CreateChild(contentGo.transform, "Item");
-            itemGo.AddComponent<RectTransform>().sizeDelta = new Vector2(0, dd.ItemHeight);
+            itemGo.AddComponent<RectTransform>().sizeDelta = new Vector2(0, dropdownData.ItemHeight);
             var itemLe = itemGo.AddComponent<LayoutElement>();
-            itemLe.preferredHeight = dd.ItemHeight;
+            itemLe.preferredHeight = dropdownData.ItemHeight;
             itemLe.flexibleWidth = 1;
             var itemBg = itemGo.AddComponent<Image>();
-            itemBg.color = dd.ItemColor.ToColor();
+            itemBg.color = dropdownData.ItemColor.ToColor();
             var itemToggle = itemGo.AddComponent<Toggle>();
             itemToggle.targetGraphic = itemBg;
 
@@ -659,8 +653,8 @@ namespace FiresCore.UI
             itemLabelRect.offsetMin = new Vector2(6, 0);
             itemLabelRect.offsetMax = new Vector2(-6, 0);
             var itemLabel = itemLabelGo.AddComponent<TextMeshProUGUI>();
-            itemLabel.fontSize = dd.FontSize;
-            itemLabel.color = dd.TextColor.ToColor();
+            itemLabel.fontSize = dropdownData.FontSize;
+            itemLabel.color = dropdownData.TextColor.ToColor();
             itemLabel.alignment = TextAlignmentOptions.MidlineLeft;
             itemLabel.textWrappingMode = TextWrappingModes.NoWrap;
             itemLabel.raycastTarget = false;
@@ -671,24 +665,24 @@ namespace FiresCore.UI
             template.SetActive(false);
 
             dropdown.ClearOptions();
-            if (dd.Options != null && dd.Options.Count > 0)
-                dropdown.AddOptions(dd.Options);
-            dropdown.value = dd.DefaultValue;
-            dropdown.enabled = dd.ComponentEnabled;
+            if (dropdownData.Options != null && dropdownData.Options.Count > 0)
+                dropdown.AddOptions(dropdownData.Options);
+            dropdown.value = dropdownData.DefaultValue;
+            dropdown.enabled = dropdownData.ComponentEnabled;
         }
 
         private static void BuildToggle(GameObject go, UIElementNode node)
         {
-            var td = node.ToggleData ?? new UIToggleDef();
+            var toggleData = node.ToggleData ?? new UIToggleDef();
 
             // Background
-            var bg = go.AddComponent<Image>();
-            bg.color = td.BackgroundColor.ToColor();
-            bg.raycastTarget = true;
+            var image = go.AddComponent<Image>();
+            image.color = toggleData.BackgroundColor.ToColor();
+            image.raycastTarget = true;
             if (node.Style != null)
             {
-                bg.type = (Image.Type)node.Style.ImageType;
-                ApplySprite(bg, node.Style.BackgroundSprite);
+                image.type = (Image.Type)node.Style.ImageType;
+                ApplySprite(image, node.Style.BackgroundSprite);
             }
 
             // Checkmark
@@ -702,13 +696,13 @@ namespace FiresCore.UI
             var checkTxt = checkGo.AddComponent<TextMeshProUGUI>();
             checkTxt.text = "\u2713";
             checkTxt.fontSize = 16;
-            checkTxt.color = td.CheckmarkColor.ToColor();
+            checkTxt.color = toggleData.CheckmarkColor.ToColor();
             checkTxt.alignment = TextAlignmentOptions.Center;
             checkTxt.raycastTarget = false;
             ApplyFont(checkTxt, "Body");
 
             // Label
-            if (!string.IsNullOrEmpty(td.Label))
+            if (!string.IsNullOrEmpty(toggleData.Label))
             {
                 var labelGo = CreateChild(go.transform, "Label");
                 var labelRect = labelGo.AddComponent<RectTransform>();
@@ -717,36 +711,36 @@ namespace FiresCore.UI
                 labelRect.offsetMin = new Vector2(24, 0);
                 labelRect.offsetMax = new Vector2(-2, 0);
                 var labelTmp = labelGo.AddComponent<TextMeshProUGUI>();
-                labelTmp.text = td.Label;
-                labelTmp.fontSize = td.FontSize;
-                labelTmp.color = td.LabelColor.ToColor();
+                labelTmp.text = toggleData.Label;
+                labelTmp.fontSize = toggleData.FontSize;
+                labelTmp.color = toggleData.LabelColor.ToColor();
                 labelTmp.alignment = TextAlignmentOptions.MidlineLeft;
                 labelTmp.raycastTarget = false;
                 ApplyFont(labelTmp, "Body");
             }
 
             var toggle = go.AddComponent<Toggle>();
-            toggle.targetGraphic = bg;
+            toggle.targetGraphic = image;
             toggle.graphic = checkTxt;
-            toggle.isOn = td.DefaultValue;
+            toggle.isOn = toggleData.DefaultValue;
             toggle.interactable = node.Interactable;
-            toggle.enabled = td.ComponentEnabled;
+            toggle.enabled = toggleData.ComponentEnabled;
         }
 
         private static void BuildSlider(GameObject go, UIElementNode node)
         {
-            var sd = node.SliderData ?? new UISliderDef();
+            var sliderData = node.SliderData ?? new UISliderDef();
 
             // Background
-            var bgGo = CreateChild(go.transform, "Background");
-            var bgRect = bgGo.AddComponent<RectTransform>();
+            var backgroundGo = CreateChild(go.transform, "Background");
+            var bgRect = backgroundGo.AddComponent<RectTransform>();
             bgRect.anchorMin = Vector2.zero;
             bgRect.anchorMax = Vector2.one;
             bgRect.offsetMin = Vector2.zero;
             bgRect.offsetMax = Vector2.zero;
-            var bgImg = bgGo.AddComponent<Image>();
-            bgImg.color = sd.BackgroundColor.ToColor();
-            bgImg.raycastTarget = true;
+            var background = backgroundGo.AddComponent<Image>();
+            background.color = sliderData.BackgroundColor.ToColor();
+            background.raycastTarget = true;
 
             // Fill area
             var fillArea = CreateChild(go.transform, "FillArea");
@@ -763,7 +757,7 @@ namespace FiresCore.UI
             fillRect.offsetMin = Vector2.zero;
             fillRect.offsetMax = Vector2.zero;
             var fillImg = fill.AddComponent<Image>();
-            fillImg.color = sd.FillColor.ToColor();
+            fillImg.color = sliderData.FillColor.ToColor();
 
             // Handle area
             var handleArea = CreateChild(go.transform, "HandleSlideArea");
@@ -777,19 +771,19 @@ namespace FiresCore.UI
             var handleRect = handle.AddComponent<RectTransform>();
             handleRect.sizeDelta = new Vector2(16, 0);
             var handleImg = handle.AddComponent<Image>();
-            handleImg.color = sd.HandleColor.ToColor();
+            handleImg.color = sliderData.HandleColor.ToColor();
             handleImg.raycastTarget = true;
 
             var slider = go.AddComponent<Slider>();
             slider.fillRect = fillRect;
             slider.handleRect = handleRect;
             slider.targetGraphic = handleImg;
-            slider.minValue = sd.MinValue;
-            slider.maxValue = sd.MaxValue;
-            slider.value = sd.DefaultValue;
-            slider.wholeNumbers = sd.WholeNumbers;
+            slider.minValue = sliderData.MinValue;
+            slider.maxValue = sliderData.MaxValue;
+            slider.value = sliderData.DefaultValue;
+            slider.wholeNumbers = sliderData.WholeNumbers;
             slider.interactable = node.Interactable;
-            slider.enabled = sd.ComponentEnabled;
+            slider.enabled = sliderData.ComponentEnabled;
         }
 
         private static void BuildDivider(GameObject go, UIElementNode node)
@@ -810,12 +804,12 @@ namespace FiresCore.UI
 
             int texW = Mathf.Max(32, def.TextureWidth);
             int texH = Mathf.Max(32, def.TextureHeight);
-            var rt = new RenderTexture(texW, texH, 16, RenderTextureFormat.ARGB32);
-            rt.name = "UIBuilderPreviewRT";
-            rt.Create();
+            var renderTexture = new RenderTexture(texW, texH, 16, RenderTextureFormat.ARGB32);
+            renderTexture.name = "UIBuilderPreviewRT";
+            renderTexture.Create();
 
             var rawImg = go.AddComponent<RawImage>();
-            rawImg.texture = rt;
+            rawImg.texture = renderTexture;
             rawImg.color = def.BackgroundColor.ToColor();
             rawImg.enabled = def.ComponentEnabled;
 
@@ -826,7 +820,7 @@ namespace FiresCore.UI
             camGo.transform.localPosition = new Vector3(5000f, 5000f, 0f);
 
             var cam = camGo.AddComponent<Camera>();
-            cam.targetTexture = rt;
+            cam.targetTexture = renderTexture;
             cam.fieldOfView = def.FieldOfView;
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = def.BackgroundColor.ToColor();
@@ -840,62 +834,60 @@ namespace FiresCore.UI
                 tag.PreviewCamera = cam;
         }
 
-        // ???????????????????????????????????????
         //  Layout component helpers
-        // ???????????????????????????????????????
 
         private static void ApplyLayoutGroup(GameObject go, UILayoutGroupDef def)
         {
             if (def == null) return;
             if (def.IsVertical)
             {
-                var vlg = go.AddComponent<VerticalLayoutGroup>();
-                vlg.spacing = def.Spacing;
-                vlg.padding = def.Padding.ToRectOffset();
-                vlg.childAlignment = (TextAnchor)def.ChildAlignment;
-                vlg.childControlWidth = def.ChildControlWidth;
-                vlg.childControlHeight = def.ChildControlHeight;
-                vlg.childForceExpandWidth = def.ChildForceExpandWidth;
-                vlg.childForceExpandHeight = def.ChildForceExpandHeight;
+                var verticalLayout = go.AddComponent<VerticalLayoutGroup>();
+                verticalLayout.spacing = def.Spacing;
+                verticalLayout.padding = def.Padding.ToRectOffset();
+                verticalLayout.childAlignment = (TextAnchor)def.ChildAlignment;
+                verticalLayout.childControlWidth = def.ChildControlWidth;
+                verticalLayout.childControlHeight = def.ChildControlHeight;
+                verticalLayout.childForceExpandWidth = def.ChildForceExpandWidth;
+                verticalLayout.childForceExpandHeight = def.ChildForceExpandHeight;
             }
             else
             {
-                var hlg = go.AddComponent<HorizontalLayoutGroup>();
-                hlg.spacing = def.Spacing;
-                hlg.padding = def.Padding.ToRectOffset();
-                hlg.childAlignment = (TextAnchor)def.ChildAlignment;
-                hlg.childControlWidth = def.ChildControlWidth;
-                hlg.childControlHeight = def.ChildControlHeight;
-                hlg.childForceExpandWidth = def.ChildForceExpandWidth;
-                hlg.childForceExpandHeight = def.ChildForceExpandHeight;
+                var horizontalLayout = go.AddComponent<HorizontalLayoutGroup>();
+                horizontalLayout.spacing = def.Spacing;
+                horizontalLayout.padding = def.Padding.ToRectOffset();
+                horizontalLayout.childAlignment = (TextAnchor)def.ChildAlignment;
+                horizontalLayout.childControlWidth = def.ChildControlWidth;
+                horizontalLayout.childControlHeight = def.ChildControlHeight;
+                horizontalLayout.childForceExpandWidth = def.ChildForceExpandWidth;
+                horizontalLayout.childForceExpandHeight = def.ChildForceExpandHeight;
             }
         }
 
         private static void ApplyLayoutElement(GameObject go, UILayoutElementDef def)
         {
             if (def == null) return;
-            var le = go.AddComponent<LayoutElement>();
-            if (def.MinWidth >= 0) le.minWidth = def.MinWidth;
-            if (def.MinHeight >= 0) le.minHeight = def.MinHeight;
-            if (def.PreferredWidth >= 0) le.preferredWidth = def.PreferredWidth;
-            if (def.PreferredHeight >= 0) le.preferredHeight = def.PreferredHeight;
-            if (def.FlexibleWidth >= 0) le.flexibleWidth = def.FlexibleWidth;
-            if (def.FlexibleHeight >= 0) le.flexibleHeight = def.FlexibleHeight;
-            le.ignoreLayout = def.IgnoreLayout;
+            var layoutElement = go.AddComponent<LayoutElement>();
+            if (def.MinWidth >= 0) layoutElement.minWidth = def.MinWidth;
+            if (def.MinHeight >= 0) layoutElement.minHeight = def.MinHeight;
+            if (def.PreferredWidth >= 0) layoutElement.preferredWidth = def.PreferredWidth;
+            if (def.PreferredHeight >= 0) layoutElement.preferredHeight = def.PreferredHeight;
+            if (def.FlexibleWidth >= 0) layoutElement.flexibleWidth = def.FlexibleWidth;
+            if (def.FlexibleHeight >= 0) layoutElement.flexibleHeight = def.FlexibleHeight;
+            layoutElement.ignoreLayout = def.IgnoreLayout;
         }
 
         private static void ApplyGridLayoutGroup(GameObject go, UIGridLayoutGroupDef def)
         {
             if (def == null) return;
-            var glg = go.AddComponent<GridLayoutGroup>();
-            glg.cellSize = def.CellSize.ToVector2();
-            glg.spacing = def.Spacing.ToVector2();
-            glg.startCorner = (GridLayoutGroup.Corner)def.StartCorner;
-            glg.startAxis = (GridLayoutGroup.Axis)def.StartAxis;
-            glg.childAlignment = (TextAnchor)def.ChildAlignment;
-            glg.constraint = (GridLayoutGroup.Constraint)def.Constraint;
-            glg.constraintCount = def.ConstraintCount;
-            glg.padding = def.Padding.ToRectOffset();
+            var gridLayout = go.AddComponent<GridLayoutGroup>();
+            gridLayout.cellSize = def.CellSize.ToVector2();
+            gridLayout.spacing = def.Spacing.ToVector2();
+            gridLayout.startCorner = (GridLayoutGroup.Corner)def.StartCorner;
+            gridLayout.startAxis = (GridLayoutGroup.Axis)def.StartAxis;
+            gridLayout.childAlignment = (TextAnchor)def.ChildAlignment;
+            gridLayout.constraint = (GridLayoutGroup.Constraint)def.Constraint;
+            gridLayout.constraintCount = def.ConstraintCount;
+            gridLayout.padding = def.Padding.ToRectOffset();
         }
 
         private static void ApplyContentFitter(GameObject go, UIContentFitterDef def)
@@ -906,9 +898,7 @@ namespace FiresCore.UI
             fitter.verticalFit = (ContentSizeFitter.FitMode)def.VerticalFit;
         }
 
-        // ???????????????????????????????????????
         //  Helpers
-        // ???????????????????????????????????????
 
         private static GameObject CreateChild(Transform parent, string name)
         {
@@ -930,10 +920,10 @@ namespace FiresCore.UI
                 UIBuilderHelper.ApplyBodyFont(text);
         }
 
-        private static TMP_InputField.ContentType StringToContentType(string s)
+        private static TMP_InputField.ContentType StringToContentType(string contentType)
         {
-            if (string.IsNullOrEmpty(s)) return TMP_InputField.ContentType.Standard;
-            switch (s)
+            if (string.IsNullOrEmpty(contentType)) return TMP_InputField.ContentType.Standard;
+            switch (contentType)
             {
                 case "Autocorrected": return TMP_InputField.ContentType.Autocorrected;
                 case "IntegerNumber": return TMP_InputField.ContentType.IntegerNumber;
@@ -1030,7 +1020,7 @@ namespace FiresCore.UI
                 }
 
                 // 3. Search all sprites loaded in memory (covers Unity built-in and Valheim game sprites).
-                // This is the key path for captured vanilla UIs � sprites like "UISprite",
+                // This is the key path for captured vanilla UIs - sprites like "UISprite",
                 // "Background", "InputFieldBackground", "Checkmark", "UIMask", "Knob" etc.
                 // are loaded in memory by Unity/Valheim but not in our asset bundles.
                 sprite = FindLoadedSprite(lookupName);
@@ -1053,7 +1043,7 @@ namespace FiresCore.UI
             }
             catch
             {
-                // Sprite not found from live sources � fall through to cached PNG
+                // Sprite not found from live sources - fall through to cached PNG
             }
 
             // Last resort: cached PNG from disk (flat rasterized sprite without metadata).
@@ -1087,7 +1077,7 @@ namespace FiresCore.UI
         /// Results are cached so subsequent lookups are fast.
         /// This finds Unity built-in sprites (UISprite, Background, Checkmark, Knob, etc.)
         /// and any game/mod sprites that happen to be loaded at runtime.
-        /// Note: This is a fallback � captured sprites should use the "cached:" prefix path
+        /// Note: This is a fallback - captured sprites should use the "cached:" prefix path
         /// which loads from disk and doesn't depend on the source mod being loaded.
         /// </summary>
         private static Sprite FindLoadedSprite(string spriteName)
@@ -1105,19 +1095,19 @@ namespace FiresCore.UI
                 var allSprites = Resources.FindObjectsOfTypeAll<Sprite>();
                 for (int i = 0; i < allSprites.Length; i++)
                 {
-                    var s = allSprites[i];
-                    if (s != null && !string.IsNullOrEmpty(s.name))
+                    var sprite = allSprites[i];
+                    if (sprite != null && !string.IsNullOrEmpty(sprite.name))
                     {
                         // Cache by plain sprite name (first wins)
-                        if (!_loadedSpriteCache.ContainsKey(s.name))
-                            _loadedSpriteCache[s.name] = s;
+                        if (!_loadedSpriteCache.ContainsKey(sprite.name))
+                            _loadedSpriteCache[sprite.name] = sprite;
 
                         // Also cache by qualified "texture:sprite" key for atlas sprites
-                        if (s.texture != null && !string.IsNullOrEmpty(s.texture.name))
+                        if (sprite.texture != null && !string.IsNullOrEmpty(sprite.texture.name))
                         {
-                            string qualifiedKey = s.texture.name + ":" + s.name;
+                            string qualifiedKey = sprite.texture.name + ":" + sprite.name;
                             if (!_loadedSpriteCache.ContainsKey(qualifiedKey))
-                                _loadedSpriteCache[qualifiedKey] = s;
+                                _loadedSpriteCache[qualifiedKey] = sprite;
                         }
                     }
                 }
@@ -1171,7 +1161,7 @@ namespace FiresCore.UI
             var rect = root.GetComponent<RectTransform>();
             if (rect == null) return;
 
-            // Apply saved scale (always � default is 1.0 so no-op when unset)
+            // Apply saved scale (always - default is 1.0 so no-op when unset)
             float scale = Mathf.Clamp(layout.ScreenScale, 0.1f, 3f);
             rect.localScale = new Vector3(scale, scale, 1f);
 

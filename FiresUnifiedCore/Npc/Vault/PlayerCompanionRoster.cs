@@ -4,34 +4,11 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.Vault
 {
     /// <summary>
-    /// High-level state of a companion entry in the player's roster.
-    /// 
-    /// This is the field that records the OWNER'S persistent intent for
-    /// the companion. It is decoupled from runtime status (alive/dead,
-    /// loaded/unloaded zone) which is tracked separately on
-    /// <see cref="PlayerCompanionRosterEntry.IsPendingRespawn"/>.
-    /// 
-    /// SEMANTICS — read carefully, these distinguish three almost-identical
-    /// commands the player can issue from the radial menu / roster UI:
-    /// 
-    ///   • <see cref="Following"/> / <see cref="Staying"/> / <see cref="Stationed"/>
-    ///     all describe IN-WORLD companions. Their ZDO exists, their
-    ///     GameObject loads when the player is in range. They differ only
-    ///     in where they are and what they do when not in combat.
-    /// 
-    ///   • <see cref="Dismissed"/> is fundamentally different: the
-    ///     companion is REMOVED FROM THE WORLD. Its live ZDO is destroyed.
-    ///     The roster entry persists with a full <see cref="PlayerCompanionRosterEntry.Snapshot"/>
-    ///     so the player can recall the companion later (re-spawning a new
-    ///     ZDO and Apply'ing the snapshot — same code path as crash-recovery
-    ///     respawn). Dismiss is the player's "I'm done with this companion
-    ///     for now but don't lose it" command.
-    /// 
-    /// THE ROSTER ENTRY IS NEVER DELETED EXCEPT BY THE EXPLICIT
-    /// "Remove" BUTTON ON THE ROSTER SCREEN. Dismiss does not delete.
-    /// Death does not delete. Logout does not delete. The only path that
-    /// calls <see cref="PlayerCompanionStorage.RemoveEntry"/> is the
-    /// roster-screen Remove confirmation.
+    /// The owner's persistent intent for a companion, separate from runtime status such as death or zone
+    /// loading. Following, Staying and Stationed are all in the world and differ only in position and idle
+    /// behavior. Dismissed removes the companion from the world while the entry keeps its snapshot for a later
+    /// recall. An entry is only ever deleted by the roster screen's Remove button, never by dismiss, death or
+    /// logout.
     /// </summary>
     public enum CompanionFollowState
     {
@@ -54,52 +31,19 @@ namespace FiresCore.Npc.Vault
         Stationed = 2,
 
         /// <summary>
-        /// Companion is OUT OF WORLD — its live ZDO has been destroyed —
-        /// but the player still owns it and can recall it from the roster
-        /// screen. The roster entry must carry a complete
-        /// <see cref="PlayerCompanionRosterEntry.Snapshot"/> so the recall
-        /// path can reconstitute identity, equipment, progression, etc.
-        /// 
-        /// AUTO-PROMOTE RULE: a Dismissed companion entering the world —
-        /// regardless of which path produced the spawn (recall button,
-        /// crash-recovery respawn, debug command) — is automatically flipped
-        /// to <see cref="Following"/>. This rule lives in
-        /// <c>CompanionRosterWriter.OnRespawned</c>; callers do not need to
-        /// do anything special on recall, the post-spawn write handles it.
-        /// (Dismissed is structurally impossible to die-from anyway, since
-        /// the companion isn't in the world to take damage.)
+        /// Out of the world with its ZDO destroyed, but still owned and recallable from the roster, so the entry keeps
+        /// a complete snapshot. Any spawn of a dismissed companion turns it back to <see cref="Following"/>
+        /// (CompanionRosterWriter.OnRespawned).
         /// </summary>
         Dismissed = 3,
     }
 
     /// <summary>
-    /// One entry per companion the player owns. Lives inside
-    /// <see cref="PlayerCompanionRoster"/>, which is JSON-serialised into a
-    /// single key in <c>Player.m_customData</c>.
-    /// 
-    /// FIELD OWNERSHIP
-    /// ---------------
-    /// Read the tracker doc (Docs/COMPANION_SAVE_REFACTOR_TRACKER.md) for
-    /// the full data-ownership matrix. In short:
-    /// 
-    ///   • <see cref="Snapshot"/> is the AUTHORITATIVE backup of the
-    ///     companion's state. While the companion is alive in the world it
-    ///     may be slightly stale (the live ZDO is the freshest copy); but
-    ///     it MUST be re-captured on death and on logout so that respawn /
-    ///     re-login can reconstitute the companion exactly. If <see cref="IsPendingRespawn"/>
-    ///     is true and <see cref="Snapshot"/> is null, the companion is
-    ///     UNRECOVERABLE — the entry should be removed rather than a default
-    ///     companion be synthesised in its place. (This is the structural
-    ///     fix for the "respawned with wrong name / wrong scale" bug.)
-    /// 
-    ///   • <see cref="ServerWorldUid"/> is stamped on creation and never
-    ///     mutated. On restore, mismatching UIDs cause the entry to be
-    ///     skipped silently — companions don't follow the player into a
-    ///     different server.
-    /// 
-    ///   • <see cref="RespawnDeadlineUtcTicks"/> is wall-clock-absolute
-    ///     instead of "seconds remaining" so a crash mid-timer doesn't
-    ///     reset the timer to its full duration on next login.
+    /// One owned companion, stored in the roster JSON under Player.m_customData. <see cref="Snapshot"/> is the
+    /// authoritative backup and is re-captured on death and logout; an entry pending respawn with no snapshot
+    /// is unrecoverable and is removed rather than replaced by a default companion. <see cref="ServerWorldUid"/>
+    /// is fixed at creation so companions never follow a character to another world, and
+    /// <see cref="RespawnDeadlineUtcTicks"/> is wall-clock so a crash doesn't restart the timer.
     /// </summary>
     [Serializable]
     public class PlayerCompanionRosterEntry
@@ -145,19 +89,8 @@ namespace FiresCore.Npc.Vault
         public long RespawnDeadlineUtcTicks;
 
         /// <summary>
-        /// Authoritative snapshot of the companion's last known state.
-        /// Re-uses the existing <see cref="CompanionSaveData"/> shape so
-        /// migration from the JSON vault is a copy operation.
-        /// 
-        /// Refreshed:
-        ///   • on death (full capture before the ZDO is destroyed),
-        ///   • on logout (capture for live companions so cross-session works),
-        ///   • on configurable periodic flush while alive (stale-by-design
-        ///     so it stays a backup, not a duplicate authority).
-        /// 
-        /// This field is non-null whenever <see cref="IsPendingRespawn"/>
-        /// is true — the contract is enforced by the storage layer in
-        /// <see cref="PlayerCompanionStorage"/>.
+        /// The companion's last captured state, refreshed on death, on logout and periodically while alive, so it
+        /// remains a backup rather than a second authority. Never null while <see cref="IsPendingRespawn"/> is true.
         /// </summary>
         public CompanionSaveData Snapshot;
 

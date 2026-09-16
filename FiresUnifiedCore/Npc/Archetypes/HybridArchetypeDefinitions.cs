@@ -4,17 +4,8 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Defines all hybrid archetype combinations with unique names, bonuses, and abilities.
-    /// 
-    /// DESIGN: Each hybrid gets:
-    /// - A unique thematic name
-    /// - Blended stat bonuses (70% main, 30% sub)
-    /// - A special hybrid ability that combines aspects of both roles
-    /// 
-    /// NAMING CONVENTIONS:
-    /// - Tank hybrids: Defensive themes (Guardian, Sentinel, Bulwark)
-    /// - DPS hybrids: Offensive themes (Slayer, Reaper, Assassin)
-    /// - Support hybrids: Utility themes (Warden, Sage, Mystic)
+    /// Hybrid archetypes, each with a thematic name, stats blended mostly from the main role, and an ability combining
+    /// both roles.
     /// </summary>
     public static class HybridArchetypeDefinitions
     {

@@ -105,8 +105,8 @@ namespace FiresCore.Npc.WildSpawn
                 int factionInt = zdo.GetInt(ZDO_FACTION, -1);
                 if (factionInt < 0) return; // dresser hasn't run yet on the server
 
-                var cf = (CompanionFaction)factionInt;
-                var vanilla = cf.ToValheim();
+                var faction = (CompanionFaction)factionInt;
+                var vanilla = faction.ToValheim();
                 if (character.m_faction != vanilla)
                 {
                     character.m_faction = vanilla;
@@ -207,19 +207,8 @@ namespace FiresCore.Npc.WildSpawn
             zdo.Set(ZDO_ROLLED_STARS, stars);
             zdo.Set(ZDO_FACTION, (int)faction);
 
-            // Deliberately do NOT call GenerateRandomLoadout() here.
-            //
-            // The previous approach of calling it directly at ~frame-1 caused wild
-            // companions to always be bald: ApplyRandomHairAndBeard fired at only
-            // ~0.17 s, before NpcVisEquipment.ConfigureVisEquipment() had a chance to
-            // set up player models, so SetAppearance silently no-oped.
-            //
-            // CompanionRandomLoadout.Start() (frame 0) already scheduled
-            // Invoke("GenerateRandomLoadout", 0.5f). None of the ZDO keys written above
-            // are checked by ShouldGenerateRandomLoadout(), so the 0.5 s path fires
-            // cleanly — the same timing used by hammer-placed companions. That delay is
-            // enough for NpcVisEquipment to initialize so hair, beard, scale, name, and
-            // gear all apply correctly.
+            // GenerateRandomLoadout is left to CompanionRandomLoadout's own delayed call: running it this early, before
+            // NpcVisEquipment sets up the player models, silently skipped hair and beards.
 
             WildCompanionSquad.ElectAndAssign(this, GetComponent<WildCompanionSeed>());
 

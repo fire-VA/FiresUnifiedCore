@@ -5,19 +5,8 @@ using FiresCore.Npc.AI;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Combat behavior for crossbows.
-    /// Implements kiting similar to BowBehavior but with reload mechanics.
-    /// 
-    /// CROSSBOW VS BOW:
-    /// - Crossbows have higher damage per shot but require reload
-    /// - Reload happens after shooting, can't draw and hold
-    /// - Best used by shooting, retreating while reloading, then planting again
-    /// 
-    /// KITING PATTERN:
-    /// 1. If loaded: Plant, aim, fire
-    /// 2. After shot: Retreat while reloading
-    /// 3. Once reloaded: Plant and fire again
-    /// 4. Emergency: Fire if loaded, then dodge
+    /// Crossbow combat that kites around the reload: plant and fire when loaded, retreat while reloading, plant again
+    /// once reloaded, and in an emergency fire if loaded and then dodge.
     /// </summary>
     public class CrossbowBehavior : WeaponBehavior
     {
@@ -49,14 +38,14 @@ Approaching,
         
         #region Constants
    
-        private const float DANGER_RANGE = 5f;
-        private const float CLOSE_RANGE = 10f;
-      private const float OPTIMAL_MIN = 10f;
-private const float OPTIMAL_MAX = 15f;
-        private const float MAX_RANGE = 25f;
-  private const float MIN_SHOT_INTERVAL = 0.3f;
-        private const float PLANT_DURATION = 0.15f;
-        private const float THREAT_CHECK_INTERVAL = 0.1f;
+        private const float DangerRange = 5f;
+        private const float CloseRange = 10f;
+      private const float OptimalMin = 10f;
+private const float OptimalMax = 15f;
+        private const float MaxRange = 25f;
+  private const float MinShotInterval = 0.3f;
+        private const float PlantDuration = 0.15f;
+        private const float ThreatCheckInterval = 0.1f;
      
         #endregion
         
@@ -75,8 +64,8 @@ private const float OPTIMAL_MAX = 15f;
      private float _phaseStartTime;
       private float _lastThreatCheck;
 
-        // Line-of-sight reposition tracking ï¿½ see DecideNextAction.
-        private const float LOS_REPOSITION_TIMEOUT = 4f;
+        // Line-of-sight reposition tracking - see DecideNextAction.
+        private const float LosRepositionTimeout = 4f;
         private Character _losTarget;
         private float _losBlockedSinceTime = -1f;
 
@@ -150,11 +139,11 @@ private const float OPTIMAL_MAX = 15f;
         public override void ConfigureAI()
         {
             // CompanionAI handles combat behavior directly - no MonsterAI settings needed
-            Context.AttackRange = MAX_RANGE;
+            Context.AttackRange = MaxRange;
             
             if (CompanionCombat.VerboseLogging)
             {
-                Debug.Log($"[CrossbowBehavior] Configured for kiting combat: range={MAX_RANGE}, reloadTime={_currentReloadDuration}");
+                Debug.Log($"[CrossbowBehavior] Configured for kiting combat: range={MaxRange}, reloadTime={_currentReloadDuration}");
             }
         }
         
@@ -200,7 +189,7 @@ private const float OPTIMAL_MAX = 15f;
             UpdateTargetTracking(target);
           
             // Check threats frequently
-            if (Time.time - _lastThreatCheck >= THREAT_CHECK_INTERVAL)
+            if (Time.time - _lastThreatCheck >= ThreatCheckInterval)
             {
      _lastThreatCheck = Time.time;
      CheckThreatLevel(target);
@@ -229,7 +218,7 @@ private const float OPTIMAL_MAX = 15f;
      
     private void CheckThreatLevel(Character target)
         {
-      if (_lastKnownTargetDistance < DANGER_RANGE)
+      if (_lastKnownTargetDistance < DangerRange)
        {
         HandleDangerZone(target);
       }
@@ -273,7 +262,7 @@ private const float OPTIMAL_MAX = 15f;
  break;
    
        case CrossbowPhase.Planting:
-          if (timeSincePhaseStart >= PLANT_DURATION)
+          if (timeSincePhaseStart >= PlantDuration)
        {
          if (_isLoaded)
             {
@@ -291,13 +280,13 @@ private const float OPTIMAL_MAX = 15f;
            FaceTarget(target);
                 if (timeSincePhaseStart >= 0.1f) // Brief aim time
                {
-                             // LINE-OF-SIGHT ABORT ï¿½ don't fire into a wall if the
+                             // LINE-OF-SIGHT ABORT - don't fire into a wall if the
                              // target ducked behind cover after we entered Aiming.
                              if (Context.CompanionAI != null && !Context.CompanionAI.HasClearShotToCurrentTarget())
                              {
                                  if (CompanionCombat.VerboseLogging)
                                  {
-                                     Debug.Log($"[CrossbowBehavior] Aborting shot ï¿½ target {target?.m_name} no longer has line-of-sight");
+                                     Debug.Log($"[CrossbowBehavior] Aborting shot - target {target?.m_name} no longer has line-of-sight");
                                  }
                                  SetPhase(CrossbowPhase.Idle);
                                  break;
@@ -341,7 +330,7 @@ private const float OPTIMAL_MAX = 15f;
         
     private void DecideNextAction(Character target)
     {
-            if (Time.time - _lastShotTime < MIN_SHOT_INTERVAL)
+            if (Time.time - _lastShotTime < MinShotInterval)
         {
   return;
             }
@@ -351,8 +340,8 @@ private const float OPTIMAL_MAX = 15f;
         return;
            }
 
-            // ?? LINE-OF-SIGHT GATE ??????????????????????????????????????????
-            // Same model as BowBehavior ï¿½ one raycast per engagement decision,
+            // LINE-OF-SIGHT GATE
+            // Same model as BowBehavior - one raycast per engagement decision,
             // not per potential target in IsValidTarget.  No LOS triggers a
             // reposition attempt; if reposition fails after the timeout we
             // blacklist the target so AI re-acquires.
@@ -365,11 +354,11 @@ private const float OPTIMAL_MAX = 15f;
                 }
 
                 float blockedFor = Time.time - _losBlockedSinceTime;
-                if (blockedFor >= LOS_REPOSITION_TIMEOUT)
+                if (blockedFor >= LosRepositionTimeout)
                 {
                     if (CompanionCombat.VerboseLogging)
                     {
-                        Debug.Log($"[CrossbowBehavior] No LOS to {target.m_name} for {blockedFor:F1}s ï¿½ blacklisting and re-acquiring");
+                        Debug.Log($"[CrossbowBehavior] No LOS to {target.m_name} for {blockedFor:F1}s - blacklisting and re-acquiring");
                     }
                     Context.CompanionAI.BlacklistTargetForLineOfSight(target);
                     SetPhase(CrossbowPhase.Idle);
@@ -390,24 +379,24 @@ private const float OPTIMAL_MAX = 15f;
                 _losBlockedSinceTime = -1f;
             }
 
-        if (_lastKnownTargetDistance > MAX_RANGE)
+        if (_lastKnownTargetDistance > MaxRange)
             {
          SetPhase(CrossbowPhase.Approaching);
        RequestMovement(MovementRequest.Approach, GetDirectionToTarget(target));
             }
-else if (_lastKnownTargetDistance < DANGER_RANGE)
+else if (_lastKnownTargetDistance < DangerRange)
          {
                 HandleDangerZone(target);
  }
  else if (_isLoaded)
             {
     // Have ammo, find good position to shoot
-       if (_lastKnownTargetDistance >= OPTIMAL_MIN && _lastKnownTargetDistance <= OPTIMAL_MAX)
+       if (_lastKnownTargetDistance >= OptimalMin && _lastKnownTargetDistance <= OptimalMax)
        {
           SetPhase(CrossbowPhase.Planting);
                 RequestMovement(MovementRequest.Stop, Vector3.zero);
     }
-    else if (_lastKnownTargetDistance < OPTIMAL_MIN)
+    else if (_lastKnownTargetDistance < OptimalMin)
            {
         // Too close but loaded - shoot then retreat
       SetPhase(CrossbowPhase.Planting);
@@ -423,7 +412,7 @@ SetPhase(CrossbowPhase.Approaching);
        else
      {
           // Not loaded - reload while maintaining distance
-     if (_lastKnownTargetDistance < OPTIMAL_MIN || _targetIsApproaching)
+     if (_lastKnownTargetDistance < OptimalMin || _targetIsApproaching)
             {
             SetPhase(CrossbowPhase.Retreating);
    RequestMovement(MovementRequest.RunAway, -GetDirectionToTarget(target));
@@ -441,7 +430,7 @@ SetPhase(CrossbowPhase.Approaching);
         
         private void UpdateApproaching(Character target)
       {
-       if (_lastKnownTargetDistance <= OPTIMAL_MAX)
+       if (_lastKnownTargetDistance <= OptimalMax)
             {
    if (_isLoaded)
   {
@@ -461,7 +450,7 @@ SetPhase(CrossbowPhase.Approaching);
     
         private void UpdateRetreating(Character target)
       {
-   if (_lastKnownTargetDistance >= OPTIMAL_MIN)
+   if (_lastKnownTargetDistance >= OptimalMin)
  {
         if (_isLoaded)
         {
@@ -502,7 +491,7 @@ SetPhase(CrossbowPhase.Approaching);
             }
             
 // While reloading, check if we need to retreat
-            if (_lastKnownTargetDistance < CLOSE_RANGE && _targetIsApproaching)
+            if (_lastKnownTargetDistance < CloseRange && _targetIsApproaching)
             {
          SetPhase(CrossbowPhase.Retreating);
      RequestMovement(MovementRequest.RunAway, -GetDirectionToTarget(target));

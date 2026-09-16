@@ -19,7 +19,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // CRITICAL: Lock movement during waiting to prevent jitter from AI systems
             if (_combatMovement != null && !_combatMovement.IsMovementLocked)
             {
-                _combatMovement.LockMovement("SmelterOperator_WaitingForOutput", OUTPUT_WAIT_TIME + 5f);
+                _combatMovement.LockMovement("SmelterOperator_WaitingForOutput", OutputWaitTime + 5f);
             }
             
             StopMovement();
@@ -65,7 +65,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Periodically check for other output conditions
-            if (Time.time - _lastOperationCheck >= OPERATION_CHECK_INTERVAL)
+            if (Time.time - _lastOperationCheck >= OperationCheckInterval)
             {
                 _lastOperationCheck = Time.time;
                 
@@ -108,7 +108,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Timeout on waiting (but only if nothing is processing)
-            if (Time.time - _phaseStartTime > OUTPUT_WAIT_TIME && !IsProcessing())
+            if (Time.time - _phaseStartTime > OutputWaitTime && !IsProcessing())
             {
                 // Unlock movement before transitioning
                 _combatMovement?.UnlockMovement();
@@ -162,7 +162,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float dist = Vector3.Distance(Transform.position, _currentPickupTargetPosition);
             
-            if (dist < PICKUP_DISTANCE)
+            if (dist < PickupDistance)
             {
                 StopMovement();
                 SetPhase(OperatePhase.PickingUpOutput);
@@ -376,7 +376,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Check if we're already close enough
             float distToChest = Vector3.Distance(Transform.position, _targetChestForDeposit.transform.position);
-            if (distToChest <= INTERACTION_DISTANCE)
+            if (distToChest <= InteractionDistance)
             {
                 SetPhase(OperatePhase.InteractingWithChestForDeposit);
             }
@@ -406,7 +406,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float dist = Vector3.Distance(Transform.position, _targetChestForDeposit.transform.position);
             
-            if (dist <= INTERACTION_DISTANCE)
+            if (dist <= InteractionDistance)
             {
                 StopMovement();
                 SetPhase(OperatePhase.InteractingWithChestForDeposit);

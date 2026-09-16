@@ -11,6 +11,10 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Healer
     /// </summary>
     public class SanctuaryEffect : Base.BuffEffect
     {
+        private const float SanctuaryDuration = 10f;
+        private const float SanctuaryDefenseMultiplier = 0.7f;
+        private const float SanctuaryRange = 10f;
+
         /// <summary>Whether to apply effect to nearby allies.</summary>
         public bool IsAura { get; set; } = true;
         
@@ -35,11 +39,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Healer
         public SanctuaryEffect()
         {
             m_name = "Sanctuary";
-            Duration = 10f;
-            DefenseMultiplier = 0.7f; // 30% damage reduction
+            Duration = SanctuaryDuration;
+            DefenseMultiplier = SanctuaryDefenseMultiplier; // 30% damage reduction
             HealthRegenBonus = 2f; // Slow regen
             IsGroupBuff = true;
-            GroupBuffRange = 10f;
+            GroupBuffRange = SanctuaryRange;
         }
         
         protected override void OnEffectApplied()

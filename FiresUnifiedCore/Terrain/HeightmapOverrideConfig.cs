@@ -10,18 +10,18 @@ namespace FiresCore.Terrain
     ///
     /// Replaces the external HeightmapUnlimited (Jotunn-dependent) mod.
     /// Allows server admins to configure how far terrain can be raised or
-    /// lowered beyond Valheim's default �8 unit clamp.
+    /// lowered beyond Valheim's default ±8 unit clamp.
     ///
     /// All entries are server-locked via ConfigSync.
     /// </summary>
     public static class HeightmapOverrideConfig
     {
-        // ?????? Config Entries ??????
+        // Config Entries
         public static ConfigEntry<bool>  Enabled;
         public static ConfigEntry<float> MaxHeight;
         public static ConfigEntry<float> MinHeight;
 
-        // ?????? Accessor Helpers (used directly by transpiler call targets) ??????
+        // Accessor Helpers (used directly by transpiler call targets)
 
         /// <summary>Returns the configured minimum height delta (negative value).</summary>
         public static float Min() => MinHeight.Value;
@@ -32,7 +32,7 @@ namespace FiresCore.Terrain
         /// <summary>Returns the configured maximum height delta (positive value).</summary>
         public static float Max() => MaxHeight.Value;
 
-        // ?????? Initialization ??????
+        // Initialization
 
         /// <summary>
         /// Bind all heightmap override config entries.
@@ -43,7 +43,7 @@ namespace FiresCore.Terrain
             Enabled = config.Bind(
                 "HeightmapOverride", "Enabled", true,
                 "Enable the built-in heightmap limit override. " +
-                "When true, terrain can be raised/lowered beyond Valheim's default �8 unit clamp. " +
+                "When true, terrain can be raised/lowered beyond Valheim's default ±8 unit clamp. " +
                 "[Synced with Server]");
 
             MaxHeight = config.Bind(

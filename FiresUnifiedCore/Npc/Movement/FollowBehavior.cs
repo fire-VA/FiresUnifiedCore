@@ -3,18 +3,9 @@
 namespace FiresCore.Npc.Movement
 {
     /// <summary>
-    /// Handles non-combat following behavior, stuck detection, and jumping.
-    /// Extracted from CompanionCombatMovement for maintainability.
-    /// 
-    /// FOLLOWING PHILOSOPHY:
-    /// - Use distance thresholds to determine speed (walk, jog, run, sprint)
-    /// - Let BaseAI (via CompanionAI) handle pathfinding - we just set the speed
-    /// - Only check for stuck when actively trying to follow
-    /// - Jump when stuck or when owner is above us
-    /// 
-    /// STUCK DETECTION:
-    /// Conservative approach - only trigger after extended failure.
-    /// False positives cause annoying random jumps.
+    /// Non-combat following, split out of CompanionCombatMovement: speed from distance (walk up to sprint) while
+    /// CompanionAI's pathfinding does the steering, conservative stuck detection, and jumping when stuck or when the
+    /// owner is above.
     /// </summary>
     public class FollowBehavior
   {
@@ -59,12 +50,12 @@ namespace FiresCore.Npc.Movement
         private int _consecutiveStuckChecks;
         private bool _shouldCheckStuck = false;
         private float _lastStuckEvaluation;
-        private const float STUCK_EVAL_INTERVAL = 2.0f;
+        private const float StuckEvalInterval = 2.0f;
 
         // Grounded state
         private bool _isGrounded;
         private float _lastGroundedCheck;
-        private const float GROUNDED_CHECK_INTERVAL = 0.2f;
+        private const float GroundedCheckInterval = 0.2f;
 
         // References
         private readonly Transform _transform;
@@ -111,8 +102,8 @@ _stuckCheckStartPos = transform.position;
             if (distanceToOwner > CatchUpThreshold)
             {
                 // Scale multiplier from 1.0 at CatchUpThreshold to CatchUpSpeedMultiplier at SprintDistance
-                float t = Mathf.InverseLerp(CatchUpThreshold, SprintDistance, distanceToOwner);
-                speedMultiplier = Mathf.Lerp(1.0f, CatchUpSpeedMultiplier, t);
+                float sprintBlend = Mathf.InverseLerp(CatchUpThreshold, SprintDistance, distanceToOwner);
+                speedMultiplier = Mathf.Lerp(1.0f, CatchUpSpeedMultiplier, sprintBlend);
             }
             
             // SPRINT: Emergency catch-up (no hysteresis needed - one-way threshold)
@@ -204,7 +195,7 @@ _stuckCheckStartPos = transform.position;
         /// </summary>
   public void UpdateGroundedState()
   {
-            if (Time.time - _lastGroundedCheck < GROUNDED_CHECK_INTERVAL) return;
+            if (Time.time - _lastGroundedCheck < GroundedCheckInterval) return;
             _lastGroundedCheck = Time.time;
 
       if (_character != null)
@@ -226,7 +217,7 @@ _stuckCheckStartPos = transform.position;
         if (isTransitioning) return false;
    if (isIdle) return false;
 
-         if (Time.time - _lastStuckEvaluation < STUCK_EVAL_INTERVAL) return false;
+         if (Time.time - _lastStuckEvaluation < StuckEvalInterval) return false;
      _lastStuckEvaluation = Time.time;
 
        float timeSinceStuckCheck = Time.time - _stuckCheckStartTime;

@@ -9,24 +9,11 @@ using FiresCore.Storage;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Builds a static, ZDO-free mannequin from a <see cref="PlayerAppearance"/> for the leaderboard
-    /// remote-player preview. It clones the registered, shader-fixed <c>CompanionNpc</c> prefab (which
-    /// already carries the live <c>Custom/Player</c> body material and the player <c>m_models[]</c>,
-    /// courtesy of CompanionPrefabManager.FixCompanionShaders), strips every gameplay/AI/network
-    /// component, then drives vanilla <see cref="VisEquipment"/> DIRECTLY — bypassing NpcVisEquipment's
-    /// ZDO gates and its T+2s Invoke init, which are wrong for a deterministic synchronous portrait.
-    ///
-    /// Item tokens come from Phase-1 capture: a prefab NAME, or — on this build, where the VisEquipment
-    /// item fields are int hashes — the literal stable-hash as an all-digit string. Both forms route
-    /// through <see cref="VisEquipmentCompat"/>: all-digit tokens are reverse-resolved to the prefab
-    /// name via ObjectDB so the value hashes back to the same key; name tokens pass through verbatim.
-    /// The string item fields are written directly (the vanilla Set*Item methods NRE without a ZDO),
-    /// then <c>UpdateEquipmentVisuals()</c> is invoked ONCE synchronously to attach everything.
-    ///
-    /// Defensive throughout: every slot/hair/color step is independent. A missing prefab leaves the
-    /// slot empty, missing hair leaves the head bald, an empty/partial record yields a naked default
-    /// mannequin. It never throws; it returns null ONLY when the base CompanionNpc prefab or the Player
-    /// source material isn't loaded yet (the caller then shows an "unavailable" state).
+    /// Builds a static, ZDO-free mannequin from a <see cref="PlayerAppearance"/> for the leaderboard preview. It
+    /// clones the shader-fixed CompanionNpc prefab, strips gameplay, AI and network components, and dresses it
+    /// through <see cref="VisEquipmentCompat"/> in one synchronous UpdateEquipmentVisuals call, bypassing
+    /// NpcVisEquipment's ZDO-driven init. Every slot, hair and color step is independent; it returns null only
+    /// when the base prefab or the player material isn't loaded yet.
     /// </summary>
     public static class FiresMannequinBuilder
     {
@@ -108,12 +95,12 @@ namespace FiresCore.Npc
 
             // Strip gameplay/AI/network machinery while still inactive (Awake hasn't fired under the
             // inactive holder). DestroyImmediate so the components are gone before activation.
-            foreach (var mb in clone.GetComponentsInChildren<MonoBehaviour>(true))
+            foreach (var behaviour in clone.GetComponentsInChildren<MonoBehaviour>(true))
             {
-                if (mb == null) continue;
-                if (StripTypeNames.Contains(mb.GetType().Name))
+                if (behaviour == null) continue;
+                if (StripTypeNames.Contains(behaviour.GetType().Name))
                 {
-                    try { UnityEngine.Object.DestroyImmediate(mb); } catch { }
+                    try { UnityEngine.Object.DestroyImmediate(behaviour); } catch { }
                 }
             }
 
@@ -126,17 +113,17 @@ namespace FiresCore.Npc
             }
 
             // Freeze the rigidbody so the body holds a static pose; disable the capsule so it can't push.
-            var rb = clone.GetComponent<Rigidbody>();
-            if (rb != null) { rb.isKinematic = true; rb.useGravity = false; rb.detectCollisions = false; }
-            foreach (var col in clone.GetComponentsInChildren<Collider>(true))
-                if (col != null) col.enabled = false;
+            var body = clone.GetComponent<Rigidbody>();
+            if (body != null) { body.isKinematic = true; body.useGravity = false; body.detectCollisions = false; }
+            foreach (var collider in clone.GetComponentsInChildren<Collider>(true))
+                if (collider != null) collider.enabled = false;
 
             return clone;
         }
 
         // ── dress ────────────────────────────────────────────────────────────
 
-        private static void Dress(GameObject clone, PlayerAppearance a)
+        private static void Dress(GameObject clone, PlayerAppearance appearance)
         {
             var vis = clone.GetComponent<VisEquipment>();
             if (vis == null) return;
@@ -152,33 +139,33 @@ namespace FiresCore.Npc
             vis.m_isPlayer = true;
             vis.m_isArmorStand = false;
 
-            int modelIndex = a != null ? Mathf.Clamp(a.ModelIndex, 0, ModelCount(vis) - 1) : 0;
+            int modelIndex = appearance != null ? Mathf.Clamp(appearance.ModelIndex, 0, ModelCount(vis) - 1) : 0;
             SetBodyMesh(vis, modelIndex);
 
             // Item slots — write the string backing fields directly (ZDO-free, hash-or-name aware).
             // Skip TrinketItem: no Fires slot. Missing/empty tokens resolve to empty (naked default).
-            if (a != null)
+            if (appearance != null)
             {
-                VisEquipmentCompat.SetItemFieldDirect(vis, F_Right, a.RightItem);
-                VisEquipmentCompat.SetItemFieldDirect(vis, F_Left, a.LeftItem);
-                SetIntField(vis, F_LeftVariant, a.LeftItemVariant);
-                VisEquipmentCompat.SetItemFieldDirect(vis, F_Chest, a.ChestItem);
-                VisEquipmentCompat.SetItemFieldDirect(vis, F_Legs, a.LegItem);
-                VisEquipmentCompat.SetItemFieldDirect(vis, F_Helmet, a.HelmetItem);
-                VisEquipmentCompat.SetItemFieldDirect(vis, F_Shoulder, a.ShoulderItem);
-                SetIntField(vis, F_ShoulderVariant, a.ShoulderItemVariant);
-                VisEquipmentCompat.SetItemFieldDirect(vis, F_Utility, a.UtilityItem);
-                VisEquipmentCompat.SetItemFieldDirect(vis, F_LeftBack, a.LeftBackItem);
-                SetIntField(vis, F_LeftBackVariant, a.LeftBackItemVariant);
-                VisEquipmentCompat.SetItemFieldDirect(vis, F_RightBack, a.RightBackItem);
+                VisEquipmentCompat.SetItemFieldDirect(vis, F_Right, appearance.RightItem);
+                VisEquipmentCompat.SetItemFieldDirect(vis, F_Left, appearance.LeftItem);
+                SetIntField(vis, F_LeftVariant, appearance.LeftItemVariant);
+                VisEquipmentCompat.SetItemFieldDirect(vis, F_Chest, appearance.ChestItem);
+                VisEquipmentCompat.SetItemFieldDirect(vis, F_Legs, appearance.LegItem);
+                VisEquipmentCompat.SetItemFieldDirect(vis, F_Helmet, appearance.HelmetItem);
+                VisEquipmentCompat.SetItemFieldDirect(vis, F_Shoulder, appearance.ShoulderItem);
+                SetIntField(vis, F_ShoulderVariant, appearance.ShoulderItemVariant);
+                VisEquipmentCompat.SetItemFieldDirect(vis, F_Utility, appearance.UtilityItem);
+                VisEquipmentCompat.SetItemFieldDirect(vis, F_LeftBack, appearance.LeftBackItem);
+                SetIntField(vis, F_LeftBackVariant, appearance.LeftBackItemVariant);
+                VisEquipmentCompat.SetItemFieldDirect(vis, F_RightBack, appearance.RightBackItem);
 
                 // Hair/beard via the string fields too — UpdateEquipmentVisuals spawns them when
                 // m_isPlayer=true. The NpcFashionBridge ApplyHair/ApplyBeard (host-mod fashion path) is
                 // invoked afterwards as the preferred styler; if no host delegate is registered it's a
                 // harmless no-op and the vanilla field-driven hair still shows.
-                VisEquipmentCompat.SetItemFieldDirect(vis, F_Hair, a.HairItem);
+                VisEquipmentCompat.SetItemFieldDirect(vis, F_Hair, appearance.HairItem);
                 if (modelIndex == 0) // beard on male model only
-                    VisEquipmentCompat.SetItemFieldDirect(vis, F_Beard, a.BeardItem);
+                    VisEquipmentCompat.SetItemFieldDirect(vis, F_Beard, appearance.BeardItem);
                 else
                     VisEquipmentCompat.SetItemFieldDirect(vis, F_Beard, "");
             }
@@ -190,16 +177,16 @@ namespace FiresCore.Npc
 
             // Colors — written on the body + hair material instances (not via SetSkinColor, which would
             // route through UpdateColors and the ZDO). Independent of slot success.
-            ApplyColors(vis, clone, a);
+            ApplyColors(vis, clone, appearance);
 
             // Host-mod fashion styling (bone-bind, ZDO-free) — preferred when present.
-            if (a != null)
+            if (appearance != null)
             {
-                string hairColorStr = a.HairColorRgba ?? "";
-                if (!string.IsNullOrEmpty(a.HairItem))
-                    NpcFashionBridge.ApplyHair(clone, a.HairItem, hairColorStr);
-                if (modelIndex == 0 && !string.IsNullOrEmpty(a.BeardItem))
-                    NpcFashionBridge.ApplyBeard(clone, a.BeardItem, hairColorStr);
+                string hairColorStr = appearance.HairColorRgba ?? "";
+                if (!string.IsNullOrEmpty(appearance.HairItem))
+                    NpcFashionBridge.ApplyHair(clone, appearance.HairItem, hairColorStr);
+                if (modelIndex == 0 && !string.IsNullOrEmpty(appearance.BeardItem))
+                    NpcFashionBridge.ApplyBeard(clone, appearance.BeardItem, hairColorStr);
             }
 
             // Strip Cloth from attached armor/hair so a static pose doesn't spam "Unable to skin" logs.
@@ -224,8 +211,8 @@ namespace FiresCore.Npc
             if (dummy == null) dummy = _dummyNviewHolder.AddComponent<ZNetView>();
 
             vis.m_nViewOverride = dummy;
-            var f = AccessTools.Field(typeof(VisEquipment), "m_nview");
-            if (f != null) { try { f.SetValue(vis, dummy); } catch { } }
+            var field = AccessTools.Field(typeof(VisEquipment), "m_nview");
+            if (field != null) { try { field.SetValue(vis, dummy); } catch { } }
 
             vis.enabled = false; // we drive it manually; keep MonoUpdater out of it
         }
@@ -291,11 +278,11 @@ namespace FiresCore.Npc
 
         // ── colors ────────────────────────────────────────────────────────────
 
-        private static void ApplyColors(VisEquipment vis, GameObject clone, PlayerAppearance a)
+        private static void ApplyColors(VisEquipment vis, GameObject clone, PlayerAppearance appearance)
         {
-            if (a == null) return;
+            if (appearance == null) return;
 
-            if (TryParseRgba(a.SkinColorRgba, out Color skin) && vis.m_bodyModel != null)
+            if (TryParseRgba(appearance.SkinColorRgba, out Color skin) && vis.m_bodyModel != null)
             {
                 try
                 {
@@ -306,7 +293,7 @@ namespace FiresCore.Npc
                 catch { }
             }
 
-            if (TryParseRgba(a.HairColorRgba, out Color hair))
+            if (TryParseRgba(appearance.HairColorRgba, out Color hair))
             {
                 try
                 {
@@ -314,9 +301,9 @@ namespace FiresCore.Npc
                     foreach (var renderer in visual.GetComponentsInChildren<Renderer>(true))
                     {
                         if (renderer == null) continue;
-                        string n = renderer.gameObject.name.ToLowerInvariant();
-                        if (!(n.StartsWith("hair") || n.StartsWith("beard")
-                              || n.StartsWith("npc_hair_") || n.StartsWith("npc_beard_"))) continue;
+                        string rendererName = renderer.gameObject.name.ToLowerInvariant();
+                        if (!(rendererName.StartsWith("hair") || rendererName.StartsWith("beard")
+                              || rendererName.StartsWith("npc_hair_") || rendererName.StartsWith("npc_beard_"))) continue;
                         var mats = renderer.materials;
                         for (int i = 0; i < mats.Length; i++)
                             if (mats[i] != null) mats[i].SetColor("_HairColor", hair);
@@ -362,20 +349,20 @@ namespace FiresCore.Npc
         {
             foreach (var name in CurrentHashFieldNames)
             {
-                var f = AccessTools.Field(typeof(VisEquipment), name);
-                if (f != null && f.FieldType == typeof(int))
+                var field = AccessTools.Field(typeof(VisEquipment), name);
+                if (field != null && field.FieldType == typeof(int))
                 {
-                    try { f.SetValue(vis, -1); } catch { }
+                    try { field.SetValue(vis, -1); } catch { }
                 }
             }
         }
 
         private static void SetIntField(VisEquipment vis, string fieldName, int value)
         {
-            var f = AccessTools.Field(typeof(VisEquipment), fieldName);
-            if (f != null && f.FieldType == typeof(int))
+            var field = AccessTools.Field(typeof(VisEquipment), fieldName);
+            if (field != null && field.FieldType == typeof(int))
             {
-                try { f.SetValue(vis, value); } catch { }
+                try { field.SetValue(vis, value); } catch { }
             }
         }
 
@@ -402,8 +389,8 @@ namespace FiresCore.Npc
         {
             color = Color.white;
             if (string.IsNullOrEmpty(rgba)) return false;
-            string s = rgba.StartsWith("#") ? rgba : "#" + rgba;
-            return ColorUtility.TryParseHtmlString(s, out color);
+            string hex = rgba.StartsWith("#") ? rgba : "#" + rgba;
+            return ColorUtility.TryParseHtmlString(hex, out color);
         }
 
         private static Transform FindRecursive(Transform parent, string name)

@@ -5,22 +5,8 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Defines the combat archetype/role for a companion.
-    /// Archetypes determine how companions approach combat, what weapons they prefer,
-    /// and what special abilities they use.
-    /// 
-    /// ARCHETYPE ASSIGNMENT:
-    /// - Archetypes are assigned per-session based on equipped items
-    /// - Only one companion per group can be Tank at a time
-    /// - Giants naturally favor Tank when they have shield + weapon
-    /// - Companions with support staves become Supports
-    /// - Other companions default to DPS based on their weapons
-    /// 
-    /// ARCHETYPE BEHAVIORS:
-    /// - Tank: Prioritizes blocking/parrying, uses taunt, stays in front
-    /// - Support: Keeps distance, buffs allies, heals when possible  
-    /// - MeleeDPS: Aggressive melee, combos, flanking
-    /// - RangedDPS: Maintains distance, kites, focuses weak targets
+    /// A companion's combat role, assigned each session from its equipment: shield users (giants especially) tank,
+    /// with one tank per group; support-staff users support; everyone else is melee or ranged DPS by weapon.
     /// </summary>
     public enum CompanionArchetypeType
     {
@@ -89,6 +75,18 @@ namespace FiresCore.Npc.Archetypes
     /// </summary>
     public static class ArchetypeUtils
     {
+        private const float GiantScaleThreshold = 1.3f;
+        private const float TankGiantPriority = 50f;
+        private const float TankShieldPriority = 30f;
+        private const float TankMeleeWeaponPriority = 20f;
+        private const float ArmorPerTankPriorityPoint = 10f;
+        private const float MaxTankArmorPriority = 20f;
+        private const float SupportStaffPriority = 100f;
+        private const float RangedWeaponPriority = 50f;
+        private const float MeleeWeaponPriority = 30f;
+        private const float MeleeDwarfPriority = 20f;
+        private const float DpsNoShieldPriority = 20f;
+
         /// <summary>
         /// Evaluates what archetype a companion should have based on their equipment.
         /// </summary>
@@ -472,7 +470,7 @@ namespace FiresCore.Npc.Archetypes
             
             // Fallback: check transform scale
             float scale = companion.transform.localScale.x;
-            return scale > 1.3f;
+            return scale > GiantScaleThreshold;
         }
         
         /// <summary>
@@ -492,14 +490,14 @@ namespace FiresCore.Npc.Archetypes
             {
                 case CompanionArchetypeType.Tank:
                     // Giants are best tanks
-                    if (IsGiant(companion)) priority += 50f;
-                    
+                    if (IsGiant(companion)) priority += TankGiantPriority;
+
                     // Shield is required
-                    if (HasShieldEquipped(inventory)) priority += 30f;
+                    if (HasShieldEquipped(inventory)) priority += TankShieldPriority;
                     else return 0f; // Can't be tank without shield
-                    
+
                     // Melee weapon needed
-                    if (HasMeleeWeapon(inventory)) priority += 20f;
+                    if (HasMeleeWeapon(inventory)) priority += TankMeleeWeaponPriority;
                     else return 0f; // Can't be tank without melee
                     
                     // Bonus for heavy armor (check total armor)
@@ -507,34 +505,34 @@ namespace FiresCore.Npc.Archetypes
                     if (combat != null)
                     {
                         float armor = combat.GetTotalArmor();
-                        priority += Mathf.Min(armor / 10f, 20f); // Up to 20 bonus for armor
+                        priority += Mathf.Min(armor / ArmorPerTankPriorityPoint, MaxTankArmorPriority); // Up to 20 bonus for armor
                     }
                     break;
                     
                 case CompanionArchetypeType.Support:
-                    if (HasSupportStaff(inventory)) priority += 100f;
+                    if (HasSupportStaff(inventory)) priority += SupportStaffPriority;
                     else return 0f; // Must have support staff
                     break;
                     
                 case CompanionArchetypeType.RangedDPS:
-                    if (HasRangedWeapon(inventory)) priority += 50f;
+                    if (HasRangedWeapon(inventory)) priority += RangedWeaponPriority;
                     else return 0f;
-                    
+
                     // Bonus if no shield (pure ranged)
-                    if (!HasShieldEquipped(inventory)) priority += 20f;
+                    if (!HasShieldEquipped(inventory)) priority += DpsNoShieldPriority;
                     break;
                     
                 case CompanionArchetypeType.MeleeDPS:
-                    if (HasMeleeWeapon(inventory)) priority += 30f;
+                    if (HasMeleeWeapon(inventory)) priority += MeleeWeaponPriority;
                     else return 0f;
-                    
+
                     // Dwarves are good melee DPS (aggressive)
                     var loadout = companion.GetComponent<CompanionRandomLoadout>();
-                    if (loadout != null && loadout.IsDwarf()) priority += 20f;
-                    
+                    if (loadout != null && loadout.IsDwarf()) priority += MeleeDwarfPriority;
+
                     // Two-handed weapons = more DPS focused
                     // No shield = pure DPS
-                    if (!HasShieldEquipped(inventory)) priority += 20f;
+                    if (!HasShieldEquipped(inventory)) priority += DpsNoShieldPriority;
                     break;
             }
             

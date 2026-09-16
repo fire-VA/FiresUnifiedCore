@@ -233,7 +233,7 @@ if (_companion?.isTamed == true)
    /// </summary>
         private void ShowLevelUpEffect(Skills.SkillType skillType, float newLevel)
   {
-          // Skip during local player respawn / loading-screen window â€” the level-up
+          // Skip during local player respawn / loading-screen window — the level-up
           // VFX prefab is a Valheim FX object with a ZNetView, and Instantiating
           // a ZNetView during IsTeleporting=true creates a ZDO that races zone
           // streaming and deadlocks the load. Skill XP/level changes already

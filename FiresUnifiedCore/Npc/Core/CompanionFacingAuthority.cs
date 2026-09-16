@@ -4,23 +4,11 @@ using System;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// FACING AUTHORITY — the single writer for a companion's BODY rotation (transform.rotation), the
-    /// rotational sibling of <see cref="UnifiedMovementAuthority"/>. It exists because facing is a second,
-    /// independent channel: before this, every facing writer (combat strafe-facing, bow aim-lock, work
-    /// "face the station", AI "look at enemy") slammed transform.rotation directly and they fought —
-    /// the companion would strafe one way while snapping to face another.
-    ///
-    /// MODEL (mirrors UMA): exactly one source owns facing at a time, chosen by the SAME priority ladder
-    /// (UnifiedMovementAuthority.MovementSource). Higher preempts; equal priority is denied to all but the
-    /// incumbent (no ping-pong between two Combat-level facers). A writer that doesn't own facing PARKS.
-    ///
-    /// INDEPENDENT OF MOVEMENT (the carve-out): facing ownership is separate from movement ownership, so a
-    /// companion can face an enemy while standing still to attack — it owns FACING without owning MOVEMENT.
-    ///
-    /// HYBRID WITH VANILLA: when NO source owns facing, this component writes nothing and vanilla Character
-    /// rotation (turning toward the move direction) applies as normal. An override only kicks in while a
-    /// source holds facing — and releasing hands rotation straight back to vanilla. Applied in LateUpdate
-    /// so it has the final say after movement + animation.
+    /// The single writer of a companion's body rotation, the rotational counterpart of
+    /// <see cref="UnifiedMovementAuthority"/>: combat strafing, bow aim, "face the station" and AI look-at used to
+    /// write transform.rotation directly and fight each other. One source owns facing at a time on the same
+    /// priority ladder, with ties kept by the incumbent, and facing is owned separately from movement so a
+    /// standing companion can still face its target. With no owner, vanilla rotation applies. Runs in LateUpdate.
     /// </summary>
     public class CompanionFacingAuthority : MonoBehaviour
     {

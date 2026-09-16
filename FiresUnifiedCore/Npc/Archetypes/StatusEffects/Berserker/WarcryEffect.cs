@@ -12,6 +12,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Berserker
     /// </summary>
     public class WarcryEffect : Base.BuffEffect
     {
+        private const float WarcryDurationSeconds = 15f;
+        private const float WarcryDamageMultiplier = 1.25f;
+        private const float WarcryAttackSpeedMultiplier = 1.1f;
+        private const float WarcryGroupBuffRange = 15f;
+
         /// <summary>Fear/stagger immunity duration at start.</summary>
         public float FearImmunityDuration { get; set; } = 3f;
         
@@ -31,11 +36,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Berserker
         public WarcryEffect()
         {
             m_name = "Warcry";
-            Duration = 15f;
-            DamageMultiplier = 1.25f; // 25% damage boost
-            AttackSpeedMultiplier = 1.1f; // 10% attack speed
+            Duration = WarcryDurationSeconds;
+            DamageMultiplier = WarcryDamageMultiplier; // 25% damage boost
+            AttackSpeedMultiplier = WarcryAttackSpeedMultiplier; // 10% attack speed
             IsGroupBuff = true;
-            GroupBuffRange = 15f;
+            GroupBuffRange = WarcryGroupBuffRange;
         }
         
         protected override void OnEffectApplied()

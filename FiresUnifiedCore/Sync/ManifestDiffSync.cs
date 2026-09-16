@@ -11,24 +11,10 @@ using UnityEngine;
 
 namespace FiresCore.Sync
 {
-    // "Don't re-send what the peer already has" sync primitive. One pair of
-    // routed RPCs covers every namespace because the namespace key is
-    // carried in the payload.
-    //
-    // FLOW
-    //   1. Server calls RequestFromPeer(peerUid, namespaceKey).
-    //   2. Peer responds with its local manifest (relativePath -> sha256).
-    //   3. Server caches the manifest per (peer, namespace) and, while
-    //      iterating its own files, skips any whose local hash matches.
-    //
-    // Two registration styles:
-    //   - RegisterFolder: enumerate a folder by pattern, hash each file.
-    //   - RegisterHashProvider / RegisterPersistedBlob: single opaque blob
-    //     (quest databases, snapshots) where the manifest is one entry
-    //     keyed by empty-string.
-    //
-    // This helper never touches the file payload itself — it only brokers
-    // the "does the peer already have this?" question.
+    // "Don't re-send what the peer already has": the server asks a peer for its manifest (relative path to
+    // SHA-256) for a namespace, caches it per peer and namespace, and skips any file whose hash already matches.
+    // RegisterFolder hashes a folder by pattern; RegisterHashProvider and RegisterPersistedBlob cover single
+    // blobs. One routed RPC pair serves every namespace, and file payloads never pass through here.
     public static class ManifestDiffSync
     {
         private const string RpcRequest = "FiresUnifiedCore_Manifest_Request";
@@ -442,7 +428,7 @@ namespace FiresCore.Sync
                 => PeerUid == other.PeerUid
                    && string.Equals(Namespace, other.Namespace, StringComparison.OrdinalIgnoreCase);
 
-            public override bool Equals(object obj) => obj is ManifestKey k && Equals(k);
+            public override bool Equals(object obj) => obj is ManifestKey other && Equals(other);
 
             public override int GetHashCode()
             {

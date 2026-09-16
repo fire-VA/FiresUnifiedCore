@@ -17,7 +17,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Initialize the codex by scanning all JSON files in the UILayouts directory.
-        /// Safe to call multiple times � only loads once unless Reload() is called.
+        /// Safe to call multiple times - only loads once unless Reload() is called.
         /// </summary>
         public static void Init()
         {
@@ -104,7 +104,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Adds or replaces a layout in the in-memory cache.
-        /// Does NOT save to disk � use UILayoutSerializer.SaveToFile for persistence.
+        /// Does NOT save to disk - use UILayoutSerializer.SaveToFile for persistence.
         /// </summary>
         public static void AddOrReplace(UILayoutDefinition layout)
         {

@@ -6,25 +6,10 @@ using FiresCore.Npc.AI;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Base class for all weapon combat behaviors.
-    /// Each weapon type (melee, bow, staff, etc.) has its own implementation.
-    /// 
-    /// NATIVE ATTACK SYSTEM STRATEGY:
-    /// 1. We clone the weapon's Attack template and call Attack.Start()
-    /// 2. Attack.Start() handles combo chains via previousAttack parameter
-    /// 3. Animation events call CharacterAnimEvent.OnAttackTrigger()
-    /// 4. Which calls Attack.OnAttackTrigger() for physics-based hit detection
-    /// 5. We call Attack.Update() every frame to let it manage state
-    /// 
-    /// COMBO SYSTEM:
-    /// Valheim's combo system works via previousAttack:
-    /// - If timeSinceLastAttack < 0.2s AND previousAttack has same animation
-    /// - Then m_currentAttackChainLevel = previousAttack.m_nextAttackChainLevel
-    /// - This triggers attack0, attack1, attack2, etc.
-    /// 
-    /// MANUAL FALLBACK:
-    /// If animation events don't fire (common for runtime-assembled NPCs), 
-    /// CompanionAttackBridge monitors animation progress and triggers manually.
+    /// Base class for weapon combat behaviors. Attacks run through a clone of the weapon's vanilla Attack:
+    /// Start chains combos from the previous attack, animation events call OnAttackTrigger for hit detection, and
+    /// Update runs every frame. When a runtime-assembled NPC never fires animation events, CompanionAttackBridge
+    /// triggers the hit from animation progress instead.
     /// </summary>
     public abstract class WeaponBehavior
     {

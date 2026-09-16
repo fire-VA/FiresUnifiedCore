@@ -6,21 +6,14 @@ using System.Linq;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Tracks kill statistics for companion NPCs.
-    /// Similar to player kill tracking but persisted with companion data.
-    /// 
-    /// Tracks:
-    /// - Total kills
-    /// - Kills by creature type
-    /// - Death count
-    /// - Session statistics
-    /// 
-    /// Data is saved to ZDO for persistence across sessions.
-    /// Uses caching to batch saves and reduce ZDO write spam.
+    /// Kill statistics per companion (total, by creature, deaths, session), saved to the ZDO in batches.
     /// </summary>
     public class CompanionKillTracker : MonoBehaviour
     {
         #region Fields
+
+        private const int SummaryTopKillCount = 3;
+        private const int CloneSuffixLength = 7;
 
         private CompanionController _companion;
         private CompanionProgression _progression;
@@ -37,15 +30,15 @@ namespace FiresCore.Npc
         private float _lastKillTime = 0f;
 
         // ZDO keys for persistence
-        private const string ZDO_TOTAL_KILLS = "companion_total_kills";
-        private const string ZDO_DEATHS = "companion_deaths";
-        private const string ZDO_KILLS_DATA = "companion_kills_data";
+        private const string ZdoTotalKills = "companion_total_kills";
+        private const string ZdoDeaths = "companion_deaths";
+        private const string ZdoKillsData = "companion_kills_data";
         
         // Caching for batched saves
         private bool _isDirty = false;
         private float _lastSaveTime = 0f;
-        private const float SAVE_INTERVAL = 30f; // Save at most every 30 seconds
-        private const float SAVE_DELAY_AFTER_CHANGE = 5f; // Wait 5 seconds after last change before saving
+        private const float SaveInterval = 30f; // Save at most every 30 seconds
+        private const float SaveDelayAfterChange = 5f; // Wait 5 seconds after last change before saving
         private float _lastChangeTime = 0f;
         
         // Logging control - only log on owner's client, not server
@@ -100,7 +93,7 @@ namespace FiresCore.Npc
                 float timeSinceSave = Time.time - _lastSaveTime;
                 
                 // Save if: enough time since last change AND enough time since last save
-                if (timeSinceChange >= SAVE_DELAY_AFTER_CHANGE && timeSinceSave >= SAVE_INTERVAL)
+                if (timeSinceChange >= SaveDelayAfterChange && timeSinceSave >= SaveInterval)
                 {
                     FlushToZDO();
                 }
@@ -222,14 +215,14 @@ namespace FiresCore.Npc
 
             if (_deaths > 0)
             {
-                float kd = (float)_totalKills / _deaths;
-                sb.AppendLine($"K/D Ratio: {kd:F2}");
+                float killDeathRatio = (float)_totalKills / _deaths;
+                sb.AppendLine($"K/D Ratio: {killDeathRatio:F2}");
             }
 
             if (_killsByCreature.Count > 0)
             {
                 sb.AppendLine("Top kills:");
-                foreach (var kvp in GetTopKills(3))
+                foreach (var kvp in GetTopKills(SummaryTopKillCount))
                 {
                     sb.AppendLine($"  {kvp.Key}: {kvp.Value}");
                 }
@@ -285,13 +278,13 @@ namespace FiresCore.Npc
 
             try
             {
-                zdo.Set(ZDO_TOTAL_KILLS, _totalKills);
-                zdo.Set(ZDO_DEATHS, _deaths);
+                zdo.Set(ZdoTotalKills, _totalKills);
+                zdo.Set(ZdoDeaths, _deaths);
 
                 // Serialize kills by creature as a simple string format
                 // Format: "creature1:count1;creature2:count2;..."
                 var killsData = string.Join(";", _killsByCreature.Select(kvp => $"{kvp.Key}:{kvp.Value}"));
-                zdo.Set(ZDO_KILLS_DATA, killsData);
+                zdo.Set(ZdoKillsData, killsData);
                 
                 // Only log save on owner's client or if verbose
                 if (VerboseLogging && IsLocalOwnerCompanion)
@@ -314,11 +307,11 @@ namespace FiresCore.Npc
 
             try
             {
-                _totalKills = zdo.GetInt(ZDO_TOTAL_KILLS, 0);
-                _deaths = zdo.GetInt(ZDO_DEATHS, 0);
+                _totalKills = zdo.GetInt(ZdoTotalKills, 0);
+                _deaths = zdo.GetInt(ZdoDeaths, 0);
 
                 // Deserialize kills by creature
-                string killsData = zdo.GetString(ZDO_KILLS_DATA, "");
+                string killsData = zdo.GetString(ZdoKillsData, "");
                 _killsByCreature.Clear();
 
                 if (!string.IsNullOrEmpty(killsData))
@@ -423,7 +416,7 @@ namespace FiresCore.Npc
             // Remove (Clone) suffix
             if (name.EndsWith("(Clone)"))
             {
-                name = name.Substring(0, name.Length - 7);
+                name = name.Substring(0, name.Length - CloneSuffixLength);
             }
 
             // Remove any instance numbers

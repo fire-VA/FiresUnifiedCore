@@ -122,10 +122,10 @@ namespace FiresCore.Npc.WildSpawn
             }
         }
 
-        private static bool IsWeaponSlot(CompanionInventory.EquipmentSlot s) =>
-            s == CompanionInventory.EquipmentSlot.RightHand
-         || s == CompanionInventory.EquipmentSlot.LeftHand
-         || s == CompanionInventory.EquipmentSlot.RightBack
-         || s == CompanionInventory.EquipmentSlot.LeftBack;
+        private static bool IsWeaponSlot(CompanionInventory.EquipmentSlot slot) =>
+            slot == CompanionInventory.EquipmentSlot.RightHand
+         || slot == CompanionInventory.EquipmentSlot.LeftHand
+         || slot == CompanionInventory.EquipmentSlot.RightBack
+         || slot == CompanionInventory.EquipmentSlot.LeftBack;
     }
 }

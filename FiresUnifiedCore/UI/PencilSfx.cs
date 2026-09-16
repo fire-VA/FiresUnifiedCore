@@ -72,8 +72,8 @@ namespace FiresCore.UI
                 if (_clips.Count == 0)
                     for (int i = 0; i < 3; i++)
                     {
-                        var c = MakeScratch(22050, 0.07f + i * 0.02f, i);
-                        if (c != null) _clips.Add(c);
+                        var clip = MakeScratch(22050, 0.07f + i * 0.02f, i);
+                        if (clip != null) _clips.Add(clip);
                     }
                 Debug.Log($"[FiresCore] PencilSfx ready ({_clips.Count} clip(s)).");
             }
@@ -86,11 +86,11 @@ namespace FiresCore.UI
             {
                 string dir = Path.Combine(Paths.ConfigPath, "FiresUISounds");
                 if (!Directory.Exists(dir)) return;
-                foreach (var f in Directory.GetFiles(dir, "*.wav"))
+                foreach (var wavPath in Directory.GetFiles(dir, "*.wav"))
                 {
-                    if (WavLoader.TryLoad(f, out float[] buf, out int ch, out int sr))
+                    if (WavLoader.TryLoad(wavPath, out float[] buf, out int channels, out int sampleRate))
                     {
-                        var clip = MakeClip(Path.GetFileNameWithoutExtension(f), buf, ch, sr);
+                        var clip = MakeClip(Path.GetFileNameWithoutExtension(wavPath), buf, channels, sampleRate);
                         if (clip != null) _clips.Add(clip);
                     }
                 }
@@ -110,23 +110,23 @@ namespace FiresCore.UI
         // highpass), a fast attack + exponential decay, and an amplitude "stroke" wobble so it reads as a scribble.
         private static object MakeScratch(int sampleRate, float durSec, int seed)
         {
-            int n = Mathf.Max(64, (int)(durSec * sampleRate));
-            var buf = new float[n];
+            int sampleCount = Mathf.Max(64, (int)(durSec * sampleRate));
+            var buf = new float[sampleCount];
             var rng = new System.Random(4242 + seed * 17);
-            float lp = 0f, prevLp = 0f, hp = 0f;
+            float lowPass = 0f, previousLowPass = 0f, highPass = 0f;
             const float lpCoef = 0.5f, hpCoef = 0.86f;
             float strokeHz = 42f + seed * 13f;
-            for (int i = 0; i < n; i++)
+            for (int i = 0; i < sampleCount; i++)
             {
-                float t = (float)i / sampleRate;
+                float time = (float)i / sampleRate;
                 float x = (float)(rng.NextDouble() * 2.0 - 1.0);
-                lp += lpCoef * (x - lp);
-                hp = hpCoef * (hp + lp - prevLp);
-                prevLp = lp;
-                float attack = Mathf.Clamp01(t / 0.004f);
-                float decay = Mathf.Exp(-t / (durSec * 0.35f));
-                float wob = 0.55f + 0.45f * Mathf.Abs(Mathf.Sin(2f * Mathf.PI * strokeHz * t));
-                buf[i] = hp * attack * decay * wob * 0.9f;
+                lowPass += lpCoef * (x - lowPass);
+                highPass = hpCoef * (highPass + lowPass - previousLowPass);
+                previousLowPass = lowPass;
+                float attack = Mathf.Clamp01(time / 0.004f);
+                float decay = Mathf.Exp(-time / (durSec * 0.35f));
+                float wob = 0.55f + 0.45f * Mathf.Abs(Mathf.Sin(2f * Mathf.PI * strokeHz * time));
+                buf[i] = highPass * attack * decay * wob * 0.9f;
             }
             return MakeClip($"pencil_scratch_{seed}", buf, 1, sampleRate);
         }
@@ -141,27 +141,27 @@ namespace FiresCore.UI
             samples = null; channels = 0; sampleRate = 0;
             try
             {
-                byte[] d = File.ReadAllBytes(path);
-                if (d.Length < 44 || d[0] != 'R' || d[1] != 'I' || d[2] != 'F' || d[3] != 'F') return false;
-                channels = BitConverter.ToInt16(d, 22);
-                sampleRate = BitConverter.ToInt32(d, 24);
-                int bits = BitConverter.ToInt16(d, 34);
+                byte[] data = File.ReadAllBytes(path);
+                if (data.Length < 44 || data[0] != 'R' || data[1] != 'I' || data[2] != 'F' || data[3] != 'F') return false;
+                channels = BitConverter.ToInt16(data, 22);
+                sampleRate = BitConverter.ToInt32(data, 24);
+                int bits = BitConverter.ToInt16(data, 34);
                 if (bits != 16 || channels < 1) return false;
 
-                int p = 12, dataOff = -1, dataLen = 0;
-                while (p + 8 <= d.Length)
+                int chunkOffset = 12, dataOffset = -1, dataLength = 0;
+                while (chunkOffset + 8 <= data.Length)
                 {
-                    int len = BitConverter.ToInt32(d, p + 4);
-                    if (d[p] == 'd' && d[p + 1] == 'a' && d[p + 2] == 't' && d[p + 3] == 'a') { dataOff = p + 8; dataLen = len; break; }
-                    p += 8 + len + (len & 1);
+                    int len = BitConverter.ToInt32(data, chunkOffset + 4);
+                    if (data[chunkOffset] == 'd' && data[chunkOffset + 1] == 'a' && data[chunkOffset + 2] == 't' && data[chunkOffset + 3] == 'a') { dataOffset = chunkOffset + 8; dataLength = len; break; }
+                    chunkOffset += 8 + len + (len & 1);
                 }
-                if (dataOff < 0) return false;
-                dataLen = Mathf.Min(dataLen, d.Length - dataOff);
+                if (dataOffset < 0) return false;
+                dataLength = Mathf.Min(dataLength, data.Length - dataOffset);
 
-                int total = dataLen / 2;
+                int total = dataLength / 2;
                 samples = new float[total];
                 for (int i = 0; i < total; i++)
-                    samples[i] = BitConverter.ToInt16(d, dataOff + i * 2) / 32768f;
+                    samples[i] = BitConverter.ToInt16(data, dataOffset + i * 2) / 32768f;
                 return true;
             }
             catch { return false; }

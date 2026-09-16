@@ -6,23 +6,9 @@ using UnityEngine;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// Global registry of all containers in the game world.
-    /// 
-    /// INSPIRED BY: SmartContainers mod's ContainersTracker
-    /// 
-    /// WHY THIS EXISTS:
-    /// - Physics.OverlapSphere every frame is expensive
-    /// - Containers don't move, so we can track them globally
-    /// - Much faster lookup for nearby containers
-    /// 
-    /// HOW IT WORKS:
-    /// - Harmony patches Container.Awake to register containers
-    /// - Harmony patches Container.OnDestroyed to unregister containers
-    /// - GetNearby() filters the cached list by distance
-    /// 
-    /// USAGE:
-    /// Instead of: ChestHelper.FindNearbyChests(pos, radius)
-    /// Use:        ContainerRegistry.GetNearby(pos, radius)
+    /// Every container in the loaded world, registered from Container.Awake and removed on destruction, so
+    /// GetNearby filters a cached list instead of running a physics overlap each time. Modeled on SmartContainers'
+    /// ContainersTracker.
     /// </summary>
     public static class ContainerRegistry
     {
@@ -31,7 +17,7 @@ namespace FiresCore.Npc.Core
         private static HashSet<Container> _allContainers = new HashSet<Container>();
         private static bool _initialized = false;
         private static float _lastCleanupTime = 0f;
-        private const float CLEANUP_INTERVAL = 60f;
+        private const float CleanupInterval = 60f;
         
         /// <summary>
         /// Enable verbose logging for debugging.
@@ -202,7 +188,7 @@ namespace FiresCore.Npc.Core
         /// </summary>
         public static void Cleanup()
         {
-            if (Time.time - _lastCleanupTime < CLEANUP_INTERVAL) return;
+            if (Time.time - _lastCleanupTime < CleanupInterval) return;
             _lastCleanupTime = Time.time;
             
             int before = _allContainers.Count;

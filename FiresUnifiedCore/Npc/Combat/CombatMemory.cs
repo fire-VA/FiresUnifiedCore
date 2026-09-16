@@ -5,24 +5,9 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Tracks combat experiences and learns from dangerous encounters.
-    /// Companions remember enemies that hurt them badly and adapt their behavior.
-    /// 
-    /// LEARNING TRIGGERS:
-    /// - Taking massive damage (>50% health in one hit)
-    /// - Dying to an enemy type
-    /// - Getting one-shot or nearly one-shot
-    /// - Repeated deaths to same enemy type
-    /// 
-    /// BEHAVIORAL ADAPTATIONS:
-    /// - Play more defensively against known dangerous enemies
-    /// - Prefer ranged attacks when possible
-    /// - Stay at greater distance
-    /// - Block/dodge more often
-    /// - Retreat earlier
-    /// 
-    /// PERSISTENCE:
-    /// Memory is stored in the companion's vault data and persists across sessions.
+    /// Remembers enemies that nearly or actually killed the companion (a huge single hit, a one-shot, repeated
+    /// deaths to one type) and makes it fight them more carefully: more ranged, more distance, more blocking and
+    /// dodging, earlier retreat. Stored with the companion's saved data.
     /// </summary>
     public class CombatMemory : MonoBehaviour
     {
@@ -62,7 +47,7 @@ namespace FiresCore.Npc.Combat
         private float _lastDamageTime;
         private string _lastDamageSource;
         private float _recentDamageTotal;
-        private const float DAMAGE_WINDOW = 2f;
+        private const float DamageWindow = 2f;
         
         public static bool VerboseLogging = false;
         
@@ -154,7 +139,7 @@ namespace FiresCore.Npc.Combat
             string enemyKey = GetEnemyKey(attacker);
             
             // Track cumulative damage in short window
-            if (Time.time - _lastDamageTime < DAMAGE_WINDOW && _lastDamageSource == enemyKey)
+            if (Time.time - _lastDamageTime < DamageWindow && _lastDamageSource == enemyKey)
             {
                 _recentDamageTotal += damage;
             }

@@ -4,26 +4,9 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Centralized manager for tracking which interactable objects are currently being used.
-    /// Prevents companions and players from stacking into each other at chairs, workbenches,
-    /// smelters, and other interactable objects.
-    /// 
-    /// USAGE:
-    /// - Call TryOccupy() before interacting with an object
-    /// - Call Release() when done interacting
-    /// - Call IsOccupied() to check if an object is in use
-    /// 
-    /// TRACKED OBJECTS:
-    /// - Chairs/Benches/Stools (attach points)
-    /// - Workstations (CraftingStation)
-    /// - Fireplaces (Fireplace, CookingStation)
-    /// - Smelters (Smelter)
-    /// - Any object with a specific attach/interaction point
-    /// 
-    /// DESIGN:
-    /// - Uses weak references to handle destroyed objects gracefully
-    /// - Automatically cleans up stale entries periodically
-    /// - Thread-safe for potential future use
+    /// Tracks which chairs, workstations, fireplaces, cooking stations and smelters are in use so companions and
+    /// players don't stack onto the same spot. Call TryOccupy before interacting, Release when done, and
+    /// IsOccupied to check; stale entries are cleaned up periodically.
     /// </summary>
     public static class InteractableOccupancyManager
     {
@@ -42,7 +25,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <summary>
         /// How often to clean up stale entries (in seconds).
         /// </summary>
-        private const float CLEANUP_INTERVAL = 30f;
+        private const float CleanupInterval = 30f;
         
         #endregion
         
@@ -298,14 +281,14 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check for nearby characters using physics overlap
             var colliders = Physics.OverlapSphere(position, radius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
                 // Check for Character component (covers companions, players, and NPCs)
-                var character = col.GetComponent<Character>();
+                var character = collider.GetComponent<Character>();
                 if (character == null)
-                    character = col.GetComponentInParent<Character>();
+                    character = collider.GetComponentInParent<Character>();
                 
                 if (character != null && character != excludeCharacter)
                 {
@@ -417,7 +400,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private static void CleanupIfNeeded()
         {
-            if (Time.time - _lastCleanupTime < CLEANUP_INTERVAL)
+            if (Time.time - _lastCleanupTime < CleanupInterval)
                 return;
             
             _lastCleanupTime = Time.time;

@@ -7,23 +7,11 @@ using UnityEngine;
 namespace FiresCore.Diagnostics
 {
     /// <summary>
-    /// Diagnostic + self-heal for the vanilla Humanoid.SetupVisEquipment NRE.
-    ///
-    /// Vanilla dereferences each equipped slot item's m_dropPrefab.name while only null-guarding
-    /// the item itself (Humanoid.SetupVisEquipment). m_dropPrefab is wired at runtime in
-    /// ItemDrop.Awake from ObjectDB.GetItemPrefab(gameObject.name); if that lookup misses
-    /// (registration / name / ItemDrop-on-child / load-order gap) the field stays null and the
-    /// whole vis rebuild throws — taking the player's appearance and action queue down with it.
-    ///
-    /// Per equipped slot with a null m_dropPrefab this prefix either:
-    ///   * recovers the drop prefab from the item's SharedData (ObjectDB.GetItemPrefab(SharedData))
-    ///     and assigns it — the correct resolution, since every item instance shares the prefab's
-    ///     SharedData reference — so the item renders and the field is fixed for good; or
-    ///   * if it is genuinely unregistered, temporarily clears the slot so vanilla renders nothing
-    ///     instead of crashing, and the postfix restores it (item stays equipped, just not drawn).
-    /// Either way it logs the offending slot + item name ONCE so the root registration gap is
-    /// identifiable. Client-only in practice: on a dedicated server m_visEquipment is null so
-    /// SetupVisEquipment never runs.
+    /// Heals the Humanoid.SetupVisEquipment NRE from an equipped item whose m_dropPrefab was never wired
+    /// (ItemDrop.Awake's ObjectDB lookup missed), which otherwise takes the whole appearance rebuild down. The
+    /// prefix recovers the prefab from the item's SharedData and assigns it for good, or, when the item is truly
+    /// unregistered, hides the slot for that rebuild and the postfix restores it. Each culprit is logged once.
+    /// Effectively client-only, since a dedicated server has no VisEquipment to rebuild.
     /// </summary>
     internal static class VisEquipmentDropPrefabHeal
     {
@@ -36,13 +24,13 @@ namespace FiresCore.Diagnostics
         {
             try
             {
-                var mi = AccessTools.Method(typeof(Humanoid), "SetupVisEquipment");
-                if (mi == null)
+                var method = AccessTools.Method(typeof(Humanoid), "SetupVisEquipment");
+                if (method == null)
                 {
                     Debug.LogError("[VisEquip null-drop] Humanoid.SetupVisEquipment NOT FOUND — heal not attached.");
                     return;
                 }
-                harmony.Patch(mi,
+                harmony.Patch(method,
                     prefix: new HarmonyMethod(AccessTools.Method(typeof(VisEquipmentDropPrefabHeal), nameof(Prefix))),
                     postfix: new HarmonyMethod(AccessTools.Method(typeof(VisEquipmentDropPrefabHeal), nameof(Postfix))));
                 Debug.Log("[VisEquip null-drop] heal attached to Humanoid.SetupVisEquipment (verified by read-back).");
@@ -61,10 +49,10 @@ namespace FiresCore.Diagnostics
         private static (string, FieldInfo)[] ResolveSlots(params string[] names)
         {
             var list = new List<(string, FieldInfo)>(names.Length);
-            foreach (var n in names)
+            foreach (var fieldName in names)
             {
-                var f = AccessTools.Field(typeof(Humanoid), n);
-                if (f != null) list.Add((n, f));
+                var field = AccessTools.Field(typeof(Humanoid), fieldName);
+                if (field != null) list.Add((fieldName, field));
             }
             return list.ToArray();
         }

@@ -9,18 +9,8 @@ using HarmonyLib;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Wires an override crafting panel to the vanilla InventoryGui crafting system.
-    /// Reads the available recipe list from <c>InventoryGui.instance</c> and builds
-    /// a visual recipe list inside the tagged container. The craft button forwards
-    /// to <c>InventoryGui.OnCraftPressed()</c>.
-    ///
-    /// Child elements are discovered by tag:
-    ///   - <c>override_recipe_list</c>   ? ScrollView content for recipe entries
-    ///   - <c>override_craft_button</c>  ? Button to trigger crafting
-    ///   - <c>override_craft_amount</c>  ? TMP_Text showing craft amount
-    ///
-    /// Each recipe entry is a runtime-created row with icon, name, and craftability
-    /// indicator, styled to match vanilla patterns.
+    /// Connects a tagged override crafting panel to InventoryGui: builds recipe rows (icon, name, craftability) in the
+    /// override_recipe_list container, shows the craft amount, and forwards the craft button to OnCraftPressed.
     /// </summary>
     public class UIOverrideCraftingWiring : MonoBehaviour
     {
@@ -73,9 +63,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Child discovery
-        // ???????????????????????????????????????
 
         private void DiscoverChildren()
         {
@@ -84,14 +72,14 @@ namespace FiresCore.UI
                 var tag = child.GetComponent<UIBuilderElementTag>();
                 if (tag == null) continue;
 
-                string t = tag.Tag;
-                if (string.IsNullOrEmpty(t)) continue;
+                string tagName = tag.Tag;
+                if (string.IsNullOrEmpty(tagName)) continue;
 
-                if (string.Equals(t, UIOverrideElementTags.RecipeList, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(tagName, UIOverrideElementTags.RecipeList, StringComparison.OrdinalIgnoreCase))
                     _recipeListRoot = child;
-                else if (string.Equals(t, UIOverrideElementTags.CraftButton, StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(tagName, UIOverrideElementTags.CraftButton, StringComparison.OrdinalIgnoreCase))
                     _craftButton = child.GetComponent<Button>();
-                else if (string.Equals(t, UIOverrideElementTags.CraftAmount, StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(tagName, UIOverrideElementTags.CraftAmount, StringComparison.OrdinalIgnoreCase))
                     _craftAmountText = child.GetComponent<TMP_Text>();
             }
 
@@ -121,9 +109,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Recipe list
-        // ???????????????????????????????????????
 
         private System.Collections.IList GetAvailableRecipes()
         {
@@ -145,16 +131,16 @@ namespace FiresCore.UI
             if (recipes == null || recipes.Count == 0) return;
 
             // Set up vertical layout
-            var vlg = _recipeListRoot.GetComponent<VerticalLayoutGroup>();
-            if (vlg == null) vlg = _recipeListRoot.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.spacing = 2f;
-            vlg.childAlignment = TextAnchor.UpperLeft;
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = false;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
+            var verticalLayout = _recipeListRoot.GetComponent<VerticalLayoutGroup>();
+            if (verticalLayout == null) verticalLayout = _recipeListRoot.gameObject.AddComponent<VerticalLayoutGroup>();
+            verticalLayout.spacing = 2f;
+            verticalLayout.childAlignment = TextAnchor.UpperLeft;
+            verticalLayout.childControlWidth = true;
+            verticalLayout.childControlHeight = false;
+            verticalLayout.childForceExpandWidth = true;
+            verticalLayout.childForceExpandHeight = false;
 
-            // The RecipeDataPair is a private struct — we access its fields via reflection
+            // The RecipeDataPair is a private struct â€” we access its fields via reflection
             var recipeDataPairType = typeof(InventoryGui).GetNestedType("RecipeDataPair",
                 BindingFlags.NonPublic | BindingFlags.Public);
 
@@ -195,24 +181,24 @@ namespace FiresCore.UI
             var rect = go.GetComponent<RectTransform>();
             rect.sizeDelta = new Vector2(0, RecipeRowHeight);
 
-            var le = go.AddComponent<LayoutElement>();
-            le.preferredHeight = RecipeRowHeight;
-            le.flexibleWidth = 1;
+            var layoutElement = go.AddComponent<LayoutElement>();
+            layoutElement.preferredHeight = RecipeRowHeight;
+            layoutElement.flexibleWidth = 1;
 
             // Background (semi-transparent, brighter if craftable)
-            var bg = go.AddComponent<Image>();
-            bg.color = canCraft ? new Color(0.15f, 0.15f, 0.15f, 0.6f) : new Color(0.1f, 0.1f, 0.1f, 0.3f);
-            bg.raycastTarget = true;
+            var image = go.AddComponent<Image>();
+            image.color = canCraft ? new Color(0.15f, 0.15f, 0.15f, 0.6f) : new Color(0.1f, 0.1f, 0.1f, 0.3f);
+            image.raycastTarget = true;
 
             // HLG for icon + name
-            var hlg = go.AddComponent<HorizontalLayoutGroup>();
-            hlg.spacing = 4f;
-            hlg.childAlignment = TextAnchor.MiddleLeft;
-            hlg.childControlWidth = false;
-            hlg.childControlHeight = false;
-            hlg.childForceExpandWidth = false;
-            hlg.childForceExpandHeight = false;
-            hlg.padding = new RectOffset(4, 4, 2, 2);
+            var horizontalLayout = go.AddComponent<HorizontalLayoutGroup>();
+            horizontalLayout.spacing = 4f;
+            horizontalLayout.childAlignment = TextAnchor.MiddleLeft;
+            horizontalLayout.childControlWidth = false;
+            horizontalLayout.childControlHeight = false;
+            horizontalLayout.childForceExpandWidth = false;
+            horizontalLayout.childForceExpandHeight = false;
+            horizontalLayout.padding = new RectOffset(4, 4, 2, 2);
 
             // Icon
             var iconGO = new GameObject("icon", typeof(RectTransform));
@@ -241,7 +227,7 @@ namespace FiresCore.UI
             nameText.color = canCraft ? Color.white : new Color(0.66f, 0.66f, 0.66f, 1f);
             nameText.raycastTarget = false;
 
-            // Click handler — forward to vanilla OnSelectedRecipe
+            // Click handler â€” forward to vanilla OnSelectedRecipe
             var btn = go.AddComponent<Button>();
             var vanillaEl = vanillaElement; // capture for closure
             btn.onClick.AddListener(() =>

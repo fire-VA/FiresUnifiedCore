@@ -6,48 +6,14 @@ using FiresCore.Npc.Core;
 namespace FiresCore.Npc.Movement
 {
     /// <summary>
-    /// Centralized state controller for companion movement and animations.
-    /// 
-    /// PURPOSE:
-    /// This class is the single source of truth for what "mode" a companion is in.
-    /// All movement and animation systems should check this controller before acting.
-    /// 
-    /// DESIGN PRINCIPLES:
-    /// 1. EXCLUSIVE STATES: Only one major state can be active at a time
-    /// 2. PRIORITY: Higher priority states override lower priority ones
-    /// 3. MOVEMENT LOCKING: When in certain states, movement systems are completely disabled
-    /// 4. CENTRALIZED CALLBACKS: All systems get notified of state changes
-    /// 5. COMMAND AUTHORITY: Player commands have absolute priority until completed or cancelled
-    /// 
-    /// STATE HIERARCHY (highest to lowest priority):
-    /// 1. UIInteraction - Player has a UI panel open for this companion
-    /// 2. PlayerCommand - Executing a player-issued command (ABSOLUTE authority)
-    /// 3. Emote - Playing a persistent emote (sit, dance, etc.)
-    /// 4. ChairSit - Sitting on a chair/furniture
-    /// 5. SubBehavior - Complex idle behavior (training, etc.)
-    /// 6. Combat - In combat mode
-    /// 7. Following - Following the player
-    /// 8. Idle - Default idle/wander state
-    /// 
-    /// USAGE:
-    /// - Call TryEnterState() to request a state change
-    /// - Call ExitState() when leaving a state
-    /// - Check IsMovementAllowed before processing movement
-    /// - Subscribe to OnStateChanged for notifications
-    /// 
-    /// INTEGRATION:
-    /// Other systems should call these methods to check if they can act:
-    /// - IsMovementAllowed: Can AI/follow systems issue movement commands?
-    /// - ShouldSkipAIUpdate: Should CompanionAI skip its Update entirely?
-    /// - ShouldSkipCombatMovement: Should CompanionCombatMovement skip processing?
-    /// - HasActiveCommand: Is there an active player command?
+    /// The single answer to "what mode is this companion in". One major state is active at a time, higher
+    /// priority states override lower ones (UI interaction, player command, emote, chair sit, sub-behavior,
+    /// combat, following, idle), and some states lock movement outright. Systems request changes with
+    /// TryEnterState and ExitState, subscribe to OnStateChanged, and check IsMovementAllowed,
+    /// ShouldSkipAIUpdate, ShouldSkipCombatMovement or HasActiveCommand before acting.
     /// </summary>
     public class CompanionStateController : MonoBehaviour
     {
-        // Verbose per-command / per-state-transition tracing from the movement/patrol debugging era. Off by
-        // default (const false → the guarded Debug.Log calls compile out), so it can't spam the server log.
-        private const bool VerboseLog = false;
-
         #region Enums
         
         /// <summary>
@@ -280,8 +246,8 @@ namespace FiresCore.Npc.Movement
         public static bool VerboseLogging = false;  // Disabled to reduce log spam
 
         // Mecanim trigger that the looping-emote state machine watches for to
-        // exit (Dance â†’ Movement, Sit â†’ Movement, etc â€” see the Animator
-        // controller's "emote_stop" condition on the emoteâ†’Movement
+        // exit (Dance → Movement, Sit → Movement, etc — see the Animator
+        // controller's "emote_stop" condition on the emote→Movement
         // transitions). Without firing this, clearing the emote bool alone
         // is not enough to actually leave the looping state. Hashed once at
         // type-init for cheap lookup at runtime.
@@ -320,7 +286,6 @@ namespace FiresCore.Npc.Movement
         
         // Movement priority system - prevents conflicting inputs
         private MovementPriority _currentMovementPriority = MovementPriority.None;
-        private MovementPriority _requestedMovementPriority = MovementPriority.None;
         private float _movementPriorityEndTime;
         private string _movementPriorityOwner;
         
@@ -328,7 +293,7 @@ namespace FiresCore.Npc.Movement
         private AnimationState _currentAnimationState = AnimationState.None;
         private float _animationStateEndTime;
         private float _lastAnimationStateCheck;
-        private const float ANIMATION_STATE_CHECK_INTERVAL = 0.1f;
+        private const float AnimationStateCheckInterval = 0.1f;
         
         // State timeout (for stuck prevention)
         private float _stateTimeout;
@@ -397,9 +362,6 @@ namespace FiresCore.Npc.Movement
             // Can only enter states with equal or higher priority
             if ((int)newState < (int)CurrentState && CurrentState != CompanionState.Idle)
             {
-                // Rate-limit this log to prevent spam when repeatedly trying to enter a blocked state
-                if (ShouldLogVerbose() && ShouldLogStateRejection(newState))
-                    if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} cannot enter {newState} - currently in {CurrentState}");
                 return false;
             }
             
@@ -428,9 +390,6 @@ namespace FiresCore.Npc.Movement
             // Notify listeners
             NotifyStateChanged(oldState, newState);
             
-            if (ShouldLogVerbose())
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} state: {oldState} -> {newState}" + 
-                    (timeout > 0f ? $" (timeout: {timeout:F1}s)" : ""));
             
             return true;
         }
@@ -462,8 +421,6 @@ namespace FiresCore.Npc.Movement
             
             NotifyStateChanged(oldState, returnTo);
             
-            if (ShouldLogVerbose())
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} exited {oldState} -> {returnTo}");
         }
         
         /// <summary>
@@ -474,7 +431,7 @@ namespace FiresCore.Npc.Movement
         {
             CompanionState oldState = CurrentState;
 
-            // Always call ForceStopEmote regardless of current state ï¿½ the emote
+            // Always call ForceStopEmote regardless of current state - the emote
             // animation can be stuck even after the state has drifted away from Emote.
             ForceStopEmote();
 
@@ -492,8 +449,6 @@ namespace FiresCore.Npc.Movement
 
             NotifyStateChanged(oldState, CompanionState.Idle);
 
-            if (ShouldLogVerbose())
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} FORCE RESET from {oldState}");
         }
         
         #endregion
@@ -531,9 +486,6 @@ namespace FiresCore.Npc.Movement
                     _animator.SetTrigger(emoteName);
             }
             
-            if (ShouldLogVerbose())
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} started emote: {emoteName} " +
-                    $"(persistent: {isPersistent}, duration: {duration:F1}s)");
             
             return true;
         }
@@ -561,7 +513,7 @@ namespace FiresCore.Npc.Movement
         /// </summary>
         public void ForceStopEmote()
         {
-            // Call vanilla StopEmote() ï¿½ this sets the ZSyncAnimator emote bool to
+            // Call vanilla StopEmote() - this sets the ZSyncAnimator emote bool to
             // false AND clears m_emoteID so the Mecanim state machine actually exits.
             if (_character != null)
             {
@@ -710,8 +662,6 @@ namespace FiresCore.Npc.Movement
             
             OnMovementLockChanged?.Invoke(true);
             
-            if (ShouldLogVerbose())
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} movement locked: {reason} ({duration:F1}s)");
         }
         
         /// <summary>
@@ -733,8 +683,6 @@ namespace FiresCore.Npc.Movement
             
             OnMovementLockChanged?.Invoke(false);
             
-            if (ShouldLogVerbose())
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} movement unlocked");
         }
         
         /// <summary>
@@ -790,8 +738,6 @@ namespace FiresCore.Npc.Movement
         {
             _hasStateTimeout = false;
             
-            if (ShouldLogVerbose())
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} state timeout in {CurrentState}");
             
             // Handle timeout based on state
             switch (CurrentState)
@@ -860,8 +806,6 @@ namespace FiresCore.Npc.Movement
                 _movementAuthority.ForceReleaseAllAuthority();
             }
             
-            if (ShouldLogVerbose())
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} animation state forcefully reset");
         }
         
         private bool HasAnimatorParameter(string paramName)
@@ -981,24 +925,18 @@ namespace FiresCore.Npc.Movement
             // If animation is blocking, only Command priority can override (handled above)
             if (IsAnimationBlocking && priority < MovementPriority.Command)
             {
-                if (ShouldLogVerbose())
-                    if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} {owner} denied priority {priority} - animation blocking");
                 return false;
             }
             
             // If current priority is Command, deny all non-Command requests
             if (_currentMovementPriority == MovementPriority.Command && priority != MovementPriority.Command)
             {
-                if (ShouldLogVerbose())
-                    if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} {owner} denied priority {priority} - Command priority active");
                 return false;
             }
             
             // If current priority is higher, deny
             if ((int)_currentMovementPriority > (int)priority)
             {
-                if (ShouldLogVerbose())
-                    if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} {owner} denied priority {priority} - current {_currentMovementPriority} by {_movementPriorityOwner}");
                 return false;
             }
             
@@ -1007,8 +945,6 @@ namespace FiresCore.Npc.Movement
             _movementPriorityOwner = owner;
             _movementPriorityEndTime = Time.time + duration;
             
-            if (ShouldLogVerbose())
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} {owner} acquired priority {priority} for {duration:F1}s");
             
             return true;
         }
@@ -1024,8 +960,6 @@ namespace FiresCore.Npc.Movement
                 return;
             }
             
-            if (ShouldLogVerbose() && _currentMovementPriority != MovementPriority.None)
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} {owner} released priority {_currentMovementPriority}");
             
             _currentMovementPriority = MovementPriority.None;
             _movementPriorityOwner = null;
@@ -1070,8 +1004,6 @@ namespace FiresCore.Npc.Movement
         /// </summary>
         public void ForceReleaseAllMovementPriority()
         {
-            if (VerboseLogging && _currentMovementPriority != MovementPriority.None)
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} FORCE released all movement priority");
             
             _currentMovementPriority = MovementPriority.None;
             _movementPriorityOwner = null;
@@ -1088,7 +1020,7 @@ namespace FiresCore.Npc.Movement
         /// </summary>
         private void UpdateAnimationState()
         {
-            if (Time.time - _lastAnimationStateCheck < ANIMATION_STATE_CHECK_INTERVAL)
+            if (Time.time - _lastAnimationStateCheck < AnimationStateCheckInterval)
                 return;
             _lastAnimationStateCheck = Time.time;
             
@@ -1244,58 +1176,7 @@ namespace FiresCore.Npc.Movement
             {
                 EnforceFreeze();
                 
-                // Only log for companions actively following the player to reduce spam
-                if (VerboseLogging && IsActivelyFollowing())
-                    if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} animation state: {oldState} -> {state} (BLOCKING)");
             }
-        }
-        
-        /// <summary>
-        /// Returns true if this companion is actively following the player.
-        /// Used to filter logging to only show relevant companions.
-        /// </summary>
-        private bool IsActivelyFollowing()
-        {
-            if (_companion == null) return false;
-            return _companion.ShouldBeFollowing;
-        }
-        
-        /// <summary>
-        /// Returns true if verbose logging should be shown for this companion.
-        /// Only logs for companions that are actively following the player.
-        /// This reduces log spam from stayed/idle companions.
-        /// </summary>
-        private bool ShouldLogVerbose()
-        {
-            return VerboseLogging && IsActivelyFollowing();
-        }
-        
-        // Rate limiting for state rejection logs to prevent spam
-        private CompanionState _lastRejectedState;
-        private float _lastRejectionLogTime;
-        private const float STATE_REJECTION_LOG_INTERVAL = 5f; // Log same rejection at most every 5 seconds
-        
-        /// <summary>
-        /// Rate-limits state rejection logs to prevent spam when repeatedly trying to enter a blocked state.
-        /// </summary>
-        private bool ShouldLogStateRejection(CompanionState rejectedState)
-        {
-            // If it's a different state than last rejection, always log
-            if (rejectedState != _lastRejectedState)
-            {
-                _lastRejectedState = rejectedState;
-                _lastRejectionLogTime = Time.time;
-                return true;
-            }
-            
-            // Same state - rate limit
-            if (Time.time - _lastRejectionLogTime >= STATE_REJECTION_LOG_INTERVAL)
-            {
-                _lastRejectionLogTime = Time.time;
-                return true;
-            }
-            
-            return false;
         }
         
         /// <summary>
@@ -1346,27 +1227,10 @@ namespace FiresCore.Npc.Movement
         #region Command Management
         
         /// <summary>
-        /// Starts a new player command. This clears any existing command and gives
-        /// the new command absolute authority over the companion.
-        /// 
-        /// CRITICAL: Move and Attack commands have ABSOLUTE priority.
-        /// They will interrupt EVERYTHING including:
-        /// - Combat (companion will disengage and move to destination)
-        /// - Sub-behaviors (chores, training)
-        /// - Sitting/emotes
-        /// - Any animation locks
-        /// 
-        /// This is by design - when the player tells their companion to do something,
-        /// it could be to save their life. The companion MUST obey immediately.
+        /// Starts a player command, replacing any current one. Move and attack commands interrupt everything,
+        /// including combat, sub-behaviors, emotes and animation locks, because an order may be what saves the
+        /// player. A timeout of 0 means none. Returns true if the command started.
         /// </summary>
-        /// <param name="type">The type of command</param>
-        /// <param name="targetPosition">The target position</param>
-        /// <param name="targetObject">Optional target object</param>
-        /// <param name="targetCharacter">Optional target character</param>
-        /// <param name="timeout">Command timeout in seconds (0 = no timeout)</param>
-        /// <param name="onComplete">Callback when command completes successfully</param>
-        /// <param name="onFailed">Callback when command fails (receives reason string)</param>
-        /// <returns>True if command was started</returns>
         public bool StartCommand(
             CommandType type,
             Vector3 targetPosition,
@@ -1379,26 +1243,9 @@ namespace FiresCore.Npc.Movement
             string companionName = _companion?.companionName ?? "Unknown";
             bool isAbsolutePriority = (type == CommandType.Move || type == CommandType.Attack);
 
-            // ?? IDEMPOTENT RE-ISSUE ????????????????????????????????????????????
-            // The command pipeline currently calls StartCommand from THREE layers
-            // for a single user click:
-            //   1) CompanionCommandSystem.IssueCommand
-            //   2) CompanionCommandSystem.ExecuteMoveCommand
-            //   3) CompanionCombatMovement.SetMoveDestination
-            // and then any monitor coroutine / repeated input fires it again on
-            // subsequent frames.  Each call used to tear down the existing
-            // command (CancelCommand ? ForceReleaseAllMovementPriority ? ForceReset
-            // ? re-acquire authority ? re-enter PlayerCommand state) which is a
-            // huge amount of wasted work AND it caused the "behaviors fighting
-            // each other" symptoms the owner reported ï¿½ every tear-down briefly
-            // returned authority to lower-priority systems before grabbing it
-            // back.
-            //
-            // If the new request is the SAME command (same type, same target
-            // within 1 m, same object/character refs) as the one already running,
-            // we just extend the timeout and refresh authority ï¿½ no destroy/rebuild,
-            // no log spam, no priority release.  This is the player's command
-            // staying their command.
+            // One click reaches StartCommand from several layers (IssueCommand, ExecuteMoveCommand,
+            // SetMoveDestination), and tearing the command down each time briefly handed authority to lower
+            // priorities. Re-issuing the same command only extends its timeout and refreshes authority.
             if (HasActiveCommand
                 && _activeCommandType == type
                 && (_commandTargetObject == targetObject)
@@ -1409,18 +1256,17 @@ namespace FiresCore.Npc.Movement
                 if (onComplete != null) _onCommandComplete = onComplete;
                 if (onFailed != null) _onCommandFailed = onFailed;
 
-                // Refresh authority lease so it doesn't expire mid-command ï¿½ but
+                // Refresh authority lease so it doesn't expire mid-command - but
                 // do NOT release-and-reacquire (that's what caused the priority
                 // ping-pong).  TryAcquireMovementPriority is a silent extension
                 // when the same owner re-acquires the same level.
                 TryAcquireMovementPriority(MovementPriority.Command, "PlayerCommand", timeout);
 
-                // No log line on the refresh path ï¿½ this used to be the source of
+                // No log line on the refresh path - this used to be the source of
                 // the [COMMAND] StartCommand spam during held-input / coroutine
                 // re-issues.
                 return true;
             }
-            // ????????????????????????????????????????????????????????????????????
 
             // Cancel any existing command first
             if (HasActiveCommand)
@@ -1505,8 +1351,6 @@ namespace FiresCore.Npc.Movement
                 ExitState(CompanionState.Idle);
             }
 
-            if (ShouldLogVerbose())
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {_companion?.companionName} completed command: {type}");
 
             onComplete?.Invoke();
             extraHooks?.Invoke();
@@ -1556,7 +1400,6 @@ namespace FiresCore.Npc.Movement
             // Show message to player
             ShowCommandFailure(companionName, type, reason);
             
-            if (VerboseLog) Debug.Log($"[CompanionStateController] {companionName} command {type} FAILED: {reason}");
             
             onFailed?.Invoke(reason);
         }
@@ -1579,8 +1422,6 @@ namespace FiresCore.Npc.Movement
                 ExitState(CompanionState.Idle);
             }
             
-            if (!silent && VerboseLogging)
-                if (VerboseLog) Debug.Log($"[CompanionStateController] {companionName} command {type} cancelled: {reason}");
         }
         
         private void ClearCommandState()

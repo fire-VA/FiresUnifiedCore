@@ -67,7 +67,7 @@ namespace FiresCore.Npc.Combat
         private readonly List<ThreatEntry> _entryPool = new List<ThreatEntry>(16);
         private int _activeEntryCount;
 
-        // Assignment tracking: companionId ? enemy Character
+        // Assignment tracking: companionId - enemy Character
         private readonly Dictionary<string, Character> _assignments = new Dictionary<string, Character>();
 
         // Cached primary target
@@ -77,9 +77,9 @@ namespace FiresCore.Npc.Combat
         private static readonly Collider[] _scanBuffer = new Collider[64];
 
         // Classification thresholds (matching ThreatAnalyzer)
-        private const float DANGEROUS_HEALTH_THRESHOLD = 300f;
-        private const float ELITE_HEALTH_THRESHOLD = 800f;
-        private const float BOSS_HEALTH_THRESHOLD = 2000f;
+        private const float DangerousHealthThreshold = 300f;
+        private const float EliteHealthThreshold = 800f;
+        private const float BossHealthThreshold = 2000f;
 
         public static bool VerboseLogging = false;
 
@@ -187,14 +187,14 @@ namespace FiresCore.Npc.Combat
                     else
                     {
                         // Check if targeting one of our companions
-                        foreach (var comp in companions)
+                        foreach (var companion in companions)
                         {
-                            if (comp == null) continue;
-                            var compChar = comp.GetCharacter();
+                            if (companion == null) continue;
+                            var compChar = companion.GetCharacter();
                             if (compChar != null && compChar == aiTarget)
                             {
                                 entry.IsTargetingCompanion = true;
-                                entry.TargetedCompanionId = comp.companionId;
+                                entry.TargetedCompanionId = companion.companionId;
                                 break;
                             }
                         }
@@ -243,9 +243,9 @@ namespace FiresCore.Npc.Combat
         {
             float maxHp = enemy.GetMaxHealth();
 
-            if (maxHp >= BOSS_HEALTH_THRESHOLD) return EnemyClassification.Boss;
-            if (maxHp >= ELITE_HEALTH_THRESHOLD) return EnemyClassification.Elite;
-            if (maxHp >= DANGEROUS_HEALTH_THRESHOLD) return EnemyClassification.Dangerous;
+            if (maxHp >= BossHealthThreshold) return EnemyClassification.Boss;
+            if (maxHp >= EliteHealthThreshold) return EnemyClassification.Elite;
+            if (maxHp >= DangerousHealthThreshold) return EnemyClassification.Dangerous;
             if (maxHp < 80f) return EnemyClassification.Minion;
             return EnemyClassification.Normal;
         }

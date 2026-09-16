@@ -253,21 +253,21 @@ namespace FiresCore.Utilities
         private Color m_originalAmbientColor;
 
         // ZDO hash codes
-        private static readonly int HASH_SIZE_X = "envbox_sx".GetStableHashCode();
-        private static readonly int HASH_SIZE_Y = "envbox_sy".GetStableHashCode();
-        private static readonly int HASH_SIZE_Z = "envbox_sz".GetStableHashCode();
-        private static readonly int HASH_ENV = "envbox_env".GetStableHashCode();
-        private static readonly int HASH_FORCE_ENV = "envbox_fenv".GetStableHashCode();
-        private static readonly int HASH_BIOME = "envbox_biome".GetStableHashCode();
-        private static readonly int HASH_SKYBOX = "envbox_sky".GetStableHashCode();
-        private static readonly int HASH_VISIBILITY = "envbox_vis".GetStableHashCode();
-        private static readonly int HASH_AMB_R = "envbox_ar".GetStableHashCode();
-        private static readonly int HASH_AMB_G = "envbox_ag".GetStableHashCode();
-        private static readonly int HASH_AMB_B = "envbox_ab".GetStableHashCode();
-        private static readonly int HASH_WIND = "envbox_wind".GetStableHashCode();
-        private static readonly int HASH_TIME = "envbox_time".GetStableHashCode();
-        private static readonly int HASH_AFFECTS_VANILLA = "envbox_avp".GetStableHashCode();
-        private static readonly int HASH_LOCKED = "envbox_locked".GetStableHashCode();
+        private static readonly int HashSizeX = "envbox_sx".GetStableHashCode();
+        private static readonly int HashSizeY = "envbox_sy".GetStableHashCode();
+        private static readonly int HashSizeZ = "envbox_sz".GetStableHashCode();
+        private static readonly int HashEnv = "envbox_env".GetStableHashCode();
+        private static readonly int HashForceEnv = "envbox_fenv".GetStableHashCode();
+        private static readonly int HashBiome = "envbox_biome".GetStableHashCode();
+        private static readonly int HashSkybox = "envbox_sky".GetStableHashCode();
+        private static readonly int HashVisibility = "envbox_vis".GetStableHashCode();
+        private static readonly int HashAmbR = "envbox_ar".GetStableHashCode();
+        private static readonly int HashAmbG = "envbox_ag".GetStableHashCode();
+        private static readonly int HashAmbB = "envbox_ab".GetStableHashCode();
+        private static readonly int HashWind = "envbox_wind".GetStableHashCode();
+        private static readonly int HashTime = "envbox_time".GetStableHashCode();
+        private static readonly int HashAffectsVanilla = "envbox_avp".GetStableHashCode();
+        private static readonly int HashLocked = "envbox_locked".GetStableHashCode();
 
         // Original wind state for restoration
         private float m_originalWindMin;
@@ -297,7 +297,7 @@ namespace FiresCore.Utilities
         // The real vanilla dungeon environment whose EnvSetup (dark ambient + low directional intensity, no fill
         // light) defines the crypt look. Forcing this through EnvMan makes SetEnv apply the genuine vanilla
         // ambient/sun/fog numbers every frame — the exact mechanism EnvZone uses inside real crypts.
-        private const string VANILLA_DUNGEON_ENV = "Crypt";
+        private const string VanillaDungeonEnv = "Crypt";
 
         // The forced-environment string we pushed onto EnvMan for the dark interior (so exit can clear it
         // without stomping an explicit per-box EnvironmentName the admin also configured).
@@ -432,8 +432,8 @@ namespace FiresCore.Utilities
             // A TELEPORT into the box (our dungeon case: you arrive at y+5000) does NOT fire OnTriggerEnter/OnTriggerStay
             // reliably, so poll the local player's position here — ENTER when inside; ValidatePlayerInside handles exit.
             // This is what makes SetForceEnvironment actually run after teleporting in (the darkness never applied before).
-            var lp = Player.m_localPlayer;
-            if (lp != null && !m_playerInside && ContainsPoint(lp.transform.position))
+            var localPlayer = Player.m_localPlayer;
+            if (localPlayer != null && !m_playerInside && ContainsPoint(localPlayer.transform.position))
                 OnPlayerEnter();
             ValidatePlayerInside();
 
@@ -462,20 +462,20 @@ namespace FiresCore.Utilities
             var player = Player.m_localPlayer;
             if (player == null) return;
 
-            Vector3 p = player.transform.position;
-            Bounds wb = GetWorldBounds();
-            bool inside = ContainsPoint(p);
+            Vector3 playerPosition = player.transform.position;
+            Bounds worldBounds = GetWorldBounds();
+            bool inside = ContainsPoint(playerPosition);
 
             // Signed distance from the player to each wall plane (world-axis-aligned box; env boxes are unrotated).
-            float dMinusX = p.x - wb.min.x; // + when right of the -X wall (inside)
-            float dPlusX = wb.max.x - p.x; // + when left  of the +X wall (inside)
-            float dMinusY = p.y - wb.min.y; // + when above  the floor
-            float dPlusY = wb.max.y - p.y; // + when below  the ceiling
-            float dMinusZ = p.z - wb.min.z;
-            float dPlusZ = wb.max.z - p.z;
+            float dMinusX = playerPosition.x - worldBounds.min.x; // + when right of the -X wall (inside)
+            float dPlusX = worldBounds.max.x - playerPosition.x; // + when left  of the +X wall (inside)
+            float dMinusY = playerPosition.y - worldBounds.min.y; // + when above  the floor
+            float dPlusY = worldBounds.max.y - playerPosition.y; // + when below  the ceiling
+            float dMinusZ = playerPosition.z - worldBounds.min.z;
+            float dPlusZ = worldBounds.max.z - playerPosition.z;
 
-            Debug.Log($"[ENVBOX-DBG] inside-check: box='{gameObject.name}' size={BoxSize} playerPos={p} " +
-                      $"INSIDE={inside} worldMin={wb.min} worldMax={wb.max} " +
+            Debug.Log($"[ENVBOX-DBG] inside-check: box='{gameObject.name}' size={BoxSize} playerPos={playerPosition} " +
+                      $"INSIDE={inside} worldMin={worldBounds.min} worldMax={worldBounds.max} " +
                       $"distWalls[-X={dMinusX:F1} +X={dPlusX:F1} -Y={dMinusY:F1} +Y={dPlusY:F1} -Z={dMinusZ:F1} +Z={dPlusZ:F1}]");
         }
 
@@ -500,7 +500,7 @@ namespace FiresCore.Utilities
             // RenderSettings — that was the improvisation that fought EnvMan and caused the lit surfaces / sky leaks.
             if (EnvMan.instance != null)
             {
-                string env = !string.IsNullOrEmpty(EnvironmentName) ? EnvironmentName : VANILLA_DUNGEON_ENV;
+                string env = !string.IsNullOrEmpty(EnvironmentName) ? EnvironmentName : VanillaDungeonEnv;
                 EnvMan.instance.SetForceEnvironment(env);
             }
         }
@@ -676,7 +676,7 @@ namespace FiresCore.Utilities
         }
 
         /// <summary>
-        /// Forces the real vanilla dungeon environment (<see cref="VANILLA_DUNGEON_ENV"/>) through EnvMan so its
+        /// Forces the real vanilla dungeon environment (<see cref="VanillaDungeonEnv"/>) through EnvMan so its
         /// EnvSetup drives all interior lighting. We only force it ourselves when the box has no explicit
         /// EnvironmentName configured; if the admin set one, that forced environment already runs and we leave it.
         /// </summary>
@@ -689,7 +689,7 @@ namespace FiresCore.Utilities
             if (!string.IsNullOrEmpty(EnvironmentName)) return;
 
             // "Crypt" is a guaranteed vanilla environment; SetForceEnvironment is a no-op for an unknown name.
-            EnvMan.instance.SetForceEnvironment(VANILLA_DUNGEON_ENV);
+            EnvMan.instance.SetForceEnvironment(VanillaDungeonEnv);
             m_dungeonEnvForced = true;
         }
 
@@ -872,10 +872,10 @@ namespace FiresCore.Utilities
 
             // Heavy diagnostics: BoxSize, top-cap flag, WORLD center + world min/max bounds, and geometry counts.
             // If the crypt/play area sits outside these world bounds, the sky WILL leak past a wall.
-            Bounds wb = GetWorldBounds();
+            Bounds worldBounds = GetWorldBounds();
             Debug.Log($"[ENVBOX-DBG] CreateEnclosureMesh: box='{gameObject.name}' BoxSize={BoxSize} includeTop={includeTop} " +
                       $"localScale={transform.localScale} color={color} cull=Off(double-sided) " +
-                      $"worldCenter={wb.center} worldMin={wb.min} worldMax={wb.max} " +
+                      $"worldCenter={worldBounds.center} worldMin={worldBounds.min} worldMax={worldBounds.max} " +
                       $"verts={vertices.Count} tris={triangles.Count / 3}");
 
             // Create material - opaque shader that blocks skybox
@@ -1365,9 +1365,9 @@ namespace FiresCore.Utilities
             // SetSize already rebuilds the enclosure shell at the new extents when the player is inside. No opaque
             // main-mesh shell to rebuild anymore (removed — the enclosure shell + forced env are the whole interior).
 
-            Bounds wb = GetWorldBounds();
+            Bounds worldBounds = GetWorldBounds();
             Debug.Log($"[ENVBOX-DBG] ReconfigureBoxToBounds: box='{gameObject.name}' newCenter={worldCenter} " +
-                      $"requestedSize={size} appliedBoxSize={BoxSize} worldMin={wb.min} worldMax={wb.max}.");
+                      $"requestedSize={size} appliedBoxSize={BoxSize} worldMin={worldBounds.min} worldMax={worldBounds.max}.");
         }
 
         /// <summary>
@@ -1643,8 +1643,8 @@ namespace FiresCore.Utilities
             markerRenderer.material = CreateBoxMaterial(new Color(1f, 0.5f, 0f, 0.8f));
 
             // Remove collider from marker sphere
-            var col = marker.GetComponent<Collider>();
-            if (col != null) Destroy(col);
+            var markerCollider = marker.GetComponent<Collider>();
+            if (markerCollider != null) Destroy(markerCollider);
 
             // Position at top of box (accounting for transform scale)
             UpdateHiddenMarkerPosition();
@@ -1745,26 +1745,26 @@ namespace FiresCore.Utilities
         private static Mesh BuildEdgeMesh(Vector3 size)
         {
             Vector3 half = size / 2f;
-            float t = Mathf.Clamp(Mathf.Min(size.x, Mathf.Min(size.y, size.z)) * 0.02f, 0.05f, 0.3f);
+            float thickness = Mathf.Clamp(Mathf.Min(size.x, Mathf.Min(size.y, size.z)) * 0.02f, 0.05f, 0.3f);
 
             var vertices = new List<Vector3>();
             var triangles = new List<int>();
 
             // Verticals
-            AddBar(vertices, triangles, new Vector3(-half.x, 0f, -half.z), new Vector3(t, size.y, t));
-            AddBar(vertices, triangles, new Vector3(half.x, 0f, -half.z), new Vector3(t, size.y, t));
-            AddBar(vertices, triangles, new Vector3(half.x, 0f, half.z), new Vector3(t, size.y, t));
-            AddBar(vertices, triangles, new Vector3(-half.x, 0f, half.z), new Vector3(t, size.y, t));
+            AddBar(vertices, triangles, new Vector3(-half.x, 0f, -half.z), new Vector3(thickness, size.y, thickness));
+            AddBar(vertices, triangles, new Vector3(half.x, 0f, -half.z), new Vector3(thickness, size.y, thickness));
+            AddBar(vertices, triangles, new Vector3(half.x, 0f, half.z), new Vector3(thickness, size.y, thickness));
+            AddBar(vertices, triangles, new Vector3(-half.x, 0f, half.z), new Vector3(thickness, size.y, thickness));
             // Bottom ring
-            AddBar(vertices, triangles, new Vector3(0f, -half.y, -half.z), new Vector3(size.x, t, t));
-            AddBar(vertices, triangles, new Vector3(0f, -half.y, half.z), new Vector3(size.x, t, t));
-            AddBar(vertices, triangles, new Vector3(-half.x, -half.y, 0f), new Vector3(t, t, size.z));
-            AddBar(vertices, triangles, new Vector3(half.x, -half.y, 0f), new Vector3(t, t, size.z));
+            AddBar(vertices, triangles, new Vector3(0f, -half.y, -half.z), new Vector3(size.x, thickness, thickness));
+            AddBar(vertices, triangles, new Vector3(0f, -half.y, half.z), new Vector3(size.x, thickness, thickness));
+            AddBar(vertices, triangles, new Vector3(-half.x, -half.y, 0f), new Vector3(thickness, thickness, size.z));
+            AddBar(vertices, triangles, new Vector3(half.x, -half.y, 0f), new Vector3(thickness, thickness, size.z));
             // Top ring
-            AddBar(vertices, triangles, new Vector3(0f, half.y, -half.z), new Vector3(size.x, t, t));
-            AddBar(vertices, triangles, new Vector3(0f, half.y, half.z), new Vector3(size.x, t, t));
-            AddBar(vertices, triangles, new Vector3(-half.x, half.y, 0f), new Vector3(t, t, size.z));
-            AddBar(vertices, triangles, new Vector3(half.x, half.y, 0f), new Vector3(t, t, size.z));
+            AddBar(vertices, triangles, new Vector3(0f, half.y, -half.z), new Vector3(size.x, thickness, thickness));
+            AddBar(vertices, triangles, new Vector3(0f, half.y, half.z), new Vector3(size.x, thickness, thickness));
+            AddBar(vertices, triangles, new Vector3(-half.x, half.y, 0f), new Vector3(thickness, thickness, size.z));
+            AddBar(vertices, triangles, new Vector3(half.x, half.y, 0f), new Vector3(thickness, thickness, size.z));
 
             Mesh mesh = new Mesh();
             mesh.name = "EnvBoxEdgeMesh";
@@ -1777,16 +1777,16 @@ namespace FiresCore.Utilities
 
         private static void AddBar(List<Vector3> vertices, List<int> triangles, Vector3 center, Vector3 size)
         {
-            Vector3 h = size / 2f;
-            int b = vertices.Count;
-            vertices.Add(center + new Vector3(-h.x, -h.y, -h.z));
-            vertices.Add(center + new Vector3(h.x, -h.y, -h.z));
-            vertices.Add(center + new Vector3(h.x, -h.y, h.z));
-            vertices.Add(center + new Vector3(-h.x, -h.y, h.z));
-            vertices.Add(center + new Vector3(-h.x, h.y, -h.z));
-            vertices.Add(center + new Vector3(h.x, h.y, -h.z));
-            vertices.Add(center + new Vector3(h.x, h.y, h.z));
-            vertices.Add(center + new Vector3(-h.x, h.y, h.z));
+            Vector3 halfSize = size / 2f;
+            int baseIndex = vertices.Count;
+            vertices.Add(center + new Vector3(-halfSize.x, -halfSize.y, -halfSize.z));
+            vertices.Add(center + new Vector3(halfSize.x, -halfSize.y, -halfSize.z));
+            vertices.Add(center + new Vector3(halfSize.x, -halfSize.y, halfSize.z));
+            vertices.Add(center + new Vector3(-halfSize.x, -halfSize.y, halfSize.z));
+            vertices.Add(center + new Vector3(-halfSize.x, halfSize.y, -halfSize.z));
+            vertices.Add(center + new Vector3(halfSize.x, halfSize.y, -halfSize.z));
+            vertices.Add(center + new Vector3(halfSize.x, halfSize.y, halfSize.z));
+            vertices.Add(center + new Vector3(-halfSize.x, halfSize.y, halfSize.z));
             int[] tris =
             {
                 0, 2, 1, 0, 3, 2,   // bottom
@@ -1796,7 +1796,7 @@ namespace FiresCore.Utilities
                 3, 0, 4, 3, 4, 7,   // left
                 1, 2, 6, 1, 6, 5,   // right
             };
-            foreach (int i in tris) triangles.Add(b + i);
+            foreach (int i in tris) triangles.Add(baseIndex + i);
         }
 
         #endregion
@@ -1875,41 +1875,41 @@ namespace FiresCore.Utilities
             if (zdo == null) return;
 
             // Load size
-            float sx = zdo.GetFloat(HASH_SIZE_X, BoxSize.x);
-            float sy = zdo.GetFloat(HASH_SIZE_Y, BoxSize.y);
-            float sz = zdo.GetFloat(HASH_SIZE_Z, BoxSize.z);
-            BoxSize = new Vector3(sx, sy, sz);
+            float sizeX = zdo.GetFloat(HashSizeX, BoxSize.x);
+            float sizeY = zdo.GetFloat(HashSizeY, BoxSize.y);
+            float sizeZ = zdo.GetFloat(HashSizeZ, BoxSize.z);
+            BoxSize = new Vector3(sizeX, sizeY, sizeZ);
 
             // Load environment
-            EnvironmentName = zdo.GetString(HASH_ENV, EnvironmentName);
-            ForceEnvironment = zdo.GetBool(HASH_FORCE_ENV, ForceEnvironment);
+            EnvironmentName = zdo.GetString(HashEnv, EnvironmentName);
+            ForceEnvironment = zdo.GetBool(HashForceEnv, ForceEnvironment);
 
             // Load biome
-            ForcedBiome = (Heightmap.Biome)zdo.GetInt(HASH_BIOME, (int)ForcedBiome);
+            ForcedBiome = (Heightmap.Biome)zdo.GetInt(HashBiome, (int)ForcedBiome);
 
             // Load skybox
-            CurrentSkyboxMode = (SkyboxMode)zdo.GetInt(HASH_SKYBOX, (int)CurrentSkyboxMode);
+            CurrentSkyboxMode = (SkyboxMode)zdo.GetInt(HashSkybox, (int)CurrentSkyboxMode);
 
             // Load visibility
-            CurrentVisibility = (VisibilityMode)zdo.GetInt(HASH_VISIBILITY, (int)CurrentVisibility);
+            CurrentVisibility = (VisibilityMode)zdo.GetInt(HashVisibility, (int)CurrentVisibility);
 
             // Load wind
-            CurrentWindIntensity = (WindIntensity)zdo.GetInt(HASH_WIND, (int)CurrentWindIntensity);
+            CurrentWindIntensity = (WindIntensity)zdo.GetInt(HashWind, (int)CurrentWindIntensity);
 
             // Load time
-            CurrentTimeOfDay = (ForcedTimeOfDay)zdo.GetInt(HASH_TIME, (int)CurrentTimeOfDay);
+            CurrentTimeOfDay = (ForcedTimeOfDay)zdo.GetInt(HashTime, (int)CurrentTimeOfDay);
 
             // Load AffectsVanillaPaint
-            AffectsVanillaPaint = zdo.GetBool(HASH_AFFECTS_VANILLA, AffectsVanillaPaint);
+            AffectsVanillaPaint = zdo.GetBool(HashAffectsVanilla, AffectsVanillaPaint);
 
             // Load Locked state
-            Locked = zdo.GetBool(HASH_LOCKED, Locked);
+            Locked = zdo.GetBool(HashLocked, Locked);
 
             // Load ambient color
-            float ar = zdo.GetFloat(HASH_AMB_R, AmbientColorOverride.r);
-            float ag = zdo.GetFloat(HASH_AMB_G, AmbientColorOverride.g);
-            float ab = zdo.GetFloat(HASH_AMB_B, AmbientColorOverride.b);
-            AmbientColorOverride = new Color(ar, ag, ab);
+            float ambientR = zdo.GetFloat(HashAmbR, AmbientColorOverride.r);
+            float ambientG = zdo.GetFloat(HashAmbG, AmbientColorOverride.g);
+            float ambientB = zdo.GetFloat(HashAmbB, AmbientColorOverride.b);
+            AmbientColorOverride = new Color(ambientR, ambientG, ambientB);
 
             // Apply loaded state
             if (m_trigger != null)
@@ -1925,39 +1925,39 @@ namespace FiresCore.Utilities
             if (zdo == null) return;
 
             // Save size
-            zdo.Set(HASH_SIZE_X, BoxSize.x);
-            zdo.Set(HASH_SIZE_Y, BoxSize.y);
-            zdo.Set(HASH_SIZE_Z, BoxSize.z);
+            zdo.Set(HashSizeX, BoxSize.x);
+            zdo.Set(HashSizeY, BoxSize.y);
+            zdo.Set(HashSizeZ, BoxSize.z);
 
             // Save environment
-            zdo.Set(HASH_ENV, EnvironmentName);
-            zdo.Set(HASH_FORCE_ENV, ForceEnvironment);
+            zdo.Set(HashEnv, EnvironmentName);
+            zdo.Set(HashForceEnv, ForceEnvironment);
 
             // Save biome
-            zdo.Set(HASH_BIOME, (int)ForcedBiome);
+            zdo.Set(HashBiome, (int)ForcedBiome);
 
             // Save skybox
-            zdo.Set(HASH_SKYBOX, (int)CurrentSkyboxMode);
+            zdo.Set(HashSkybox, (int)CurrentSkyboxMode);
 
             // Save visibility
-            zdo.Set(HASH_VISIBILITY, (int)CurrentVisibility);
+            zdo.Set(HashVisibility, (int)CurrentVisibility);
 
             // Save wind
-            zdo.Set(HASH_WIND, (int)CurrentWindIntensity);
+            zdo.Set(HashWind, (int)CurrentWindIntensity);
 
             // Save time
-            zdo.Set(HASH_TIME, (int)CurrentTimeOfDay);
+            zdo.Set(HashTime, (int)CurrentTimeOfDay);
 
             // Save AffectsVanillaPaint
-            zdo.Set(HASH_AFFECTS_VANILLA, AffectsVanillaPaint);
+            zdo.Set(HashAffectsVanilla, AffectsVanillaPaint);
 
             // Save Locked state
-            zdo.Set(HASH_LOCKED, Locked);
+            zdo.Set(HashLocked, Locked);
 
             // Save ambient color
-            zdo.Set(HASH_AMB_R, AmbientColorOverride.r);
-            zdo.Set(HASH_AMB_G, AmbientColorOverride.g);
-            zdo.Set(HASH_AMB_B, AmbientColorOverride.b);
+            zdo.Set(HashAmbR, AmbientColorOverride.r);
+            zdo.Set(HashAmbG, AmbientColorOverride.g);
+            zdo.Set(HashAmbB, AmbientColorOverride.b);
         }
 
         #endregion

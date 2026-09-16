@@ -8,18 +8,9 @@ using FiresCore.Npc.Vault;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Handles companion death, tombstone creation, respawn, and loot recovery.
-    /// This replaces the "defeated" state with proper destruction/respawn like players.
-    /// 
-    /// Death Flow:
-    /// 1. Companion health reaches 0
-    /// 2. OnDeath is called (hooked from Character.OnDeath)
-    /// 3. Save companion state to vault
-    /// 4. Create tombstone with inventory (NOW SAFE - uses CompanionNetworkHelper)
-    /// 5. Destroy the companion GameObject (via CompanionNetworkHelper)
-    /// 6. Start respawn timer (stored in vault)
-    /// 7. After timer, spawn new companion from vault
-    /// 8. New companion seeks and loots its tombstone
+    /// Companion death handled like a player's: save state, drop a tombstone with the inventory, destroy the body
+    /// through CompanionNetworkHelper, start the respawn timer, and after it spawn a fresh companion that goes back
+    /// to loot its tombstone.
     /// </summary>
     public class CompanionDeathHandler : MonoBehaviour
     {
@@ -137,20 +128,8 @@ namespace FiresCore.Npc
                     Debug.Log($"[CompanionDeathHandler] {_companion.companionName} has died! (tamed: {_companion.isTamed})");
                 }
 
-                // Wild companions die permanently. Vanilla Character.OnDeath
-                // *should* call ZNetScene.Destroy(this.gameObject) at the end
-                // of OnDeath — but in practice we've observed cases where the
-                // vanilla destroy doesn't happen (other m_onDeath subscribers,
-                // some edge case in the chain) and the corpse stays in the
-                // world: invisible if a ragdoll spawned, but still targetable
-                // by enemies and still rendering equipped weapons. We schedule
-                // a coroutine-based safety-net destroy so that if vanilla DOES
-                // destroy the GameObject, the coroutine dies with it and is a
-                // no-op; if vanilla doesn't, we destroy it via
-                // ZNetScene.Destroy ourselves a moment later. The path through
-                // CompanionNetworkHelper.Destroy correctly removes the ZDO
-                // from ZNetScene.m_instances, so this cannot leave the stale
-                // entries that previously caused ZNetScene.RemoveObjects NREs.
+                // Wild companions die for good. If vanilla's own destroy doesn't happen the body lingers, so a safety
+                // net destroys it through ZNetScene a moment later; it dies with the body when vanilla did its job.
                 if (!_companion.isTamed)
                 {
                     if (_nview != null && _nview.IsOwner())
@@ -244,21 +223,9 @@ namespace FiresCore.Npc
             // 6. Notify owner
             NotifyOwnerOfDeath();
 
-            // 7. Safety-net destroy. Vanilla Character.OnDeath is supposed to
-            //    call ZNetScene.Destroy(this.gameObject) right after the
-            //    m_onDeath callback returns, but in practice we've seen the
-            //    vanilla destroy not happen for tamed companions (the body
-            //    stays — invisible if a ragdoll spawned, but still targetable
-            //    by enemies and still rendering equipped weapons). The
-            //    coroutine below is host-bound to this GameObject, so:
-            //      • if vanilla DID destroy, this GO is gone before the
-            //        WaitForSeconds elapses — coroutine dies with it, no-op.
-            //      • if vanilla DIDN'T destroy, our coroutine fires after the
-            //        delay and does it via CompanionNetworkHelper.Destroy —
-            //        which goes through ZNetScene.Destroy and properly
-            //        unregisters the ZDO from m_instances (so this cannot
-            //        leave the stale entries that earlier caused
-            //        ZNetScene.RemoveObjects NREs).
+            // Vanilla OnDeath should destroy the body right after this callback, but tamed companions have been seen to
+            // survive it. This coroutine lives on the body, so it dies with it if vanilla did its job; otherwise it
+            // destroys the body through ZNetScene after a delay.
             if (_nview != null && _nview.IsOwner())
             {
                 StartCoroutine(DestroyAfterDelay(1.0f));
@@ -651,19 +618,19 @@ namespace FiresCore.Npc
 
         private IEnumerator PassiveTombstoneMonitor(ZDOID tombstoneZDOID)
         {
-            const float AUTO_LOOT_RANGE = 5f;
-            const float CHECK_INTERVAL = 1f;
-            const float MAX_MONITOR_TIME = 3600f;
+            const float AutoLootRange = 5f;
+            const float CheckInterval = 1f;
+            const float MaxMonitorTime = 3600f;
 
             if (VerboseLogging)
                 Debug.Log($"[CompanionDeathHandler] {_companion.companionName} passively monitoring for tombstone");
 
             float monitorTime = 0f;
 
-            while (monitorTime < MAX_MONITOR_TIME)
+            while (monitorTime < MaxMonitorTime)
             {
-                yield return new WaitForSeconds(CHECK_INTERVAL);
-                monitorTime += CHECK_INTERVAL;
+                yield return new WaitForSeconds(CheckInterval);
+                monitorTime += CheckInterval;
 
                 if (_companion == null || transform == null)
                 {
@@ -680,7 +647,7 @@ namespace FiresCore.Npc
                 }
 
                 float distance = Vector3.Distance(transform.position, tombstoneObj.transform.position);
-                if (distance <= AUTO_LOOT_RANGE)
+                if (distance <= AutoLootRange)
                 {
                     Debug.Log($"[CompanionDeathHandler] {_companion.companionName} auto-looting tombstone!");
                     LootTombstone(tombstoneObj);
@@ -865,9 +832,9 @@ namespace FiresCore.Npc
                     }
                 }
 
-                foreach (var r in GetComponentsInChildren<Renderer>(includeInactive: false))
+                foreach (var childRenderer in GetComponentsInChildren<Renderer>(includeInactive: false))
                 {
-                    if (r != null) r.enabled = false;
+                    if (childRenderer != null) childRenderer.enabled = false;
                 }
             }
             catch (Exception ex)
@@ -912,8 +879,8 @@ namespace FiresCore.Npc
         // here (client-side) so it respects each player's language even when the server is headless.
         private void RPC_CompanionDeathNotice(long sender, long ownerPlayerId, string companionName, string killerRaw, float delay)
         {
-            var lp = Player.m_localPlayer;
-            if (lp == null || lp.GetPlayerID() != ownerPlayerId) return;
+            var localPlayer = Player.m_localPlayer;
+            if (localPlayer == null || localPlayer.GetPlayerID() != ownerPlayerId) return;
 
             string killer = null;
             if (!string.IsNullOrEmpty(killerRaw))
@@ -987,17 +954,8 @@ namespace FiresCore.Npc
         }
 
         /// <summary>
-        /// Walks every <see cref="ZNetView"/> in the children of this
-        /// GameObject (excluding the parent's own ZNetView) and destroys
-        /// each via <see cref="CompanionNetworkHelper.Destroy"/> so its
-        /// ZDO is removed from <c>ZNetScene.m_instances</c> rather than
-        /// being orphaned by Unity's destruction cascade.
-        ///
-        /// Detaches each child from the parent transform first so the
-        /// subsequent parent destroy can't pull a partially-destroyed
-        /// child along with it through the cascade.
-        ///
-        /// Safe to call when no child ZNetViews exist — does nothing.
+        /// Detaches and destroys every child ZNetView through CompanionNetworkHelper, so child ZDOs leave
+        /// ZNetScene.m_instances instead of being orphaned by the parent's destruction cascade.
         /// </summary>
         private void DestroyChildZNetViewsCleanly()
         {
@@ -1009,11 +967,11 @@ namespace FiresCore.Npc
 
                 for (int i = 0; i < childViews.Length; i++)
                 {
-                    var cv = childViews[i];
-                    if (cv == null) continue;
-                    if (cv == ownNview) continue;            // parent's own — handled by the destroy below
-                    if (!cv.IsValid()) continue;             // already torn down
-                    var go = cv.gameObject;
+                    var childView = childViews[i];
+                    if (childView == null) continue;
+                    if (childView == ownNview) continue;            // parent's own — handled by the destroy below
+                    if (!childView.IsValid()) continue;             // already torn down
+                    var go = childView.gameObject;
                     if (go == null || go == this.gameObject) continue;
 
                     try

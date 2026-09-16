@@ -3,28 +3,18 @@
 namespace FiresCore.Npc.Formation
 {
     /// <summary>
-    /// Per-companion component that reads its assigned formation slot from GroupFormationManager
-    /// and adjusts movement targets accordingly. Also enforces personal space.
-    /// 
-    /// LIFECYCLE:
-    /// - Awake: Cache component references
-    /// - OnEnable: Register with GroupFormationManager
-    /// - OnDisable/OnDestroy: Unregister from GroupFormationManager
-    /// - LateUpdate: Throttled personal space enforcement and formation updates
-    /// 
-    /// INTEGRATION:
-    /// - CompanionAI reads GetAdjustedFollowTarget() to offset the follow destination
-    /// - PlayerIdleHandler reads GetIdleSpreadTarget() for coordinated spread positions
-    /// - Personal space repulsion is blended into movement by the caller
+    /// A companion's link to <see cref="GroupFormationManager"/>: registers while enabled, offsets the follow
+    /// destination through GetAdjustedFollowTarget, provides idle spread positions through GetIdleSpreadTarget, and
+    /// enforces personal space on a throttle in LateUpdate.
     /// </summary>
     public class CompanionFormationController : MonoBehaviour
     {
         #region Settings
 
-        private const float SEPARATION_CHECK_INTERVAL = 0.2f;
-        private const float FORMATION_UPDATE_INTERVAL = 0.5f;
-        private const float CLEANUP_INTERVAL = 5.0f;
-        private const float ARRIVAL_THRESHOLD = 0.5f;
+        private const float SeparationCheckInterval = 0.2f;
+        private const float FormationUpdateInterval = 0.5f;
+        private const float CleanupInterval = 5.0f;
+        private const float ArrivalThreshold = 0.5f;
 
         public static bool VerboseLogging = false;
 
@@ -88,21 +78,21 @@ namespace FiresCore.Npc.Formation
             }
 
             // Throttled formation update (drives GroupFormationManager for this player's group)
-            if (Time.time - _lastFormationUpdateTime >= FORMATION_UPDATE_INTERVAL)
+            if (Time.time - _lastFormationUpdateTime >= FormationUpdateInterval)
             {
                 _lastFormationUpdateTime = Time.time;
                 GroupFormationManager.Instance.UpdateFormations();
             }
 
             // Throttled personal space check
-            if (Time.time - _lastSeparationTime >= SEPARATION_CHECK_INTERVAL)
+            if (Time.time - _lastSeparationTime >= SeparationCheckInterval)
             {
                 _lastSeparationTime = Time.time;
                 _lastSeparationForce = GroupFormationManager.Instance.ComputeSeparation(_companion, transform.position);
             }
 
             // Periodic cleanup of destroyed companions
-            if (Time.time - _lastCleanupTime >= CLEANUP_INTERVAL)
+            if (Time.time - _lastCleanupTime >= CleanupInterval)
             {
                 _lastCleanupTime = Time.time;
                 GroupFormationManager.Instance.CleanupDestroyedCompanions();
@@ -189,7 +179,7 @@ namespace FiresCore.Npc.Formation
                 float dist = Vector3.Distance(
                     new Vector3(transform.position.x, 0f, transform.position.z),
                     new Vector3(_cachedSlot.WorldPosition.x, 0f, _cachedSlot.WorldPosition.z));
-                return dist < ARRIVAL_THRESHOLD;
+                return dist < ArrivalThreshold;
             }
         }
 

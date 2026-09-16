@@ -45,14 +45,14 @@ namespace FiresCore.UI
             MiniGameCamera.IsTuning = combo;
             if (!combo) return;
 
-            var o = MiniGameCamera.TuneOffset;
-            o.x += Input.GetAxis("Mouse X") * PanSpeed;               // camera right
-            o.y += Input.GetAxis("Mouse Y") * PanSpeed;               // camera up
-            o.z += Input.GetAxis("Mouse ScrollWheel") * ZoomSpeed;   // dolly forward (zoom)
-            o.x = Mathf.Clamp(o.x, -Limit, Limit);
-            o.y = Mathf.Clamp(o.y, -Limit, Limit);
-            o.z = Mathf.Clamp(o.z, -Limit, Limit);
-            MiniGameCamera.TuneOffset = o;
+            var offset = MiniGameCamera.TuneOffset;
+            offset.x += Input.GetAxis("Mouse X") * PanSpeed;               // camera right
+            offset.y += Input.GetAxis("Mouse Y") * PanSpeed;               // camera up
+            offset.z += Input.GetAxis("Mouse ScrollWheel") * ZoomSpeed;   // dolly forward (zoom)
+            offset.x = Mathf.Clamp(offset.x, -Limit, Limit);
+            offset.y = Mathf.Clamp(offset.y, -Limit, Limit);
+            offset.z = Mathf.Clamp(offset.z, -Limit, Limit);
+            MiniGameCamera.TuneOffset = offset;
 
             if (Input.GetKeyDown(KeyCode.R)) MiniGameCamera.ResetTune();
         }
@@ -62,13 +62,13 @@ namespace FiresCore.UI
             if (!MiniGameCamera.Active) return;
             EnsureStyle();
 
-            var o = MiniGameCamera.TuneOffset;
+            var offset = MiniGameCamera.TuneOffset;
             string text = MiniGameCamera.IsTuning
-                ? $"CAMERA TUNE   pan X {o.x:0.00}  Y {o.y:0.00}   zoom {o.z:0.00}   —  mouse moves · wheel zooms · R re-centres"
+                ? $"CAMERA TUNE   pan X {offset.x:0.00}  Y {offset.y:0.00}   zoom {offset.z:0.00}   —  mouse moves · wheel zooms · R re-centres"
                 : "Esc: exit    ·    Hold Ctrl+Alt: move camera    ·    wheel: zoom";
 
-            float w = 760f, h = 26f;
-            var rect = new Rect((Screen.width - w) * 0.5f, Screen.height - 44f, w, h);
+            float width = 760f, height = 26f;
+            var rect = new Rect((Screen.width - width) * 0.5f, Screen.height - 44f, width, height);
             GUI.color = new Color(1f, 1f, 1f, MiniGameCamera.IsTuning ? 0.95f : 0.5f);
             GUI.Label(rect, text, _style);
             GUI.color = Color.white;
@@ -115,12 +115,12 @@ namespace FiresCore.UI
                 if (!File.Exists(Path)) return;
                 foreach (var line in File.ReadAllLines(Path))
                 {
-                    var p = line.Split('|');
-                    if (p.Length < 4) continue;
-                    if (float.TryParse(p[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)
-                        && float.TryParse(p[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)
-                        && float.TryParse(p[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float z))
-                        _cache[p[0]] = new Vector3(x, y, z);
+                    var parts = line.Split('|');
+                    if (parts.Length < 4) continue;
+                    if (float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)
+                        && float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)
+                        && float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float z))
+                        _cache[parts[0]] = new Vector3(x, y, z);
                 }
             }
             catch { /* first run / unreadable — just start empty */ }
@@ -130,14 +130,14 @@ namespace FiresCore.UI
         {
             if (string.IsNullOrEmpty(key)) return Vector3.zero;
             EnsureLoaded();
-            return _cache.TryGetValue(key, out var v) ? v : Vector3.zero;
+            return _cache.TryGetValue(key, out var offset) ? offset : Vector3.zero;
         }
 
-        public static void Save(string key, Vector3 v)
+        public static void Save(string key, Vector3 offset)
         {
             if (string.IsNullOrEmpty(key)) return;
             EnsureLoaded();
-            _cache[key] = v;
+            _cache[key] = offset;
             try
             {
                 var sb = new StringBuilder();

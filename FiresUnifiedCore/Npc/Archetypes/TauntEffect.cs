@@ -11,20 +11,9 @@ using FiresCore.Lifecycle;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Taunt status effect that forces enemies to target the taunter.
-    /// Applied by Tank archetype companions to draw aggro away from allies.
-    /// 
-    /// EFFECT BEHAVIOR:
-    /// - Enemy AI is forced to target the taunter for the duration
-    /// - Enemy's aggro is locked onto the taunter via Harmony patch intercept
-    /// - If taunter dies or goes out of range, taunt ends early
-    /// - Multiple taunts don't stack - newer taunt replaces older
-    /// 
-    /// IMPLEMENTATION:
-    /// We use a static registry + Harmony patch approach:
-    /// - When taunt is applied, we register the enemy -> taunter mapping
-    /// - A Harmony postfix on MonsterAI.UpdateTarget() forces the target back
-    /// - This intercepts the AI's own target selection, which is more reliable
+    /// Tank taunt: enemies are held on the taunter for the duration through an enemy-to-taunter registry and a
+    /// MonsterAI.UpdateTarget postfix that restores the target after the AI's own selection. A newer taunt replaces
+    /// an older one, and the taunt ends early if the taunter dies or leaves range.
     /// </summary>
     public class CompanionTauntEffect : StatusEffect
     {
@@ -501,7 +490,8 @@ namespace FiresCore.Npc.Archetypes
         public List<Character> TauntedEnemies { get; } = new List<Character>();
         
         // How often to re-apply taunt to enemies (seconds)
-        private const float TAUNT_REAPPLY_INTERVAL = 1.0f;
+        private const float TauntReapplyInterval = 1.0f;
+        private const float MinimalAggroDamage = 0.01f;
         private float _lastTauntReapplyTime;
         
         public static bool VerboseLogging = false;
@@ -527,7 +517,7 @@ namespace FiresCore.Npc.Archetypes
             base.UpdateStatusEffect(dt);
             
             // Continuously re-apply taunt to all enemies in range
-            if (Time.time - _lastTauntReapplyTime >= TAUNT_REAPPLY_INTERVAL)
+            if (Time.time - _lastTauntReapplyTime >= TauntReapplyInterval)
             {
                 _lastTauntReapplyTime = Time.time;
                 ReapplyTauntToNearbyEnemies();
@@ -643,7 +633,7 @@ namespace FiresCore.Npc.Archetypes
             Vector3 taunterPos = m_character.transform.position;
             
             HitData hitData = new HitData();
-            hitData.m_damage.m_blunt = 0.01f; // Minimal damage to draw aggro
+            hitData.m_damage.m_blunt = MinimalAggroDamage; // Minimal damage to draw aggro
             hitData.m_point = enemy.transform.position;
             hitData.m_dir = (enemy.transform.position - taunterPos).normalized;
             hitData.m_pushForce = 0f;
@@ -698,6 +688,8 @@ namespace FiresCore.Npc.Archetypes
     /// </summary>
     public static class TauntManager
     {
+        private const int FallbackIconSize = 64;
+
         private static bool _effectsRegistered = false;
         private static CompanionTauntEffect _tauntEffectPrefab;
         private static CompanionTauntingEffect _tauntingEffectPrefab;
@@ -847,15 +839,15 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         public static Sprite CreateFallbackIcon(Color color)
         {
-            Texture2D texture = new Texture2D(64, 64);
-            Color[] pixels = new Color[64 * 64];
+            Texture2D texture = new Texture2D(FallbackIconSize, FallbackIconSize);
+            Color[] pixels = new Color[FallbackIconSize * FallbackIconSize];
             for (int i = 0; i < pixels.Length; i++)
             {
                 pixels[i] = color;
             }
             texture.SetPixels(pixels);
             texture.Apply();
-            return Sprite.Create(texture, new Rect(0, 0, 64, 64), new Vector2(0.5f, 0.5f));
+            return Sprite.Create(texture, new Rect(0, 0, FallbackIconSize, FallbackIconSize), new Vector2(0.5f, 0.5f));
         }
         
         /// <summary>
@@ -915,17 +907,9 @@ namespace FiresCore.Npc.Archetypes
     }
     
     /// <summary>
-    /// Helper MonoBehaviour to run taunt shockwave coroutines.
-    /// Uses Valheim's native sledge hammer secondary attack for the shockwave effect.
-    /// The companion plays a taunting emote, then triggers the sledge VFX/SFX with 
-    /// minimal damage (0.01) to only aggro monsters without actually harming them.
-    /// 
-    /// FEATURES:
-    /// - Plays a random taunting emote (flex, challenge, roar)
-    /// - Freezes movement during emote (follows emote rules)
-    /// - Optionally grants brief invulnerability during taunt
-    /// - Triggers sledge hammer VFX for visual feedback
-    /// - Applies taunt status effect to nearby enemies
+    /// Runs the taunt shockwave: the companion plays a taunting emote (movement frozen, optionally invulnerable), then
+    /// fires the sledgehammer secondary's effects with negligible damage to draw aggro, and applies the taunt effect to
+    /// nearby enemies.
     /// </summary>
     public class TauntShockwaveHelper : MonoBehaviour
     {
@@ -936,14 +920,22 @@ namespace FiresCore.Npc.Archetypes
         
         // Cached prefab names for sledge effects
         // NOTE: vfx_sledge_hit is the VISIBLE ground slam, fx_sledge_hit is small/invisible
-        private const string SLEDGE_HIT_EFFECT = "vfx_sledge_hit";
-        private const string SLEDGE_HIT_EFFECT_FALLBACK = "fx_sledge_hit";
-        private const string SLEDGE_PREFAB = "SledgeStagbreaker";
+        private const string SledgeHitEffect = "vfx_sledge_hit";
+        private const string SledgeHitEffectFallback = "fx_sledge_hit";
+        private const string SledgePrefab = "SledgeStagbreaker";
         
         // Taunt animation duration
-        private const float TAUNT_EMOTE_DURATION = 1.5f;
-        private const float TAUNT_IMPACT_TIME = 0.5f;
-        
+        private const float TauntEmoteDuration = 1.5f;
+        private const float TauntImpactTime = 0.5f;
+        private const float EffectGroundOffset = 0.1f;
+        private const float AllyShockwaveScale = 0.7f;
+        private const float MinimalAggroDamage = 0.01f;
+        private const float ShockwaveScaleReferenceRange = 5f;
+        private const float MinShockwaveVisualScale = 0.8f;
+        private const float MaxShockwaveVisualScale = 2.0f;
+        private const float TauntedIndicatorScale = 0.8f;
+        private const float DefaultTauntingRange = 5f;
+
         /// <summary>Whether to grant invulnerability during the taunt animation.</summary>
         public static bool GrantImmunityDuringTaunt = true;
         
@@ -982,7 +974,7 @@ namespace FiresCore.Npc.Archetypes
                 {
                     stateController.TryEnterState(
                         FiresCore.Npc.Movement.CompanionStateController.CompanionState.Emote, 
-                        TAUNT_EMOTE_DURATION, 
+                        TauntEmoteDuration, 
                         "TauntShockwave");
                     
                     if (VerboseLogging)
@@ -1001,7 +993,7 @@ namespace FiresCore.Npc.Archetypes
                 PlayTauntEmote();
                 
                 // 4. Wait for emote to reach the "impact" moment
-                yield return new WaitForSeconds(TAUNT_IMPACT_TIME);
+                yield return new WaitForSeconds(TauntImpactTime);
                 
                 // 5. Trigger the sledge hammer shockwave effect at tank's position
                 TriggerSledgeShockwave(taunter, range);
@@ -1051,7 +1043,7 @@ namespace FiresCore.Npc.Archetypes
                 }
                 
                 // 8. Wait for animation to complete
-                yield return new WaitForSeconds(TAUNT_EMOTE_DURATION - TAUNT_IMPACT_TIME);
+                yield return new WaitForSeconds(TauntEmoteDuration - TauntImpactTime);
             }
             finally
             {
@@ -1092,7 +1084,7 @@ namespace FiresCore.Npc.Archetypes
             
             long ownerId = taunterController.ownerPlayerId;
             Vector3 taunterPos = taunter.transform.position;
-            const float MAX_ALLY_RANGE = 20f; // Only spawn at allies within 20m
+            const float MaxAllyRange = 20f; // Only spawn at allies within 20m
             
             int allyCount = 0;
             int shockwaveCount = 0;
@@ -1116,9 +1108,9 @@ namespace FiresCore.Npc.Archetypes
                 }
                 
                 float distToTaunter = Vector3.Distance(taunterPos, companionChar.transform.position);
-                if (distToTaunter > MAX_ALLY_RANGE)
+                if (distToTaunter > MaxAllyRange)
                 {
-                    Debug.Log($"[TauntShockwave] Ally {companion.companionName} too far ({distToTaunter:F1}m > {MAX_ALLY_RANGE}m)");
+                    Debug.Log($"[TauntShockwave] Ally {companion.companionName} too far ({distToTaunter:F1}m > {MaxAllyRange}m)");
                     continue;
                 }
                 
@@ -1131,13 +1123,13 @@ namespace FiresCore.Npc.Archetypes
                     float groundHeight;
                     if (ZoneSystem.instance.GetGroundHeight(allyPos, out groundHeight))
                     {
-                        allyPos.y = groundHeight + 0.1f;
+                        allyPos.y = groundHeight + EffectGroundOffset;
                     }
                 }
                 
                 // Spawn the sledge effect at ally position (scaled down slightly)
                 // Try multiple prefab names as fallbacks - vfx_sledge_hit is the visible one
-                string[] effectNames = { SLEDGE_HIT_EFFECT, "fx_eikthyr_stomp", SLEDGE_HIT_EFFECT_FALLBACK, "vfx_GoblinShaman_protect" };
+                string[] effectNames = { SledgeHitEffect, "fx_eikthyr_stomp", SledgeHitEffectFallback, "vfx_GoblinShaman_protect" };
                 GameObject effectPrefab = null;
                 string usedEffectName = null;
                 
@@ -1156,7 +1148,7 @@ namespace FiresCore.Npc.Archetypes
                     var fx = UnityEngine.Object.Instantiate(effectPrefab, allyPos, Quaternion.identity);
                     
                     // Scale down the ally shockwaves slightly (they're secondary effects)
-                    fx.transform.localScale = Vector3.one * 0.7f;
+                    fx.transform.localScale = Vector3.one * AllyShockwaveScale;
                     
                     shockwaveCount++;
                     Debug.Log($"[TauntShockwave] Spawned ally shockwave #{shockwaveCount} at {companion.companionName}'s position using {usedEffectName}");
@@ -1164,7 +1156,7 @@ namespace FiresCore.Npc.Archetypes
                 else
                 {
                     // Last resort: Use AbilityFXManager which has its own prefab lookup logic
-                    AbilityFXManager.SpawnEffect("vfx_sledge_hit", allyPos, Quaternion.identity, 0.7f);
+                    AbilityFXManager.SpawnEffect("vfx_sledge_hit", allyPos, Quaternion.identity, AllyShockwaveScale);
                     shockwaveCount++;
                     Debug.Log($"[TauntShockwave] Spawned ally shockwave #{shockwaveCount} via AbilityFXManager at {companion.companionName}'s position");
                 }
@@ -1186,8 +1178,8 @@ namespace FiresCore.Npc.Archetypes
             
             long ownerId = taunterController.ownerPlayerId;
             Vector3 taunterPos = taunter.transform.position;
-            const float MAX_ALLY_RANGE = 20f;
-            const float ALLY_TAUNT_RANGE = 5f; // Taunt enemies within 5m of allies
+            const float MaxAllyRange = 20f;
+            const float AllyTauntRange = 5f; // Taunt enemies within 5m of allies
             
             int tauntedCount = 0;
             ZDOID taunterZDOID = taunter.GetComponent<ZNetView>()?.GetZDO()?.m_uid ?? ZDOID.None;
@@ -1215,7 +1207,7 @@ namespace FiresCore.Npc.Archetypes
                 if (companionChar == null || companionChar.IsDead()) continue;
                 
                 float distToTaunter = Vector3.Distance(taunterPos, companionChar.transform.position);
-                if (distToTaunter > MAX_ALLY_RANGE) continue;
+                if (distToTaunter > MaxAllyRange) continue;
                 
                 Vector3 allyPos = companionChar.transform.position;
                 
@@ -1236,11 +1228,11 @@ namespace FiresCore.Npc.Archetypes
                     }
                     
                     float distToAlly = Vector3.Distance(allyPos, character.transform.position);
-                    if (distToAlly > ALLY_TAUNT_RANGE) continue;
+                    if (distToAlly > AllyTauntRange) continue;
                     
                     // Apply minimal damage to draw aggro
                     HitData hitData = new HitData();
-                    hitData.m_damage.m_blunt = 0.01f;
+                    hitData.m_damage.m_blunt = MinimalAggroDamage;
                     hitData.m_point = character.transform.position;
                     hitData.m_dir = (character.transform.position - taunterPos).normalized;
                     hitData.m_pushForce = 0f;
@@ -1343,13 +1335,13 @@ namespace FiresCore.Npc.Archetypes
                 float groundHeight;
                 if (ZoneSystem.instance.GetGroundHeight(position, out groundHeight))
                 {
-                    position.y = groundHeight + 0.1f;
+                    position.y = groundHeight + EffectGroundOffset;
                 }
             }
             
             // Try to spawn the sledge hit effect (this is what creates the shockwave visual)
             // Try multiple names in order of preference
-            string[] effectNames = { SLEDGE_HIT_EFFECT, "fx_eikthyr_stomp", SLEDGE_HIT_EFFECT_FALLBACK, "vfx_GoblinShaman_protect" };
+            string[] effectNames = { SledgeHitEffect, "fx_eikthyr_stomp", SledgeHitEffectFallback, "vfx_GoblinShaman_protect" };
             GameObject effectPrefab = null;
             string usedEffectName = null;
             
@@ -1369,7 +1361,7 @@ namespace FiresCore.Npc.Archetypes
                 var fx = UnityEngine.Object.Instantiate(effectPrefab, position, Quaternion.identity);
                 
                 // Scale based on range
-                float scale = Mathf.Clamp(range / 5f, 0.8f, 2.0f);
+                float scale = Mathf.Clamp(range / ShockwaveScaleReferenceRange, MinShockwaveVisualScale, MaxShockwaveVisualScale);
                 fx.transform.localScale = Vector3.one * scale;
                 
                 Debug.Log($"[TauntShockwave] Spawned {usedEffectName} at {position} (scale={scale:F1})");
@@ -1418,7 +1410,7 @@ namespace FiresCore.Npc.Archetypes
                 // Apply minimal damage (0.01) to register as a hit and draw aggro
                 // This damage is so low it won't actually harm anything
                 HitData hitData = new HitData();
-                hitData.m_damage.m_blunt = 0.01f; // Minimal blunt damage like a hammer tap
+                hitData.m_damage.m_blunt = MinimalAggroDamage; // Minimal blunt damage like a hammer tap
                 hitData.m_point = character.transform.position;
                 hitData.m_dir = (character.transform.position - taunterPos).normalized;
                 hitData.m_pushForce = 0f; // No knockback
@@ -1461,7 +1453,7 @@ namespace FiresCore.Npc.Archetypes
                 if (prefab != null)
                 {
                     var fx = UnityEngine.Object.Instantiate(prefab, headPos, Quaternion.identity);
-                    fx.transform.localScale = Vector3.one * 0.8f;
+                    fx.transform.localScale = Vector3.one * TauntedIndicatorScale;
                     // The vanilla prefabs here carry a ZNetView, so a raw Object.Destroy
                     // would leave a stale entry in ZNetScene.m_instances and trip
                     // ZNetSceneStaleInstanceDiagnostic. Route through SafeDestroy after
@@ -1509,7 +1501,7 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         private void ApplyTauntingBuffToTaunter(Character taunter, float duration)
         {
-            ApplyTauntingBuffToTaunter(taunter, duration, 5f); // Default range
+            ApplyTauntingBuffToTaunter(taunter, duration, DefaultTauntingRange); // Default range
         }
         
         /// <summary>

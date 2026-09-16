@@ -6,7 +6,7 @@ namespace FiresCore.UI
     /// <summary>
     /// Self-contained equipment panel state manager for the UI override system.
     /// Tracks dirty state for the override's visual sync loop. This is NOT the
-    /// VAInventory EquipmentPanel — it is a lightweight state flag that the
+    /// VAInventory EquipmentPanel â€” it is a lightweight state flag that the
     /// override slot mirrors use to coordinate visual refreshes.
     /// </summary>
     public static class UIOverrideEquipmentPanel

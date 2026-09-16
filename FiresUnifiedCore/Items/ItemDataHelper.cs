@@ -5,35 +5,9 @@ using UnityEngine;
 namespace FiresCore.Items
 {
     /// <summary>
-    /// SINGLE SOURCE OF TRUTH for item data handling in companion systems.
-    /// 
-    /// This helper ensures that ALL item properties are correctly preserved when:
-    /// - Cloning items for transfers
-    /// - Validating item data integrity
-    /// - Saving/loading items
-    /// 
-    /// VALHEIM ITEMDATA FIELDS (as of version 106):
-    /// - m_dropPrefab: The prefab GameObject reference
-    /// - m_stack: Current stack count
-    /// - m_durability: Current durability
-    /// - m_gridPos: Position in inventory grid
-    /// - m_equipped: Whether item is equipped
-    /// - m_quality: Item quality/upgrade level (1-4+)
-    /// - m_variant: Visual variant index (affects icon)
-    /// - m_crafterID: Player ID who crafted the item
-    /// - m_crafterName: Player name who crafted the item
-    /// - m_customData: Dictionary of custom string data (mods use this)
-    /// - m_worldLevel: World level when item was created
-    /// - m_pickedUp: Whether item has been picked up before
-    /// 
-    /// SHARED DATA (read-only, from prefab):
-    /// - m_shared.m_name: Localized item name key
-    /// - m_shared.m_maxStackSize: Maximum stack size
-    /// - m_shared.m_weight: Weight per item
-    /// - m_shared.m_itemType: ItemType enum
-    /// - m_shared.m_damages: Damage values
-    /// - m_shared.m_armor: Armor value
-    /// - etc...
+    /// The single place companion systems clone, validate and persist ItemData, so every per-instance field
+    /// (stack, durability, quality, variant, crafter, custom data, world level, picked-up) survives transfers
+    /// and save/load.
     /// </summary>
     public static class ItemDataHelper
     {

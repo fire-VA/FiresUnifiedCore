@@ -6,31 +6,11 @@ using UnityEngine;
 
 namespace FiresCore.Services
 {
-    // Cross-mod "render this prefab at extreme distance" pipeline.
-    //
-    // Vanilla's distant-object system relies on ZDO.Distant being true at
-    // ZDO creation time. Any ZDO with Distant=false stops syncing past
-    // the peer's normal active area (~80m on default settings) — clients
-    // far away never see those objects render, even if they should.
-    //
-    // This service lets mods flag specific prefab names as "always distant
-    // up to <maxMeters>". A self-spawned driver:
-    //   - Server side, every ServerScanIntervalSeconds: walks ZDOMan for
-    //     every registered prefab, sets ZDO.Distant=true on each, calls
-    //     ForceSendZDO so existing-but-not-yet-distant ZDOs reach far peers.
-    //   - Client side, every ClientCacheIntervalSeconds: rebuilds a local
-    //     cache of in-range distant ZDOs filtered by the per-prefab maxMeters.
-    //   - On ZNetScene.CreateDestroyObjects, the cached client list is
-    //     appended to vanilla's distantSectorObjects via the
-    //     FindSectorObjects postfix — vanilla then handles creation and
-    //     cleanup naturally.
-    //
-    // Stays no-op until at least one consumer calls Register(name, dist).
-    // Driver GameObject is auto-spawned on first registration; never
-    // exists if nothing is registered.
-    //
-    // Mods register via the API; FUC ships the Harmony patches that drive
-    // injection. Consumer mods don't have to author any patches themselves.
+    // Lets mods render chosen prefabs far beyond the active area. Vanilla only syncs a ZDO past that range when
+    // it was created Distant, so a driver spawned on the first Register call marks every registered prefab's
+    // ZDOs Distant on the server and force-sends them, while clients cache the in-range ones (per-prefab max
+    // distance) and a FindSectorObjects postfix hands them to vanilla's distant list for normal creation and
+    // cleanup. Nothing runs until something registers.
     public static class DistantRenderer
     {
         private const float ServerScanIntervalSeconds = 10f;
@@ -220,7 +200,7 @@ namespace FiresCore.Services
             Vector3 refPos = ZNet.instance.GetReferencePosition();
 
             string prefab = _scanPrefabs[_scanPrefabIdx];
-            float maxDistSqr = DistanceByPrefab.TryGetValue(prefab, out var d) ? d * d : 0f;
+            float maxDistSqr = DistanceByPrefab.TryGetValue(prefab, out var distance) ? distance * distance : 0f;
 
             ClientScanBuffer.Clear();
             int idx = 0;
@@ -321,8 +301,8 @@ namespace FiresCore.Services
                 DedupeSet.Clear();
                 for (int i = 0; i < distantSectorObjects.Count; i++)
                 {
-                    var z = distantSectorObjects[i];
-                    if (z != null) DedupeSet.Add(z);
+                    var sectorZdo = distantSectorObjects[i];
+                    if (sectorZdo != null) DedupeSet.Add(sectorZdo);
                 }
 
                 for (int i = 0; i < CachedDistantZDOs.Count; i++)

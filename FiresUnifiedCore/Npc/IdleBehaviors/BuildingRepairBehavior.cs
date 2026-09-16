@@ -7,12 +7,12 @@ namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
     /// Companion idle behavior: scan nearby player-placed building pieces for damage,
-    /// acquire a hammer (from inventory â†’ nearby chests â†’ craft at workbench), then
+    /// acquire a hammer (from inventory → nearby chests → craft at workbench), then
     /// walk to each damaged piece and repair it.
     ///
     /// Only activates for companions in Stay mode (HasHomePosition &amp;&amp; !ShouldBeFollowing).
     /// Only repairs pieces placed by a player (Piece.GetCreator() != 0).
-    /// Building repair in Valheim is material-free â€” WearNTear.Repair() resets health to max.
+    /// Building repair in Valheim is material-free — WearNTear.Repair() resets health to max.
     /// Hammer crafting (3 Wood + 2 Stone) simulates the vanilla recipe.
     /// </summary>
     public class BuildingRepairBehavior : WorkBehaviorBase<BuildingRepairBehavior.RepairPhase>
@@ -41,16 +41,16 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #region Constants
 
-        private const float SCAN_RADIUS         = 40f;
-        private const float INTERACTION_RANGE   = 2.5f;
-        private const float REPAIR_THRESHOLD    = 0.95f;  // Repair if health below 95%
-        private const float REPAIR_DURATION     = 2.0f;   // Animation hold time
-        private const float MAX_REPAIR_TIME     = 180f;
-        private const float SCAN_CACHE_DURATION = 30f;
+        private const float ScanRadius         = 40f;
+        private const float InteractionRange   = 2.5f;
+        private const float RepairThreshold    = 0.95f;  // Repair if health below 95%
+        private const float RepairDuration     = 2.0f;   // Animation hold time
+        private const float MaxRepairTime     = 180f;
+        private const float ScanCacheDuration = 30f;
         // Vanilla Hammer recipe
-        private const int   WOOD_NEEDED  = 3;
-        private const int   STONE_NEEDED = 2;
-        private const string HAMMER_PREFAB = "Hammer";
+        private const int   WoodNeeded  = 3;
+        private const int   StoneNeeded = 2;
+        private const string HammerPrefab = "Hammer";
 
         #endregion
 
@@ -68,7 +68,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private ItemDrop.ItemData _savedRightHand;  // displaced from right-hand slot when hammer equips
         private bool _swingTriggered;               // fire hammer animation once per repair, not every frame
 
-        // CanStart() cache â€” Physics.OverlapSphere is expensive, throttle it
+        // CanStart() cache — Physics.OverlapSphere is expensive, throttle it
         private float _lastCanStartScan  = -999f;
         private bool  _cachedHasDamage   = false;
 
@@ -123,7 +123,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 RepairPhase.MovingToChestForHammer => RepairPhase.FindingHammer,
                 RepairPhase.MovingToWorkbench      => RepairPhase.Complete,
-                // Couldn't reach the piece â€” swing from here and repair anyway.
+                // Couldn't reach the piece — swing from here and repair anyway.
                 // FindingNextPiece would re-queue the same unreachable piece forever.
                 RepairPhase.MovingToPiece          => RepairPhase.Repairing,
                 RepairPhase.Repairing              => RepairPhase.FindingNextPiece,
@@ -150,14 +150,14 @@ namespace FiresCore.Npc.IdleBehaviors
         public override void Initialize(CompanionController companion, CompanionIdleBehavior idleBehavior)
         {
             base.Initialize(companion, idleBehavior);
-            MaxDuration = MAX_REPAIR_TIME;
+            MaxDuration = MaxRepairTime;
         }
 
         /// <summary>
         /// Set by the command system when the player Shift+MMBs a damaged
         /// building piece. Forces this companion to repair that piece (and
         /// any others nearby), bypassing the Stay-mode requirement. The
-        /// hammer-acquisition check still applies â€” repair without a hammer
+        /// hammer-acquisition check still applies — repair without a hammer
         /// is impossible.
         /// </summary>
         public void SetCommandedTarget(GameObject target)
@@ -175,7 +175,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 var commandedWnt = _commandedTarget.GetComponent<WearNTear>()
                                 ?? _commandedTarget.GetComponentInParent<WearNTear>();
-                if (commandedWnt != null && commandedWnt.GetHealthPercentage() < REPAIR_THRESHOLD)
+                if (commandedWnt != null && commandedWnt.GetHealthPercentage() < RepairThreshold)
                 {
                     if (!CanAcquireHammer())
                     {
@@ -288,7 +288,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (_damagedPieces.Count == 0)
             {
-                LogVerbose("No damaged pieces found â€” completing");
+                LogVerbose("No damaged pieces found — completing");
                 SetPhase(RepairPhase.Complete);
                 return false;
             }
@@ -346,7 +346,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
 
-            LogVerbose("Cannot acquire hammer â€” completing");
+            LogVerbose("Cannot acquire hammer — completing");
             SetPhase(RepairPhase.Complete);
             return false;
         }
@@ -355,7 +355,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_hammerChest == null) { SetPhase(RepairPhase.FindingHammer); return false; }
 
-            if (DistanceTo(_hammerChest.transform.position) < INTERACTION_RANGE)
+            if (DistanceTo(_hammerChest.transform.position) < InteractionRange)
             {
                 StopMovement();
                 FaceTarget(_hammerChest.transform.position);
@@ -403,7 +403,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_workbench == null) { SetPhase(RepairPhase.Complete); return false; }
 
-            if (DistanceTo(_workbench.transform.position) < INTERACTION_RANGE)
+            if (DistanceTo(_workbench.transform.position) < InteractionRange)
             {
                 StopMovement();
                 FaceTarget(_workbench.transform.position);
@@ -428,10 +428,10 @@ namespace FiresCore.Npc.IdleBehaviors
             var storage = GetStorageInventory();
             if (storage == null) { SetPhase(RepairPhase.Complete); return false; }
 
-            if (!TryConsumeItems(storage, "Wood", WOOD_NEEDED) ||
-                !TryConsumeItems(storage, "Stone", STONE_NEEDED))
+            if (!TryConsumeItems(storage, "Wood", WoodNeeded) ||
+                !TryConsumeItems(storage, "Stone", StoneNeeded))
             {
-                LogWarning("Could not consume crafting materials for hammer â€” aborting");
+                LogWarning("Could not consume crafting materials for hammer — aborting");
                 PlayWorkAnimation(false);
                 SetPhase(RepairPhase.Complete);
                 return false;
@@ -458,14 +458,14 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool UpdateMovingToPiece()
         {
-            if (_currentPiece == null || _currentPiece.GetHealthPercentage() >= REPAIR_THRESHOLD)
+            if (_currentPiece == null || _currentPiece.GetHealthPercentage() >= RepairThreshold)
             {
                 // Piece healed itself (e.g., natural regen) or was destroyed/null
                 SetPhase(RepairPhase.FindingNextPiece);
                 return false;
             }
 
-            if (DistanceXZ(_currentPiece.transform.position) < INTERACTION_RANGE)
+            if (DistanceXZ(_currentPiece.transform.position) < InteractionRange)
             {
                 StopMovement();
                 FaceTarget(_currentPiece.transform.position);
@@ -503,13 +503,13 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // Hold for swing animation duration before applying repair
-            if (Time.time - _repairPhaseStart < REPAIR_DURATION)
+            if (Time.time - _repairPhaseStart < RepairDuration)
                 return false;
 
             float hpBefore = _currentPiece.GetHealthPercentage();
             LogVerbose($"Attempting repair on {_currentPiece.name} (hp={hpBefore:P0})");
 
-            // CRITICAL: add before repair attempt â€” prevents re-queuing the same piece
+            // CRITICAL: add before repair attempt — prevents re-queuing the same piece
             // if RepairPiece() returns false (e.g., ZDO ownership race on first try)
             _repairedPieces.Add(_currentPiece);
 
@@ -521,7 +521,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             else
             {
-                LogVerbose($"RepairPiece returned false â€” skipping (won't retry)");
+                LogVerbose($"RepairPiece returned false — skipping (won't retry)");
             }
 
             SetPhase(RepairPhase.FindingNextPiece);
@@ -536,11 +536,11 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 // Do one more scan in case new damage appeared
                 var fresh = ScanForDamagedPieces();
-                foreach (var wnt in fresh)
+                foreach (var wearNTear in fresh)
                 {
-                    if (!_repairedPieces.Contains(wnt))
+                    if (!_repairedPieces.Contains(wearNTear))
                     {
-                        _currentPiece = wnt;
+                        _currentPiece = wearNTear;
                         break;
                     }
                 }
@@ -574,7 +574,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_totalRepaired > 0)
                 CompanionChatHelper.NotifyTaskComplete(Companion, $"repaired {_totalRepaired} building piece{(_totalRepaired > 1 ? "s" : "")}");
 
-            // Cache is stale after repairs â€” reset so next CanStart() re-scans
+            // Cache is stale after repairs — reset so next CanStart() re-scans
             _cachedHasDamage  = false;
             _lastCanStartScan = -999f;
 
@@ -586,7 +586,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #region Scanning
 
-        // XZ-only distance â€” pieces on walls/upper floors have a Y offset that would
+        // XZ-only distance — pieces on walls/upper floors have a Y offset that would
         // make 3D distance always fail, so we only care about horizontal proximity.
         private float DistanceXZ(Vector3 target)
         {
@@ -609,7 +609,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool HasDamagedPiecesNearby()
         {
-            if (Time.time - _lastCanStartScan < SCAN_CACHE_DURATION)
+            if (Time.time - _lastCanStartScan < ScanCacheDuration)
                 return _cachedHasDamage;
 
             _lastCanStartScan = Time.time;
@@ -621,13 +621,13 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (Transform == null) return false;
 
-            var colliders = Physics.OverlapSphere(Transform.position, SCAN_RADIUS);
-            foreach (var col in colliders)
+            var colliders = Physics.OverlapSphere(Transform.position, ScanRadius);
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
-                var wnt = col.GetComponent<WearNTear>();
-                if (wnt == null) continue;
-                if (!IsRepairCandidate(wnt)) continue;
+                if (collider == null) continue;
+                var wearNTear = collider.GetComponent<WearNTear>();
+                if (wearNTear == null) continue;
+                if (!IsRepairCandidate(wearNTear)) continue;
                 return true;
             }
             return false;
@@ -640,20 +640,20 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (Transform == null) return result;
 
-            var colliders = Physics.OverlapSphere(Transform.position, SCAN_RADIUS);
-            foreach (var col in colliders)
+            var colliders = Physics.OverlapSphere(Transform.position, ScanRadius);
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
 
-                var wnt = col.GetComponent<WearNTear>() ?? col.GetComponentInParent<WearNTear>();
-                if (wnt == null) continue;
+                var wearNTear = collider.GetComponent<WearNTear>() ?? collider.GetComponentInParent<WearNTear>();
+                if (wearNTear == null) continue;
 
-                int id = wnt.GetInstanceID();
+                int id = wearNTear.GetInstanceID();
                 if (processed.Contains(id)) continue;
                 processed.Add(id);
 
-                if (!IsRepairCandidate(wnt)) continue;
-                result.Add(wnt);
+                if (!IsRepairCandidate(wearNTear)) continue;
+                result.Add(wearNTear);
             }
 
             // Most-damaged first
@@ -661,17 +661,17 @@ namespace FiresCore.Npc.IdleBehaviors
             return result;
         }
 
-        private bool IsRepairCandidate(WearNTear wnt)
+        private bool IsRepairCandidate(WearNTear wearNTear)
         {
-            if (wnt == null) return false;
+            if (wearNTear == null) return false;
 
-            var nview = wnt.GetComponent<ZNetView>();
+            var nview = wearNTear.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return false;
 
-            if (wnt.GetHealthPercentage() >= REPAIR_THRESHOLD) return false;
+            if (wearNTear.GetHealthPercentage() >= RepairThreshold) return false;
 
             // Only repair player-placed pieces
-            var piece = wnt.GetComponent<Piece>();
+            var piece = wearNTear.GetComponent<Piece>();
             if (piece == null || piece.GetCreator() == 0L) return false;
 
             return true;
@@ -686,22 +686,22 @@ namespace FiresCore.Npc.IdleBehaviors
                 InteractableOccupancyManager.Release(_currentPiece.gameObject, Character);
             }
 
-            foreach (var wnt in _damagedPieces)
+            foreach (var wearNTear in _damagedPieces)
             {
-                if (wnt == null) continue;
-                if (_repairedPieces.Contains(wnt)) continue;
-                if (wnt.GetHealthPercentage() >= REPAIR_THRESHOLD) continue;
+                if (wearNTear == null) continue;
+                if (_repairedPieces.Contains(wearNTear)) continue;
+                if (wearNTear.GetHealthPercentage() >= RepairThreshold) continue;
 
                 // EARLY RESERVATION: claim the piece before walking to it so other
                 // companions don't pile onto the same wall/roof.
-                if (!InteractableOccupancyManager.TryOccupy(wnt.gameObject, Character, MAX_REPAIR_TIME))
+                if (!InteractableOccupancyManager.TryOccupy(wearNTear.gameObject, Character, MaxRepairTime))
                 {
-                    // Another companion is already on this one â€” skip it for this session.
-                    _repairedPieces.Add(wnt);
+                    // Another companion is already on this one — skip it for this session.
+                    _repairedPieces.Add(wearNTear);
                     continue;
                 }
 
-                return wnt;
+                return wearNTear;
             }
             return null;
         }
@@ -778,13 +778,13 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var storage = GetStorageInventory();
             if (storage == null) return false;
-            return CountItems(storage, "Wood") >= WOOD_NEEDED &&
-                   CountItems(storage, "Stone") >= STONE_NEEDED;
+            return CountItems(storage, "Wood") >= WoodNeeded &&
+                   CountItems(storage, "Stone") >= StoneNeeded;
         }
 
         private CraftingStation FindNearestWorkbench()
         {
-            var stations = SmartStorageOrganizer.FindNearbyStations(Transform.position, SCAN_RADIUS);
+            var stations = SmartStorageOrganizer.FindNearbyStations(Transform.position, ScanRadius);
             foreach (var station in stations.OrderBy(s => s.Distance))
             {
                 if (station.Type == SmartStorageOrganizer.StationType.Workbench && station.Object != null)
@@ -795,7 +795,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool TryAddHammerToInventory(Inventory storage)
         {
-            var prefab = ZNetScene.instance?.GetPrefab(HAMMER_PREFAB);
+            var prefab = ZNetScene.instance?.GetPrefab(HammerPrefab);
             if (prefab == null) return false;
 
             var itemDrop = prefab.GetComponent<ItemDrop>();
@@ -811,7 +811,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (item == null) return false;
             string prefab = item.m_dropPrefab?.name ?? "";
-            return prefab.Equals(HAMMER_PREFAB, System.StringComparison.OrdinalIgnoreCase);
+            return prefab.Equals(HammerPrefab, System.StringComparison.OrdinalIgnoreCase);
         }
 
         private void EquipHammer()
@@ -873,7 +873,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private void PlayHammerSwingAnimation()
         {
-            // Hammer is a one-handed tool â€” use Valheim's standard one-handed swing triggers
+            // Hammer is a one-handed tool — use Valheim's standard one-handed swing triggers
             int idx = UnityEngine.Random.Range(0, 3);
             string trigger = $"swing_axe{idx}";
             ZAnim?.SetTrigger(trigger);
@@ -888,24 +888,24 @@ namespace FiresCore.Npc.IdleBehaviors
             _currentPiece.m_hitEffect.Create(hitPoint, Quaternion.identity, _currentPiece.transform);
         }
 
-        private bool RepairPiece(WearNTear wnt)
+        private bool RepairPiece(WearNTear wearNTear)
         {
-            if (wnt == null) return false;
+            if (wearNTear == null) return false;
 
-            var nview = wnt.GetComponent<ZNetView>();
+            var nview = wearNTear.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return false;
 
             // Claim ownership so WearNTear.Repair()'s IsOwner() check passes
             nview.ClaimOwnership();
 
-            // Try vanilla repair first â€” this is correct and syncs to all clients
-            if (wnt.Repair()) return true;
+            // Try vanilla repair first — this is correct and syncs to all clients
+            if (wearNTear.Repair()) return true;
 
             // Fallback: ClaimOwnership is not instant (ZNet ownership propagates
             // over the network), so IsOwner() may still return false in the same
             // frame. Write the health ZDO key directly as a fallback. This is the
             // same write that WearNTear.RPC_Repair() does internally.
-            float maxHealth = wnt.m_health; // world-level-scaled max, same value RPC_Repair uses
+            float maxHealth = wearNTear.m_health; // world-level-scaled max, same value RPC_Repair uses
             if (maxHealth <= 0f) return false;
 
             var zdo = nview.GetZDO();
@@ -916,7 +916,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             zdo.Set(ZDOVars.s_health, maxHealth);
             nview.InvokeRPC(ZNetView.Everybody, "RPC_HealthChanged", (object)maxHealth);
-            LogVerbose($"RepairPiece: direct ZDO write (health {currentHealth:F0} â†’ {maxHealth:F0})");
+            LogVerbose($"RepairPiece: direct ZDO write (health {currentHealth:F0} → {maxHealth:F0})");
             return true;
         }
 

@@ -3,27 +3,18 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Centralized settings for companion behaviors.
-    /// Provides easy access to configurable values from ConfigManager with validation and defaults.
-    /// 
-    /// ALL companion systems should use these properties instead of hardcoded values for:
-    /// - Idle wander radius
-    /// - Return home radius  
-    /// - Chest search radius
-    /// - Auto-sort radius
-    /// 
-    /// This ensures consistency across all companion behaviors and allows players
-    /// to adjust these values in the config file.
+    /// Validated, configurable companion settings (wander, return-home, chest search and auto-sort radii and the like);
+    /// companion systems read these instead of hard-coding values.
     /// </summary>
     public static class CompanionSettings
     {
         #region Default Values
         
         // These are used if ConfigManager is not initialized
-        private const float DEFAULT_IDLE_WANDER_RADIUS = 20f;
-        private const float DEFAULT_RETURN_HOME_RADIUS = 25f;
-        private const float DEFAULT_CHEST_SEARCH_RADIUS = 50f;  // INCREASED: 50m default to find chests across base
-        private const float DEFAULT_AUTO_SORT_RADIUS = 10f;
+        private const float DefaultIdleWanderRadius = 20f;
+        private const float DefaultReturnHomeRadius = 25f;
+        private const float DefaultChestSearchRadius = 50f;  // INCREASED: 50m default to find chests across base
+        private const float DefaultAutoSortRadius = 10f;
         
         /// <summary>
         /// STAY MODE WORK SEARCH RADIUS:
@@ -32,30 +23,30 @@ namespace FiresCore.Npc
         /// This is separate from the wander radius (where they can walk to) and allows
         /// companions to find and travel to work sites further away.
         /// </summary>
-        private const float DEFAULT_STAY_MODE_WORK_RADIUS = 50f;
+        private const float DefaultStayModeWorkRadius = 50f;
         
         // Hard limits to prevent abuse
-        private const float MIN_WANDER_RADIUS = 5f;
-        private const float MAX_WANDER_RADIUS = 100f;
-        private const float MIN_RETURN_RADIUS = 10f;
-        private const float MAX_RETURN_RADIUS = 100f;
-        private const float MIN_CHEST_RADIUS = 5f;
-        private const float MAX_CHEST_RADIUS = 100f;  // INCREASED: Allow larger search for commanded behaviors
-        private const float MIN_SORT_RADIUS = 5f;
-        private const float MAX_SORT_RADIUS = 30f;
-        private const float MIN_WORK_RADIUS = 10f;
-        private const float MAX_WORK_RADIUS = 100f;
+        private const float MinWanderRadius = 5f;
+        private const float MaxWanderRadius = 100f;
+        private const float MinReturnRadius = 10f;
+        private const float MaxReturnRadius = 100f;
+        private const float MinChestRadius = 5f;
+        private const float MaxChestRadius = 100f;  // INCREASED: Allow larger search for commanded behaviors
+        private const float MinSortRadius = 5f;
+        private const float MaxSortRadius = 30f;
+        private const float MinWorkRadius = 10f;
+        private const float MaxWorkRadius = 100f;
 
         // Stationed self-defense (defend-the-post combat for static/patrol NPCs)
-        private const float DEFAULT_STATIONED_DEFEND_RANGE = 14f;
-        private const float DEFAULT_STATIONED_LEASH_RANGE = 24f;
-        private const float DEFAULT_STATIONED_COMBAT_HOLD = 10f;
-        private const float MIN_STATIONED_DEFEND = 4f;
-        private const float MAX_STATIONED_DEFEND = 40f;
-        private const float MIN_STATIONED_LEASH = 6f;
-        private const float MAX_STATIONED_LEASH = 60f;
-        private const float MIN_STATIONED_HOLD = 0f;
-        private const float MAX_STATIONED_HOLD = 60f;
+        private const float DefaultStationedDefendRange = 14f;
+        private const float DefaultStationedLeashRange = 24f;
+        private const float DefaultStationedCombatHold = 10f;
+        private const float MinStationedDefend = 4f;
+        private const float MaxStationedDefend = 40f;
+        private const float MinStationedLeash = 6f;
+        private const float MaxStationedLeash = 60f;
+        private const float MinStationedHold = 0f;
+        private const float MaxStationedHold = 60f;
 
         #endregion
         
@@ -69,8 +60,8 @@ namespace FiresCore.Npc
         {
             get
             {
-                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionIdleWanderRadius", DEFAULT_IDLE_WANDER_RADIUS);
-                return Mathf.Clamp(value, MIN_WANDER_RADIUS, MAX_WANDER_RADIUS);
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionIdleWanderRadius", DefaultIdleWanderRadius);
+                return Mathf.Clamp(value, MinWanderRadius, MaxWanderRadius);
             }
         }
         
@@ -83,8 +74,8 @@ namespace FiresCore.Npc
         {
             get
             {
-                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionReturnHomeRadius", DEFAULT_RETURN_HOME_RADIUS);
-                return Mathf.Clamp(value, MIN_RETURN_RADIUS, MAX_RETURN_RADIUS);
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionReturnHomeRadius", DefaultReturnHomeRadius);
+                return Mathf.Clamp(value, MinReturnRadius, MaxReturnRadius);
             }
         }
         
@@ -96,8 +87,8 @@ namespace FiresCore.Npc
         {
             get
             {
-                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionChestSearchRadius", DEFAULT_CHEST_SEARCH_RADIUS);
-                return Mathf.Clamp(value, MIN_CHEST_RADIUS, MAX_CHEST_RADIUS);
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionChestSearchRadius", DefaultChestSearchRadius);
+                return Mathf.Clamp(value, MinChestRadius, MaxChestRadius);
             }
         }
         
@@ -110,8 +101,8 @@ namespace FiresCore.Npc
         {
             get
             {
-                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("ChestAutoSortRadius", DEFAULT_AUTO_SORT_RADIUS);
-                return Mathf.Clamp(value, MIN_SORT_RADIUS, MAX_SORT_RADIUS);
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("ChestAutoSortRadius", DefaultAutoSortRadius);
+                return Mathf.Clamp(value, MinSortRadius, MaxSortRadius);
             }
         }
         
@@ -131,8 +122,8 @@ namespace FiresCore.Npc
         {
             get
             {
-                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStayModeWorkRadius", DEFAULT_STAY_MODE_WORK_RADIUS);
-                return Mathf.Clamp(value, MIN_WORK_RADIUS, MAX_WORK_RADIUS);
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStayModeWorkRadius", DefaultStayModeWorkRadius);
+                return Mathf.Clamp(value, MinWorkRadius, MaxWorkRadius);
             }
         }
         
@@ -299,8 +290,8 @@ namespace FiresCore.Npc
         {
             get
             {
-                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStationedDefendRange", DEFAULT_STATIONED_DEFEND_RANGE);
-                return Mathf.Clamp(value, MIN_STATIONED_DEFEND, MAX_STATIONED_DEFEND);
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStationedDefendRange", DefaultStationedDefendRange);
+                return Mathf.Clamp(value, MinStationedDefend, MaxStationedDefend);
             }
         }
 
@@ -312,8 +303,8 @@ namespace FiresCore.Npc
         {
             get
             {
-                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStationedLeashRange", DEFAULT_STATIONED_LEASH_RANGE);
-                return Mathf.Clamp(value, MIN_STATIONED_LEASH, MAX_STATIONED_LEASH);
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStationedLeashRange", DefaultStationedLeashRange);
+                return Mathf.Clamp(value, MinStationedLeash, MaxStationedLeash);
             }
         }
 
@@ -325,8 +316,8 @@ namespace FiresCore.Npc
         {
             get
             {
-                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStationedCombatHold", DEFAULT_STATIONED_COMBAT_HOLD);
-                return Mathf.Clamp(value, MIN_STATIONED_HOLD, MAX_STATIONED_HOLD);
+                float value = FiresCore.Bridge.NpcConfigBridge.GetFloat("CompanionStationedCombatHold", DefaultStationedCombatHold);
+                return Mathf.Clamp(value, MinStationedHold, MaxStationedHold);
             }
         }
 

@@ -5,21 +5,11 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Runtime tripwire for Unity's skin-time body-mesh rejection: "SkinnedMeshRenderer: Rendering
-    /// stopped because the data for mesh 'X' on Game Object 'Y' does not match the expected mesh data
-    /// size and vertex stride."
-    ///
-    /// The bindpose-count guard cannot catch this class of failure. The live game's 'bodyfem' carries
-    /// the same bindpose COUNT as the baked NPC rig (53), yet its vertex layout has drifted from what
-    /// the ripped rig's renderer can skin, so Unity rejects the pairing at render time, stops rendering
-    /// the body (invisible NPC) and logs the error once per render attempt. Unity exposes no API to
-    /// query that verdict up front — the only reliable detector is the error message itself.
-    ///
-    /// So: listen for the message, blacklist the exact (mesh instance, rig bone count) pairing that was
-    /// rejected, and swap every affected NPC body back to its best non-rejected candidate. Assignment
-    /// sites (NpcVisEquipment.TryAssignBodyMesh, the VisEquipment.UpdateBaseModel prefix,
-    /// NpcTemplateAppearance.DressFromLook) consult the blacklist so a rejected pairing is never
-    /// assigned again within the session.
+    /// Catches Unity's render-time body-mesh rejection ("SkinnedMeshRenderer: Rendering stopped because the data
+    /// for mesh ... does not match"), which leaves an NPC invisible. The bone-count check cannot predict it (the
+    /// live bodyfem matches the baked rig's count but not its vertex layout) and Unity offers no API, so this
+    /// listens for the message, blacklists that mesh and rig pairing for the session, and swaps affected bodies
+    /// to their best remaining candidate. Every body-mesh assignment site consults the blacklist.
     /// </summary>
     public static class NpcBodyMeshGuard
     {
@@ -67,9 +57,9 @@ namespace FiresCore.Npc
             if (_logged.Add(key)) Debug.Log(message);
         }
 
-        private static string PairKey(Mesh mesh, SkinnedMeshRenderer smr)
+        private static string PairKey(Mesh mesh, SkinnedMeshRenderer skinnedRenderer)
         {
-            int bones = smr.bones != null ? smr.bones.Length : 0;
+            int bones = skinnedRenderer.bones != null ? skinnedRenderer.bones.Length : 0;
             return mesh.GetInstanceID() + "|" + bones;
         }
 
@@ -98,9 +88,9 @@ namespace FiresCore.Npc
         private static void HealAll(string meshName, string goName)
         {
             int healed = 0;
-            foreach (var nve in UnityEngine.Object.FindObjectsOfType<NpcVisEquipment>())
+            foreach (var npcVis in UnityEngine.Object.FindObjectsByType<NpcVisEquipment>(FindObjectsSortMode.None))
             {
-                if (nve != null && nve.HealRejectedBodyMesh(meshName, goName)) healed++;
+                if (npcVis != null && npcVis.HealRejectedBodyMesh(meshName, goName)) healed++;
             }
             if (healed == 0)
                 LogOnce("miss|" + meshName + "|" + goName,

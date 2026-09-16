@@ -6,29 +6,19 @@ using FiresCore.Npc.Patrol;
 namespace FiresCore.Npc.Anchor
 {
     /// <summary>
-    /// Server-side guardian on the <c>FiresNpcAnchor</c> prefab — vanilla <c>CreatureSpawner</c>
-    /// semantics applied to placed NPCs. The anchor is a tiny persistent ZDO holding the NPC's full
-    /// identity; this keeper guarantees the body exists whenever the anchor's zone is loaded, and is
-    /// the ONLY thing that ever (re)creates a body. Deleting the anchor deletes the NPC forever.
-    ///
-    /// Duplication-proof presence check, in order:
-    ///  1. <c>ZDOConnection(Spawned)</c> → body ZDO alive (pure data lookup — true even while the
-    ///     body's zone is unloaded or the body wandered into another sector) → done.
-    ///  2. Connection broken (save/load churn, ownership races) → scan body-prefab ZDOs for our
-    ///     <see cref="NpcAnchorFields.BodyGuidBackRef"/> and RE-LINK instead of spawning.
-    ///  3. Only then treat the body as gone: stamp missing-since once, wait out the respawn delay
-    ///     (Static = immediate), then spawn exactly one body — owner-gated, with a spawn cooldown so
-    ///     two ticks can never double-spawn.
-    ///
-    /// Spawn position: Static/Wander → the anchor's exact position (NEVER re-snapped through
-    /// <c>ZoneSystem.FindFloor</c>, which is terrain-only and would drag floor-placed NPCs to the
-    /// dirt); Patrol → the route checkpoint closest to where the body died (death hook stamps
-    /// <see cref="NpcAnchorFields.DeathPos"/>), falling back to the anchor.
+    /// Server-side keeper on the FiresNpcAnchor prefab, giving placed NPCs vanilla CreatureSpawner semantics: the
+    /// anchor's persistent ZDO holds the NPC's identity, and this is the only thing that ever creates its body.
+    /// Deleting the anchor deletes the NPC. A body counts as present if its spawned connection resolves or, after
+    /// save churn, a body ZDO carries our back-reference (which is re-linked); only then does it wait out the
+    /// respawn delay and spawn exactly one body behind an owner gate and cooldown. Static and wander NPCs spawn at
+    /// the anchor's exact position, never re-snapped to terrain; patrol NPCs at the checkpoint nearest their death.
     /// </summary>
     public class NpcAnchorKeeper : MonoBehaviour
     {
         private const float TickSeconds = 5f;
         private const float SpawnCooldownSeconds = 10f;
+        private const float DefaultRespawnDelaySeconds = 60f;
+        private const float MoverSpawnHeightOffset = 0.25f;
 
         private ZNetView _nview;
         private float _noSpawnBefore;
@@ -93,7 +83,7 @@ namespace FiresCore.Npc.Anchor
             }
 
             var mode = NpcAnchorFields.GetMode(zdo);
-            float delay = mode == NpcAnchorFields.Mode.Static ? 0f : Mathf.Max(0f, zdo.GetFloat(NpcAnchorFields.RespawnDelay, 60f));
+            float delay = mode == NpcAnchorFields.Mode.Static ? 0f : Mathf.Max(0f, zdo.GetFloat(NpcAnchorFields.RespawnDelay, DefaultRespawnDelaySeconds));
             if ((DateTime.UtcNow - new DateTime(missingSince, DateTimeKind.Utc)).TotalSeconds < delay) return;
 
             if (Time.realtimeSinceStartup < _noSpawnBefore) return;
@@ -117,11 +107,11 @@ namespace FiresCore.Npc.Anchor
             while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(NpcAnchorFields.AnchorPrefabName, buf, ref idx)) { }
             for (int i = 0; i < buf.Count; i++)
             {
-                var z = buf[i];
-                if (z == null || !z.IsValid()) continue;
-                if (z.GetString(NpcAnchorFields.Guid, "") != guid) continue;
-                z.Set(NpcAnchorFields.DeathPos, deathPos);
-                z.Set(NpcAnchorFields.MissingSince, DateTime.UtcNow.Ticks);
+                var zdo = buf[i];
+                if (zdo == null || !zdo.IsValid()) continue;
+                if (zdo.GetString(NpcAnchorFields.Guid, "") != guid) continue;
+                zdo.Set(NpcAnchorFields.DeathPos, deathPos);
+                zdo.Set(NpcAnchorFields.MissingSince, DateTime.UtcNow.Ticks);
                 return;
             }
         }
@@ -136,9 +126,9 @@ namespace FiresCore.Npc.Anchor
             while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(bodyPrefab, buf, ref idx)) { }
             for (int i = 0; i < buf.Count; i++)
             {
-                var z = buf[i];
-                if (z != null && z.IsValid() && z.GetString(NpcAnchorFields.BodyGuidBackRef, "") == guid)
-                    return z;
+                var zdo = buf[i];
+                if (zdo != null && zdo.IsValid() && zdo.GetString(NpcAnchorFields.BodyGuidBackRef, "") == guid)
+                    return zdo;
             }
             return null;
         }
@@ -168,7 +158,7 @@ namespace FiresCore.Npc.Anchor
             // a stone wedged in the feet at spawn rides along with every step ("pet rock"). They
             // settle the 25cm via gravity once the init freeze releases. Static fixtures stay at the
             // EXACT anchor height (they are permanently frozen; an offset would leave them floating).
-            if (mode != NpcAnchorFields.Mode.Static) pos.y += 0.25f;
+            if (mode != NpcAnchorFields.Mode.Static) pos.y += MoverSpawnHeightOffset;
 
             var go = UnityEngine.Object.Instantiate(prefab, pos, rot);
             var nview = go.GetComponent<ZNetView>();
@@ -216,8 +206,8 @@ namespace FiresCore.Npc.Anchor
                 float bestSqr = (points[0] - nearTo).sqrMagnitude;
                 for (int i = 1; i < points.Count; i++)
                 {
-                    float d = (points[i] - nearTo).sqrMagnitude;
-                    if (d < bestSqr) { bestSqr = d; best = points[i]; }
+                    float sqrDistance = (points[i] - nearTo).sqrMagnitude;
+                    if (sqrDistance < bestSqr) { bestSqr = sqrDistance; best = points[i]; }
                 }
                 return best;
             }

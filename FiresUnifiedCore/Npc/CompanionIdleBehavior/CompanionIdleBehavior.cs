@@ -9,40 +9,11 @@ using FiresCore.Npc.NpcMode;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Handles idle behaviors for companion NPCs when not in combat or actively following.
-    /// This includes wandering, emotes, chair sitting, head look-at, weapon holstering,
-    /// and modular sub-behaviors like bow training.
-    /// 
-    /// This is a partial class split across multiple files for maintainability:
-    /// - CompanionIdleBehavior.cs: Core class, fields, Unity lifecycle
-    /// - CompanionIdleBehavior.SubBehaviors.cs: Sub-behavior system
-    /// - CompanionIdleBehavior.Emotes.cs: Emote playback and management
-    /// - CompanionIdleBehavior.Chairs.cs: Chair sitting logic
-    /// - CompanionIdleBehavior.Wandering.cs: Wandering and path preference
-    /// - CompanionIdleBehavior.HeadLook.cs: Head look-at system
-    /// - CompanionIdleBehavior.StuckPrevention.cs: Stuck detection and animation reset
-    /// 
-    /// DESIGN PRINCIPLE:
-    /// Idle behaviors use committed movements - set a destination ONCE and let the NPC walk there smoothly.
-    /// This creates natural, purposeful movement instead of jittery frame-by-frame updates.
-    /// 
-    /// TERRAIN CHECKS:
-    /// Terrain/path scoring is EXPENSIVE and causes jerky movement if done frequently.
-    /// We check terrain ONCE when becoming idle, then commit to decisions until the next idle period.
-    /// 
-    /// Combat can interrupt idle behaviors at any time via CancelAllIdleBehaviors().
-    /// 
-    /// SUB-BEHAVIORs:
-    /// Complex idle activities (training, crafting, etc.) are handled by IdleSubBehavior classes.
-    /// These are checked and potentially started during idle periods.
-    /// 
-    /// EMOTE TIMEOUT:
-    /// All emotes and sitting states have a HARD timeout to prevent getting stuck.
-    /// After the timeout, we forcibly reset to Standing state.
-    /// 
-    /// WEAPON HOLSTERING:
-    /// When idle, weapons are moved from hand slots to back slots in CompanionInventory.
-    /// This is a real inventory operation, not just visual - prevents duplication.
+    /// Idle behavior for companions that are neither fighting nor following: wandering, emotes, chairs, head
+    /// look-at, weapon holstering and <see cref="IdleSubBehavior"/> activities, split across partial files by
+    /// topic. A destination is committed once per decision and terrain is scored once per idle period, since
+    /// per-frame re-evaluation made movement jittery. Emotes and sitting have a hard timeout, holstering moves
+    /// real inventory items, and combat cancels everything through CancelAllIdleBehaviors.
     /// </summary>
     public partial class CompanionIdleBehavior : MonoBehaviour
     {
@@ -174,15 +145,12 @@ namespace FiresCore.Npc
         // Combat timing
         private float _lastCombatTime;
         private float _lastOnCombatStartedCall;
-        private const float MIN_ON_COMBAT_STARTED_INTERVAL = 2f;
+        private const float MinOnCombatStartedInterval = 2f;
 
         // Look around state
-        private bool _isLookingAround;
         private float _lookAroundEndTime;
 
         // Wander state
-        private bool _isWandering;
-        private bool _isWaitingAtWanderPoint;
         private int _currentWanderLeg = 0;
         private int _totalWanderLegs = 1;
         private Vector3 _lastWanderDirection;
@@ -197,7 +165,7 @@ namespace FiresCore.Npc
         private bool _hasActiveDestination = false;
         private float _destinationReachedThreshold = 2.0f;
         private float _lastWanderCompleteTime;
-        private const float MIN_WANDER_COOLDOWN = 4f;
+        private const float MinWanderCooldown = 4f;
 
         // Smooth rotation
         private float _targetYRotation;
@@ -299,7 +267,7 @@ namespace FiresCore.Npc
         private float _standingPauseMaxDuration = 45f;  // Maximum 45 seconds standing still
         private float _nextDecisionTime;
         private bool _isInStandingPause = false;
-        private const float MIN_VELOCITY_FOR_STATIONARY = 0.1f;
+        private const float MinVelocityForStationary = 0.1f;
 
         // Weapon holstering
         private bool _weaponsHolstered = false;
@@ -313,8 +281,8 @@ namespace FiresCore.Npc
         public static bool VerboseLogging = false;
         
         // ZONE-PROXIMITY GATING - skip expensive idle evaluation when far from all players
-        private const float PLAYER_PROXIMITY_CHECK_INTERVAL = 5f;
-        private const float PLAYER_PROXIMITY_THRESHOLD = 64f; // Same as zone load distance
+        private const float PlayerProximityCheckInterval = 5f;
+        private const float PlayerProximityThreshold = 64f; // Same as zone load distance
         private float _lastProximityCheckTime = -999f;
         private bool _isNearAnyPlayer = true; // Assume near until first check
 
@@ -375,7 +343,7 @@ namespace FiresCore.Npc
 
         private void Update()
         {
-            // Static placed NPCs have no CompanionController ÃƒÂ¯Ã‚Â¿Ã‚Â½ allow them through
+            // Static placed NPCs have no CompanionController - allow them through
             // if they're stationed with idle wandering enabled
             if (_companion == null)
             {
@@ -391,7 +359,7 @@ namespace FiresCore.Npc
             }
             else if (_companion.isStaticPlacement)
             {
-                // Static placement with CompanionController ÃƒÂ¯Ã‚Â¿Ã‚Â½ only run if wandering is enabled
+                // Static placement with CompanionController - only run if wandering is enabled
                 if (_npcModule == null)
                     _npcModule = GetComponent<CompanionNpcModule>();
                 if (_npcModule == null || (!_npcModule.allowIdleWandering && !HasPatrolRoute()))
@@ -408,7 +376,7 @@ namespace FiresCore.Npc
             // ZONE-PROXIMITY GATING: Periodically check if any player is nearby.
             // When far from all players, skip expensive idle evaluation (sub-behavior
             // CanStart checks that do Physics.OverlapSphere, chest scanning, etc.)
-            if (Time.time - _lastProximityCheckTime >= PLAYER_PROXIMITY_CHECK_INTERVAL)
+            if (Time.time - _lastProximityCheckTime >= PlayerProximityCheckInterval)
             {
                 _lastProximityCheckTime = Time.time;
                 _isNearAnyPlayer = IsAnyPlayerNearby();
@@ -619,7 +587,7 @@ namespace FiresCore.Npc
 
         public void OnCombatStarted()
         {
-            if (Time.time - _lastOnCombatStartedCall < MIN_ON_COMBAT_STARTED_INTERVAL)
+            if (Time.time - _lastOnCombatStartedCall < MinOnCombatStartedInterval)
                 return;
                 
             _lastOnCombatStartedCall = Time.time;
@@ -802,7 +770,7 @@ namespace FiresCore.Npc
             if (_rigidbody != null)
             {
                 Vector3 horizontalVel = new Vector3(_rigidbody.linearVelocity.x, 0, _rigidbody.linearVelocity.z);
-                if (horizontalVel.magnitude > MIN_VELOCITY_FOR_STATIONARY)
+                if (horizontalVel.magnitude > MinVelocityForStationary)
                     return false;
             }
             
@@ -810,7 +778,7 @@ namespace FiresCore.Npc
             {
                 Vector3 charVel = _character.GetVelocity();
                 Vector3 horizontalCharVel = new Vector3(charVel.x, 0, charVel.z);
-                if (horizontalCharVel.magnitude > MIN_VELOCITY_FOR_STATIONARY)
+                if (horizontalCharVel.magnitude > MinVelocityForStationary)
                     return false;
             }
             
@@ -824,7 +792,7 @@ namespace FiresCore.Npc
         }
         
         /// <summary>
-        /// Checks if any player is within PLAYER_PROXIMITY_THRESHOLD meters.
+        /// Checks if any player is within PlayerProximityThreshold meters.
         /// Used for zone-proximity gating to skip expensive idle evaluation
         /// (sub-behavior CanStart, Physics.OverlapSphere, chest scanning) when
         /// companions are far from all players. Companions will still wander
@@ -833,7 +801,7 @@ namespace FiresCore.Npc
         private bool IsAnyPlayerNearby()
         {
             Vector3 myPos = transform.position;
-            float thresholdSq = PLAYER_PROXIMITY_THRESHOLD * PLAYER_PROXIMITY_THRESHOLD;
+            float thresholdSq = PlayerProximityThreshold * PlayerProximityThreshold;
             
             foreach (var player in Player.GetAllPlayers())
             {
@@ -850,7 +818,6 @@ namespace FiresCore.Npc
         {
             if (Time.time >= _lookAroundEndTime)
             {
-                _isLookingAround = false;
                 SetIdleState(IdleState.Standing);
             }
         }
@@ -862,7 +829,6 @@ namespace FiresCore.Npc
                 float distToTarget = Vector3.Distance(transform.position, _currentDestination);
                 if (distToTarget < _destinationReachedThreshold)
                 {
-                    _isWaitingAtWanderPoint = true;
                     float pauseDuration = UnityEngine.Random.Range(wanderPauseDuration, wanderPauseMaxDuration);
                     _idleBehaviorEndTime = Time.time + pauseDuration;
                     _hasActiveDestination = false;
@@ -891,8 +857,6 @@ namespace FiresCore.Npc
                     _lastChairCheckTime = Time.time;
                     if (TryFindAndSitOnChair())
                     {
-                        _isWandering = false;
-                        _isWaitingAtWanderPoint = false;
                         _currentWanderLeg = 0;
                         return;
                     }
@@ -900,14 +864,11 @@ namespace FiresCore.Npc
                 
                 if (_currentWanderLeg < _totalWanderLegs && UnityEngine.Random.value < continueWanderChance)
                 {
-                    _isWaitingAtWanderPoint = false;
                     StartNextWanderLeg();
                     SetIdleState(IdleState.Wandering);
                 }
                 else
                 {
-                    _isWandering = false;
-                    _isWaitingAtWanderPoint = false;
                     _currentWanderLeg = 0;
                     _lastWanderCompleteTime = Time.time;
                     SetIdleState(IdleState.Standing);
@@ -964,7 +925,7 @@ namespace FiresCore.Npc
 
         private void TryStartIdleBehavior()
         {
-            // Priority 0: Sub-behaviors (only when near a player ÃƒÂ¯Ã‚Â¿Ã‚Â½ these do expensive
+            // Priority 0: Sub-behaviors (only when near a player - these do expensive
             // Physics.OverlapSphere, chest scanning, etc. in their CanStart checks)
             if (_isNearAnyPlayer && TryStartSubBehavior())
                 return;
@@ -1040,9 +1001,6 @@ namespace FiresCore.Npc
                     Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} cleared emote bool: {_currentEmote}");
             }
             
-            _isLookingAround = false;
-            _isWandering = false;
-            _isWaitingAtWanderPoint = false;
             _isPlayingEmote = false;
             _currentEmote = "";
             _isPersistentEmote = false;
@@ -1197,7 +1155,6 @@ namespace FiresCore.Npc
             float targetAngle = transform.eulerAngles.y + UnityEngine.Random.Range(-90f, 90f);
             StartSmoothRotation(targetAngle, idleRotationSpeed);
 
-            _isLookingAround = true;
             _lookAroundEndTime = Time.time + _rotationDuration + 1f;
             SetIdleState(IdleState.LookingAround);
         }
@@ -1224,12 +1181,12 @@ namespace FiresCore.Npc
             
             // Look for players, other companions, or interesting objects
             var colliders = Physics.OverlapSphere(transform.position, lookAtDetectionRange);
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
                 // Check for players
-                var player = col.GetComponent<Player>();
+                var player = collider.GetComponent<Player>();
                 if (player != null && player != _companion?.GetOwner())
                 {
                     Vector3 toTarget = player.transform.position - transform.position;
@@ -1244,7 +1201,7 @@ namespace FiresCore.Npc
                 }
                 
                 // Check for other companions
-                var companion = col.GetComponent<CompanionController>();
+                var companion = collider.GetComponent<CompanionController>();
                 if (companion != null && companion != _companion)
                 {
                     Vector3 toTarget = companion.transform.position - transform.position;
@@ -1272,12 +1229,12 @@ namespace FiresCore.Npc
             if (!_isRotating) return;
 
             float elapsed = Time.time - _rotationStartTime;
-            float t = Mathf.Clamp01(elapsed / _rotationDuration);
+            float progress = Mathf.Clamp01(elapsed / _rotationDuration);
 
-            float newAngle = Mathf.LerpAngle(_startYRotation, _targetYRotation, t);
+            float newAngle = Mathf.LerpAngle(_startYRotation, _targetYRotation, progress);
             transform.rotation = Quaternion.Euler(0, newAngle, 0);
 
-            if (t >= 1f)
+            if (progress >= 1f)
             {
                 _isRotating = false;
             }

@@ -66,7 +66,7 @@ namespace FiresCore.Npc.Combat
         private bool _isGroupCritical;    // Any member < 20%
 
         // Smoothing factor for damage rate EMA
-        private const float DAMAGE_RATE_SMOOTHING = 0.3f;
+        private const float DamageRateSmoothing = 0.3f;
 
         public static bool VerboseLogging = false;
 
@@ -113,15 +113,15 @@ namespace FiresCore.Npc.Combat
             }
 
             // Update companion snapshots
-            foreach (var comp in companions)
+            foreach (var companion in companions)
             {
-                if (comp == null) continue;
-                var character = comp.GetCharacter();
+                if (companion == null) continue;
+                var character = companion.GetCharacter();
                 if (character == null || character.IsDead()) continue;
 
-                string id = comp.companionId ?? comp.companionName;
+                string id = companion.companionId ?? companion.companionName;
                 var snap = GetOrCreateSnapshot(id);
-                UpdateSnapshot(snap, character, comp, false, threatTable);
+                UpdateSnapshot(snap, character, companion, false, threatTable);
 
                 totalHealth += snap.HealthPercent;
                 memberCount++;
@@ -145,8 +145,8 @@ namespace FiresCore.Npc.Combat
         private void UpdateSnapshot(HealthSnapshot snap, Character character,
             CompanionController companion, bool isPlayer, SharedThreatTable threatTable)
         {
-            float dt = Time.time - snap.LastUpdateTime;
-            if (dt <= 0f) dt = 0.3f; // First update
+            float elapsed = Time.time - snap.LastUpdateTime;
+            if (elapsed <= 0f) elapsed = 0.3f; // First update
 
             snap.Character = character;
             snap.Companion = companion;
@@ -158,10 +158,10 @@ namespace FiresCore.Npc.Combat
 
             // Calculate damage rate using exponential moving average
             float healthDelta = snap.PreviousHealth - snap.CurrentHealth;
-            float instantRate = dt > 0f ? healthDelta / dt : 0f;
+            float instantRate = elapsed > 0f ? healthDelta / elapsed : 0f;
             instantRate = Mathf.Max(0f, instantRate); // Only track damage, not healing
 
-            snap.DamageRatePerSecond = Mathf.Lerp(snap.DamageRatePerSecond, instantRate, DAMAGE_RATE_SMOOTHING);
+            snap.DamageRatePerSecond = Mathf.Lerp(snap.DamageRatePerSecond, instantRate, DamageRateSmoothing);
             snap.PreviousHealth = snap.CurrentHealth;
 
             // Estimate time to down
@@ -300,9 +300,9 @@ namespace FiresCore.Npc.Combat
                 }
 
                 bool found = false;
-                foreach (var comp in companions)
+                foreach (var companion in companions)
                 {
-                    if (comp != null && (comp.companionId == kvp.Key || comp.companionName == kvp.Key))
+                    if (companion != null && (companion.companionId == kvp.Key || companion.companionName == kvp.Key))
                     {
                         found = true;
                         break;

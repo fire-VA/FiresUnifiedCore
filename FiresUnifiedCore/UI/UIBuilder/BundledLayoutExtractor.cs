@@ -7,18 +7,9 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Extracts UI layout JSON files that ship inside the assembly as
-    /// <see cref="EmbeddedResource"/>s into the on-disk UILayouts folder on
-    /// first run. This lets us bundle authored layouts (e.g. the companion
-    /// equipment screen) with the mod itself instead of relying on every
-    /// installer remembering to drop the JSON into BepInEx config manually.
-    ///
-    /// Resources must be embedded with a logical name of the form
-    /// <c>FiresRPGmaker.BundledLayouts.&lt;subpath&gt;.&lt;file&gt;.json</c>.
-    /// The <c>BundledLayouts.</c> prefix is stripped and the remaining dotted
-    /// segments are converted to directory separators, so
-    /// <c>FiresRPGmaker.BundledLayouts.custom.companionsequipmentscreen.json</c>
-    /// extracts to <c>&lt;config&gt;/UILayouts/custom/companionsequipmentscreen.json</c>.
+    /// Extracts UI layout JSON embedded in the assembly into the UILayouts config folder on first run, so authored
+    /// layouts ship with the mod. A resource named FiresRPGmaker.BundledLayouts.custom.screen.json extracts to
+    /// UILayouts/custom/screen.json: the prefix is dropped and the remaining dots become folders.
     /// </summary>
     internal static class BundledLayoutExtractor
     {
@@ -69,9 +60,9 @@ namespace FiresCore.UI
                                 Debug.LogWarning($"[BundledLayoutExtractor] GetManifestResourceStream returned null for '{resName}'");
                                 continue;
                             }
-                            using (var fs = File.Create(fullPath))
+                            using (var output = File.Create(fullPath))
                             {
-                                stream.CopyTo(fs);
+                                stream.CopyTo(output);
                             }
                         }
 

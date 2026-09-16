@@ -32,12 +32,12 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float WORKSTATION_DETECTION_RANGE = 8f;
-        private const float INTERACTION_DISTANCE = 2f;
-        private const float UPGRADE_ANIMATION_DURATION = 2f;
-        private const float MAX_UPGRADE_TIME = 60f;
-        private const float UPGRADE_ATTEMPT_CHANCE = 0.3f;
-        private const int MAX_UPGRADES_PER_SESSION = 3;
+        private const float WorkstationDetectionRange = 8f;
+        private const float InteractionDistance = 2f;
+        private const float UpgradeAnimationDuration = 2f;
+        private const float MaxUpgradeTime = 60f;
+        private const float UpgradeAttemptChance = 0.3f;
+        private const int MaxUpgradesPerSession = 3;
         
         #endregion
         
@@ -102,14 +102,14 @@ namespace FiresCore.Npc.IdleBehaviors
         public override void Initialize(CompanionController companion, CompanionIdleBehavior idleBehavior)
         {
             base.Initialize(companion, idleBehavior);
-            MaxDuration = MAX_UPGRADE_TIME + 30f;
+            MaxDuration = MaxUpgradeTime + 30f;
         }
         
         public override bool CanStart()
         {
             if (Companion == null || Inventory == null) return false;
             if (!CompanionBehaviorToggles.IsCraftingEnabled(Companion)) return false;
-            if (Random.value > UPGRADE_ATTEMPT_CHANCE) return false;
+            if (Random.value > UpgradeAttemptChance) return false;
             
             var station = FindNearbyWorkstation();
             if (station == null) return false;
@@ -228,7 +228,7 @@ namespace FiresCore.Npc.IdleBehaviors
             PlayInteractAnimation();
             
             // Wait for animation
-            if (TimeInCurrentPhase < UPGRADE_ANIMATION_DURATION)
+            if (TimeInCurrentPhase < UpgradeAnimationDuration)
             {
                 return false;
             }
@@ -248,7 +248,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check for more upgrades
             _itemToUpgrade = null;
             
-            if (_upgradesCompleted < MAX_UPGRADES_PER_SESSION)
+            if (_upgradesCompleted < MaxUpgradesPerSession)
             {
                 var nextUpgrade = FindBestUpgrade(_targetStation);
                 if (nextUpgrade != null)
@@ -284,13 +284,13 @@ namespace FiresCore.Npc.IdleBehaviors
             int bestLevel = -1;
             float bestDist = float.MaxValue;
             
-            var colliders = Physics.OverlapSphere(Transform.position, WORKSTATION_DETECTION_RANGE);
+            var colliders = Physics.OverlapSphere(Transform.position, WorkstationDetectionRange);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var station = col.GetComponent<CraftingStation>() ?? col.GetComponentInParent<CraftingStation>();
+                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
                 if (station == null) continue;
                 
                 int level = station.GetLevel();

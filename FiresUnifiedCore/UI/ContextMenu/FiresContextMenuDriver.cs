@@ -142,9 +142,9 @@ namespace FiresCore.UI.ContextMenu
             var seen = new System.Collections.Generic.HashSet<GameObject>();
             int mask = RayMask;
 
-            for (int o = 0; o < PickOffsets.Length; o++)
+            for (int offsetIndex = 0; offsetIndex < PickOffsets.Length; offsetIndex++)
             {
-                Vector2 off = PickOffsets[o];
+                Vector2 off = PickOffsets[offsetIndex];
                 Ray ray = cam.ScreenPointToRay(new Vector3(mouse.x + off.x, mouse.y + off.y, 0f));
 
                 var hits = Physics.RaycastAll(ray, PickMaxDistance, mask, QueryTriggerInteraction.Ignore);
@@ -152,7 +152,7 @@ namespace FiresCore.UI.ContextMenu
                 {
                     var root = ResolveRoot(hits[i].collider.gameObject);
                     if (root == null || !seen.Add(root)) continue;
-                    var t = new ContextTarget
+                    var target = new ContextTarget
                     {
                         GameObject = root,
                         Point = hits[i].point,
@@ -161,15 +161,15 @@ namespace FiresCore.UI.ContextMenu
                         Collider = hits[i].collider,
                     };
                     if (root.GetComponent<Character>() != null || root.GetComponent<ZNetView>() != null)
-                        interactables.Add(t);
+                        interactables.Add(target);
                     else
-                        others.Add(t);
+                        others.Add(target);
                 }
 
                 // Collider-less markers (patrol node spheres etc.) — only test the exact-cursor ray.
                 if (off == Vector2.zero)
                     foreach (var tester in FiresContextMenu.MarkerSources)
-                        if (tester(ray, out var mt) && mt != null) interactables.Add(mt);
+                        if (tester(ray, out var hitTarget) && hitTarget != null) interactables.Add(hitTarget);
             }
 
             // Nothing within pick range (e.g. flying 400m up inside a giant environment box: its walls are trigger
@@ -199,10 +199,10 @@ namespace FiresCore.UI.ContextMenu
         private static GameObject ResolveRoot(GameObject go)
         {
             if (go == null) return null;
-            var ch = go.GetComponentInParent<Character>();
-            if (ch != null) return ch.gameObject;
-            var nv = go.GetComponentInParent<ZNetView>();
-            if (nv != null) return nv.gameObject;
+            var character = go.GetComponentInParent<Character>();
+            if (character != null) return character.gameObject;
+            var netView = go.GetComponentInParent<ZNetView>();
+            if (netView != null) return netView.gameObject;
             return go;
         }
 

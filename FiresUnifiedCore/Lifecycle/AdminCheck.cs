@@ -63,10 +63,10 @@ namespace FiresCore.Lifecycle
         {
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                var t = asm.GetType(ServerSyncAdminTypeName);
-                if (t == null) continue;
+                var adminType = asm.GetType(ServerSyncAdminTypeName);
+                if (adminType == null) continue;
 
-                _isAdminMethod = t.GetMethod(IsAdminMethodName,
+                _isAdminMethod = adminType.GetMethod(IsAdminMethodName,
                     BindingFlags.Public | BindingFlags.Static,
                     null, new[] { typeof(long) }, null);
 

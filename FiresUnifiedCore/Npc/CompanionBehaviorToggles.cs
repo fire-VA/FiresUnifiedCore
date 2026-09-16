@@ -14,7 +14,7 @@ namespace FiresCore.Npc
     /// </summary>
     public static class CompanionBehaviorToggles
     {
-        // ZDO key constants ï¿½ single source of truth for these strings.
+        // ZDO key constants - single source of truth for these strings.
         public const string KEY_GATHER   = "companion_gather_enabled";    // wood / resource / farming gathering
         public const string KEY_FIRES    = "companion_fires_enabled";     // fire tending (fuel + light)
         public const string KEY_SMELTER  = "companion_smelter_enabled";   // smelter / kiln / blast furnace operation
@@ -26,7 +26,7 @@ namespace FiresCore.Npc
         public const string KEY_FISHING  = "companion_fishing_enabled";   // fishing behavior
         public const string KEY_REPAIR   = "companion_repair_enabled";    // building repair behavior
 
-        // ?? readers ??????????????????????????????????????????????????????????
+        // readers
         public static bool IsGatherEnabled(CompanionController companion)   => Read(companion, KEY_GATHER);
         public static bool IsFiresEnabled(CompanionController companion)    => Read(companion, KEY_FIRES);
         public static bool IsSmelterEnabled(CompanionController companion)  => Read(companion, KEY_SMELTER);
@@ -41,7 +41,7 @@ namespace FiresCore.Npc
         // disable it on companions that should ignore neutral wildlife.
         public static bool IsHuntingEnabled(CompanionController companion)  => Read(companion, KEY_HUNTING, true);
 
-        // ?? writers ??????????????????????????????????????????????????????????
+        // writers
         public static void SetGatherEnabled(CompanionController companion, bool v)   => Write(companion, KEY_GATHER, v);
         public static void SetFiresEnabled(CompanionController companion, bool v)    => Write(companion, KEY_FIRES, v);
         public static void SetSmelterEnabled(CompanionController companion, bool v)  => Write(companion, KEY_SMELTER, v);
@@ -53,7 +53,7 @@ namespace FiresCore.Npc
         public static void SetRepairEnabled(CompanionController companion, bool v)   => Write(companion, KEY_REPAIR, v);
         public static void SetHuntingEnabled(CompanionController companion, bool v)  => Write(companion, KEY_HUNTING, v);
 
-        // ?? implementation ???????????????????????????????????????????????????
+        // implementation
         private static bool Read(CompanionController companion, string key)
         {
             return Read(companion, key, true);

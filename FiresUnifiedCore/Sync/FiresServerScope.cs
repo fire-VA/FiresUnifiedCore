@@ -22,10 +22,10 @@ namespace FiresCore.Sync
             {
                 var net = ZNet.instance;
                 if (net == null) return null;
-                var sp = net.GetServerPeer();
-                if (sp != null && sp.m_socket != null)
+                var serverPeer = net.GetServerPeer();
+                if (serverPeer != null && serverPeer.m_socket != null)
                 {
-                    string host = sp.m_socket.GetHostName();
+                    string host = serverPeer.m_socket.GetHostName();
                     if (!string.IsNullOrEmpty(host)) return "s" + Sanitize(host);
                 }
                 if (net.IsServer())
@@ -57,9 +57,9 @@ namespace FiresCore.Sync
         public static void DeleteLegacy(params string[] paths)
         {
             if (paths == null) return;
-            foreach (var p in paths)
+            foreach (var path in paths)
             {
-                try { if (!string.IsNullOrEmpty(p) && File.Exists(p)) File.Delete(p); }
+                try { if (!string.IsNullOrEmpty(path) && File.Exists(path)) File.Delete(path); }
                 catch { }
             }
         }

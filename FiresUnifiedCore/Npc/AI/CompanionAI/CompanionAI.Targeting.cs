@@ -13,24 +13,12 @@ namespace FiresCore.Npc.AI
 
         private void UpdateTargetDetection(float dt)
         {
-            if (Time.time - _lastTargetScanTime < TARGET_SCAN_INTERVAL)
+            if (Time.time - _lastTargetScanTime < TargetScanInterval)
                 return;
             _lastTargetScanTime = Time.time;
 
-            // ABSOLUTE-PRIORITY PLAYER COMMAND
-            // The owner has explicitly told this companion to do something — Move
-            // to a position, Attack a target, etc.  While that command is active
-            // the companion's behaviour MUST be exactly that command and nothing
-            // else; any "I see something nearby, let me run off and fight it"
-            // impulse is the bug the owner explicitly told us to remove.
-            //
-            // We bail before the threat scan even runs.  UpdateCombatState already
-            // bails the same way (CompanionAI.Combat.cs around line 34) so the
-            // FSM never enters Combat while a command is up — but without this
-            // gate, target detection kept firing every TARGET_SCAN_INTERVAL,
-            // re-acquiring a _targetCreature that UpdateCombatState then had to
-            // clear again.  Two systems fighting each other to a draw, every
-            // frame, is the exact thing the owner just said to stop doing.
+            // A player command means nothing else: skip the threat scan entirely, since re-acquiring a target every scan
+            // only for the combat state to clear it again had the two systems fighting every frame.
             if (_stateController != null && _stateController.HasAbsolutePriorityCommand)
             {
                 if (_targetCreature != null)
@@ -75,17 +63,17 @@ namespace FiresCore.Npc.AI
             }
             
             bool isStaying = !_shouldFollow && _hasHomePositionSet;
-            bool wasRecentlyDamaged = Time.time - _lastDirectlyDamagedTime < DIRECT_DAMAGE_ALERT_DURATION;
+            bool wasRecentlyDamaged = Time.time - _lastDirectlyDamagedTime < DirectDamageAlertDuration;
             float effectiveAggroRange = aggroRange;
             
             if (isStaying && !wasRecentlyDamaged)
             {
-                effectiveAggroRange = STAY_MODE_AGGRO_RANGE;
+                effectiveAggroRange = StayModeAggroRange;
                 
                 if (_targetCreature != null)
                 {
                     float distToTarget = Vector3.Distance(transform.position, _targetCreature.transform.position);
-                    if (distToTarget > STAY_MODE_AGGRO_RANGE)
+                    if (distToTarget > StayModeAggroRange)
                     {
                         if (VerboseLogging)
                             Debug.Log($"[CompanionAI] {m_character?.m_name} is staying - disengaging from distant target {_targetCreature.m_name} ({distToTarget:F1}m)");
@@ -115,24 +103,9 @@ namespace FiresCore.Npc.AI
                 if (!IsValidTarget(character))
                     continue;
 
-                // OWNER-DEFENSE GATE
-                // ------------------
-                // For aggressive (non-passive) enemies in Follow mode, only
-                // pick this character as a target if it is *actually*
-                // threatening the owner or this companion. Without this
-                // gate, companions in Follow mode would engage every
-                // hostile in aggroRange the moment they spotted it — the
-                // "chase everything in the forest" behaviour the player
-                // reported after the flee-suppression fix.
-                //
-                // Passives (boar / deer / neck / etc.) already have their
-                // own gate inside IsValidTarget that respects the per-
-                // companion Hunting toggle. Stay mode uses the much smaller
-                // STAY_MODE_AGGRO_RANGE bubble and skips this gate so a
-                // staying companion still defends its post.
-                // Hostile PvP targets (another player's PvP-enabled companion/player) bypass the
-                // owner-defense gate so companions actively engage enemy squads instead of only
-                // defending the owner's bubble.
+                // In Follow mode an aggressive enemy is only a target when it actually threatens the owner or this
+                // companion, or companions chase every hostile in range. Passives have their own hunting gate, Stay
+                // mode defends its smaller bubble, and hostile PvP targets are always engaged.
                 if (!isStaying && !IsPassiveCreature(character) && !IsHostilePvpTarget(character))
                 {
                     if (!IsThreatToOwnerOrSelf(character, ownerPos, ownerCharacter))
@@ -377,12 +350,12 @@ namespace FiresCore.Npc.AI
                 bool huntingEnabled = CompanionBehaviorToggles.IsHuntingEnabled(_companion);
                 if (!huntingEnabled)
                 {
-                    if (Time.time - _lastDirectlyDamagedTime > DIRECT_DAMAGE_ALERT_DURATION)
+                    if (Time.time - _lastDirectlyDamagedTime > DirectDamageAlertDuration)
                         return false;
                     // Even when recently damaged, only retaliate against the actual
                     // creature that hit us — not every passive in the area.
                     // (We use proximity as a cheap proxy here; the precise attacker
-                    // is tracked by OnDamaged ? ConsiderTargetSwitch.)
+                    // is tracked by OnDamaged -> ConsiderTargetSwitch.)
                     float distToHostilePassive = Vector3.Distance(transform.position, target.transform.position);
                     if (distToHostilePassive > 8f)
                         return false;
@@ -429,9 +402,9 @@ namespace FiresCore.Npc.AI
             long targetOwnerId;
             if (target.IsPlayer())
             {
-                var tp = target as Player;
-                if (tp == null || !tp.IsPVPEnabled()) return false;
-                targetOwnerId = tp.GetPlayerID();
+                var targetPlayer = target as Player;
+                if (targetPlayer == null || !targetPlayer.IsPVPEnabled()) return false;
+                targetOwnerId = targetPlayer.GetPlayerID();
             }
             else
             {
@@ -447,25 +420,9 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// Owner-defense check used by Follow-mode targeting to decide
-        /// whether an aggressive enemy is actually a threat we should
-        /// engage, vs just a hostile creature that happens to be in our
-        /// aggroRange.
-        ///
-        /// Returns true when AT LEAST ONE of:
-        ///   - The target is within <see cref="OWNER_DEFENSE_RADIUS"/> of
-        ///     the owner (defending the owner's personal space).
-        ///   - The target's BaseAI is actively targeting the owner, any
-        ///     player, or this companion (real combat already engaged).
-        ///   - This companion was directly damaged in the last
-        ///     <see cref="DIRECT_DAMAGE_ALERT_DURATION"/> seconds
-        ///     (someone is hitting us — retaliate).
-        ///
-        /// Otherwise returns false and the caller skips this target.
-        ///
-        /// Note: explicit owner-issued attack commands go through
-        /// <c>ForceTarget</c>, which bypasses the detection scan entirely,
-        /// so this gate never blocks a player-directed attack.
+        /// In Follow mode, engages a hostile only if it is within <see cref="OwnerDefenseRadius"/> of the owner,
+        /// is already targeting the owner, a player or this companion, or this companion was hit within
+        /// <see cref="DirectDamageAlertDuration"/>. Explicit attack commands use ForceTarget and bypass this.
         /// </summary>
         private bool IsThreatToOwnerOrSelf(Character target, Vector3 ownerPos, Character ownerCharacter)
         {
@@ -473,7 +430,7 @@ namespace FiresCore.Npc.AI
 
             // 1. Threat is inside the owner's defense bubble.
             float distToOwner = Vector3.Distance(target.transform.position, ownerPos);
-            if (distToOwner <= OWNER_DEFENSE_RADIUS)
+            if (distToOwner <= OwnerDefenseRadius)
                 return true;
 
             // 2. The threat's AI is locked on to the owner / a player /
@@ -498,19 +455,19 @@ namespace FiresCore.Npc.AI
             //    attacker has since broken aggro and isn't currently
             //    targeting us. Mirrors the existing retaliation window
             //    that's already used for passive creatures.
-            if (Time.time - _lastDirectlyDamagedTime < DIRECT_DAMAGE_ALERT_DURATION)
+            if (Time.time - _lastDirectlyDamagedTime < DirectDamageAlertDuration)
                 return true;
 
             return false;
         }
 
-        // ?? Ranged LOS support ??????????????????????????????????????????????
+        // Ranged LOS support
         // Targets that the bow/crossbow behavior has tried to engage but gave
         // up on (no LOS even after attempting to reposition) are stored here
         // with an expiry time, so IsValidTarget skips them without paying the
         // cost of a raycast every detection tick.
         private Dictionary<int, float> _losBlacklist;
-        private const float LOS_BLACKLIST_DURATION = 8f; // seconds before the same target can be retried
+        private const float LosBlacklistDuration = 8f; // seconds before the same target can be retried
 
         /// <summary>
         /// Called by ranged weapon behaviors after they've concluded they cannot
@@ -523,7 +480,7 @@ namespace FiresCore.Npc.AI
         {
             if (target == null) return;
             if (_losBlacklist == null) _losBlacklist = new Dictionary<int, float>();
-            _losBlacklist[target.GetInstanceID()] = Time.time + LOS_BLACKLIST_DURATION;
+            _losBlacklist[target.GetInstanceID()] = Time.time + LosBlacklistDuration;
 
             // If this is our current target, drop it so re-acquisition runs.
             if (_targetCreature == target)
@@ -554,12 +511,12 @@ namespace FiresCore.Npc.AI
                 // Triggers (volumes, area-effects, etc.) never block sight.
                 if (hit.collider.isTrigger) return true;
 
-                // We hit the target itself or one of its child colliders ? clear.
+                // We hit the target itself or one of its child colliders - clear.
                 var hitChar = hit.collider.GetComponentInParent<Character>();
                 if (hitChar == target) return true;
 
                 // We hit something very close to the target (its collider edge,
-                // a piece of armor, a mount, etc.) ? still effectively clear.
+                // a piece of armor, a mount, etc.) - still effectively clear.
                 if (Vector3.Distance(hit.point, targetPos) < 0.75f) return true;
 
                 // Wall, terrain, or piece in the way.
@@ -660,19 +617,9 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// Called by <see cref="CompanionController.TeleportToOwner"/> /
-        /// <see cref="CompanionController.TeleportToDestination"/> after a long-distance
-        /// teleport (portal jump, dungeon entry, owner respawn at a bed, etc).
-        ///
-        /// Without this, a companion who was mid-combat outside the dungeon will keep
-        /// its <c>_targetCreature</c> reference pointing at the now-thousands-of-metres-
-        /// away enemy, stay in <see cref="AIState.Combat"/>, and refuse to engage the
-        /// new threats around it inside the dungeon — making them functionally useless
-        /// in dungeon fights.  We:
-        ///   1) drop the stale target reference,
-        ///   2) clear alerted state and last-target-position memory,
-        ///   3) snap the FSM back to Following (if shouldFollow) or Idle, so the next
-        ///      target-acquisition pass scans the new surroundings.
+        /// Called after a long-distance teleport (portal, dungeon entry, owner respawn). Drops the stale target and
+        /// alert memory and returns to Following or Idle, so a companion that was fighting outside a dungeon engages
+        /// what is actually around it.
         /// </summary>
         public void OnTeleportedFar()
         {
@@ -688,7 +635,7 @@ namespace FiresCore.Npc.AI
             // and stop animating "I want to run off and fight that thing", and
             // short enough that real local threats are picked up promptly once
             // it expires.
-            _combatSuppressedUntilTime = Time.time + POST_TELEPORT_COMBAT_SUPPRESS_SECONDS;
+            _combatSuppressedUntilTime = Time.time + PostTeleportCombatSuppressSeconds;
 
             // Force the FSM out of any combat-related state.  If we were following,
             // resume following so the AI starts pulling toward the owner immediately;

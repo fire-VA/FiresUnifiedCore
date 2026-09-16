@@ -23,17 +23,17 @@ namespace FiresCore.UI.GroupHud
     {
         #region Constants
 
-        private const float PANEL_WIDTH = 180f;
-        private const float MEMBER_HEIGHT = 50f;
-        private const float BAR_HEIGHT = 6f;
-        private const float BAR_SPACING = 2f;
-        private const float STATUS_EFFECT_ROW_HEIGHT = 16f;
-        private const float STATUS_EFFECT_ICON_SIZE = 14f;
-        private const int MAX_EFFECTS_PER_ROW = 5;
-        private const float COLUMN_INNER_WIDTH = PANEL_WIDTH - 8f;
+        private const float PanelWidth = 180f;
+        private const float MemberHeight = 50f;
+        private const float BarHeight = 6f;
+        private const float BarSpacing = 2f;
+        private const float StatusEffectRowHeight = 16f;
+        private const float StatusEffectIconSize = 14f;
+        private const int MaxEffectsPerRow = 5;
+        private const float ColumnInnerWidth = PanelWidth - 8f;
 
-        private const string PREF_POS_X = "GroupHud_PosX";
-        private const string PREF_POS_Y = "GroupHud_PosY";
+        private const string PrefPosX = "GroupHud_PosX";
+        private const string PrefPosY = "GroupHud_PosY";
 
         private static readonly Color HealthBarColor = new Color(0.8f, 0.2f, 0.2f, 1f);
         private static readonly Color StaminaBarColor = new Color(0.9f, 0.8f, 0.2f, 1f);
@@ -49,7 +49,7 @@ namespace FiresCore.UI.GroupHud
         private static readonly Color DeadBarColor = new Color(0.2f, 0.2f, 0.2f, 0.5f);
         private static readonly Color StatusTextColor = new Color(1f, 0.5f, 0.3f, 1f);
 
-        private const float UPDATE_INTERVAL = 0.1f;
+        private const float UpdateInterval = 0.1f;
 
         private static int VisibleRows => Mathf.Clamp(GroupHudConfig.MaxRowsPerColumn?.Value ?? 8, 1, 20);
         private static int VisibleColumns => Mathf.Clamp(GroupHudConfig.Columns?.Value ?? 1, 1, 2);
@@ -187,13 +187,13 @@ namespace FiresCore.UI.GroupHud
 
         private void OnConfigChanged(object sender, BepInEx.Configuration.SettingChangedEventArgs e)
         {
-            var c = e?.ChangedSetting;
-            if (c != GroupHudConfig.MaxRowsPerColumn && c != GroupHudConfig.Columns
-                && c != GroupHudConfig.DefaultPosX && c != GroupHudConfig.DefaultPosY) return;
+            var changed = e?.ChangedSetting;
+            if (changed != GroupHudConfig.MaxRowsPerColumn && changed != GroupHudConfig.Columns
+                && changed != GroupHudConfig.DefaultPosX && changed != GroupHudConfig.DefaultPosY) return;
             try
             {
                 RebuildLayout();
-                if (_rootRect != null && !(PlayerPrefs.HasKey(PREF_POS_X) && PlayerPrefs.HasKey(PREF_POS_Y)))
+                if (_rootRect != null && !(PlayerPrefs.HasKey(PrefPosX) && PlayerPrefs.HasKey(PrefPosY)))
                     _rootRect.anchoredPosition = GroupHudConfig.DefaultPosition;
             }
             catch (Exception ex) { Debug.LogWarning($"[GroupHud] config refresh failed: {ex.Message}"); }
@@ -210,13 +210,14 @@ namespace FiresCore.UI.GroupHud
             // Refresh members ALWAYS (even while hidden). Visibility is gated on having members, and
             // members are only collected here — refreshing only when visible would mean the panel
             // could never appear in the first place.
-            if (Time.time - _lastUpdate >= UPDATE_INTERVAL)
+            if (Time.time - _lastUpdate >= UpdateInterval)
             {
                 _lastUpdate = Time.time;
                 RefreshMembers();
             }
 
             bool show = ShouldShowHud();
+            if (!show) OnDragEnd();
             if (_root != null)
             {
                 _root.SetActive(show);
@@ -247,9 +248,7 @@ namespace FiresCore.UI.GroupHud
                 try { if (GroupHudBridge.IsBlockingUiOpen()) return false; } catch { }
             }
 
-            // Nothing to show (and not parking the panel via the menu) → stay hidden.
-            if (_orderedIds.Count == 0 && !_isRepositionMode) return false;
-            return true;
+            return _orderedIds.Count > 0;
         }
 
         #endregion
@@ -262,8 +261,8 @@ namespace FiresCore.UI.GroupHud
             var members = GroupHudBridge.CollectMembers();
             members.Sort((a, b) =>
             {
-                int c = a.SortKey.CompareTo(b.SortKey);
-                return c != 0 ? c : string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.Ordinal);
+                int comparison = a.SortKey.CompareTo(b.SortKey);
+                return comparison != 0 ? comparison : string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.Ordinal);
             });
 
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -272,17 +271,17 @@ namespace FiresCore.UI.GroupHud
 
             for (int i = 0; i < members.Count; i++)
             {
-                var m = members[i];
-                seen.Add(m.Id);
-                _orderedIds.Add(m.Id);
+                var member = members[i];
+                seen.Add(member.Id);
+                _orderedIds.Add(member.Id);
 
-                if (!_rows.TryGetValue(m.Id, out var ui))
+                if (!_rows.TryGetValue(member.Id, out var ui))
                 {
-                    ui = CreateMemberUI(m.Id);
-                    _rows[m.Id] = ui;
+                    ui = CreateMemberUI(member.Id);
+                    _rows[member.Id] = ui;
                     orderChanged = true;
                 }
-                UpdateRow(m, ui);
+                UpdateRow(member, ui);
             }
 
             // Drop rows whose members vanished.
@@ -304,23 +303,23 @@ namespace FiresCore.UI.GroupHud
             }
         }
 
-        private void UpdateRow(GroupHudMember m, MemberUI ui)
+        private void UpdateRow(GroupHudMember member, MemberUI ui)
         {
             if (ui.Root == null) return;
 
-            Color nameCol = m.NameColor.a > 0f ? m.NameColor : (m.IsDead ? DeadNameColor : NameColor);
-            ui.NameText.text = m.Name ?? "";
+            Color nameCol = member.NameColor.a > 0f ? member.NameColor : (member.IsDead ? DeadNameColor : NameColor);
+            ui.NameText.text = member.Name ?? "";
             ui.NameText.color = nameCol;
 
             // Right-side text: explicit status overrides distance.
-            if (!string.IsNullOrEmpty(m.StatusText))
+            if (!string.IsNullOrEmpty(member.StatusText))
             {
-                ui.StatusText.text = m.StatusText;
-                ui.StatusText.color = m.IsDead ? StatusTextColor : DistanceColor;
+                ui.StatusText.text = member.StatusText;
+                ui.StatusText.color = member.IsDead ? StatusTextColor : DistanceColor;
             }
-            else if (m.Distance >= 0f)
+            else if (member.Distance >= 0f)
             {
-                ui.StatusText.text = $"({m.Distance:F0}m)";
+                ui.StatusText.text = $"({member.Distance:F0}m)";
                 ui.StatusText.color = DistanceColor;
             }
             else
@@ -328,7 +327,7 @@ namespace FiresCore.UI.GroupHud
                 ui.StatusText.text = "";
             }
 
-            if (m.IsDead)
+            if (member.IsDead)
             {
                 SetBarFill(ui.HealthBarFill, 0f);
                 SetBarFill(ui.StaminaBarFill, 0f);
@@ -340,24 +339,24 @@ namespace FiresCore.UI.GroupHud
             {
                 ui.HealthBarFill.color = HealthBarColor;
                 ui.StaminaBarFill.color = StaminaBarColor;
-                SetBarFill(ui.HealthBarFill, m.MaxHealth > 0f ? Mathf.Clamp01(m.Health / m.MaxHealth) : 0f);
-                SetBarFill(ui.StaminaBarFill, m.MaxStamina > 0f ? Mathf.Clamp01(m.Stamina / m.MaxStamina) : 0f);
+                SetBarFill(ui.HealthBarFill, member.MaxHealth > 0f ? Mathf.Clamp01(member.Health / member.MaxHealth) : 0f);
+                SetBarFill(ui.StaminaBarFill, member.MaxStamina > 0f ? Mathf.Clamp01(member.Stamina / member.MaxStamina) : 0f);
 
-                if (m.MaxEitr > 0f)
+                if (member.MaxEitr > 0f)
                 {
                     ui.EitrBarRoot.SetActive(true);
                     ui.EitrBarFill.color = EitrBarColor;
-                    SetBarFill(ui.EitrBarFill, Mathf.Clamp01(m.Eitr / m.MaxEitr));
+                    SetBarFill(ui.EitrBarFill, Mathf.Clamp01(member.Eitr / member.MaxEitr));
                 }
                 else ui.EitrBarRoot.SetActive(false);
             }
 
-            UpdateStatusIcons(m, ui);
+            UpdateStatusIcons(member, ui);
         }
 
-        private void UpdateStatusIcons(GroupHudMember m, MemberUI ui)
+        private void UpdateStatusIcons(GroupHudMember member, MemberUI ui)
         {
-            var icons = m.StatusIcons;
+            var icons = member.StatusIcons;
             int count = icons?.Count ?? 0;
 
             for (int i = 0; i < count; i++)
@@ -391,7 +390,7 @@ namespace FiresCore.UI.GroupHud
             _rootRect.anchorMin = new Vector2(1f, 1f);
             _rootRect.anchorMax = new Vector2(1f, 1f);
             _rootRect.pivot = new Vector2(1f, 1f);
-            _rootRect.sizeDelta = new Vector2(PANEL_WIDTH, 30f);
+            _rootRect.sizeDelta = new Vector2(PanelWidth, 30f);
 
             _backgroundImage = _root.AddComponent<Image>();
             _backgroundImage.sprite = FiresCore.UI.FiresRoundedSkin.RoundedSprite(13, PanelBackgroundColor, PanelGoldBorder, 2);
@@ -446,7 +445,7 @@ namespace FiresCore.UI.GroupHud
 
             var rootLE = _root.AddComponent<LayoutElement>();
             rootLE.minHeight = 30f;
-            rootLE.minWidth = PANEL_WIDTH;
+            rootLE.minWidth = PanelWidth;
 
             _root.AddComponent<GroupHudDragHandler>().Initialize(this);
 
@@ -458,22 +457,22 @@ namespace FiresCore.UI.GroupHud
         {
             var go = new GameObject(name);
             go.transform.SetParent(parent, false);
-            go.AddComponent<RectTransform>().sizeDelta = new Vector2(COLUMN_INNER_WIDTH, 0f);
+            go.AddComponent<RectTransform>().sizeDelta = new Vector2(ColumnInnerWidth, 0f);
 
-            var vl = go.AddComponent<VerticalLayoutGroup>();
-            vl.spacing = 4f;
-            vl.childControlWidth = true;
-            vl.childControlHeight = true;
-            vl.childForceExpandWidth = true;
-            vl.childForceExpandHeight = false;
+            var layout = go.AddComponent<VerticalLayoutGroup>();
+            layout.spacing = 4f;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = false;
 
             var fitter = go.AddComponent<ContentSizeFitter>();
             fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            var le = go.AddComponent<LayoutElement>();
-            le.preferredWidth = COLUMN_INNER_WIDTH;
-            le.minWidth = COLUMN_INNER_WIDTH;
+            var layoutElement = go.AddComponent<LayoutElement>();
+            layoutElement.preferredWidth = ColumnInnerWidth;
+            layoutElement.minWidth = ColumnInnerWidth;
             return go;
         }
 
@@ -486,15 +485,15 @@ namespace FiresCore.UI.GroupHud
             ui.Root = memberGO;
             memberGO.AddComponent<RectTransform>();
 
-            var le = memberGO.AddComponent<LayoutElement>();
-            le.preferredHeight = MEMBER_HEIGHT + STATUS_EFFECT_ROW_HEIGHT * 2;
-            le.minHeight = MEMBER_HEIGHT + STATUS_EFFECT_ROW_HEIGHT;
+            var layoutElement = memberGO.AddComponent<LayoutElement>();
+            layoutElement.preferredHeight = MemberHeight + StatusEffectRowHeight * 2;
+            layoutElement.minHeight = MemberHeight + StatusEffectRowHeight;
 
-            var bg = memberGO.AddComponent<Image>();
-            bg.sprite = FiresCore.UI.FiresRoundedSkin.RoundedSprite(8, RowFill, RowBorder, 1);
-            bg.type = Image.Type.Sliced;
-            bg.color = Color.white;
-            bg.raycastTarget = false;
+            var image = memberGO.AddComponent<Image>();
+            image.sprite = FiresCore.UI.FiresRoundedSkin.RoundedSprite(8, RowFill, RowBorder, 1);
+            image.type = Image.Type.Sliced;
+            image.color = Color.white;
+            image.raycastTarget = false;
 
             CreateNameRow(memberGO.transform, ui);
             CreateStatBars(memberGO.transform, ui);
@@ -512,12 +511,12 @@ namespace FiresCore.UI.GroupHud
             rect.offsetMin = new Vector2(4, 0);
             rect.offsetMax = new Vector2(-4, -2);
 
-            var hl = rowGO.AddComponent<HorizontalLayoutGroup>();
-            hl.spacing = 4f;
-            hl.childControlWidth = true;
-            hl.childControlHeight = true;
-            hl.childForceExpandWidth = false;
-            hl.childForceExpandHeight = true;
+            var rowLayout = rowGO.AddComponent<HorizontalLayoutGroup>();
+            rowLayout.spacing = 4f;
+            rowLayout.childControlWidth = true;
+            rowLayout.childControlHeight = true;
+            rowLayout.childForceExpandWidth = false;
+            rowLayout.childForceExpandHeight = true;
 
             ui.NameText = CreateText(rowGO.transform, "Name", "", 11f, NameColor, TextAlignmentOptions.MidlineLeft, true);
             ui.NameText.overflowMode = TextOverflowModes.Ellipsis;
@@ -537,12 +536,12 @@ namespace FiresCore.UI.GroupHud
             rect.offsetMin = new Vector2(4, 2);
             rect.offsetMax = new Vector2(-4, 0);
 
-            var vl = barsGO.AddComponent<VerticalLayoutGroup>();
-            vl.spacing = BAR_SPACING;
-            vl.childControlWidth = true;
-            vl.childControlHeight = true;
-            vl.childForceExpandWidth = true;
-            vl.childForceExpandHeight = false;
+            var barsLayout = barsGO.AddComponent<VerticalLayoutGroup>();
+            barsLayout.spacing = BarSpacing;
+            barsLayout.childControlWidth = true;
+            barsLayout.childControlHeight = true;
+            barsLayout.childForceExpandWidth = true;
+            barsLayout.childForceExpandHeight = false;
 
             ui.HealthBarFill = CreateStatBar(barsGO.transform, "Health", HealthBarColor);
             ui.StaminaBarFill = CreateStatBar(barsGO.transform, "Stamina", StaminaBarColor);
@@ -555,9 +554,9 @@ namespace FiresCore.UI.GroupHud
             var barGO = new GameObject($"{name}Bar");
             barGO.transform.SetParent(parent, false);
             barGO.AddComponent<RectTransform>();
-            var le = barGO.AddComponent<LayoutElement>();
-            le.preferredHeight = BAR_HEIGHT;
-            le.minHeight = BAR_HEIGHT;
+            var layoutElement = barGO.AddComponent<LayoutElement>();
+            layoutElement.preferredHeight = BarHeight;
+            layoutElement.minHeight = BarHeight;
 
             barGO.AddComponent<Image>().color = BarBackgroundColor;
             barGO.GetComponent<Image>().raycastTarget = false;
@@ -595,16 +594,16 @@ namespace FiresCore.UI.GroupHud
             rect.anchorMax = new Vector2(1, 0);
             rect.pivot = new Vector2(0, 0);
             rect.offsetMin = new Vector2(4, 2);
-            rect.offsetMax = new Vector2(-4, 2 + STATUS_EFFECT_ROW_HEIGHT * 2);
+            rect.offsetMax = new Vector2(-4, 2 + StatusEffectRowHeight * 2);
 
             var grid = go.AddComponent<GridLayoutGroup>();
-            grid.cellSize = new Vector2(STATUS_EFFECT_ICON_SIZE + 16f, STATUS_EFFECT_ROW_HEIGHT);
+            grid.cellSize = new Vector2(StatusEffectIconSize + 16f, StatusEffectRowHeight);
             grid.spacing = new Vector2(2f, 2f);
             grid.startCorner = GridLayoutGroup.Corner.UpperLeft;
             grid.startAxis = GridLayoutGroup.Axis.Horizontal;
             grid.childAlignment = TextAnchor.UpperLeft;
             grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-            grid.constraintCount = MAX_EFFECTS_PER_ROW;
+            grid.constraintCount = MaxEffectsPerRow;
 
             ui.StatusEffectContainer = go.transform;
         }
@@ -613,7 +612,7 @@ namespace FiresCore.UI.GroupHud
         {
             var iconUI = new StatusIconUI { Root = new GameObject("EffectIcon") };
             iconUI.Root.transform.SetParent(parent, false);
-            iconUI.Root.AddComponent<RectTransform>().sizeDelta = new Vector2(STATUS_EFFECT_ICON_SIZE + 16f, STATUS_EFFECT_ROW_HEIGHT);
+            iconUI.Root.AddComponent<RectTransform>().sizeDelta = new Vector2(StatusEffectIconSize + 16f, StatusEffectRowHeight);
 
             var iconGO = new GameObject("Icon");
             iconGO.transform.SetParent(iconUI.Root.transform, false);
@@ -621,16 +620,16 @@ namespace FiresCore.UI.GroupHud
             iconRect.anchorMin = new Vector2(0, 0.5f);
             iconRect.anchorMax = new Vector2(0, 0.5f);
             iconRect.pivot = new Vector2(0, 0.5f);
-            iconRect.sizeDelta = new Vector2(STATUS_EFFECT_ICON_SIZE, STATUS_EFFECT_ICON_SIZE);
+            iconRect.sizeDelta = new Vector2(StatusEffectIconSize, StatusEffectIconSize);
             iconUI.Icon = iconGO.AddComponent<Image>();
             iconUI.Icon.raycastTarget = false;
 
             iconUI.TimerText = CreateText(iconUI.Root.transform, "Timer", "", 8f, Color.white, TextAlignmentOptions.MidlineLeft, false);
-            var tRect = iconUI.TimerText.rectTransform;
-            tRect.anchorMin = new Vector2(0, 0);
-            tRect.anchorMax = new Vector2(1, 1);
-            tRect.offsetMin = new Vector2(STATUS_EFFECT_ICON_SIZE + 1, 0);
-            tRect.offsetMax = Vector2.zero;
+            var timerRect = iconUI.TimerText.rectTransform;
+            timerRect.anchorMin = new Vector2(0, 0);
+            timerRect.anchorMax = new Vector2(1, 1);
+            timerRect.offsetMin = new Vector2(StatusEffectIconSize + 1, 0);
+            timerRect.offsetMax = Vector2.zero;
             return iconUI;
         }
 
@@ -638,16 +637,16 @@ namespace FiresCore.UI.GroupHud
         {
             var go = new GameObject(name);
             go.transform.SetParent(parent, false);
-            var t = go.AddComponent<TextMeshProUGUI>();
-            t.text = text;
-            t.fontSize = size;
-            t.color = color;
-            t.alignment = align;
-            t.fontStyle = bold ? FontStyles.Bold : FontStyles.Normal;
-            t.textWrappingMode = TextWrappingModes.NoWrap;
-            t.raycastTarget = false;
-            UIFontConfig.ApplyGameFont(t);   // config-aware (defaults to Averia Sans)
-            return t;
+            var label = go.AddComponent<TextMeshProUGUI>();
+            label.text = text;
+            label.fontSize = size;
+            label.color = color;
+            label.alignment = align;
+            label.fontStyle = bold ? FontStyles.Bold : FontStyles.Normal;
+            label.textWrappingMode = TextWrappingModes.NoWrap;
+            label.raycastTarget = false;
+            UIFontConfig.ApplyGameFont(label);   // config-aware (defaults to Averia Sans)
+            return label;
         }
 
         #endregion
@@ -678,9 +677,9 @@ namespace FiresCore.UI.GroupHud
                 roots[i].transform.SetSiblingIndex(inCol2 ? i - splitAt : i);
             }
 
-            float colW = COLUMN_INNER_WIDTH;
-            float totalW = needsCol2 ? colW * 2 + 4f + 8f : PANEL_WIDTH;
-            float rowH = MEMBER_HEIGHT + STATUS_EFFECT_ROW_HEIGHT * 2 + 4f;
+            float colW = ColumnInnerWidth;
+            float totalW = needsCol2 ? colW * 2 + 4f + 8f : PanelWidth;
+            float rowH = MemberHeight + StatusEffectRowHeight * 2 + 4f;
             int visibleRowsActual = Mathf.Clamp(total, 1, visRows);
             float viewportH = Mathf.Max(30f, visibleRowsActual * rowH + 8f);
 
@@ -724,10 +723,10 @@ namespace FiresCore.UI.GroupHud
         private void SavePosition()
         {
             if (_rootRect == null) return;
-            var p = _rootRect.anchoredPosition;
-            if (float.IsNaN(p.x) || float.IsNaN(p.y) || float.IsInfinity(p.x) || float.IsInfinity(p.y)) return;
-            PlayerPrefs.SetFloat(PREF_POS_X, p.x);
-            PlayerPrefs.SetFloat(PREF_POS_Y, p.y);
+            var position = _rootRect.anchoredPosition;
+            if (float.IsNaN(position.x) || float.IsNaN(position.y) || float.IsInfinity(position.x) || float.IsInfinity(position.y)) return;
+            PlayerPrefs.SetFloat(PrefPosX, position.x);
+            PlayerPrefs.SetFloat(PrefPosY, position.y);
             PlayerPrefs.Save();
         }
 
@@ -735,8 +734,8 @@ namespace FiresCore.UI.GroupHud
         {
             if (_rootRect == null) return;
             Vector2 def = GroupHudConfig.DefaultPosition;
-            float x = PlayerPrefs.GetFloat(PREF_POS_X, def.x);
-            float y = PlayerPrefs.GetFloat(PREF_POS_Y, def.y);
+            float x = PlayerPrefs.GetFloat(PrefPosX, def.x);
+            float y = PlayerPrefs.GetFloat(PrefPosY, def.y);
             if (float.IsNaN(x) || float.IsNaN(y) || float.IsInfinity(x) || float.IsInfinity(y)) { x = def.x; y = def.y; }
             _rootRect.anchoredPosition = new Vector2(x, y);
         }
@@ -744,8 +743,8 @@ namespace FiresCore.UI.GroupHud
         /// <summary>Clears the saved position and snaps back to the configured default.</summary>
         public void ResetPosition()
         {
-            PlayerPrefs.DeleteKey(PREF_POS_X);
-            PlayerPrefs.DeleteKey(PREF_POS_Y);
+            PlayerPrefs.DeleteKey(PrefPosX);
+            PlayerPrefs.DeleteKey(PrefPosY);
             PlayerPrefs.Save();
             if (_rootRect != null) _rootRect.anchoredPosition = GroupHudConfig.DefaultPosition;
         }

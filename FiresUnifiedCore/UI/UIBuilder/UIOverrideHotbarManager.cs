@@ -7,7 +7,7 @@ namespace FiresCore.UI
 {
     /// <summary>
     /// Self-contained hotbar manager for the UI override system.
-    /// Handles activating tool hotbar slots by index — equipping/unequipping
+    /// Handles activating tool hotbar slots by index â€” equipping/unequipping
     /// items through the vanilla game API. Does NOT depend on any external
     /// inventory mod's HotbarManager or ToolBar classes.
     /// </summary>

@@ -114,30 +114,30 @@ namespace FiresCore.Npc.Combat
             // Track melee companions for flanking coordination
             _meleeCompanions.Clear();
 
-            foreach (var comp in companions)
+            foreach (var companion in companions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (!comp.ShouldBeFollowing && !comp.IsInCombat) continue;
+                if (companion == null || companion.isDefeated) continue;
+                if (!companion.ShouldBeFollowing && !companion.IsInCombat) continue;
 
-                var archetype = comp.GetArchetypeController();
+                var archetype = companion.GetArchetypeController();
                 if (archetype == null)
                 {
-                    IssueFreeAction(comp);
+                    IssueFreeAction(companion);
                     continue;
                 }
 
                 if (archetype.IsTank)
-                    IssueTankDirective(comp, archetype, player, threatTable, healthMonitor);
+                    IssueTankDirective(companion, archetype, player, threatTable, healthMonitor);
                 else if (archetype.IsSupport)
-                    IssueSupportDirective(comp, archetype, player, threatTable, healthMonitor);
+                    IssueSupportDirective(companion, archetype, player, threatTable, healthMonitor);
                 else if (archetype.IsDPS)
                 {
-                    IssueDpsDirective(comp, archetype, threatTable, maxPerTarget);
+                    IssueDpsDirective(companion, archetype, threatTable, maxPerTarget);
                     if (archetype.IsMelee)
-                        _meleeCompanions.Add(comp);
+                        _meleeCompanions.Add(companion);
                 }
                 else
-                    IssueFreeAction(comp);
+                    IssueFreeAction(companion);
             }
 
             // Assign flanking angles to melee companions attacking the same target
@@ -148,10 +148,10 @@ namespace FiresCore.Npc.Combat
 
         #region Role-Specific Logic
 
-        private void IssueTankDirective(CompanionController comp, ArchetypeController archetype,
+        private void IssueTankDirective(CompanionController companion, ArchetypeController archetype,
             Player player, SharedThreatTable threatTable, GroupHealthMonitor healthMonitor)
         {
-            var directive = GetOrCreateDirective(comp);
+            var directive = GetOrCreateDirective(companion);
 
             // Priority 1: Intercept enemies targeting the player
             if (threatTable.PrimaryTarget != null && threatTable.PrimaryTarget.IsTargetingPlayer)
@@ -159,7 +159,7 @@ namespace FiresCore.Npc.Combat
                 directive.Set(CombatDirective.InterceptThreat, _directiveExpiryTime);
                 directive.TargetEnemy = threatTable.PrimaryTarget.Enemy;
                 directive.Priority = 100f;
-                threatTable.AssignCompanionToTarget(comp.companionId, directive.TargetEnemy);
+                threatTable.AssignCompanionToTarget(companion.companionId, directive.TargetEnemy);
                 return;
             }
 
@@ -169,7 +169,7 @@ namespace FiresCore.Npc.Combat
                 if (!threat.IsValid || !threat.IsTargetingCompanion) continue;
 
                 // Check if the targeted companion is a support/healer
-                var targetedComp = FindCompanionById(threat.TargetedCompanionId, comp);
+                var targetedComp = FindCompanionById(threat.TargetedCompanionId, companion);
                 if (targetedComp != null)
                 {
                     var targetedArchetype = targetedComp.GetArchetypeController();
@@ -178,14 +178,14 @@ namespace FiresCore.Npc.Combat
                         directive.Set(CombatDirective.InterceptThreat, _directiveExpiryTime);
                         directive.TargetEnemy = threat.Enemy;
                         directive.Priority = 80f;
-                        threatTable.AssignCompanionToTarget(comp.companionId, directive.TargetEnemy);
+                        threatTable.AssignCompanionToTarget(companion.companionId, directive.TargetEnemy);
                         return;
                     }
                 }
             }
 
             // Priority 3: Tank health is low and healer exists — hold position
-            var tankHealth = healthMonitor.GetSnapshot(comp.companionId ?? comp.companionName);
+            var tankHealth = healthMonitor.GetSnapshot(companion.companionId ?? companion.companionName);
             if (tankHealth != null && tankHealth.HealthPercent < 0.3f)
             {
                 directive.Set(CombatDirective.HoldPosition, _directiveExpiryTime);
@@ -199,18 +199,18 @@ namespace FiresCore.Npc.Combat
                 directive.Set(CombatDirective.EngageAndTaunt, _directiveExpiryTime);
                 directive.TargetEnemy = threatTable.PrimaryTarget.Enemy;
                 directive.Priority = 60f;
-                threatTable.AssignCompanionToTarget(comp.companionId, directive.TargetEnemy);
+                threatTable.AssignCompanionToTarget(companion.companionId, directive.TargetEnemy);
             }
             else
             {
-                IssueFreeAction(comp);
+                IssueFreeAction(companion);
             }
         }
 
-        private void IssueSupportDirective(CompanionController comp, ArchetypeController archetype,
+        private void IssueSupportDirective(CompanionController companion, ArchetypeController archetype,
             Player player, SharedThreatTable threatTable, GroupHealthMonitor healthMonitor)
         {
-            var directive = GetOrCreateDirective(comp);
+            var directive = GetOrCreateDirective(companion);
 
             // Priority 1: Heal the most urgent target
             var urgentTarget = healthMonitor.GetMostUrgentHealTarget(0.6f);
@@ -233,7 +233,7 @@ namespace FiresCore.Npc.Combat
             foreach (var threat in threatTable.AllThreats)
             {
                 if (!threat.IsValid) continue;
-                if (threat.IsTargetingCompanion && threat.TargetedCompanionId == comp.companionId)
+                if (threat.IsTargetingCompanion && threat.TargetedCompanionId == companion.companionId)
                 {
                     directive.Set(CombatDirective.StayProtected, _directiveExpiryTime);
                     directive.Priority = 80f;
@@ -263,13 +263,13 @@ namespace FiresCore.Npc.Combat
             }
         }
 
-        private void IssueDpsDirective(CompanionController comp, ArchetypeController archetype,
+        private void IssueDpsDirective(CompanionController companion, ArchetypeController archetype,
             SharedThreatTable threatTable, int maxPerTarget)
         {
-            var directive = GetOrCreateDirective(comp);
+            var directive = GetOrCreateDirective(companion);
 
             // Check if we have a current target from the threat table
-            var assignedTarget = threatTable.GetAssignedTarget(comp.companionId);
+            var assignedTarget = threatTable.GetAssignedTarget(companion.companionId);
 
             // If current target is still alive and not almost dead, keep it (target consistency)
             if (assignedTarget != null && !assignedTarget.IsDead())
@@ -296,7 +296,7 @@ namespace FiresCore.Npc.Combat
                     directive.Set(CombatDirective.FocusTarget, _directiveExpiryTime);
                     directive.TargetEnemy = primary.Enemy;
                     directive.Priority = 60f;
-                    threatTable.AssignCompanionToTarget(comp.companionId, primary.Enemy);
+                    threatTable.AssignCompanionToTarget(companion.companionId, primary.Enemy);
                     return;
                 }
             }
@@ -323,7 +323,7 @@ namespace FiresCore.Npc.Combat
                 directive.Set(CombatDirective.FocusTarget, _directiveExpiryTime);
                 directive.TargetEnemy = bestTarget.Enemy;
                 directive.Priority = 50f;
-                threatTable.AssignCompanionToTarget(comp.companionId, bestTarget.Enemy);
+                threatTable.AssignCompanionToTarget(companion.companionId, bestTarget.Enemy);
             }
             else
             {
@@ -347,9 +347,9 @@ namespace FiresCore.Npc.Combat
             // Group melee companions by their target
             var targetGroups = new Dictionary<Character, List<CompanionController>>();
 
-            foreach (var comp in _meleeCompanions)
+            foreach (var companion in _meleeCompanions)
             {
-                var directive = GetDirective(comp.companionId);
+                var directive = GetDirective(companion.companionId);
                 if (directive == null || directive.TargetEnemy == null) continue;
 
                 if (!targetGroups.TryGetValue(directive.TargetEnemy, out var group))
@@ -357,7 +357,7 @@ namespace FiresCore.Npc.Combat
                     group = new List<CompanionController>(4);
                     targetGroups[directive.TargetEnemy] = group;
                 }
-                group.Add(comp);
+                group.Add(companion);
             }
 
             // Assign angle offsets for groups with 2+ melee
@@ -400,10 +400,10 @@ namespace FiresCore.Npc.Combat
 
         private void IssueRegroupToAll(IReadOnlyList<CompanionController> companions)
         {
-            foreach (var comp in companions)
+            foreach (var companion in companions)
             {
-                if (comp == null) continue;
-                var directive = GetOrCreateDirective(comp);
+                if (companion == null) continue;
+                var directive = GetOrCreateDirective(companion);
                 directive.Set(CombatDirective.Regroup, _directiveExpiryTime);
                 directive.Priority = 200f; // Override everything
             }
@@ -444,9 +444,9 @@ namespace FiresCore.Npc.Combat
 
         #region Helpers
 
-        private RoleDirective GetOrCreateDirective(CompanionController comp)
+        private RoleDirective GetOrCreateDirective(CompanionController companion)
         {
-            string id = comp.companionId ?? comp.companionName;
+            string id = companion.companionId ?? companion.companionName;
             if (!_directives.TryGetValue(id, out var directive))
             {
                 directive = new RoleDirective();
@@ -455,9 +455,9 @@ namespace FiresCore.Npc.Combat
             return directive;
         }
 
-        private void IssueFreeAction(CompanionController comp)
+        private void IssueFreeAction(CompanionController companion)
         {
-            var directive = GetOrCreateDirective(comp);
+            var directive = GetOrCreateDirective(companion);
             directive.Set(CombatDirective.FreeAction, _directiveExpiryTime);
         }
 
@@ -465,11 +465,11 @@ namespace FiresCore.Npc.Combat
         {
             if (string.IsNullOrEmpty(companionId) || anyGroupMember == null) return null;
 
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null) continue;
-                if (comp.companionId == companionId && comp.ownerPlayerId == anyGroupMember.ownerPlayerId)
-                    return comp;
+                if (companion == null) continue;
+                if (companion.companionId == companionId && companion.ownerPlayerId == anyGroupMember.ownerPlayerId)
+                    return companion;
             }
             return null;
         }

@@ -135,7 +135,7 @@ namespace FiresCore.Npc.Patrol
             private float _smoothing;
             private FiresContextMenu.MarkerHitTester _tester;
 
-            public void SetSmoothing(float s) { _smoothing = Mathf.Clamp01(s); RebuildLine(); }
+            public void SetSmoothing(float smoothing) { _smoothing = Mathf.Clamp01(smoothing); RebuildLine(); }
 
             // Re-sample the LineRenderer from the current node positions + smoothing. Called on build, on a
             // smoothing change, and on every node drag — so dragging a checkpoint re-curves the segments in
@@ -143,9 +143,9 @@ namespace FiresCore.Npc.Patrol
             private void RebuildLine()
             {
                 if (_line == null || _nodeWorld.Count < 2) return;
-                var pts = PatrolSpline.Densify(_nodeWorld, _loop, _smoothing, CurveSubdiv);
-                _line.positionCount = pts.Count;
-                for (int i = 0; i < pts.Count; i++) _line.SetPosition(i, pts[i]);
+                var points = PatrolSpline.Densify(_nodeWorld, _loop, _smoothing, CurveSubdiv);
+                _line.positionCount = points.Count;
+                for (int i = 0; i < points.Count; i++) _line.SetPosition(i, points[i]);
             }
 
             public int Count => _nodeWorld.Count;
@@ -157,54 +157,54 @@ namespace FiresCore.Npc.Patrol
             public void ApplySpeedColors(SpeedPreset preset)
             {
                 var route = PatrolRouteManager.GetRoute(_route);
-                var pts = route?.Points;
-                if (pts == null || pts.Count == 0) return;
+                var points = route?.Points;
+                if (points == null || points.Count == 0) return;
 
-                var cum = new float[pts.Count];
-                for (int i = 1; i < pts.Count; i++) cum[i] = cum[i - 1] + Vector3.Distance(pts[i - 1], pts[i]);
+                var cum = new float[points.Count];
+                for (int i = 1; i < points.Count; i++) cum[i] = cum[i - 1] + Vector3.Distance(points[i - 1], points[i]);
 
-                int n = Mathf.Min(pts.Count, _spheres.Count);
-                for (int i = 0; i < n; i++)
+                int count = Mathf.Min(points.Count, _spheres.Count);
+                for (int i = 0; i < count; i++)
                 {
                     float mul = 1f;
                     var sec = preset?.SectionAt(i);
                     if (sec != null)
                     {
-                        int lo = Mathf.Clamp(sec.Low, 0, pts.Count - 1);
-                        int hi = Mathf.Clamp(sec.High, 0, pts.Count - 1);
-                        float len = cum[hi] - cum[lo];
-                        float u = len > 1e-3f ? (cum[Mathf.Clamp(i, lo, hi)] - cum[lo]) / len : 0f;
-                        mul = sec.Sample(u);
+                        int low = Mathf.Clamp(sec.Low, 0, points.Count - 1);
+                        int high = Mathf.Clamp(sec.High, 0, points.Count - 1);
+                        float len = cum[high] - cum[low];
+                        float sectionProgress = len > 1e-3f ? (cum[Mathf.Clamp(i, low, high)] - cum[low]) / len : 0f;
+                        mul = sec.Sample(sectionProgress);
                     }
                     bool isStop = preset?.StopAt(i) != null;
                     bool mustHit = route.MustHit.Contains(i);
-                    Color c = isStop ? StopMarkColor : (mustHit ? MustHitColor : SpeedColor(mul));
-                    float sc = isStop ? StopScale : (mustHit ? MustHitScale : NodeScale);
-                    SetNode(i, c, sc);
+                    Color color = isStop ? StopMarkColor : (mustHit ? MustHitColor : SpeedColor(mul));
+                    float scale = isStop ? StopScale : (mustHit ? MustHitScale : NodeScale);
+                    SetNode(i, color, scale);
                 }
             }
 
             public void ClearSpeedColors()
             {
-                int n = Mathf.Min(_baseColors.Count, _spheres.Count);
-                for (int i = 0; i < n; i++) SetNode(i, _baseColors[i], NodeScale);
+                int count = Mathf.Min(_baseColors.Count, _spheres.Count);
+                for (int i = 0; i < count; i++) SetNode(i, _baseColors[i], NodeScale);
             }
 
             private void SetNode(int i, Color color, float scale)
             {
                 if (i < 0 || i >= _spheres.Count || _spheres[i] == null) return;
-                var mr = _spheres[i].GetComponent<MeshRenderer>();
-                if (mr != null && mr.sharedMaterial != null) mr.sharedMaterial.color = color;
+                var renderer = _spheres[i].GetComponent<MeshRenderer>();
+                if (renderer != null && renderer.sharedMaterial != null) renderer.sharedMaterial.color = color;
                 _spheres[i].localScale = Vector3.one * scale;
             }
 
             // Slow (≈0.4×) green → base (≈1×) yellow → fast (≈1.6×+) red.
             private static Color SpeedColor(float mul)
             {
-                float t = Mathf.InverseLerp(0.4f, 1.6f, mul);
-                return t < 0.5f
-                    ? Color.Lerp(new Color(0.25f, 0.9f, 0.3f), new Color(1f, 0.9f, 0.2f), t * 2f)
-                    : Color.Lerp(new Color(1f, 0.9f, 0.2f), new Color(1f, 0.25f, 0.2f), (t - 0.5f) * 2f);
+                float speedBlend = Mathf.InverseLerp(0.4f, 1.6f, mul);
+                return speedBlend < 0.5f
+                    ? Color.Lerp(new Color(0.25f, 0.9f, 0.3f), new Color(1f, 0.9f, 0.2f), speedBlend * 2f)
+                    : Color.Lerp(new Color(1f, 0.9f, 0.2f), new Color(1f, 0.25f, 0.2f), (speedBlend - 0.5f) * 2f);
             }
 
             /// <summary>Live-move a node's sphere + re-curve the line (no save). A drag re-smooths the neighbouring
@@ -220,44 +220,44 @@ namespace FiresCore.Npc.Patrol
             public void Build(PatrolRoute route, string routeName)
             {
                 _route = routeName;
-                var pts = route.Points;
+                var points = route.Points;
                 bool loop = route.IsLoop;
                 _loop = loop;
                 _smoothing = Mathf.Clamp01(route.Smoothing);
 
                 var lineGo = new GameObject("Line");
                 lineGo.transform.SetParent(transform, false);
-                var lr = lineGo.AddComponent<LineRenderer>();
-                _line = lr;
-                lr.material = new Material(Shader.Find("Sprites/Default"));
-                lr.widthMultiplier = 0.25f;
-                lr.numCornerVertices = 2;
-                lr.numCapVertices = 2;
-                lr.useWorldSpace = true;
-                lr.startColor = lr.endColor = LineColor;
+                var line = lineGo.AddComponent<LineRenderer>();
+                _line = line;
+                line.material = new Material(Shader.Find("Sprites/Default"));
+                line.widthMultiplier = 0.25f;
+                line.numCornerVertices = 2;
+                line.numCapVertices = 2;
+                line.useWorldSpace = true;
+                line.startColor = line.endColor = LineColor;
 
                 var nodeShader = Shader.Find("Unlit/Color") ?? Shader.Find("Sprites/Default");
-                for (int i = 0; i < pts.Count; i++)
+                for (int i = 0; i < points.Count; i++)
                 {
-                    Vector3 world = pts[i] + Vector3.up * 0.3f;
+                    Vector3 world = points[i] + Vector3.up * 0.3f;
                     _nodeWorld.Add(world);
 
-                    var s = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    s.name = "Node" + i;
-                    s.transform.SetParent(transform, false);
-                    s.transform.position = world;
+                    var sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    sphere.name = "Node" + i;
+                    sphere.transform.SetParent(transform, false);
+                    sphere.transform.position = world;
                     bool mustHit = route.MustHit.Contains(i);
-                    s.transform.localScale = Vector3.one * (mustHit ? MustHitScale : NodeScale);
-                    _spheres.Add(s.transform);
-                    var col = s.GetComponent<Collider>(); if (col != null) Destroy(col);
-                    var m = new Material(nodeShader);
+                    sphere.transform.localScale = Vector3.one * (mustHit ? MustHitScale : NodeScale);
+                    _spheres.Add(sphere.transform);
+                    var sphereCollider = sphere.GetComponent<Collider>(); if (sphereCollider != null) Destroy(sphereCollider);
+                    var material = new Material(nodeShader);
                     Color baseColor = mustHit ? MustHitColor
                                     : (!loop && i == 0) ? StartColor
-                                    : (!loop && i == pts.Count - 1) ? EndColor
+                                    : (!loop && i == points.Count - 1) ? EndColor
                                     : NodeColor;
-                    m.color = baseColor;
+                    material.color = baseColor;
                     _baseColors.Add(baseColor);
-                    s.GetComponent<MeshRenderer>().sharedMaterial = m;
+                    sphere.GetComponent<MeshRenderer>().sharedMaterial = material;
                 }
 
                 RebuildLine();   // draw the (optionally smoothed) polyline through the nodes
@@ -287,7 +287,7 @@ namespace FiresCore.Npc.Patrol
                 float best = float.MaxValue;
                 int bestIdx = -1;
                 for (int i = 0; i < _nodeWorld.Count; i++)
-                    if (RaySphere(ray, _nodeWorld[i], NodePickRadius, out float d) && d < best) { best = d; bestIdx = i; }
+                    if (RaySphere(ray, _nodeWorld[i], NodePickRadius, out float distance) && distance < best) { best = distance; bestIdx = i; }
                 if (bestIdx < 0) return false;
                 target = new ContextTarget
                 {

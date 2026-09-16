@@ -4,22 +4,9 @@ using FiresCore.Npc.Combat;
 namespace FiresCore.Npc.Movement
 {
     /// <summary>
-    /// Handles stuck detection and jump logic for companions.
-    /// 
-    /// RESPONSIBILITIES:
-    /// - Detect when companion is stuck (not making progress)
-    /// - Determine when to jump over obstacles
-    /// - Track grounded state
-    /// - Execute jumps when needed
-    /// 
-    /// DESIGN:
-    /// This is a helper class, not a MonoBehaviour. It's instantiated and owned
-    /// by the movement coordinator which calls its methods as needed.
-    /// 
-    /// STUCK DETECTION PHILOSOPHY:
-    /// - Only trigger when actually trying to follow (not idle, not in combat)
-    /// - Requires extended movement failure before considering stuck
-    /// - Conservative - false positives cause weird jumping
+    /// Stuck detection and obstacle jumps while following, owned by the movement coordinator. It only engages
+    /// when the companion is trying to follow, and waits for sustained lack of progress, because false positives
+    /// produce odd jumping.
     /// </summary>
     public class StuckDetectionHandler
     {
@@ -62,8 +49,8 @@ namespace FiresCore.Npc.Movement
         private bool _shouldCheckStuck;
         private float _lastStuckEvaluation;
         
-        private const float STUCK_EVAL_INTERVAL = 2.0f;
-        private const float GROUNDED_CHECK_INTERVAL = 0.2f;
+        private const float StuckEvalInterval = 2.0f;
+        private const float GroundedCheckInterval = 0.2f;
         
         public static bool VerboseLogging = false;
         
@@ -145,7 +132,7 @@ namespace FiresCore.Npc.Movement
             if (isInTransition) return;
             if (isIdle) return;
             
-            if (Time.time - _lastStuckEvaluation < STUCK_EVAL_INTERVAL) return;
+            if (Time.time - _lastStuckEvaluation < StuckEvalInterval) return;
             _lastStuckEvaluation = Time.time;
             
             float timeSinceStuckCheck = Time.time - _stuckCheckStartTime;

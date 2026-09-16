@@ -22,7 +22,8 @@ namespace FiresCore.ClientLogRelay.Transport
         }
 
         private static readonly Dictionary<long, TransferState> _activeTransfers = new Dictionary<long, TransferState>();
-        private const float TRANSFER_TIMEOUT = 60f;
+        private const float TransferTimeout = 60f;
+        private const long UpdateTransferKeyOffset = 1000000000L;
 
         public class TransferResult
         {
@@ -157,13 +158,13 @@ namespace FiresCore.ClientLogRelay.Transport
         {
             float now = Time.realtimeSinceStartup;
             var timedOut = _activeTransfers
-                .Where(kvp => (now - kvp.Value.LastChunkTime) > TRANSFER_TIMEOUT)
+                .Where(kvp => (now - kvp.Value.LastChunkTime) > TransferTimeout)
                 .Select(kvp => kvp.Key)
                 .ToList();
 
             foreach (var peerId in timedOut)
             {
-                Debug.LogWarning($"[ClientLogChunkedTransfer] Transfer from peer {peerId} timed out after {TRANSFER_TIMEOUT}s - cleaning up");
+                Debug.LogWarning($"[ClientLogChunkedTransfer] Transfer from peer {peerId} timed out after {TransferTimeout}s - cleaning up");
                 _activeTransfers.Remove(peerId);
             }
         }
@@ -187,7 +188,7 @@ namespace FiresCore.ClientLogRelay.Transport
         {
             // Reuse the same transfer state system, but use a different key to avoid conflicts
             // with ongoing initial uploads
-            long updateKey = peerId + 1000000000L; // Offset to avoid collision
+            long updateKey = peerId + UpdateTransferKeyOffset; // Offset to avoid collision
 
             if (!_activeTransfers.TryGetValue(updateKey, out var state))
             {

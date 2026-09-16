@@ -47,7 +47,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Sprites loaded from cached asset bundles, keyed by sprite name.
-        /// This is the primary sprite source � provides real sprites with all original metadata.
+        /// This is the primary sprite source - provides real sprites with all original metadata.
         /// </summary>
         private static readonly Dictionary<string, Sprite> _bundleSprites =
             new Dictionary<string, Sprite>(StringComparer.OrdinalIgnoreCase);
@@ -71,9 +71,7 @@ namespace FiresCore.UI
         /// </summary>
         public static bool ForceRecache { get; set; }
 
-        // ???????????????????????????????????????
-        //  Public API � Caching (used during capture)
-        // ???????????????????????????????????????
+        //  Public API - Caching (used during capture)
 
         /// <summary>
         /// Inspects an Image component's sprite during capture. If the sprite appears to come
@@ -91,7 +89,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Caches a sprite to disk if it appears to be from a mod. Returns the sprite name
-        /// to store in the layout data � either "cached:filename" or the original name.
+        /// to store in the layout data - either "cached:filename" or the original name.
         /// </summary>
         public static string CacheSprite(Sprite sprite, string fallbackName = null)
         {
@@ -184,9 +182,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
-        //  Public API � Loading (used by renderer)
-        // ???????????????????????????????????????
+        //  Public API - Loading (used by renderer)
 
         /// <summary>
         /// Caches a RawImage's texture to disk. RawImages use Texture2D directly instead of
@@ -321,20 +317,20 @@ namespace FiresCore.UI
                 // Look up manifest entry for sliced sprite metadata (border, pivot, ppu)
                 Vector4 border = Vector4.zero;
                 Vector2 pivot = new Vector2(0.5f, 0.5f);
-                float ppu = 100f;
+                float pixelsPerUnit = 100f;
                 EnsureManifest();
                 if (_manifest != null && _manifest.Entries != null)
                 {
                     for (int i = 0; i < _manifest.Entries.Count; i++)
                     {
-                        var me = _manifest.Entries[i];
-                        string meFile = Path.GetFileNameWithoutExtension(me.CachedFile);
+                        var entry = _manifest.Entries[i];
+                        string meFile = Path.GetFileNameWithoutExtension(entry.CachedFile);
                         if (string.Equals(meFile, cacheId, StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(me.CachedFile, fileName, StringComparison.OrdinalIgnoreCase))
+                            string.Equals(entry.CachedFile, fileName, StringComparison.OrdinalIgnoreCase))
                         {
-                            border = new Vector4(me.BorderL, me.BorderB, me.BorderR, me.BorderT);
-                            pivot = new Vector2(me.PivotX, me.PivotY);
-                            ppu = me.PixelsPerUnit > 0 ? me.PixelsPerUnit : 100f;
+                            border = new Vector4(entry.BorderL, entry.BorderB, entry.BorderR, entry.BorderT);
+                            pivot = new Vector2(entry.PivotX, entry.PivotY);
+                            pixelsPerUnit = entry.PixelsPerUnit > 0 ? entry.PixelsPerUnit : 100f;
                             break;
                         }
                     }
@@ -342,7 +338,7 @@ namespace FiresCore.UI
 
                 var sprite = Sprite.Create(tex,
                     new Rect(0, 0, tex.width, tex.height),
-                    pivot, ppu, 0, SpriteMeshType.FullRect, border);
+                    pivot, pixelsPerUnit, 0, SpriteMeshType.FullRect, border);
 
                 _loadedCache[cacheId] = sprite;
                 return sprite;
@@ -425,18 +421,16 @@ namespace FiresCore.UI
             _loadedCache.Clear();
         }
 
-        // ???????????????????????????????????????
         //  Bundle-based sprite loading (primary source)
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Loads all cached .bundle files from the bundles directory and indexes every
         /// Sprite asset they contain. This gives us the REAL sprite objects with full
         /// original metadata (9-slice borders, pivot, pixels-per-unit, atlas rects,
-        /// compression, etc.) � exactly as the source mod shipped them.
+        /// compression, etc.) - exactly as the source mod shipped them.
         ///
         /// Call this once early (e.g., from ScanAndCacheAllModBundles or Init).
-        /// Safe to call multiple times � only loads once unless force is true.
+        /// Safe to call multiple times - only loads once unless force is true.
         /// </summary>
         public static void LoadCachedBundles(bool force = false)
         {
@@ -477,24 +471,24 @@ namespace FiresCore.UI
                     try { sprites = bundle.LoadAllAssets<Sprite>(); } catch { }
                     if (sprites != null)
                     {
-                        for (int s = 0; s < sprites.Length; s++)
+                        for (int spriteIndex = 0; spriteIndex < sprites.Length; spriteIndex++)
                         {
-                            if (sprites[s] == null || string.IsNullOrEmpty(sprites[s].name)) continue;
-                            string spriteName = sprites[s].name;
+                            if (sprites[spriteIndex] == null || string.IsNullOrEmpty(sprites[spriteIndex].name)) continue;
+                            string spriteName = sprites[spriteIndex].name;
 
                             // Store by plain name
                             if (!_bundleSprites.ContainsKey(spriteName))
                             {
-                                _bundleSprites[spriteName] = sprites[s];
+                                _bundleSprites[spriteName] = sprites[spriteIndex];
                                 indexedSprites++;
                             }
 
                             // Also store by qualified "texture:sprite" name for atlas lookups
-                            if (sprites[s].texture != null && !string.IsNullOrEmpty(sprites[s].texture.name))
+                            if (sprites[spriteIndex].texture != null && !string.IsNullOrEmpty(sprites[spriteIndex].texture.name))
                             {
-                                string qualifiedName = sprites[s].texture.name + ":" + spriteName;
+                                string qualifiedName = sprites[spriteIndex].texture.name + ":" + spriteName;
                                 if (!_bundleSprites.ContainsKey(qualifiedName))
-                                    _bundleSprites[qualifiedName] = sprites[s];
+                                    _bundleSprites[qualifiedName] = sprites[spriteIndex];
                             }
                         }
                     }
@@ -504,19 +498,19 @@ namespace FiresCore.UI
                     try { textures = bundle.LoadAllAssets<Texture2D>(); } catch { }
                     if (textures != null)
                     {
-                        for (int t = 0; t < textures.Length; t++)
+                        for (int textureIndex = 0; textureIndex < textures.Length; textureIndex++)
                         {
-                            if (textures[t] == null || string.IsNullOrEmpty(textures[t].name)) continue;
-                            if (textures[t].width <= 0 || textures[t].height <= 0) continue;
+                            if (textures[textureIndex] == null || string.IsNullOrEmpty(textures[textureIndex].name)) continue;
+                            if (textures[textureIndex].width <= 0 || textures[textureIndex].height <= 0) continue;
 
-                            string texName = textures[t].name;
+                            string texName = textures[textureIndex].name;
                             // Only create a sprite wrapper if we don't already have a real sprite for this name
                             if (!_bundleSprites.ContainsKey(texName))
                             {
                                 try
                                 {
-                                    var texSprite = Sprite.Create(textures[t],
-                                        new Rect(0, 0, textures[t].width, textures[t].height),
+                                    var texSprite = Sprite.Create(textures[textureIndex],
+                                        new Rect(0, 0, textures[textureIndex].width, textures[textureIndex].height),
                                         new Vector2(0.5f, 0.5f), 100f);
                                     if (texSprite != null)
                                     {
@@ -555,7 +549,7 @@ namespace FiresCore.UI
             // Only search sprites that have already been indexed via LoadRequiredBundles(),
             // IndexAllLiveModBundles(), or IndexSpritesFromBundle(). We do NOT auto-call
             // LoadCachedBundles() here because that synchronously loads every .bundle file
-            // from disk � which is catastrophically expensive during capture/rendering and
+            // from disk - which is catastrophically expensive during capture/rendering and
             // causes server disconnects.
 
             // Direct lookup
@@ -595,14 +589,14 @@ namespace FiresCore.UI
                     var allBundles = AssetBundle.GetAllLoadedAssetBundles();
                     if (allBundles != null)
                     {
-                        foreach (var b in allBundles)
+                        foreach (var bundle in allBundles)
                         {
-                            if (b == null) continue;
+                            if (bundle == null) continue;
                             try
                             {
-                                if (string.Equals(b.name, bundleForSprite, StringComparison.OrdinalIgnoreCase))
+                                if (string.Equals(bundle.name, bundleForSprite, StringComparison.OrdinalIgnoreCase))
                                 {
-                                    IndexSpritesFromBundle(b, b.name);
+                                    IndexSpritesFromBundle(bundle, bundle.name);
                                     loadedLive = true;
                                     break;
                                 }
@@ -708,11 +702,11 @@ namespace FiresCore.UI
                 foreach (var bundle in allBundles)
                 {
                     if (bundle == null) continue;
-                    string bName;
-                    try { bName = bundle.name; } catch { continue; }
-                    if (string.IsNullOrEmpty(bName)) continue;
+                    string internalBundleName;
+                    try { internalBundleName = bundle.name; } catch { continue; }
+                    if (string.IsNullOrEmpty(internalBundleName)) continue;
                     if (IsVanillaBundle(bundle)) continue;
-                    liveBundles[bName] = bundle;
+                    liveBundles[internalBundleName] = bundle;
                 }
 
                 foreach (string bundleName in bundleNames)
@@ -822,17 +816,17 @@ namespace FiresCore.UI
                 {
                     if (bundle == null) continue;
 
-                    string bName;
-                    try { bName = bundle.name; } catch { continue; }
-                    if (string.IsNullOrEmpty(bName)) continue;
+                    string bundleName;
+                    try { bundleName = bundle.name; } catch { continue; }
+                    if (string.IsNullOrEmpty(bundleName)) continue;
 
-                    if (!bundleNames.Contains(bName)) continue;
+                    if (!bundleNames.Contains(bundleName)) continue;
                     if (IsVanillaBundle(bundle)) continue;
                     try { if (UIBuilderHost.AssetBundle != null && bundle == UIBuilderHost.AssetBundle) continue; } catch { }
 
-                    int count = IndexSpritesFromBundle(bundle, bName);
-                    indexed.Add(bName);
-                    Debug.Log($"[UIBuilderAssetCache] Indexed {count} sprites from live mod bundle '{bName}'");
+                    int count = IndexSpritesFromBundle(bundle, bundleName);
+                    indexed.Add(bundleName);
+                    Debug.Log($"[UIBuilderAssetCache] Indexed {count} sprites from live mod bundle '{bundleName}'");
                 }
             }
             catch (Exception ex)
@@ -855,22 +849,22 @@ namespace FiresCore.UI
             try { sprites = bundle.LoadAllAssets<Sprite>(); } catch { }
             if (sprites != null)
             {
-                for (int s = 0; s < sprites.Length; s++)
+                for (int spriteIndex = 0; spriteIndex < sprites.Length; spriteIndex++)
                 {
-                    if (sprites[s] == null || string.IsNullOrEmpty(sprites[s].name)) continue;
-                    string spriteName = sprites[s].name;
+                    if (sprites[spriteIndex] == null || string.IsNullOrEmpty(sprites[spriteIndex].name)) continue;
+                    string spriteName = sprites[spriteIndex].name;
 
                     if (!_bundleSprites.ContainsKey(spriteName))
                     {
-                        _bundleSprites[spriteName] = sprites[s];
+                        _bundleSprites[spriteName] = sprites[spriteIndex];
                         indexedSprites++;
                     }
 
-                    if (sprites[s].texture != null && !string.IsNullOrEmpty(sprites[s].texture.name))
+                    if (sprites[spriteIndex].texture != null && !string.IsNullOrEmpty(sprites[spriteIndex].texture.name))
                     {
-                        string qualifiedName = sprites[s].texture.name + ":" + spriteName;
+                        string qualifiedName = sprites[spriteIndex].texture.name + ":" + spriteName;
                         if (!_bundleSprites.ContainsKey(qualifiedName))
-                            _bundleSprites[qualifiedName] = sprites[s];
+                            _bundleSprites[qualifiedName] = sprites[spriteIndex];
                     }
                 }
             }
@@ -879,18 +873,18 @@ namespace FiresCore.UI
             try { textures = bundle.LoadAllAssets<Texture2D>(); } catch { }
             if (textures != null)
             {
-                for (int t = 0; t < textures.Length; t++)
+                for (int textureIndex = 0; textureIndex < textures.Length; textureIndex++)
                 {
-                    if (textures[t] == null || string.IsNullOrEmpty(textures[t].name)) continue;
-                    if (textures[t].width <= 0 || textures[t].height <= 0) continue;
+                    if (textures[textureIndex] == null || string.IsNullOrEmpty(textures[textureIndex].name)) continue;
+                    if (textures[textureIndex].width <= 0 || textures[textureIndex].height <= 0) continue;
 
-                    string texName = textures[t].name;
+                    string texName = textures[textureIndex].name;
                     if (!_bundleSprites.ContainsKey(texName))
                     {
                         try
                         {
-                            var texSprite = Sprite.Create(textures[t],
-                                new Rect(0, 0, textures[t].width, textures[t].height),
+                            var texSprite = Sprite.Create(textures[textureIndex],
+                                new Rect(0, 0, textures[textureIndex].width, textures[textureIndex].height),
                                 new Vector2(0.5f, 0.5f), 100f);
                             if (texSprite != null)
                             {
@@ -913,7 +907,7 @@ namespace FiresCore.UI
         /// Unlike LoadCachedBundles(), this never tries to load .bundle files from disk
         /// (which would conflict with already-loaded bundles). It only indexes sprites
         /// from bundles that are already in memory.
-        /// Safe to call multiple times � skips bundles already indexed.
+        /// Safe to call multiple times - skips bundles already indexed.
         /// </summary>
         public static void IndexAllLiveModBundles()
         {
@@ -927,16 +921,16 @@ namespace FiresCore.UI
                 {
                     if (bundle == null) continue;
 
-                    string bName;
-                    try { bName = bundle.name; } catch { continue; }
-                    if (string.IsNullOrEmpty(bName)) continue;
+                    string bundleName;
+                    try { bundleName = bundle.name; } catch { continue; }
+                    if (string.IsNullOrEmpty(bundleName)) continue;
                     if (IsVanillaBundle(bundle)) continue;
                     try { if (UIBuilderHost.AssetBundle != null && bundle == UIBuilderHost.AssetBundle) continue; } catch { }
 
                     // Skip if we've already indexed this bundle
-                    if (_loadedBundles.ContainsKey(bName)) continue;
+                    if (_loadedBundles.ContainsKey(bundleName)) continue;
 
-                    int count = IndexSpritesFromBundle(bundle, bName);
+                    int count = IndexSpritesFromBundle(bundle, bundleName);
                     if (count > 0)
                         totalIndexed += count;
                 }
@@ -964,9 +958,7 @@ namespace FiresCore.UI
             _bundleSpritesLoaded = false;
         }
 
-        // ???????????????????????????????????????
         //  Proactive mod bundle scanning (chunked / coroutine-safe)
-        // ???????????????????????????????????????
 
         private static bool _modBundlesScanned;
 
@@ -986,7 +978,7 @@ namespace FiresCore.UI
         /// Maximum wall-clock milliseconds the scanner is allowed to spend per frame
         /// before yielding. 4 ms keeps us well under the 16 ms budget for 60 fps and
         /// leaves plenty of headroom for the game's own work. The previous 8 ms budget
-        /// was too generous � individual sprite cache operations (GPU blit + ReadPixels +
+        /// was too generous - individual sprite cache operations (GPU blit + ReadPixels +
         /// file I/O) frequently exceed 8 ms each, causing frame spikes that accumulate
         /// into server heartbeat timeouts and disconnects.
         /// </summary>
@@ -1015,7 +1007,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Known Valheim asset bundle name patterns. These are the game's own bundles
-        /// that ship in valheim_Data/ � we never need to cache assets from these because
+        /// that ship in valheim_Data/ - we never need to cache assets from these because
         /// they're always available at runtime.
         /// </summary>
         private static readonly string[] VanillaBundlePatterns =
@@ -1075,25 +1067,10 @@ namespace FiresCore.UI
         }
 
         /// <summary>
-        /// Proactively scans ALL loaded asset bundles from other mods, extracts every
-        /// Sprite and Texture2D asset from them, and caches them to our disk cache.
-        /// Also scans BepInEx plugins and config directories for loose PNG files
-        /// (e.g., Minimal UI's MUI_*.png pattern) and caches those too.
-        ///
-        /// Only caches MODDED assets � vanilla game bundles and Unity built-in assets
-        /// are skipped since they're always available at runtime.
-        ///
-        /// This is the key method that "steals" assets from other mods so our layouts
-        /// work even after those mods are removed. Call this during capture or before
-        /// applying overrides.
-        ///
-        /// Safe to call multiple times � only runs the full scan once per session
-        /// unless force is true.
-        ///
-        /// This is a lightweight kick-off method. The actual heavy scanning runs as a
-        /// coroutine over many frames via <see cref="ScanAndCacheAllModBundlesCoroutine"/>.
-        /// If no MonoBehaviour host is available (e.g. during unit tests) the scan runs
-        /// synchronously on the current frame as a fallback.
+        /// Starts a background scan that copies every sprite and texture from other mods' asset bundles, plus
+        /// loose PNGs under the plugins and config folders, into the disk cache, so layouts keep working after
+        /// those mods are removed. Vanilla and built-in assets are skipped. Runs once per session unless
+        /// <paramref name="force"/> is set, and synchronously when no MonoBehaviour host exists.
         /// </summary>
         public static void ScanAndCacheAllModBundles(bool force = false)
         {
@@ -1116,32 +1093,23 @@ namespace FiresCore.UI
             else
             {
                 // Fallback: run synchronously (step the enumerator without yielding)
-                Debug.LogWarning("[UIBuilderAssetCache] No MonoBehaviour host available � running scan synchronously.");
+                Debug.LogWarning("[UIBuilderAssetCache] No MonoBehaviour host available - running scan synchronously.");
                 var enumerator = ScanAndCacheAllModBundlesCoroutine();
                 while (enumerator.MoveNext()) { }
             }
         }
 
         /// <summary>
-        /// Coroutine that performs the full mod asset scan over many frames.
-        /// Yields periodically based on <see cref="ScanFrameBudgetMs"/> to keep
-        /// frame times short and prevent server heartbeat timeouts.
-        ///
-        /// Phases:
-        ///   1. Scan loaded AssetBundles for sprites and textures
-        ///   2. Scan BepInEx plugin fields for sprites and bundles
-        ///   3. Scan loose PNG files in plugins/config directories
-        ///   4. Save raw .bundle files for later embedding
-        ///
-        /// Each phase yields between individual bundles/plugins/directories, and
-        /// within large asset arrays if the per-frame budget is exceeded.
+        /// The frame-budgeted scan behind ScanAndCacheAllModBundles: loaded bundles, plugin fields, loose PNGs, then raw
+        /// bundle files, yielding whenever <see cref="ScanFrameBudgetMs"/> is exceeded so frames and server heartbeats
+        /// aren't starved.
         /// </summary>
         public static System.Collections.IEnumerator ScanAndCacheAllModBundlesCoroutine()
         {
             if (_scanInProgress) yield break;
             _scanInProgress = true;
             ScanProgress = 0f;
-            ScanStatusLabel = "Starting mod asset scan�";
+            ScanStatusLabel = "Starting mod asset scan…";
 
             int cachedSprites = 0;
             int cachedTextures = 0;
@@ -1183,9 +1151,9 @@ namespace FiresCore.UI
                     foreach (var kvp in Chainloader.PluginInfos)
                     {
                         if (kvp.Value == null || kvp.Value.Instance == null) continue;
-                        Type pt = kvp.Value.Instance.GetType();
-                        string ns = pt.Namespace ?? "";
-                        if (ns.StartsWith("VerdantsAscent", StringComparison.OrdinalIgnoreCase)) continue;
+                        Type instanceType = kvp.Value.Instance.GetType();
+                        string pluginNamespace = instanceType.Namespace ?? "";
+                        if (pluginNamespace.StartsWith("VerdantsAscent", StringComparison.OrdinalIgnoreCase)) continue;
                         pluginList.Add(kvp);
                     }
                 }
@@ -1196,26 +1164,26 @@ namespace FiresCore.UI
             int totalUnits = modBundles.Count + pluginList.Count + 2 /* loose files + raw bundles */;
             int completedUnits = 0;
 
-            var sw = new System.Diagnostics.Stopwatch();
+            var stopwatch = new System.Diagnostics.Stopwatch();
 
-            // ??? Phase 1: Index sprites from loaded AssetBundles (memory only, no PNG extraction) ???
-            // We do NOT call CacheSprite() here � that triggers Graphics.Blit + ReadPixels +
+            // Phase 1: Index sprites from loaded AssetBundles (memory only, no PNG extraction)
+            // We do NOT call CacheSprite() here - that triggers Graphics.Blit + ReadPixels +
             // File.WriteAllBytes for EVERY sprite, which is extremely expensive and causes
             // server disconnects. Instead, we just index sprites into _bundleSprites for fast
             // lookup. The raw .bundle files are cached to disk in Phase 4, which is the
             // authoritative sprite source. PNG extraction only happens during explicit capture
             // operations (when the user captures a UI in the editor).
-            for (int b = 0; b < modBundles.Count; b++)
+            for (int bundleIndex = 0; bundleIndex < modBundles.Count; bundleIndex++)
             {
-                var bundle = modBundles[b];
+                var bundle = modBundles[bundleIndex];
                 if (bundle == null) { completedUnits++; continue; }
 
                 string bundleName = "unknown";
                 try { bundleName = bundle.name ?? "unnamed"; } catch { }
-                ScanStatusLabel = $"Phase 1/{4}: Indexing bundle '{bundleName}' ({b + 1}/{modBundles.Count})";
+                ScanStatusLabel = $"Phase 1/{4}: Indexing bundle '{bundleName}' ({bundleIndex + 1}/{modBundles.Count})";
                 ScanProgress = (float)completedUnits / totalUnits;
 
-                sw.Restart();
+                stopwatch.Restart();
 
                 try
                 {
@@ -1230,19 +1198,19 @@ namespace FiresCore.UI
                 completedUnits++;
                 Debug.Log($"[UIBuilderAssetCache] Indexed mod bundle '{bundleName}'");
                 yield return null; // Always yield between bundles
-                sw.Restart();
+                stopwatch.Restart();
             }
 
-            // ??? Phase 2: Scan BepInEx plugin fields ???
-            for (int p = 0; p < pluginList.Count; p++)
+            // Phase 2: Scan BepInEx plugin fields
+            for (int pluginIndex = 0; pluginIndex < pluginList.Count; pluginIndex++)
             {
-                var kvp = pluginList[p];
+                var kvp = pluginList[pluginIndex];
                 var pluginInfo = kvp.Value;
                 Type pluginType = pluginInfo.Instance.GetType();
 
-                ScanStatusLabel = $"Phase 2/{4}: Scanning plugin '{kvp.Key}' ({p + 1}/{pluginList.Count})";
+                ScanStatusLabel = $"Phase 2/{4}: Scanning plugin '{kvp.Key}' ({pluginIndex + 1}/{pluginList.Count})";
                 ScanProgress = (float)completedUnits / totalUnits;
-                sw.Restart();
+                stopwatch.Restart();
 
                 // Load field arrays inside try-catch, iterate outside
                 FieldInfo[] staticFields = null;
@@ -1252,18 +1220,18 @@ namespace FiresCore.UI
 
                 if (staticFields != null)
                 {
-                    for (int f = 0; f < staticFields.Length; f++)
+                    for (int fieldIndex = 0; fieldIndex < staticFields.Length; fieldIndex++)
                     {
                         try
                         {
-                            if (staticFields[f].FieldType == typeof(Sprite))
+                            if (staticFields[fieldIndex].FieldType == typeof(Sprite))
                             {
-                                var sprite = staticFields[f].GetValue(null) as Sprite;
+                                var sprite = staticFields[fieldIndex].GetValue(null) as Sprite;
                                 if (sprite != null && !string.IsNullOrEmpty(sprite.name) && !IsUnityBuiltinAssetName(sprite.name))
                                 {
                                     // Index the sprite for fast lookup. Only cache to PNG if
                                     // it's NOT already in our bundle index (bundle sprites are
-                                    // preserved via raw .bundle caching in Phase 4 � far cheaper
+                                    // preserved via raw .bundle caching in Phase 4 - far cheaper
                                     // than per-sprite GPU blit + ReadPixels + disk write).
                                     if (!_bundleSprites.ContainsKey(sprite.name))
                                     {
@@ -1272,51 +1240,51 @@ namespace FiresCore.UI
                                     }
                                 }
                             }
-                            else if (staticFields[f].FieldType == typeof(AssetBundle))
+                            else if (staticFields[fieldIndex].FieldType == typeof(AssetBundle))
                             {
-                                var bundle = staticFields[f].GetValue(null) as AssetBundle;
+                                var bundle = staticFields[fieldIndex].GetValue(null) as AssetBundle;
                                 if (bundle != null && !IsVanillaBundle(bundle))
-                                    cachedSprites += CacheBundleSpritesBatch(bundle, ref cachedTextures, sw);
+                                    cachedSprites += CacheBundleSpritesBatch(bundle, ref cachedTextures, stopwatch);
                             }
                         }
                         catch { }
 
-                        if (sw.Elapsed.TotalMilliseconds >= ScanFrameBudgetMs)
+                        if (stopwatch.Elapsed.TotalMilliseconds >= ScanFrameBudgetMs)
                         {
                             yield return null;
-                            sw.Restart();
+                            stopwatch.Restart();
                         }
                     }
                 }
 
                 if (instanceFields != null)
                 {
-                    for (int f = 0; f < instanceFields.Length; f++)
+                    for (int fieldIndex = 0; fieldIndex < instanceFields.Length; fieldIndex++)
                     {
-                        if (instanceFields[f].FieldType != typeof(AssetBundle)) continue;
+                        if (instanceFields[fieldIndex].FieldType != typeof(AssetBundle)) continue;
                         try
                         {
-                            var bundle = instanceFields[f].GetValue(pluginInfo.Instance) as AssetBundle;
+                            var bundle = instanceFields[fieldIndex].GetValue(pluginInfo.Instance) as AssetBundle;
                             if (bundle != null && !IsVanillaBundle(bundle))
-                                cachedSprites += CacheBundleSpritesBatch(bundle, ref cachedTextures, sw);
+                                cachedSprites += CacheBundleSpritesBatch(bundle, ref cachedTextures, stopwatch);
                         }
                         catch { }
 
-                        if (sw.Elapsed.TotalMilliseconds >= ScanFrameBudgetMs)
+                        if (stopwatch.Elapsed.TotalMilliseconds >= ScanFrameBudgetMs)
                         {
                             yield return null;
-                            sw.Restart();
+                            stopwatch.Restart();
                         }
                     }
                 }
 
                 completedUnits++;
                 yield return null; // Yield between plugins
-                sw.Restart();
+                stopwatch.Restart();
             }
 
-            // ??? Phase 3: Loose PNG files ???
-            ScanStatusLabel = "Phase 3/4: Scanning loose image files�";
+            // Phase 3: Loose PNG files
+            ScanStatusLabel = "Phase 3/4: Scanning loose image files…";
             ScanProgress = (float)completedUnits / totalUnits;
 
             try { cachedFiles += ScanDirectoryForModImages(Paths.PluginPath); } catch { }
@@ -1325,49 +1293,49 @@ namespace FiresCore.UI
             yield return null;
             completedUnits++;
 
-            // ??? Phase 4: Raw .bundle files ???
-            ScanStatusLabel = "Phase 4/4: Caching raw bundle files�";
+            // Phase 4: Raw .bundle files
+            ScanStatusLabel = "Phase 4/4: Caching raw bundle files…";
             ScanProgress = (float)completedUnits / totalUnits;
-            sw.Restart();
+            stopwatch.Restart();
 
-            // Build a mapping of AssetBundle instance ? owning plugin assembly
+            // Build a mapping of AssetBundle instance - owning plugin assembly
             // so TryCacheRawBundle can try embedded resource extraction
             var bundleToAssembly = new Dictionary<AssetBundle, Assembly>();
-            for (int p2 = 0; p2 < pluginList.Count; p2++)
+            for (int pluginIndex = 0; pluginIndex < pluginList.Count; pluginIndex++)
             {
-                var pkvp = pluginList[p2];
+                var pkvp = pluginList[pluginIndex];
                 if (pkvp.Value?.Instance == null) continue;
-                Type pt = pkvp.Value.Instance.GetType();
+                Type instanceType = pkvp.Value.Instance.GetType();
                 FieldInfo[] pFields = null;
                 try
                 {
-                    var fl = new List<FieldInfo>();
-                    fl.AddRange(pt.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic));
-                    fl.AddRange(pt.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
-                    pFields = fl.ToArray();
+                    var fields = new List<FieldInfo>();
+                    fields.AddRange(instanceType.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic));
+                    fields.AddRange(instanceType.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
+                    pFields = fields.ToArray();
                 }
                 catch { }
 
                 if (pFields != null)
                 {
-                    for (int fi2 = 0; fi2 < pFields.Length; fi2++)
+                    for (int pluginFieldIndex = 0; pluginFieldIndex < pFields.Length; pluginFieldIndex++)
                     {
-                        if (pFields[fi2].FieldType != typeof(AssetBundle)) continue;
+                        if (pFields[pluginFieldIndex].FieldType != typeof(AssetBundle)) continue;
                         try
                         {
-                            object tgt = pFields[fi2].IsStatic ? null : pkvp.Value.Instance;
-                            var bndl = pFields[fi2].GetValue(tgt) as AssetBundle;
-                            if (bndl != null && !bundleToAssembly.ContainsKey(bndl))
-                                bundleToAssembly[bndl] = pt.Assembly;
+                            object fieldOwner = pFields[pluginFieldIndex].IsStatic ? null : pkvp.Value.Instance;
+                            var fieldBundle = pFields[pluginFieldIndex].GetValue(fieldOwner) as AssetBundle;
+                            if (fieldBundle != null && !bundleToAssembly.ContainsKey(fieldBundle))
+                                bundleToAssembly[fieldBundle] = instanceType.Assembly;
                         }
                         catch { }
                     }
                 }
             }
 
-            for (int b = 0; b < modBundles.Count; b++)
+            for (int bundleIndex = 0; bundleIndex < modBundles.Count; bundleIndex++)
             {
-                var bundle = modBundles[b];
+                var bundle = modBundles[bundleIndex];
                 if (bundle == null) continue;
                 bool isScene = false;
                 try { isScene = bundle.isStreamedSceneAssetBundle; } catch { }
@@ -1379,42 +1347,42 @@ namespace FiresCore.UI
 
                 try { if (TryCacheRawBundle(bundle, bundleAsm, null)) cachedBundles++; } catch { }
 
-                if (sw.Elapsed.TotalMilliseconds >= ScanFrameBudgetMs)
+                if (stopwatch.Elapsed.TotalMilliseconds >= ScanFrameBudgetMs)
                 {
                     yield return null;
-                    sw.Restart();
+                    stopwatch.Restart();
                 }
             }
 
             yield return null;
-            sw.Restart();
+            stopwatch.Restart();
 
             // Plugin-held bundles (may be embedded resources)
-            for (int p = 0; p < pluginList.Count; p++)
+            for (int pluginIndex = 0; pluginIndex < pluginList.Count; pluginIndex++)
             {
-                var kvp = pluginList[p];
+                var kvp = pluginList[pluginIndex];
                 var pluginInfo = kvp.Value;
                 Type pluginType = pluginInfo.Instance.GetType();
 
                 FieldInfo[] allPluginFields = null;
                 try
                 {
-                    var fl = new List<FieldInfo>();
-                    fl.AddRange(pluginType.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic));
-                    fl.AddRange(pluginType.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
-                    allPluginFields = fl.ToArray();
+                    var fields = new List<FieldInfo>();
+                    fields.AddRange(pluginType.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic));
+                    fields.AddRange(pluginType.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
+                    allPluginFields = fields.ToArray();
                 }
                 catch { }
 
                 if (allPluginFields != null)
                 {
-                    for (int fi = 0; fi < allPluginFields.Length; fi++)
+                    for (int fieldIndex = 0; fieldIndex < allPluginFields.Length; fieldIndex++)
                     {
-                        if (allPluginFields[fi].FieldType != typeof(AssetBundle)) continue;
+                        if (allPluginFields[fieldIndex].FieldType != typeof(AssetBundle)) continue;
                         try
                         {
-                            object target = allPluginFields[fi].IsStatic ? null : pluginInfo.Instance;
-                            var bundle = allPluginFields[fi].GetValue(target) as AssetBundle;
+                            object target = allPluginFields[fieldIndex].IsStatic ? null : pluginInfo.Instance;
+                            var bundle = allPluginFields[fieldIndex].GetValue(target) as AssetBundle;
                             if (bundle == null) continue;
                             if (IsVanillaBundle(bundle)) continue;
                             bool isScene = false;
@@ -1428,10 +1396,10 @@ namespace FiresCore.UI
                     }
                 }
 
-                if (sw.Elapsed.TotalMilliseconds >= ScanFrameBudgetMs)
+                if (stopwatch.Elapsed.TotalMilliseconds >= ScanFrameBudgetMs)
                 {
                     yield return null;
-                    sw.Restart();
+                    stopwatch.Restart();
                 }
             }
             completedUnits++;
@@ -1445,7 +1413,7 @@ namespace FiresCore.UI
                     "They will be loaded on-demand when overrides need them.");
             }
 
-            // ??? Done ???
+            // Done
             _scanInProgress = false;
             ScanProgress = 1f;
             ScanStatusLabel = "Scan complete";
@@ -1471,17 +1439,17 @@ namespace FiresCore.UI
         /// via the Phase 1 per-bundle scan which properly yields between sprites.
         ///
         /// Previously this method called CacheSprite() for every sprite which
-        /// triggered GPU blit + ReadPixels + File.WriteAllBytes for each one �
+        /// triggered GPU blit + ReadPixels + File.WriteAllBytes for each one -
         /// an extremely expensive operation that caused server disconnects.
         /// Returns the number of sprites indexed.
         /// </summary>
-        private static int CacheBundleSpritesBatch(AssetBundle bundle, ref int cachedTextures, System.Diagnostics.Stopwatch sw)
+        private static int CacheBundleSpritesBatch(AssetBundle bundle, ref int cachedTextures, System.Diagnostics.Stopwatch stopwatch)
         {
             int indexed = 0;
             try
             {
                 // Just index sprites into _bundleSprites for fast lookup.
-                // Don't extract to PNG here � that's done during capture or Phase 1.
+                // Don't extract to PNG here - that's done during capture or Phase 1.
                 indexed = IndexSpritesFromBundle(bundle, bundle.name ?? "unknown");
             }
             catch { }
@@ -1536,11 +1504,11 @@ namespace FiresCore.UI
                         bool alreadyCached = false;
                         if (_manifest != null && _manifest.Entries != null)
                         {
-                            for (int m = 0; m < _manifest.Entries.Count; m++)
+                            for (int entryIndex = 0; entryIndex < _manifest.Entries.Count; entryIndex++)
                             {
-                                if (string.Equals(_manifest.Entries[m].OriginalName, fileName, StringComparison.OrdinalIgnoreCase))
+                                if (string.Equals(_manifest.Entries[entryIndex].OriginalName, fileName, StringComparison.OrdinalIgnoreCase))
                                 {
-                                    string cachedPath = Path.Combine(CacheDir, _manifest.Entries[m].CachedFile);
+                                    string cachedPath = Path.Combine(CacheDir, _manifest.Entries[entryIndex].CachedFile);
                                     if (File.Exists(cachedPath))
                                     {
                                         alreadyCached = true;
@@ -1611,9 +1579,7 @@ namespace FiresCore.UI
             return cached;
         }
 
-        // ???????????????????????????????????????
         //  Raw asset bundle caching
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Attempts to save a raw copy of the given AssetBundle to the bundles cache directory.
@@ -1647,9 +1613,9 @@ namespace FiresCore.UI
                 {
                     try
                     {
-                        var fi = new FileInfo(destPath);
+                        var fileInfo = new FileInfo(destPath);
                         UIBundleManifestManager.CreateAndSaveManifest(bundle, safeName + ".bundle",
-                            pluginGuid ?? "", pluginAssembly?.GetName()?.Name ?? "", false, fi.Length);
+                            pluginGuid ?? "", pluginAssembly?.GetName()?.Name ?? "", false, fileInfo.Length);
                     }
                     catch { }
                 }
@@ -1695,11 +1661,11 @@ namespace FiresCore.UI
                         foreach (var kvpScan in Chainloader.PluginInfos)
                         {
                             if (kvpScan.Value?.Instance == null) continue;
-                            Type pt = kvpScan.Value.Instance.GetType();
-                            string ns = pt.Namespace ?? "";
-                            if (ns.StartsWith("VerdantsAscent", StringComparison.OrdinalIgnoreCase)) continue;
+                            Type instanceType = kvpScan.Value.Instance.GetType();
+                            string pluginNamespace = instanceType.Namespace ?? "";
+                            if (pluginNamespace.StartsWith("VerdantsAscent", StringComparison.OrdinalIgnoreCase)) continue;
 
-                            rawBytes = ExtractBundleFromEmbeddedResources(pt.Assembly, bundleName);
+                            rawBytes = ExtractBundleFromEmbeddedResources(instanceType.Assembly, bundleName);
                             if (rawBytes != null)
                             {
                                 fromEmbedded = true;
@@ -1788,8 +1754,8 @@ namespace FiresCore.UI
                     {
                         try
                         {
-                            var fi = new FileInfo(matchingFiles[i]);
-                            if (fi.Length < 64) continue;
+                            var fileInfo = new FileInfo(matchingFiles[i]);
+                            if (fileInfo.Length < 64) continue;
                         }
                         catch { continue; }
 
@@ -1807,7 +1773,7 @@ namespace FiresCore.UI
                         }
 
                         // If internal name doesn't match but filename matches exactly,
-                        // still return it � the file was explicitly named for this bundle
+                        // still return it - the file was explicitly named for this bundle
                         string fileName = Path.GetFileName(matchingFiles[i]);
                         if (string.Equals(fileName, bundleName, StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(fileName, bundleName + ".bundle", StringComparison.OrdinalIgnoreCase))
@@ -1962,16 +1928,16 @@ namespace FiresCore.UI
 
                 var candidateNames = ExtractNullTerminatedStrings(buffer, remaining, 2, 128);
 
-                for (int c = 0; c < candidateNames.Count; c++)
+                for (int candidateIndex = 0; candidateIndex < candidateNames.Count; candidateIndex++)
                 {
-                    string candidate = candidateNames[c];
+                    string candidate = candidateNames[candidateIndex];
                     if (candidate.StartsWith("CAB-", StringComparison.Ordinal)) continue;
                     if (candidate.StartsWith("archive:/", StringComparison.Ordinal)) continue;
                     if (candidate.StartsWith("library/", StringComparison.OrdinalIgnoreCase)) continue;
                     bool allDigits = true;
-                    for (int ch = 0; ch < candidate.Length; ch++)
+                    for (int charIndex = 0; charIndex < candidate.Length; charIndex++)
                     {
-                        if (!char.IsDigit(candidate[ch]) && candidate[ch] != '.') { allDigits = false; break; }
+                        if (!char.IsDigit(candidate[charIndex]) && candidate[charIndex] != '.') { allDigits = false; break; }
                     }
                     if (allDigits) continue;
                     if (candidate.Contains(" ")) continue;
@@ -2005,7 +1971,7 @@ namespace FiresCore.UI
             try
             {
                 // Only scan files with bundle-like extensions instead of ALL files.
-                // This dramatically reduces I/O � a typical plugins folder has thousands
+                // This dramatically reduces I/O - a typical plugins folder has thousands
                 // of .dll, .cfg, .md, .png files that can never be bundles.
                 var bundleExtensions = new[] { "*.bundle", "*.assets", "*.resource" };
                 var candidateFiles = new List<string>();
@@ -2048,8 +2014,8 @@ namespace FiresCore.UI
                     // Skip files too small to be a bundle
                     try
                     {
-                        var fi = new FileInfo(candidateFiles[i]);
-                        if (fi.Length < 64) continue;
+                        var fileInfo = new FileInfo(candidateFiles[i]);
+                        if (fileInfo.Length < 64) continue;
                     }
                     catch { continue; }
 
@@ -2087,11 +2053,11 @@ namespace FiresCore.UI
         {
             try
             {
-                using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
                     // Validate UnityFS magic ("UnityFS\0")
                     byte[] magic = new byte[8];
-                    if (fs.Read(magic, 0, 8) < 8) return null;
+                    if (stream.Read(magic, 0, 8) < 8) return null;
                     if (magic[0] != 'U' || magic[1] != 'n' || magic[2] != 'i' ||
                         magic[3] != 't' || magic[4] != 'y' || magic[5] != 'F' ||
                         magic[6] != 'S' || magic[7] != 0)
@@ -2099,37 +2065,37 @@ namespace FiresCore.UI
 
                     // Read format version (big-endian int32)
                     byte[] versionBytes = new byte[4];
-                    if (fs.Read(versionBytes, 0, 4) < 4) return null;
+                    if (stream.Read(versionBytes, 0, 4) < 4) return null;
 
                     // Read first null-terminated string (player version)
-                    string playerVersion = ReadNullTerminatedString(fs, 128);
+                    string playerVersion = ReadNullTerminatedString(stream, 128);
                     if (playerVersion == null) return null;
 
                     // Read second null-terminated string (engine version)
-                    string engineVersion = ReadNullTerminatedString(fs, 128);
+                    string engineVersion = ReadNullTerminatedString(stream, 128);
                     if (engineVersion == null) return null;
 
                     // Read up to 64KB from this point and scan for the internal name
-                    long remaining = Math.Min(fs.Length - fs.Position, 65536);
+                    long remaining = Math.Min(stream.Length - stream.Position, 65536);
                     if (remaining < 20) return null;
 
                     byte[] buffer = new byte[remaining];
-                    int bytesRead = fs.Read(buffer, 0, buffer.Length);
+                    int bytesRead = stream.Read(buffer, 0, buffer.Length);
                     if (bytesRead < 20) return null;
 
                     var candidateNames = ExtractNullTerminatedStrings(buffer, bytesRead, 2, 128);
 
-                    for (int c = 0; c < candidateNames.Count; c++)
+                    for (int candidateIndex = 0; candidateIndex < candidateNames.Count; candidateIndex++)
                     {
-                        string candidate = candidateNames[c];
+                        string candidate = candidateNames[candidateIndex];
                         if (candidate == playerVersion || candidate == engineVersion) continue;
                         if (candidate.StartsWith("CAB-", StringComparison.Ordinal)) continue;
                         if (candidate.StartsWith("archive:/", StringComparison.Ordinal)) continue;
                         if (candidate.StartsWith("library/", StringComparison.OrdinalIgnoreCase)) continue;
                         bool allDigits = true;
-                        for (int ch = 0; ch < candidate.Length; ch++)
+                        for (int charIndex = 0; charIndex < candidate.Length; charIndex++)
                         {
-                            if (!char.IsDigit(candidate[ch]) && candidate[ch] != '.') { allDigits = false; break; }
+                            if (!char.IsDigit(candidate[charIndex]) && candidate[charIndex] != '.') { allDigits = false; break; }
                         }
                         if (allDigits) continue;
                         if (candidate.Contains(" ")) continue;
@@ -2145,15 +2111,15 @@ namespace FiresCore.UI
         /// <summary>
         /// Reads a null-terminated ASCII string from a stream, up to maxLength bytes.
         /// </summary>
-        private static string ReadNullTerminatedString(FileStream fs, int maxLength)
+        private static string ReadNullTerminatedString(FileStream stream, int maxLength)
         {
             var sb = new StringBuilder();
             for (int i = 0; i < maxLength; i++)
             {
-                int b = fs.ReadByte();
-                if (b < 0) return null;
-                if (b == 0) return sb.ToString();
-                sb.Append((char)b);
+                int nextByte = stream.ReadByte();
+                if (nextByte < 0) return null;
+                if (nextByte == 0) return sb.ToString();
+                sb.Append((char)nextByte);
             }
             return null;
         }
@@ -2168,12 +2134,12 @@ namespace FiresCore.UI
             int start = -1;
             for (int i = 0; i < length; i++)
             {
-                byte b = buffer[i];
-                if (b >= 0x20 && b < 0x7F)
+                byte current = buffer[i];
+                if (current >= 0x20 && current < 0x7F)
                 {
                     if (start < 0) start = i;
                 }
-                else if (b == 0 && start >= 0)
+                else if (current == 0 && start >= 0)
                 {
                     int len = i - start;
                     if (len >= minLen && len <= maxLen)
@@ -2217,9 +2183,7 @@ namespace FiresCore.UI
             return BundleCacheDir;
         }
 
-        // ???????????????????????????????????????
         //  Manifest management
-        // ???????????????????????????????????????
 
         private static void EnsureManifest()
         {
@@ -2268,14 +2232,14 @@ namespace FiresCore.UI
         {
             if (_manifest == null || _manifest.Entries == null) return null;
 
-            int w = (int)sprite.rect.width;
-            int h = (int)sprite.rect.height;
+            int width = (int)sprite.rect.width;
+            int height = (int)sprite.rect.height;
 
             for (int i = 0; i < _manifest.Entries.Count; i++)
             {
                 var entry = _manifest.Entries[i];
                 if (string.Equals(entry.OriginalName, originalName, StringComparison.OrdinalIgnoreCase) &&
-                    entry.TextureWidth == w && entry.TextureHeight == h)
+                    entry.TextureWidth == width && entry.TextureHeight == height)
                 {
                     // Verify the file still exists
                     string filePath = Path.Combine(CacheDir, entry.CachedFile);
@@ -2387,9 +2351,7 @@ namespace FiresCore.UI
             SaveManifest();
         }
 
-        // ???????????????????????????????????????
         //  Texture extraction
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Extracts a sprite's pixels to a PNG byte array. Handles both readable and
@@ -2476,7 +2438,7 @@ namespace FiresCore.UI
             }
             catch
             {
-                // Texture not readable � fall through to blit
+                // Texture not readable - fall through to blit
             }
 
             // RenderTexture blit fallback for non-readable textures
@@ -2497,11 +2459,11 @@ namespace FiresCore.UI
             if (srcTex == null) return null;
 
             // Blit the full texture to a temporary RenderTexture
-            var rt = RenderTexture.GetTemporary(srcTex.width, srcTex.height, 0, RenderTextureFormat.ARGB32);
+            var renderTexture = RenderTexture.GetTemporary(srcTex.width, srcTex.height, 0, RenderTextureFormat.ARGB32);
             var prev = RenderTexture.active;
 
-            Graphics.Blit(srcTex, rt);
-            RenderTexture.active = rt;
+            Graphics.Blit(srcTex, renderTexture);
+            RenderTexture.active = renderTexture;
 
             // Read just the sprite region
             var readback = new Texture2D(srcW, srcH, TextureFormat.RGBA32, false);
@@ -2509,7 +2471,7 @@ namespace FiresCore.UI
             readback.Apply();
 
             RenderTexture.active = prev;
-            RenderTexture.ReleaseTemporary(rt);
+            RenderTexture.ReleaseTemporary(renderTexture);
 
             if (outW != srcW || outH != srcH)
             {
@@ -2525,18 +2487,18 @@ namespace FiresCore.UI
 
         private static Texture2D ScaleTexture(Texture2D source, int targetW, int targetH)
         {
-            var rt = RenderTexture.GetTemporary(targetW, targetH, 0, RenderTextureFormat.ARGB32);
+            var renderTexture = RenderTexture.GetTemporary(targetW, targetH, 0, RenderTextureFormat.ARGB32);
             var prev = RenderTexture.active;
 
-            Graphics.Blit(source, rt);
-            RenderTexture.active = rt;
+            Graphics.Blit(source, renderTexture);
+            RenderTexture.active = renderTexture;
 
             var result = new Texture2D(targetW, targetH, TextureFormat.RGBA32, false);
             result.ReadPixels(new Rect(0, 0, targetW, targetH), 0, 0);
             result.Apply();
 
             RenderTexture.active = prev;
-            RenderTexture.ReleaseTemporary(rt);
+            RenderTexture.ReleaseTemporary(renderTexture);
             return result;
         }
 
@@ -2555,7 +2517,7 @@ namespace FiresCore.UI
                         return (byte[])method.Invoke(null, new object[] { tex });
                 }
 
-                // Fallback � try instance method on Texture2D (older Unity)
+                // Fallback - try instance method on Texture2D (older Unity)
                 var instanceMethod = typeof(Texture2D).GetMethod("EncodeToPNG",
                     System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public,
                     null, Type.EmptyTypes, null);
@@ -2593,9 +2555,7 @@ namespace FiresCore.UI
             return false;
         }
 
-        // ???????????????????????????????????????
         //  Helpers
-        // ???????????????????????????????????????
 
         private static void EnsureCacheDir()
         {
@@ -2627,14 +2587,12 @@ namespace FiresCore.UI
         private static string DetectSpriteAssembly(Sprite sprite)
         {
             // We can't directly determine which assembly a sprite came from at runtime,
-            // since sprites are pure data. Return empty � the manifest entry records this
+            // since sprites are pure data. Return empty - the manifest entry records this
             // based on the context of the capture (the canvas classification).
             return "";
         }
 
-        // ???????????????????????????????????????
         //  Manifest serialization (hand-rolled, no external deps)
-        // ???????????????????????????????????????
 
         private class CacheManifest
         {
@@ -2667,21 +2625,21 @@ namespace FiresCore.UI
 
             for (int i = 0; i < manifest.Entries.Count; i++)
             {
-                var e = manifest.Entries[i];
+                var entry = manifest.Entries[i];
                 sb.Append("    {");
-                sb.Append($" \"originalName\": \"{EscapeJson(e.OriginalName)}\",");
-                sb.Append($" \"cachedFile\": \"{EscapeJson(e.CachedFile)}\",");
-                sb.Append($" \"sourceAssembly\": \"{EscapeJson(e.SourceAssembly)}\",");
-                sb.Append($" \"textureWidth\": {e.TextureWidth},");
-                sb.Append($" \"textureHeight\": {e.TextureHeight},");
-                sb.Append($" \"capturedTimestamp\": {e.CapturedTimestamp},");
-                sb.Append($" \"borderL\": {e.BorderL:F2},");
-                sb.Append($" \"borderB\": {e.BorderB:F2},");
-                sb.Append($" \"borderR\": {e.BorderR:F2},");
-                sb.Append($" \"borderT\": {e.BorderT:F2},");
-                sb.Append($" \"pivotX\": {e.PivotX:F4},");
-                sb.Append($" \"pivotY\": {e.PivotY:F4},");
-                sb.Append($" \"pixelsPerUnit\": {e.PixelsPerUnit:F1}");
+                sb.Append($" \"originalName\": \"{EscapeJson(entry.OriginalName)}\",");
+                sb.Append($" \"cachedFile\": \"{EscapeJson(entry.CachedFile)}\",");
+                sb.Append($" \"sourceAssembly\": \"{EscapeJson(entry.SourceAssembly)}\",");
+                sb.Append($" \"textureWidth\": {entry.TextureWidth},");
+                sb.Append($" \"textureHeight\": {entry.TextureHeight},");
+                sb.Append($" \"capturedTimestamp\": {entry.CapturedTimestamp},");
+                sb.Append($" \"borderL\": {entry.BorderL:F2},");
+                sb.Append($" \"borderB\": {entry.BorderB:F2},");
+                sb.Append($" \"borderR\": {entry.BorderR:F2},");
+                sb.Append($" \"borderT\": {entry.BorderT:F2},");
+                sb.Append($" \"pivotX\": {entry.PivotX:F4},");
+                sb.Append($" \"pivotY\": {entry.PivotY:F4},");
+                sb.Append($" \"pixelsPerUnit\": {entry.PixelsPerUnit:F1}");
                 sb.Append(" }");
                 if (i < manifest.Entries.Count - 1) sb.Append(",");
                 sb.AppendLine();
@@ -2694,7 +2652,7 @@ namespace FiresCore.UI
 
         private static CacheManifest DeserializeManifest(string json)
         {
-            // Minimal hand-rolled parser � just needs to read the entries array
+            // Minimal hand-rolled parser - just needs to read the entries array
             var manifest = new CacheManifest();
             if (string.IsNullOrEmpty(json)) return manifest;
 
@@ -2747,10 +2705,10 @@ namespace FiresCore.UI
             return manifest;
         }
 
-        private static string EscapeJson(string s)
+        private static string EscapeJson(string text)
         {
-            if (string.IsNullOrEmpty(s)) return "";
-            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+            if (string.IsNullOrEmpty(text)) return "";
+            return text.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
         }
 
         private static string ExtractJsonString(string json, string key)

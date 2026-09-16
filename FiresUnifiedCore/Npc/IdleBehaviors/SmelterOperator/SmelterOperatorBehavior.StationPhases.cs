@@ -33,17 +33,17 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"  Companion pos: {Transform.position}");
                 Debug.Log($"  _targetPosition (standing): {_targetPosition}");
                 Debug.Log($"  Interactable point (Switch): {interactablePoint}");
-                Debug.Log($"  Distance to target: {dist:F2}m (need <{ARRIVAL_DISTANCE:F1}m)");
+                Debug.Log($"  Distance to target: {dist:F2}m (need <{ArrivalDistance:F1}m)");
             }
             
-            // Use ARRIVAL_DISTANCE to check if we've arrived at the standing position
-            if (dist < ARRIVAL_DISTANCE)
+            // Use ArrivalDistance to check if we've arrived at the standing position
+            if (dist < ArrivalDistance)
             {
                 StopMovement();
                 ResetProgressTracking();
                 
                 // CRITICAL: Register occupancy when we arrive at the smelter
-                if (!InteractableOccupancyManager.TryOccupy(_targetSmelter.gameObject, _character, MAX_OPERATE_TIME))
+                if (!InteractableOccupancyManager.TryOccupy(_targetSmelter.gameObject, _character, MaxOperateTime))
                 {
                     // Someone else grabbed it first
                     if (CompanionIdleBehavior.VerboseLogging)
@@ -69,15 +69,15 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Calculate dynamic timeout based on distance
             float dynamicTimeout = Mathf.Min(
-                PATHFINDING_TIMEOUT_BASE + (dist * PATHFINDING_TIMEOUT_PER_METER),
-                MAX_PATHFINDING_TIMEOUT
+                PathfindingTimeoutBase + (dist * PathfindingTimeoutPerMeter),
+                MaxPathfindingTimeout
             );
             
             // Check for timeout OR stuck condition
             bool shouldTeleport = false;
             string teleportReason = "";
             
-            if (isStuck && _noProgressDuration >= NO_PROGRESS_TIMEOUT)
+            if (isStuck && _noProgressDuration >= NoProgressTimeout)
             {
                 shouldTeleport = true;
                 teleportReason = $"no progress for {_noProgressDuration:F1}s";
@@ -94,7 +94,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // Blacklist this companion from smelter attempts briefly so other behaviors
                 // (farming, gathering) get a turn before we retry a possibly unreachable station.
                 string companionId = Companion?.companionId ?? Companion?.companionName ?? "unknown";
-                _materialUnavailableCooldowns[companionId] = Time.time + MATERIAL_UNAVAILABLE_COOLDOWN;
+                _materialUnavailableCooldowns[companionId] = Time.time + MaterialUnavailableCooldown;
                 // Force a fresh station scan next time so we don't re-pick the same one.
                 _cachedAutonomousSmelter = null;
                 _lastAutonomousScanTime = -999f;
@@ -120,15 +120,15 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Only check at intervals to avoid jitter
-            if (Time.time - _lastProgressTime < PROGRESS_CHECK_INTERVAL)
+            if (Time.time - _lastProgressTime < ProgressCheckInterval)
             {
-                return _noProgressDuration >= NO_PROGRESS_TIMEOUT * 0.5f; // Return early stuck warning
+                return _noProgressDuration >= NoProgressTimeout * 0.5f; // Return early stuck warning
             }
             
             // Calculate distance moved since last check
             float distanceMoved = Vector3.Distance(Transform.position, _lastProgressPosition);
             
-            if (distanceMoved >= PROGRESS_THRESHOLD)
+            if (distanceMoved >= ProgressThreshold)
             {
                 // Making progress - reset stuck counter
                 _noProgressDuration = 0f;
@@ -147,7 +147,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             _lastProgressTime = Time.time;
             
-            return _noProgressDuration >= NO_PROGRESS_TIMEOUT * 0.5f;
+            return _noProgressDuration >= NoProgressTimeout * 0.5f;
         }
         
         /// <summary>
@@ -166,7 +166,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         // CIRCUIT BREAKER: Track consecutive failed pull attempts to prevent infinite loops
         private int _consecutiveFailedPulls = 0;
-        private const int MAX_CONSECUTIVE_FAILED_PULLS = 3;
+        private const int MaxConsecutiveFailedPulls = 3;
         
         // Track last successful pull for circuit breaker
         private int _lastPullCount = 0;
@@ -222,9 +222,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     // Failed to pull any items
                     _consecutiveFailedPulls++;
-                    Debug.LogWarning($"[SmelterOperator] {Companion?.companionName} failed pull attempt #{_consecutiveFailedPulls}/{MAX_CONSECUTIVE_FAILED_PULLS}");
+                    Debug.LogWarning($"[SmelterOperator] {Companion?.companionName} failed pull attempt #{_consecutiveFailedPulls}/{MaxConsecutiveFailedPulls}");
                     
-                    if (_consecutiveFailedPulls >= MAX_CONSECUTIVE_FAILED_PULLS)
+                    if (_consecutiveFailedPulls >= MaxConsecutiveFailedPulls)
                     {
                         Debug.LogWarning($"[SmelterOperator] {Companion?.companionName} CIRCUIT BREAKER: {_consecutiveFailedPulls} consecutive failed pulls - checking for resource gathering");
                         
@@ -241,7 +241,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         
                         // Resource gathering not possible - set cooldown and complete
                         string companionId = Companion?.companionId ?? Companion?.companionName ?? "unknown";
-                        _materialUnavailableCooldowns[companionId] = Time.time + MATERIAL_UNAVAILABLE_COOLDOWN;
+                        _materialUnavailableCooldowns[companionId] = Time.time + MaterialUnavailableCooldown;
                         
                         CompanionChatHelper.QuickMessages.NoMaterialsAvailable(Companion, materialNeeded);
                         SetPhase(OperatePhase.Complete);
@@ -261,7 +261,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_lastPullCount > 0)
             {
                 // We successfully pulled items - go directly to filling.
-                // Log only in verbose mode ï¿½ this fires every pull cycle and spams the console.
+                // Log only in verbose mode - this fires every pull cycle and spams the console.
                 if (CompanionIdleBehavior.VerboseLogging)
                     Debug.Log($"[SmelterOperator] {Companion?.companionName} pulled {_lastPullCount} items, proceeding to fill station");
 
@@ -362,9 +362,9 @@ namespace FiresCore.Npc.IdleBehaviors
             _pullItemAmount = amountToPull;
             
             // Check if we're already close enough to the chest
-            // Use tight ARRIVAL_DISTANCE to ensure proper positioning
+            // Use tight ArrivalDistance to ensure proper positioning
             float distToChest = Vector3.Distance(Transform.position, bestChest.transform.position);
-            if (distToChest <= ARRIVAL_DISTANCE)
+            if (distToChest <= ArrivalDistance)
             {
                 // Already at chest - go directly to interaction
                 SetPhase(OperatePhase.InteractingWithChestForPull);
@@ -401,8 +401,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 _targetChestForPull, Transform.position);
             float dist = Vector3.Distance(Transform.position, interactionPoint);
             
-            // Use tight ARRIVAL_DISTANCE to ensure we reach the correct position in front of chest
-            if (dist <= ARRIVAL_DISTANCE)
+            // Use tight ArrivalDistance to ensure we reach the correct position in front of chest
+            if (dist <= ArrivalDistance)
             {
                 StopMovement();
                 SetPhase(OperatePhase.InteractingWithChestForPull);
@@ -541,7 +541,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             bool hasOre = HasOre() || HasOreInChests();
-            // Also count fuel already loaded in the smelter ï¿½ if the station already has
+            // Also count fuel already loaded in the smelter - if the station already has
             // coal we don't need any in the companion inventory or nearby chests.
             float loadedFuel = !_isKilnOperation ? GetCurrentFuel() : 0f;
             bool smelterAlreadyHasFuel = !_isKilnOperation && _targetSmelter != null
@@ -692,16 +692,16 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 // Search for trees
                 var colliders = Physics.OverlapSphere(searchCenter, searchRadius);
-                foreach (var col in colliders)
+                foreach (var collider in colliders)
                 {
-                    if (col == null) continue;
-                    var tree = col.GetComponent<TreeBase>() ?? col.GetComponentInParent<TreeBase>();
+                    if (collider == null) continue;
+                    var tree = collider.GetComponent<TreeBase>() ?? collider.GetComponentInParent<TreeBase>();
                     if (tree != null)
                     {
                         hasNearbyResource = true;
                         break;
                     }
-                    var treeLog = col.GetComponent<TreeLog>() ?? col.GetComponentInParent<TreeLog>();
+                    var treeLog = collider.GetComponent<TreeLog>() ?? collider.GetComponentInParent<TreeLog>();
                     if (treeLog != null)
                     {
                         hasNearbyResource = true;
@@ -713,17 +713,17 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 // Search for mineable rocks
                 var colliders = Physics.OverlapSphere(searchCenter, searchRadius);
-                foreach (var col in colliders)
+                foreach (var collider in colliders)
                 {
-                    if (col == null) continue;
-                    var rock = col.GetComponent<MineRock>() ?? col.GetComponentInParent<MineRock>();
+                    if (collider == null) continue;
+                    var rock = collider.GetComponent<MineRock>() ?? collider.GetComponentInParent<MineRock>();
                     if (rock != null)
                     {
                         hasNearbyResource = true;
                         break;
                     }
-                    var rock5 = col.GetComponent<MineRock5>() ?? col.GetComponentInParent<MineRock5>();
-                    if (rock5 != null)
+                    var mineRock = collider.GetComponent<MineRock5>() ?? collider.GetComponentInParent<MineRock5>();
+                    if (mineRock != null)
                     {
                         hasNearbyResource = true;
                         break;
@@ -934,7 +934,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (canAddOreCheck && hasOreInv && oreBelowThreshold)
             {
                 if (shouldLog)
-                    Debug.Log($"[SmelterOperator] {Companion?.companionName} -> Adding ore (have ore in inventory, below {ORE_REFILL_THRESHOLD * 100:F0}% threshold)");
+                    Debug.Log($"[SmelterOperator] {Companion?.companionName} -> Adding ore (have ore in inventory, below {OreRefillThreshold * 100:F0}% threshold)");
                 if (_hasOreSwitch)
                 {
                     SetPhase(OperatePhase.MovingToOreSwitch);
@@ -962,7 +962,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (shouldAddFuel)
                 {
                     if (shouldLog)
-                        Debug.Log($"[SmelterOperator] {Companion?.companionName} -> Adding fuel (have fuel in inventory, below {FUEL_REFILL_THRESHOLD * 100:F0}% threshold, smelterHasOre={smelterHasOre}, hasOreInv={hasOreInv})");
+                        Debug.Log($"[SmelterOperator] {Companion?.companionName} -> Adding fuel (have fuel in inventory, below {FuelRefillThreshold * 100:F0}% threshold, smelterHasOre={smelterHasOre}, hasOreInv={hasOreInv})");
                     if (_hasFuelSwitch)
                     {
                         SetPhase(OperatePhase.MovingToFuelSwitch);
@@ -982,7 +982,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // STEP 3: We don't have materials in inventory - need to pull from chests
             // CRITICAL: Skip this if we JUST pulled items - give inventory time to sync
-            bool inPostPullGrace = _justPulledItems && (Time.time - _pullCompletedTime) < POST_PULL_GRACE_PERIOD;
+            bool inPostPullGrace = _justPulledItems && (Time.time - _pullCompletedTime) < PostPullGracePeriod;
             
             if (inPostPullGrace)
             {
@@ -994,7 +994,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Clear the flag after grace period
-            if (_justPulledItems && (Time.time - _pullCompletedTime) >= POST_PULL_GRACE_PERIOD)
+            if (_justPulledItems && (Time.time - _pullCompletedTime) >= PostPullGracePeriod)
             {
                 _justPulledItems = false;
             }
@@ -1002,7 +1002,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check if we need ore (below threshold) and it's available in chests
             // Check if we need ore (below threshold) and it's available in chests
             // GUARD: if we just pulled items (_lastPullCount > 0), HasOre() may return false
-            // due to a prefab-name mismatch between the puller and the checker ï¿½ in that case
+            // due to a prefab-name mismatch between the puller and the checker - in that case
             // attempt to add ore directly rather than looping back to pull again.
             if (canAddOreCheck && !hasOreInv && oreBelowThreshold && _lastPullCount > 0)
             {
@@ -1101,7 +1101,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     CompanionChatHelper.QuickMessages.NoOreAvailable(Companion);
                     
                     string companionId = Companion?.companionId ?? Companion?.companionName ?? "unknown";
-                    _materialUnavailableCooldowns[companionId] = Time.time + MATERIAL_UNAVAILABLE_COOLDOWN;
+                    _materialUnavailableCooldowns[companionId] = Time.time + MaterialUnavailableCooldown;
                     
                     SetPhase(OperatePhase.Complete);
                     return true;
@@ -1112,7 +1112,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     CompanionChatHelper.QuickMessages.NoFuelAvailable(Companion);
                     
                     string companionId = Companion?.companionId ?? Companion?.companionName ?? "unknown";
-                    _materialUnavailableCooldowns[companionId] = Time.time + MATERIAL_UNAVAILABLE_COOLDOWN;
+                    _materialUnavailableCooldowns[companionId] = Time.time + MaterialUnavailableCooldown;
                     
                     SetPhase(OperatePhase.Complete);
                     return true;
@@ -1229,8 +1229,8 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float dist = Vector3.Distance(Transform.position, _fuelSwitchPosition);
             
-            // Use tight ARRIVAL_DISTANCE to ensure we reach the correct position
-            if (dist < ARRIVAL_DISTANCE)
+            // Use tight ArrivalDistance to ensure we reach the correct position
+            if (dist < ArrivalDistance)
             {
                 StopMovement();
                 SetPhase(OperatePhase.AddingFuel);
@@ -1271,7 +1271,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Wait for animation cooldown before adding next item
-            if (Time.time - _lastAnyAddTime < MIN_SINGLE_INPUT_INTERVAL)
+            if (Time.time - _lastAnyAddTime < MinSingleInputInterval)
             {
                 return false;
             }
@@ -1324,8 +1324,8 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float dist = Vector3.Distance(Transform.position, _oreSwitchPosition);
             
-            // Use tight ARRIVAL_DISTANCE to ensure we reach the correct position
-            if (dist < ARRIVAL_DISTANCE)
+            // Use tight ArrivalDistance to ensure we reach the correct position
+            if (dist < ArrivalDistance)
             {
                 StopMovement();
                 SetPhase(OperatePhase.AddingOre);
@@ -1366,7 +1366,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Wait for animation cooldown before adding next item
-            if (Time.time - _lastAnyAddTime < MIN_SINGLE_INPUT_INTERVAL)
+            if (Time.time - _lastAnyAddTime < MinSingleInputInterval)
             {
                 return false;
             }

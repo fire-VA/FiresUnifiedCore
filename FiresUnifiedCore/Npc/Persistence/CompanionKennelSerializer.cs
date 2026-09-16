@@ -32,14 +32,14 @@ namespace FiresCore.Npc.Persistence
 
             for (int i = 0; i < count; i++)
             {
-                var e = entries[i];
+                var entry = entries[i];
                 try
                 {
-                    pkg.Write(e?.NpcId ?? string.Empty);
-                    pkg.Write((int)(e?.Kind ?? DormancyKind.LoggedOutFollower));
-                    pkg.Write(e?.RecallDeadlineUtcTicks ?? 0L);
-                    pkg.Write(e?.LastUpdatedUtcTicks ?? 0L);
-                    pkg.Write(e?.Snapshot?.ToJson() ?? string.Empty);
+                    pkg.Write(entry?.NpcId ?? string.Empty);
+                    pkg.Write((int)(entry?.Kind ?? DormancyKind.LoggedOutFollower));
+                    pkg.Write(entry?.RecallDeadlineUtcTicks ?? 0L);
+                    pkg.Write(entry?.LastUpdatedUtcTicks ?? 0L);
+                    pkg.Write(entry?.Snapshot?.ToJson() ?? string.Empty);
                 }
                 catch (Exception ex)
                 {
@@ -90,7 +90,7 @@ namespace FiresCore.Npc.Persistence
             {
                 try
                 {
-                    var e = new DormantNpcEntry
+                    var entry = new DormantNpcEntry
                     {
                         NpcId                  = pkg.ReadString(),
                         Kind                   = (DormancyKind)pkg.ReadInt(),
@@ -100,14 +100,14 @@ namespace FiresCore.Npc.Persistence
                     var json = pkg.ReadString();
                     if (!string.IsNullOrEmpty(json))
                     {
-                        try { e.Snapshot = NpcSaveState.FromJson(json); }
+                        try { entry.Snapshot = NpcSaveState.FromJson(json); }
                         catch (Exception jsonEx)
                         {
-                            Debug.LogWarning($"[CompanionKennel] Decode entry #{i} ({e.NpcId}): NpcSaveState JSON failed: {jsonEx.Message}");
+                            Debug.LogWarning($"[CompanionKennel] Decode entry #{i} ({entry.NpcId}): NpcSaveState JSON failed: {jsonEx.Message}");
                         }
                     }
-                    if (!string.IsNullOrEmpty(e.NpcId))
-                        entries.Add(e);
+                    if (!string.IsNullOrEmpty(entry.NpcId))
+                        entries.Add(entry);
                 }
                 catch (Exception ex)
                 {

@@ -15,20 +15,21 @@ using UnityEngine;
 namespace FiresCore.Sync
 {
     // Server-locked BepInEx config sync. Fork of the community-canonical
-    // ConfigSync pattern. Server is the source of truth; clients receive
-    // synced entries via the routed "<Name> ConfigSync" RPC, can mutate
-    // them locally only when AdminSyncing has flagged this client as
-    // admin (lockExempt) or no locking entry is registered.
+    // ConfigSync pattern. Server is the source of truth; a joining client
+    // receives every synced entry right after login, later changes arrive
+    // via the routed "<Name> ConfigSync" RPC, and clients mutate synced
+    // entries only when AdminSyncing has flagged them as admin (lockExempt)
+    // or the config is unlocked. Leaving the server restores local values.
     //
     // Wire framing carries three orthogonal flag bits:
-    //   PARTIAL_CONFIGS    — sender is only re-broadcasting a delta
-    //   FRAGMENTED_CONFIG  — payload split across multiple ZPackages
-    //   COMPRESSED_CONFIG  — payload deflate-compressed
+    //   PartialConfigs    — sender is only re-broadcasting a delta
+    //   FragmentedConfig  — payload split across multiple ZPackages
+    //   CompressedConfig  — payload deflate-compressed
     public class ConfigSync
     {
-        private const byte PARTIAL_CONFIGS = 1;
-        private const byte FRAGMENTED_CONFIG = 2;
-        private const byte COMPRESSED_CONFIG = 4;
+        private const byte PartialConfigs = 1;
+        private const byte FragmentedConfig = 2;
+        private const byte CompressedConfig = 4;
 
         private const int CompressionThresholdBytes = 10_000;
         private const int FragmentChunkBytes = 250_000;
@@ -125,6 +126,37 @@ namespace FiresCore.Sync
             ZRoutedRpc.instance.InvokeRoutedRPC(serverPeer.m_uid, Name + ConfigSyncRpcSuffix, new ZPackage());
         }
 
+        internal void SendAllValuesToJoiningPeer(ZNetPeer peer)
+        {
+            var joiningPeer = new List<ZNetPeer> { peer };
+            ZNet.instance.StartCoroutine(SendZPackage(joiningPeer, BuildAllValuesPackage(), waitForSendQueue: false));
+        }
+
+        internal void RestoreLocalConfigs()
+        {
+            resetConfigsFromServer();
+            IsSourceOfTruth = true;
+            InitialSyncDone = false;
+        }
+
+        internal static void RefreshReadOnlyFlagsForAll()
+        {
+            foreach (var configSync in configSyncs)
+                configSync.serverLockedSettingChanged();
+        }
+
+        private ZPackage BuildAllValuesPackage() =>
+            ConfigsToPackage(allConfigs.Select(config => config.BaseConfig), allCustomValues, partial: false);
+
+        private void SendAllValuesToRequestingPeer(long sender)
+        {
+            ZNetPeer peer = ZNet.instance.GetPeer(sender);
+            if (peer == null) return;
+
+            var requestingPeer = new List<ZNetPeer> { peer };
+            ZNet.instance.StartCoroutine(SendZPackage(requestingPeer, BuildAllValuesPackage()));
+        }
+
         public SyncedConfigEntry<T> AddConfigEntry<T>(ConfigEntry<T> configEntry)
         {
             var syncedEntry = configData(configEntry) as SyncedConfigEntry<T>
@@ -201,6 +233,12 @@ namespace FiresCore.Sync
 
         internal void RPC_FromOtherClientConfigSync(long sender, ZPackage package)
         {
+            if (isServer && package.Size() == 0)
+            {
+                SendAllValuesToRequestingPeer(sender);
+                return;
+            }
+
             HandleConfigSyncRPC(sender, package, true);
         }
 
@@ -217,10 +255,10 @@ namespace FiresCore.Sync
 
                 ProcessingServerUpdate = true;
 
-                if ((flags & COMPRESSED_CONFIG) != 0)
+                if ((flags & CompressedConfig) != 0)
                     DecompressPackage(ref package, out flags);
 
-                if ((flags & PARTIAL_CONFIGS) == 0)
+                if ((flags & PartialConfigs) == 0)
                     resetConfigsFromServer();
 
                 var parsed = ReadConfigsFromPackage(package);
@@ -241,8 +279,7 @@ namespace FiresCore.Sync
             if (!isServer || !IsLocked) return true;
 
             string hostName = SnatchCurrentlyHandlingRPC.currentRpc?.GetSocket()?.GetHostName();
-            var adminList = (SyncedList)AccessTools.Field(typeof(ZNet), "m_adminList").GetValue(ZNet.instance);
-            return hostName == null || adminList.Contains(hostName);
+            return hostName == null || AdminSyncing.AdminListContains(hostName);
         }
 
         private void ExpireStaleFragmentCacheEntries()
@@ -253,7 +290,7 @@ namespace FiresCore.Sync
 
         private bool TryReassembleFragments(long sender, ref ZPackage package, ref byte flags)
         {
-            if ((flags & FRAGMENTED_CONFIG) == 0) return true;
+            if ((flags & FragmentedConfig) == 0) return true;
 
             long packageId = package.ReadLong();
             string cacheKey = sender.ToString() + packageId.ToString();
@@ -354,7 +391,8 @@ namespace FiresCore.Sync
             if (sync == null || sync.IsSourceOfTruth || !config.SynchronizedConfig || config.LocalBaseValue == null)
                 return true;
 
-            return !sync.IsLocked || config != sync.lockedConfig || lockExempt;
+            if (sync.IsLocked) return false;
+            return config != sync.lockedConfig || lockExempt;
         }
 
         internal void resetConfigsFromServer()
@@ -622,7 +660,7 @@ namespace FiresCore.Sync
             var entryList = packageEntries?.ToList() ?? new List<PackageEntry>();
 
             var package = new ZPackage();
-            package.Write((byte)(partial ? PARTIAL_CONFIGS : 0));
+            package.Write((byte)(partial ? PartialConfigs : 0));
             package.Write(configList.Count + customList.Count + entryList.Count);
 
             foreach (var entry in entryList)
@@ -668,7 +706,10 @@ namespace FiresCore.Sync
             while (enumerator.MoveNext()) yield return enumerator.Current;
         }
 
-        public IEnumerator SendZPackage(List<ZNetPeer> peers, ZPackage package)
+        public IEnumerator SendZPackage(List<ZNetPeer> peers, ZPackage package) =>
+            SendZPackage(peers, package, waitForSendQueue: true);
+
+        private IEnumerator SendZPackage(List<ZNetPeer> peers, ZPackage package, bool waitForSendQueue)
         {
             if (!ZNet.instance) yield break;
 
@@ -678,7 +719,7 @@ namespace FiresCore.Sync
 
             var writers = peers
                 .Where(p => p.IsReady())
-                .Select(p => distributeConfigToPeers(p, package))
+                .Select(p => distributeConfigToPeers(p, package, waitForSendQueue))
                 .ToList();
 
             writers.RemoveAll(w => !w.MoveNext());
@@ -693,7 +734,7 @@ namespace FiresCore.Sync
         private static ZPackage CompressPackage(byte[] data)
         {
             var compressed = new ZPackage();
-            compressed.Write(COMPRESSED_CONFIG);
+            compressed.Write(CompressedConfig);
 
             using var output = new MemoryStream();
             using (var deflate = new DeflateStream(output, System.IO.Compression.CompressionLevel.Optimal))
@@ -703,7 +744,7 @@ namespace FiresCore.Sync
             return compressed;
         }
 
-        private IEnumerator distributeConfigToPeers(ZNetPeer peer, ZPackage package)
+        private IEnumerator distributeConfigToPeers(ZNetPeer peer, ZPackage package, bool waitForSendQueue)
         {
             byte[] data = package.GetArray();
 
@@ -714,13 +755,14 @@ namespace FiresCore.Sync
 
                 for (int i = 0; i < fragments; i++)
                 {
-                    foreach (bool wait in waitForQueue())
-                        yield return wait;
+                    if (waitForSendQueue)
+                        foreach (bool wait in waitForQueue())
+                            yield return wait;
 
                     if (!peer.m_socket.IsConnected()) break;
 
                     var pkg = new ZPackage();
-                    pkg.Write(FRAGMENTED_CONFIG);
+                    pkg.Write(FragmentedConfig);
                     pkg.Write(packageId);
                     pkg.Write(i);
                     pkg.Write(fragments);
@@ -733,8 +775,9 @@ namespace FiresCore.Sync
             }
             else
             {
-                foreach (bool wait in waitForQueue())
-                    yield return wait;
+                if (waitForSendQueue)
+                    foreach (bool wait in waitForQueue())
+                        yield return wait;
                 SendPackage(package);
             }
 
@@ -886,6 +929,47 @@ namespace FiresCore.Sync
                 peer.m_rpc.Register<ZPackage>(
                     configSync.Name + " ConfigSync",
                     configSync.RPC_FromServerConfigSync);
+        }
+    }
+
+    // Runs after vanilla accepted or rejected the login (only accepted peers have a uid) and after
+    // other mods' postfixes, so their single-package config sends reach the socket before this one.
+    [HarmonyPatch(typeof(ZNet), "RPC_PeerInfo")]
+    internal class SendServerConfigsToJoiningPeer
+    {
+        [HarmonyPostfix]
+        [HarmonyPriority(Priority.Last)]
+        private static void Postfix(ZNet __instance, ZRpc rpc)
+        {
+            if (!__instance.IsServer()) return;
+
+            ZNetPeer peer = __instance.GetPeers().Find(candidate => candidate.m_rpc == rpc);
+            if (peer == null || !peer.IsReady()) return;
+
+            AdminSyncing.PushAdminStatus(new[] { peer });
+            foreach (var configSync in ConfigSync.configSyncs)
+                configSync.SendAllValuesToJoiningPeer(peer);
+        }
+    }
+
+    [HarmonyPatch(typeof(ZNet), "OnDestroy")]
+    internal class RestoreLocalConfigsOnDisconnect
+    {
+        [HarmonyPostfix]
+        private static void Postfix()
+        {
+            if (ConfigSync.isServer) return;
+
+            ConfigSync.ProcessingServerUpdate = true;
+            try
+            {
+                foreach (var configSync in ConfigSync.configSyncs)
+                    configSync.RestoreLocalConfigs();
+            }
+            finally
+            {
+                ConfigSync.ProcessingServerUpdate = false;
+            }
         }
     }
 

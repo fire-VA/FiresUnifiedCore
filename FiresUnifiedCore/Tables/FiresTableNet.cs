@@ -69,7 +69,7 @@ namespace FiresCore.Tables
 
             public FiresTableSeat Find(long playerId)
             {
-                foreach (var s in Seats) if (!s.IsBot && s.Id == playerId) return s;
+                foreach (var seat in Seats) if (!seat.IsBot && seat.Id == playerId) return seat;
                 return null;
             }
         }
@@ -89,13 +89,13 @@ namespace FiresCore.Tables
 
         public static void Initialize()
         {
-            var cur = ZRoutedRpc.instance;
-            if (cur == null) return;
-            if (_registered && _registeredOn == cur) return;
-            cur.Register<ZPackage>(RpcAct, new Action<long, ZPackage>(RPC_Act));
-            cur.Register<ZPackage>(RpcState, new Action<long, ZPackage>(RPC_State));
-            cur.Register<ZPackage>(RpcEvt, new Action<long, ZPackage>(RPC_Evt));
-            _registered = true; _registeredOn = cur;
+            var routedRpc = ZRoutedRpc.instance;
+            if (routedRpc == null) return;
+            if (_registered && _registeredOn == routedRpc) return;
+            routedRpc.Register<ZPackage>(RpcAct, new Action<long, ZPackage>(RPC_Act));
+            routedRpc.Register<ZPackage>(RpcState, new Action<long, ZPackage>(RPC_State));
+            routedRpc.Register<ZPackage>(RpcEvt, new Action<long, ZPackage>(RPC_Evt));
+            _registered = true; _registeredOn = routedRpc;
             _sessions.Clear(); _clientVersion.Clear();
             if (IsServer && _pump == null)
             {
@@ -109,22 +109,22 @@ namespace FiresCore.Tables
         public static Session Open(string tableId, string gameKey, IFiresTableHost host, float timeoutSeconds = 30f)
         {
             if (!IsServer || string.IsNullOrEmpty(tableId) || host == null) return null;
-            var s = new Session { Id = tableId, GameKey = gameKey ?? "", Host = host, TimeoutSeconds = timeoutSeconds };
-            _sessions[tableId] = s;
-            return s;
+            var session = new Session { Id = tableId, GameKey = gameKey ?? "", Host = host, TimeoutSeconds = timeoutSeconds };
+            _sessions[tableId] = session;
+            return session;
         }
 
-        public static Session Get(string tableId) => tableId != null && _sessions.TryGetValue(tableId, out var s) ? s : null;
+        public static Session Get(string tableId) => tableId != null && _sessions.TryGetValue(tableId, out var session) ? session : null;
 
         public static void Close(string tableId, string reason = "")
         {
-            var s = Get(tableId);
-            if (s == null) return;
+            var session = Get(tableId);
+            if (session == null) return;
             _sessions.Remove(tableId);
             var pkg = new ZPackage();
             pkg.Write(reason ?? "");
-            foreach (var seat in s.Seats)
-                if (!seat.IsBot) SendEventTo(s, seat, EvtClosed, pkg);
+            foreach (var seat in session.Seats)
+                if (!seat.IsBot) SendEventTo(session, seat, EvtClosed, pkg);
         }
 
         public static FiresTableSeat SeatHuman(Session s, long playerId, string name, int seatIndex)
@@ -223,9 +223,9 @@ namespace FiresCore.Tables
             try
             {
                 gameKey = payload.ReadString();
-                int n = payload.ReadInt();
-                seats = new List<FiresTableSeat>(n);
-                for (int i = 0; i < n; i++)
+                int count = payload.ReadInt();
+                seats = new List<FiresTableSeat>(count);
+                for (int i = 0; i < count; i++)
                     seats.Add(new FiresTableSeat { Id = payload.ReadLong(), Name = payload.ReadString(), Seat = payload.ReadInt() });
                 return true;
             }
@@ -258,9 +258,9 @@ namespace FiresCore.Tables
                 byte code = pkg.ReadByte();
                 byte[] inner = pkg.ReadByteArray();
 
-                var s = Get(tableId);
-                var seat = s?.Find(playerId);
-                if (s == null || seat == null) return;
+                var session = Get(tableId);
+                var seat = session?.Find(playerId);
+                if (session == null || seat == null) return;
 
                 seat.LastSeen = Time.realtimeSinceStartup;
                 bool firstAttach = seat.Route == 0L;
@@ -268,12 +268,12 @@ namespace FiresCore.Tables
 
                 if (firstAttach)
                 {
-                    try { s.Host.OnJoin(seat); }
-                    catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresTableNet] OnJoin '{s.Id}': {ex.Message}"); }
+                    try { session.Host.OnJoin(seat); }
+                    catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresTableNet] OnJoin '{session.Id}': {ex.Message}"); }
                 }
 
-                if (code == CodeDetach) Unseat(s, seat, timedOut: false);
-                else if (code == CodeAction) s.Host.OnAction(playerId, new ZPackage(inner));
+                if (code == CodeDetach) Unseat(session, seat, timedOut: false);
+                else if (code == CodeAction) session.Host.OnAction(playerId, new ZPackage(inner));
             }
             catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresTableNet] act: {ex.Message}"); }
         }
@@ -318,15 +318,15 @@ namespace FiresCore.Tables
                 _work.Clear();
                 _work.AddRange(_sessions.Values);
                 float now = Time.realtimeSinceStartup;
-                foreach (var s in _work)
+                foreach (var session in _work)
                 {
                     _stale.Clear();
-                    foreach (var seat in s.Seats)
-                        if (!seat.IsBot && seat.Route != 0L && now - seat.LastSeen > s.TimeoutSeconds) _stale.Add(seat);
-                    foreach (var seat in _stale) Unseat(s, seat, timedOut: true);
+                    foreach (var seat in session.Seats)
+                        if (!seat.IsBot && seat.Route != 0L && now - seat.LastSeen > session.TimeoutSeconds) _stale.Add(seat);
+                    foreach (var seat in _stale) Unseat(session, seat, timedOut: true);
 
-                    try { s.Host.Tick(Time.deltaTime); }
-                    catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresTableNet] tick '{s.Id}': {ex.Message}"); }
+                    try { session.Host.Tick(Time.deltaTime); }
+                    catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresTableNet] tick '{session.Id}': {ex.Message}"); }
                 }
             }
         }

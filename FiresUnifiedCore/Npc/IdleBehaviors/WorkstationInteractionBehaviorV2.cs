@@ -43,26 +43,26 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float WORKSTATION_DETECTION_RANGE = 10f;
-        private const float INTERACTION_DISTANCE = 2f;
-        private const float MIN_WORK_DURATION = 10f;
-        private const float MAX_WORK_DURATION = 20f;
-        private const float WORK_ANIMATION_INTERVAL = 3f;
+        private const float WorkstationDetectionRange = 10f;
+        private const float InteractionDistance = 2f;
+        private const float MinWorkDuration = 10f;
+        private const float MaxWorkDuration = 20f;
+        private const float WorkAnimationInterval = 3f;
         
         // Repair/upgrade chances - lowered to make interactions feel less robotic
-        private const float REPAIR_CHANCE_PER_ANIMATION = 0.15f;  // Reduced from 0.25
-        private const float REPAIR_AMOUNT_PERCENT = 0.15f;
-        private const float UPGRADE_CHANCE_PER_ANIMATION = 0.02f;
-        private const float FULL_REPAIR_CHANCE = 0.05f;  // Reduced from 0.08
+        private const float RepairChancePerAnimation = 0.15f;  // Reduced from 0.25
+        private const float RepairAmountPercent = 0.15f;
+        private const float UpgradeChancePerAnimation = 0.02f;
+        private const float FullRepairChance = 0.05f;  // Reduced from 0.08
         
         // Repair threshold - only repair items below 75% durability (was 95% which caused unnecessary repairs)
-        private const float REPAIR_THRESHOLD = 0.75f;
+        private const float RepairThreshold = 0.75f;
         
         // Workstation cooldown - companions shouldn't interact with workbenches too often
-        private const float WORKSTATION_COOLDOWN = 300f;  // 5 minutes between workstation interactions
+        private const float WorkstationCooldown = 300f;  // 5 minutes between workstation interactions
         
         // Upgrade limit - companions can only upgrade items once per in-game day (1800 seconds)
-        private const float UPGRADE_DAY_LENGTH = 1800f;  // 30 minutes real time = 1 in-game day
+        private const float UpgradeDayLength = 1800f;  // 30 minutes real time = 1 in-game day
         
         #endregion
         
@@ -79,7 +79,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private static Dictionary<string, float> _lastWorkstationTime = new Dictionary<string, float>();
         
         // Upgrade tracking - stored in ZDO via companion
-        private const string LAST_UPGRADE_DAY_KEY = "lastUpgradeDay";
+        private const string LastUpgradeDayKey = "lastUpgradeDay";
         
         // Commanded target
         private CraftingStation _commandedStation;
@@ -102,7 +102,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 WorkPhase.FindingWorkstation => 5f,
                 WorkPhase.MovingToWorkstation => 30f,
-                WorkPhase.Working => MAX_WORK_DURATION + 10f,
+                WorkPhase.Working => MaxWorkDuration + 10f,
                 _ => 10f
             };
         }
@@ -133,7 +133,7 @@ namespace FiresCore.Npc.IdleBehaviors
         public override void Initialize(CompanionController companion, CompanionIdleBehavior idleBehavior)
         {
             base.Initialize(companion, idleBehavior);
-            MaxDuration = MAX_WORK_DURATION + 30f;
+            MaxDuration = MaxWorkDuration + 30f;
         }
         
         public void SetCommandedStation(CraftingStation station)
@@ -152,10 +152,10 @@ namespace FiresCore.Npc.IdleBehaviors
             string companionId = Companion.companionId ?? Companion.GetInstanceID().ToString();
             if (_lastWorkstationTime.TryGetValue(companionId, out float lastTime))
             {
-                if (Time.time - lastTime < WORKSTATION_COOLDOWN)
+                if (Time.time - lastTime < WorkstationCooldown)
                 {
                     if (CompanionIdleBehavior.VerboseLogging)
-                        Debug.Log($"[WorkstationInteraction] {Companion?.companionName} skipping - on cooldown ({(WORKSTATION_COOLDOWN - (Time.time - lastTime)):F0}s remaining)");
+                        Debug.Log($"[WorkstationInteraction] {Companion?.companionName} skipping - on cooldown ({(WorkstationCooldown - (Time.time - lastTime)):F0}s remaining)");
                     return false;
                 }
             }
@@ -180,7 +180,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 _workPosition = CalculateWorkPosition(_targetStation);
 
                 // EARLY RESERVATION: Claim immediately so concurrent companions don't pile in.
-                if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, Character, MAX_WORK_DURATION + 30f))
+                if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, Character, MaxWorkDuration + 30f))
                 {
                     LogVerbose($"Could not reserve {_targetStation.m_name} at Start - already taken");
                     _targetStation = null;
@@ -249,7 +249,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             _pieceData = PieceDataHelper.GetPieceData(_targetStation.gameObject);
             
-            if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, Character, MAX_WORK_DURATION))
+            if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, Character, MaxWorkDuration))
             {
                 LogVerbose("Cannot restore - workstation is now occupied");
                 SetPhase(WorkPhase.Complete);
@@ -257,7 +257,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             float dist = DistanceTo(_workPosition);
-            if (dist > INTERACTION_DISTANCE)
+            if (dist > InteractionDistance)
             {
                 SetPhase(WorkPhase.MovingToWorkstation);
                 MoveToPosition(_workPosition);
@@ -293,7 +293,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // EARLY RESERVATION: Claim before we walk so other companions don't pick the same one.
-            if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, Character, MAX_WORK_DURATION + 30f))
+            if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, Character, MaxWorkDuration + 30f))
             {
                 LogVerbose($"Lost race for {_targetStation.m_name} - another companion got there first");
                 _targetStation = null;
@@ -370,7 +370,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Play work animation periodically
-            if (Time.time - _lastAnimationTime >= WORK_ANIMATION_INTERVAL)
+            if (Time.time - _lastAnimationTime >= WorkAnimationInterval)
             {
                 PlayPeriodicWorkAnimation();  // Use renamed method
                 _lastAnimationTime = Time.time;
@@ -395,7 +395,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private void StartWorking()
         {
-            if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, Character, MAX_WORK_DURATION + 30f))
+            if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, Character, MaxWorkDuration + 30f))
             {
                 LogVerbose($"Could not occupy {_targetStation.m_name} - already taken");
                 Complete();
@@ -406,7 +406,7 @@ namespace FiresCore.Npc.IdleBehaviors
             string stationType = PieceDataHelper.GetCraftingStationType(_targetStation);
             CompanionEvents.FireWorkStationStarted(Companion, _targetStation.gameObject, stationType);
             
-            float workDuration = Random.Range(MIN_WORK_DURATION, MAX_WORK_DURATION);
+            float workDuration = Random.Range(MinWorkDuration, MaxWorkDuration);
             _workEndTime = Time.time + workDuration;
             
             StopMovement();
@@ -500,7 +500,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Inventory == null) return;
             
             // Check upgrade chance first (upgrade is rarer than repair)
-            if (Random.value <= UPGRADE_CHANCE_PER_ANIMATION)
+            if (Random.value <= UpgradeChancePerAnimation)
             {
                 // Check if we're allowed to upgrade today
                 if (CanUpgradeToday())
@@ -510,13 +510,13 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
             
-            if (Random.value <= FULL_REPAIR_CHANCE)
+            if (Random.value <= FullRepairChance)
             {
                 TryFullRepairItem();
                 return;
             }
             
-            if (Random.value > REPAIR_CHANCE_PER_ANIMATION) return;
+            if (Random.value > RepairChancePerAnimation) return;
             
             var damagedItems = GetDamagedItems();
             if (damagedItems.Count == 0) return;
@@ -524,7 +524,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var itemToRepair = damagedItems[Random.Range(0, damagedItems.Count)];
             
             float maxDurability = itemToRepair.GetMaxDurability();
-            float repairAmount = maxDurability * REPAIR_AMOUNT_PERCENT;
+            float repairAmount = maxDurability * RepairAmountPercent;
             float oldDurability = itemToRepair.m_durability;
             float newDurability = Mathf.Min(itemToRepair.m_durability + repairAmount, maxDurability);
             float actualRepairPercent = (newDurability - oldDurability) / maxDurability;
@@ -552,7 +552,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var nview = Companion.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return true;  // Allow if can't track
             
-            int lastUpgradeDay = nview.GetZDO().GetInt(LAST_UPGRADE_DAY_KEY, -1);
+            int lastUpgradeDay = nview.GetZDO().GetInt(LastUpgradeDayKey, -1);
             
             // If never upgraded or last upgrade was at least 1 day ago, allow
             if (lastUpgradeDay < 0 || currentDay > lastUpgradeDay)
@@ -576,7 +576,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var nview = Companion.GetComponent<ZNetView>();
             if (nview != null && nview.IsValid())
             {
-                nview.GetZDO().Set(LAST_UPGRADE_DAY_KEY, currentDay);
+                nview.GetZDO().Set(LastUpgradeDayKey, currentDay);
             }
         }
         
@@ -746,7 +746,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Only repair items that are actually damaged - below 75% durability
             // Previously was 95% which caused companions to "repair" items that were nearly full
-            return item.m_durability / maxDurability < REPAIR_THRESHOLD;
+            return item.m_durability / maxDurability < RepairThreshold;
         }
         
         private void StopWorkAnimation()
@@ -775,14 +775,14 @@ namespace FiresCore.Npc.IdleBehaviors
             CraftingStation bestStation = null;
             float bestDistance = float.MaxValue;
             
-            float searchRadius = GetEffectiveSearchRadius(WORKSTATION_DETECTION_RANGE);
+            float searchRadius = GetEffectiveSearchRadius(WorkstationDetectionRange);
             var colliders = Physics.OverlapSphere(SearchCenter, searchRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var station = col.GetComponent<CraftingStation>() ?? col.GetComponentInParent<CraftingStation>();
+                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
                 if (station == null) continue;
                 
                 if (!InteractableOccupancyManager.CanUseInteractable(station.gameObject, Character))

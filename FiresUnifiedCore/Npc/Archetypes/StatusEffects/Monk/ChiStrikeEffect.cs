@@ -11,6 +11,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
     /// </summary>
     public class ChiStrikeEffect : Base.BuffEffect
     {
+        private const float ChargesDepletedTtlSeconds = 0.1f;
+
         /// <summary>Number of empowered attacks remaining.</summary>
         public int EmpoweredAttacksRemaining { get; set; } = 3;
         
@@ -82,7 +84,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
                     // End effect if no charges left
                     if (EmpoweredAttacksRemaining <= 0)
                     {
-                        m_ttl = 0.1f; // End soon
+                        m_ttl = ChargesDepletedTtlSeconds; // End soon
                     }
                 }
             }

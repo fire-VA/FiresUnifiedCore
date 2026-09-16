@@ -4,20 +4,8 @@ using System.Collections.Generic;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Scales weapons and equipment to match the companion's body scale.
-    /// 
-    /// PROBLEM: When a companion is scaled (giant/dwarf), weapons attached via VisEquipment
-    /// are parented to bones. The bones ARE children of the scaled root, so they inherit
-    /// the scale. However, VisEquipment instantiates weapons with localScale (1,1,1).
-    /// 
-    /// EXPECTED: Weapons should appear at companionScale * 1 = companionScale world size.
-    /// ACTUAL: This should work automatically via transform hierarchy inheritance.
-    /// 
-    /// If weapons are appearing at wrong scale, this component can apply corrections.
-    /// Currently it:
-    /// - Tracks weapon instances for debugging
-    /// - Applies extra scale to giant helmets (so they don't look small on big heads)
-    /// - Can apply inverse scaling if weapons appear too large (currently disabled)
+    /// Scale corrections for equipment on scaled companions. Weapons already inherit the body's scale through the
+    /// bone hierarchy; this enlarges helmets on giants so they don't look undersized.
     /// </summary>
     public class CompanionWeaponScaler : MonoBehaviour
     {
@@ -26,13 +14,13 @@ namespace FiresCore.Npc
         private VisEquipment _visEquipment;
         private float _lastScale = 1.0f;
         private float _updateTimer;
-        private const float UPDATE_INTERVAL = 0.5f;
+        private const float UpdateInterval = 0.5f;
         
         // Track scaled items (key = instance ID, value = applied scale)
         private Dictionary<int, float> _scaledInstances = new Dictionary<int, float>();
         
         // For giants, scale helmets slightly larger
-        private const float GIANT_HELMET_EXTRA_SCALE = 1.1f;
+        private const float GiantHelmetExtraScale = 1.1f;
         
         // Set to true to apply inverse scaling to weapons (makes them appear normal-sized on scaled characters)
         // Set to false to let weapons scale with the character (giants have big swords)
@@ -63,7 +51,7 @@ namespace FiresCore.Npc
         private void LateUpdate()
         {
             _updateTimer += Time.deltaTime;
-            if (_updateTimer < UPDATE_INTERVAL) return;
+            if (_updateTimer < UpdateInterval) return;
             _updateTimer = 0f;
             
             float currentScale = _randomLoadout != null ? _randomLoadout.GetScale() : 1.0f;
@@ -104,7 +92,7 @@ namespace FiresCore.Npc
             // Giants get slightly larger helmets
             if (isGiant)
             {
-                ScaleItemInstance("m_helmetItemInstance", GIANT_HELMET_EXTRA_SCALE, companionScale);
+                ScaleItemInstance("m_helmetItemInstance", GiantHelmetExtraScale, companionScale);
             }
         }
 
@@ -166,7 +154,7 @@ namespace FiresCore.Npc
         public void ForceScaleEquipment()
         {
             _scaledInstances.Clear();
-            _updateTimer = UPDATE_INTERVAL;
+            _updateTimer = UpdateInterval;
         }
     }
 }

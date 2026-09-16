@@ -4,21 +4,8 @@ using System.Collections.Generic;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Utility class for sending chat messages from companions.
-    /// Provides a consistent way for companions to communicate with their owners
-    /// about completed tasks, status updates, and other notifications.
-    /// 
-    /// MESSAGE TYPES:
-    /// - Speech bubble: Appears above companion's head (NPC text)
-    /// - Chat log: Appears in the chat window (optional)
-    /// - HUD message: Appears as top-left notification
-    /// 
-    /// RATE LIMITING:
-    /// - Messages are rate-limited to prevent spam
-    /// - Same message won't repeat within a cooldown period
-    /// - Maximum messages per companion per minute
-    /// - Global limit: Max 2 chat bubbles on screen at once
-    /// - Distance check: Companions close together won't both talk at once
+    /// Companion messages to the owner (speech bubbles, chat log, HUD notices) about finished tasks and status,
+    /// rate-limited per message, per companion and globally, with nearby companions never talking at once.
     /// </summary>
     public static partial class CompanionChatHelper
     {
@@ -28,25 +15,25 @@ namespace FiresCore.Npc
         private static Dictionary<string, int> _messageCountsPerMinute = new Dictionary<string, int>();
         private static float _lastCleanupTime = 0f;
         
-        private const float MESSAGE_COOLDOWN = 10f;  // Same message can't repeat for 10 seconds
-        private const float CLEANUP_INTERVAL = 60f;  // Clean up tracking every minute
-        private const int MAX_MESSAGES_PER_MINUTE = 5;  // Max messages per companion per minute
+        private const float MessageCooldown = 10f;  // Same message can't repeat for 10 seconds
+        private const float CleanupInterval = 60f;  // Clean up tracking every minute
+        private const int MaxMessagesPerMinute = 5;  // Max messages per companion per minute
         
         // Status display tracking - separate from regular messages
         private static Dictionary<string, float> _lastStatusUpdateTimes = new Dictionary<string, float>();
         private static Dictionary<string, string> _lastStatusText = new Dictionary<string, string>(); // Track last status text per companion
-        private const float STATUS_UPDATE_INTERVAL = 15f;  // Same status can repeat every 15 seconds
-        private const float STATUS_CHANGE_COOLDOWN = 5f;   // Minimum time between ANY status updates (prevents rapid flickering)
+        private const float StatusUpdateInterval = 15f;  // Same status can repeat every 15 seconds
+        private const float StatusChangeCooldown = 5f;   // Minimum time between ANY status updates (prevents rapid flickering)
         
         // Global chat bubble limiting - prevent screen spam when multiple companions work nearby
         private static Dictionary<string, float> _activeStatusBubbles = new Dictionary<string, float>(); // companionId -> expiry time
         private static Dictionary<string, Vector3> _activeBubblePositions = new Dictionary<string, Vector3>(); // companionId -> position
-        private const int MAX_CONCURRENT_BUBBLES = 2;  // Maximum bubbles on screen at once
-        private const float MIN_BUBBLE_DISTANCE = 8f;   // Minimum distance between companions showing bubbles
+        private const int MaxConcurrentBubbles = 2;  // Maximum bubbles on screen at once
+        private const float MinBubbleDistance = 8f;   // Minimum distance between companions showing bubbles
         
         // Message cycling - track recently used messages to avoid repetition
         private static Dictionary<string, List<int>> _recentMessageIndices = new Dictionary<string, List<int>>(); // category -> list of recently used indices
-        private const int MAX_RECENT_MESSAGES = 3;  // Remember last 3 messages per category to avoid immediate repeats
+        private const int MaxRecentMessages = 3;  // Remember last 3 messages per category to avoid immediate repeats
         
         /// <summary>
         /// The symbol/icon displayed before working status messages.
@@ -213,19 +200,10 @@ namespace FiresCore.Npc
         }
         
         /// <summary>
-        /// Shows a working status above the companion's head while they're performing a task.
-        /// Rate-limited to show the same status every 15 seconds, but state CHANGES show immediately.
-        /// This provides visual feedback without spamming.
-        /// 
-        /// GLOBAL LIMITING:
-        /// - Maximum of 2 chat bubbles displayed at once across all companions
-        /// - Companions within 8m of each other won't both display bubbles
-        /// - This prevents screen clutter when multiple companions work nearby
+        /// Shows a working status above the companion. Repeats of the same status are rate-limited while changes show
+        /// at once (or immediately with <paramref name="forceUpdate"/>), and bubbles are capped on screen with nearby
+        /// companions never showing theirs together.
         /// </summary>
-        /// <param name="companion">The companion performing the task</param>
-        /// <param name="statusText">Current status (e.g., "Filling smelter", "Waiting for output")</param>
-        /// <param name="forceUpdate">If true, bypasses rate limiting to show immediately</param>
-        /// <param name="context">Optional station context for smarter message generation</param>
         public static void ShowWorkingStatus(CompanionController companion, string statusText, bool forceUpdate = false, StationContext context = StationContext.None)
         {
             if (companion == null || string.IsNullOrEmpty(statusText)) return;
@@ -257,18 +235,18 @@ namespace FiresCore.Npc
             }
             
             // Rate limiting logic:
-            // - State changes: Enforce STATUS_CHANGE_COOLDOWN (5s) to prevent rapid flickering
-            // - Same status: Only repeat every STATUS_UPDATE_INTERVAL (15s) seconds
+            // - State changes: Enforce StatusChangeCooldown (5s) to prevent rapid flickering
+            // - Same status: Only repeat every StatusUpdateInterval (15s) seconds
             // This prevents the companion from spamming status changes when rapidly switching states
             if (!forceUpdate)
             {
                 if (_lastStatusUpdateTimes.TryGetValue(companionId, out float lastTime))
                 {
                     // Always enforce minimum cooldown between ANY status updates
-                    if (currentTime - lastTime < STATUS_CHANGE_COOLDOWN) return;
+                    if (currentTime - lastTime < StatusChangeCooldown) return;
                     
                     // For same status, enforce the longer interval
-                    if (!isStateChange && currentTime - lastTime < STATUS_UPDATE_INTERVAL) return;
+                    if (!isStateChange && currentTime - lastTime < StatusUpdateInterval) return;
                 }
             }
             
@@ -281,7 +259,7 @@ namespace FiresCore.Npc
             if (!hasActiveBubble)
             {
                 // Check concurrent bubble count
-                if (_activeStatusBubbles.Count >= MAX_CONCURRENT_BUBBLES)
+                if (_activeStatusBubbles.Count >= MaxConcurrentBubbles)
                 {
                     return; // Too many bubbles on screen
                 }
@@ -291,7 +269,7 @@ namespace FiresCore.Npc
                 {
                     if (kvp.Key == companionId) continue;
                     float dist = Vector3.Distance(companionPos, kvp.Value);
-                    if (dist < MIN_BUBBLE_DISTANCE)
+                    if (dist < MinBubbleDistance)
                     {
                         return; // Another companion too close is already showing a bubble
                     }
@@ -303,7 +281,7 @@ namespace FiresCore.Npc
             _lastStatusText[companionId] = statusText;
             
             // Register this bubble as active
-            float bubbleExpiry = currentTime + STATUS_UPDATE_INTERVAL;
+            float bubbleExpiry = currentTime + StatusUpdateInterval;
             _activeStatusBubbles[companionId] = bubbleExpiry;
             _activeBubblePositions[companionId] = companionPos;
             
@@ -332,7 +310,7 @@ namespace FiresCore.Npc
                     companion.gameObject,
                     Vector3.up * 2.2f,    // Slightly higher offset
                     25f,                  // Slightly larger cull distance
-                    STATUS_UPDATE_INTERVAL - 0.5f,  // Display until next update
+                    StatusUpdateInterval - 0.5f,  // Display until next update
                     "",                   // No topic
                     formattedText,
                     false                 // Not large text
@@ -895,7 +873,7 @@ namespace FiresCore.Npc
             recentIndices.Add(selectedIndex);
             
             // Keep the recent list from growing too large
-            while (recentIndices.Count > MAX_RECENT_MESSAGES && recentIndices.Count > 0)
+            while (recentIndices.Count > MaxRecentMessages && recentIndices.Count > 0)
             {
                 recentIndices.RemoveAt(0);
             }
@@ -1381,14 +1359,14 @@ namespace FiresCore.Npc
             // Check per-companion message count
             if (_messageCountsPerMinute.TryGetValue(companionId, out int count))
             {
-                if (count >= MAX_MESSAGES_PER_MINUTE) return false;
+                if (count >= MaxMessagesPerMinute) return false;
             }
             
             // Check for duplicate message
             string messageKey = $"{companionId}_{message.GetHashCode()}";
             if (_lastMessageTimes.TryGetValue(messageKey, out float lastTime))
             {
-                if (Time.time - lastTime < MESSAGE_COOLDOWN) return false;
+                if (Time.time - lastTime < MessageCooldown) return false;
             }
             
             return true;
@@ -1411,7 +1389,7 @@ namespace FiresCore.Npc
         
         private static void CleanupOldRecords()
         {
-            if (Time.time - _lastCleanupTime < CLEANUP_INTERVAL) return;
+            if (Time.time - _lastCleanupTime < CleanupInterval) return;
             _lastCleanupTime = Time.time;
             
             // Clear message counts
@@ -1421,7 +1399,7 @@ namespace FiresCore.Npc
             var keysToRemove = new List<string>();
             foreach (var kvp in _lastMessageTimes)
             {
-                if (Time.time - kvp.Value > MESSAGE_COOLDOWN * 2)
+                if (Time.time - kvp.Value > MessageCooldown * 2)
                 {
                     keysToRemove.Add(kvp.Key);
                 }

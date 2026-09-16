@@ -69,10 +69,10 @@ namespace FiresCore.Bridge
                     continue;
                 }
                 if (rows == null) continue;
-                foreach (var m in rows)
+                foreach (var member in rows)
                 {
-                    if (m != null && !string.IsNullOrEmpty(m.Id))
-                        result.Add(m);
+                    if (member != null && !string.IsNullOrEmpty(member.Id))
+                        result.Add(member);
                 }
             }
             return result;

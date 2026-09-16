@@ -15,7 +15,7 @@ namespace FiresCore.Npc
     {
         #region Movement Authority Helpers
         
-        private const string AUTHORITY_OWNER = "CompanionCombatMovement";
+        private const string AuthorityOwner = "CompanionCombatMovement";
         
         /// <summary>
         /// Gets the appropriate movement source based on current state.
@@ -63,7 +63,7 @@ namespace FiresCore.Npc
                 return false;
             }
             
-            return _movementAuthority.TryAcquireAuthority(source, AUTHORITY_OWNER, 2f);
+            return _movementAuthority.TryAcquireAuthority(source, AuthorityOwner, 2f);
         }
         
         /// <summary>
@@ -71,7 +71,7 @@ namespace FiresCore.Npc
         /// </summary>
         private void ReleaseMovementAuthority()
         {
-            _movementAuthority?.ReleaseAuthority(AUTHORITY_OWNER);
+            _movementAuthority?.ReleaseAuthority(AuthorityOwner);
         }
         
         /// <summary>
@@ -209,9 +209,8 @@ namespace FiresCore.Npc
                 bool run = mode == MovementMode.Run;
                 
                 // Route through authority
-                _movementAuthority.SetMoveDirection(AUTHORITY_OWNER, moveDir, walk, run);
+                _movementAuthority.SetMoveDirection(AuthorityOwner, moveDir, walk, run);
                 _lastSetMoveDir = moveDir;
-                _moveDirSet = true;
                 return;
             }
             
@@ -243,8 +242,8 @@ namespace FiresCore.Npc
             var facing = GetFacingAuthority();
             if (facing != null)
             {
-                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.Following, AUTHORITY_OWNER, 0.5f))
-                    facing.SetLookDirection(AUTHORITY_OWNER, dir);
+                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.Following, AuthorityOwner, 0.5f))
+                    facing.SetLookDirection(AuthorityOwner, dir);
                 return;
             }
 

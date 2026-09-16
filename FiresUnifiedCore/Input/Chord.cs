@@ -36,8 +36,8 @@ namespace FiresCore.Input
             {
                 if (mod == main) continue;
                 bool listed = false;
-                foreach (var m in shortcut.Modifiers)
-                    if (m == mod) { listed = true; break; }
+                foreach (var modifier in shortcut.Modifiers)
+                    if (modifier == mod) { listed = true; break; }
                 if (!listed && UnityEngine.Input.GetKey(mod)) return false;
             }
             return true;

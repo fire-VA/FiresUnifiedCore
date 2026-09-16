@@ -630,10 +630,10 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             m_character.transform.position = destination;
             
             // Reset velocity to prevent weird movement
-            var rb = m_character.GetComponent<Rigidbody>();
-            if (rb != null && !rb.isKinematic)
+            var body = m_character.GetComponent<Rigidbody>();
+            if (body != null && !body.isKinematic)
             {
-                rb.linearVelocity = Vector3.zero;
+                body.linearVelocity = Vector3.zero;
             }
         }
         

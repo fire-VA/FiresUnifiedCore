@@ -7,101 +7,9 @@ using FiresCore.Npc.AI;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Manages visual effects (VFX) and sound effects (SFX) for companion abilities.
-    /// Uses Valheim's native attack/effect prefabs to create polished ability visuals.
-    /// 
-    /// CLEANUP SYSTEM:
-    /// All spawned effects are tracked and cleaned up after their duration expires.
-    /// A fallback cleanup of 10 seconds ensures no effects persist indefinitely.
-    /// 
-    /// VERIFIED EFFECT PREFABS (from fx_dump.txt):
-    /// 
-    /// SHIELD/PROTECTION:
-    /// - vfx_GoblinShield [Particles, Light] - Green protective shield bubble
-    /// - vfx_StaffShield [Particles, Light] - Staff shield barrier
-    /// - fx_shaman_protect [Particles, Light, Duration:8.0s] - Shaman protection bubble
-    /// - fx_shield_start [Particles, Light, Duration:8.0s] - Shield activation
-    /// - fx_shieldgenerator_domehit [Particles, Duration:6.0s] - Shield dome hit
-    /// - fx_StaffShield_Hit [Particles, Duration:3.0s] - Staff shield impact
-    /// 
-    /// IMPACT/SHOCKWAVE:
-    /// - vfx_sledge_hit [Particles, Duration:5.0s] - Hammer slam
-    /// - vfx_sledge_iron_hit [Particles, Light, Duration:5.0s] - Iron sledge impact
-    /// - fx_eikthyr_stomp [Particles, Light, Duration:10.0s] - Eikthyr's stomp
-    /// - vfx_troll_groundslam [Particles, Duration:5.0s] - Troll ground slam
-    /// - vfx_bjorn_groundslam [Particles, Duration:5.0s] - Bear ground slam
-    /// - vfx_seekerbrute_groundslam [Particles, Duration:5.0s] - Seeker brute slam
-    /// - fx_goblinbrute_groundslam [Particles, Duration:5.0s] - Fuling brute slam
-    /// 
-    /// FIRE/EXPLOSION:
-    /// - vfx_fireball_explosion [Particles, Light, Duration:8.0s] - Fireball explosion
-    /// - vfx_FireballHit [Particles, Duration:8.0s] - Fireball impact
-    /// - fx_fireball_staff_explosion [Particles, Light, Duration:8.0s] - Staff fireball
-    /// - fx_firebomb_hit [Particles, Light, Duration:8.0s] - Fire bomb impact
-    /// - vfx_spray_fire [Particles, Light, Duration:5.0s] - Fire spray
-    /// - fx_fenring_flames [Particles, Light, Duration:5.0s] - Fenring fire burst
-    /// 
-    /// ICE/FROST:
-    /// - vfx_frostbolt_explosion [Particles, Light, Duration:8.0s] - Frostbolt explosion
-    /// - vfx_frostarrow_hit [Particles, Light, Duration:10.0s] - Frost arrow impact
-    /// - fx_fenring_frost [Particles, Light, Duration:5.0s] - Fenring frost attack
-    /// - fx_fenring_icenova [Particles, Light, Duration:6.0s] - Fenring ice nova
-    /// - fx_iceshard_hit [Particles, Light, Duration:8.0s] - Ice shard impact
-    /// - vfx_ColdBall_Hit [Particles, Light, Duration:8.0s] - Cold ball impact
-    /// 
-    /// LIGHTNING:
-    /// - fx_Lightning [Particles, Light] - Lightning bolt
-    /// - fx_eikthyr_forwardshockwave [Particles, Light, Duration:10.0s] - Eikthyr lightning
-    /// - fx_chainlightning_hit [Particles, Light, Duration:3.0s] - Chain lightning hit
-    /// - fx_lightningweapon_hit [Particles, Light, Duration:3.0s] - Lightning weapon hit
-    /// - vfx_thunderbolt_explosion [Particles, Light, Duration:8.0s] - Thunder explosion
-    /// 
-    /// POISON/NATURE:
-    /// - vfx_Poison [Particles] - Poison effect
-    /// - vfx_poisonarrow_hit [Particles, Light, Duration:10.0s] - Poison arrow
-    /// - vfx_poisonbolt_explosion [Particles, Light, Duration:8.0s] - Poison explosion
-    /// - vfx_blob_attack [Particles, Duration:5.0s] - Blob acid attack
-    /// - vfx_spray_poison [Particles, Light, Duration:5.0s] - Poison spray
-    /// - fx_natureweapon_hit [Particles, Light, Duration:8.0s] - Nature weapon hit
-    /// 
-    /// SPIRIT/GHOST:
-    /// - vfx_ghost_death [Particles, Light, Duration:10.0s] - Ghost death/fade
-    /// - vfx_odin_despawn [Particles, Duration:5.0s] - Odin disappear effect
-    /// - vfx_spiritbolt_explosion [Particles, Light, Duration:8.0s] - Spirit bolt
-    /// - vfx_spray_spirit [Particles, Light, Duration:5.0s] - Spirit spray
-    /// - vfx_wraith_death [Particles, Light, Duration:10.0s] - Wraith fade
-    /// 
-    /// HEAL/BUFF:
-    /// - vfx_offering [Particles, Light, Duration:10.0s] - Offering altar glow
-    /// - vfx_spawn [Particles, Light, Duration:10.0s] - Spawn/summon effect
-    /// - fx_creature_tamed [Particles, Duration:5.0s] - Taming hearts
-    /// - vfx_HealthUpgrade [Particles, Light, Duration:15.0s] - Health upgrade
-    /// - vfx_StaminaUpgrade [Particles, Light, Duration:15.0s] - Stamina upgrade
-    /// - fx_DvergerMage_Support_hit [Particles, Light, Duration:15.0s] - Support buff hit
-    /// - fx_DvergerMage_Support_start [Particles, Light, Duration:28.0s] - Support buff start
-    /// 
-    /// AURA/CONTINUOUS:
-    /// - vfx_Burning [Particles, Light] - Burning aura
-    /// - vfx_Freezing [Particles] - Freezing aura  
-    /// - vfx_Cold [Particles] - Cold aura
-    /// - vfx_Frost [Particles] - Frost aura
-    /// - vfx_Slimed [Particles] - Slimed effect
-    /// - vfx_Tared [Particles] - Tarred effect
-    /// - vfx_BugRepellent [Particles, Light] - Bug repellent aura
-    /// 
-    /// POTION/BUFF VISUALS:
-    /// - vfx_Potion_health_medium [Particles, Light] - Health potion
-    /// - vfx_Potion_stamina_medium [Particles, Light] - Stamina potion
-    /// - vfx_Potion_eitr_minor [Particles, Light] - Eitr potion
-    /// - vfx_MeadBzerker [Particles, Light] - Berserker mead
-    /// - vfx_MeadHasty [Particles, Light] - Haste mead
-    /// - vfx_MeadStrength [Particles, Light] - Strength mead
-    /// - vfx_MeadTamer [Particles, Light] - Tamer mead
-    /// 
-    /// BOSS ATTACKS (HIGH IMPACT):
-    /// - fx_goblinking_nova [Particles, Light, Duration:10.0s] - Yagluth nova
-    /// - fx_fireskeleton_nova [Particles, Light, Duration:6.0s] - Fire skeleton nova
-    /// - fx_himminafl_aoe [Particles, Light, Duration:10.0s] - Himminafl AoE
+    /// Spawns and cleans up the visual and sound effects for companion abilities using Valheim's own effect
+    /// prefabs. Every spawned effect is tracked and destroyed when its duration ends, with a fallback timeout
+    /// so nothing outlives its ability.
     /// </summary>
     public static class AbilityFXManager
     {
@@ -114,7 +22,7 @@ namespace FiresCore.Npc.Archetypes
         private static List<TrackedEffect> _activeEffects = new List<TrackedEffect>();
         
         // Fallback cleanup duration if effect doesn't self-destruct
-        private const float FALLBACK_CLEANUP_DURATION = 10f;
+        private const float FallbackCleanupDuration = 10f;
         
         /// <summary>
         /// Tracks a spawned effect for cleanup.
@@ -401,7 +309,7 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>
         /// Called periodically to prune the tracking list and force-clean any
         /// continuous effects (no TimedDestruction) whose duration has elapsed.
-        /// Effects that already have TimedDestruction are left alone ï¿½ their
+        /// Effects that already have TimedDestruction are left alone - their
         /// OnDestroy path through ZNetScene.Destroy is correct and sufficient.
         /// </summary>
         public static void CleanupExpiredEffects()
@@ -413,7 +321,7 @@ namespace FiresCore.Npc.Archetypes
 
                 // If the instance is still alive it means there was no TimedDestruction
                 // (continuous aura / missing timeout). Route through NetworkObjectHelper so
-                // the ZNetScene entry is properly removed ï¿½ never use Object.Destroy here.
+                // the ZNetScene entry is properly removed - never use Object.Destroy here.
                 if (tracked.Instance != null)
                     FiresCore.Net.NetworkObjectHelper.SafeDestroy(tracked.Instance);
 
@@ -442,7 +350,7 @@ namespace FiresCore.Npc.Archetypes
         /// Spawns a sound effect at a position.
         /// Uses Object.Instantiate (same as EffectList.Create) so ZNetView.Awake
         /// registers the instance correctly. TimedDestruction on the prefab will
-        /// call ZNetScene.Destroy when it expires ï¿½ no manual cleanup needed.
+        /// call ZNetScene.Destroy when it expires - no manual cleanup needed.
         /// </summary>
         public static GameObject SpawnSound(string sfxName, Vector3 position)
         {
@@ -458,7 +366,7 @@ namespace FiresCore.Npc.Archetypes
             ForceSpatial3D(instance);
 
             // Track so CleanupExpiredEffects can catch any edge-case continuous SFX.
-            float dur = EnsureSelfDestruct(instance, FALLBACK_CLEANUP_DURATION);
+            float dur = EnsureSelfDestruct(instance, FallbackCleanupDuration);
             _activeEffects.Add(new TrackedEffect { Instance = instance, SpawnTime = Time.time, Duration = dur });
 
             if (VerboseLogging)
@@ -481,22 +389,22 @@ namespace FiresCore.Npc.Archetypes
         {
             if (instance == null) return fallbackDuration;
 
-            var td = instance.GetComponent<TimedDestruction>();
-            if (td != null && td.m_timeout > 0f)
-                return td.m_timeout;
+            var timedDestruction = instance.GetComponent<TimedDestruction>();
+            if (timedDestruction != null && timedDestruction.m_timeout > 0f)
+                return timedDestruction.m_timeout;
 
-            if (td == null)
-                td = instance.AddComponent<TimedDestruction>();
+            if (timedDestruction == null)
+                timedDestruction = instance.AddComponent<TimedDestruction>();
 
-            td.m_timeout = fallbackDuration;
-            td.Trigger();
+            timedDestruction.m_timeout = fallbackDuration;
+            timedDestruction.Trigger();
             return fallbackDuration;
         }
 
         /// <summary>
         /// Forces every AudioSource on the spawned hierarchy to 3D positional
         /// audio with a sane rolloff. Many vanilla Valheim FX prefabs ship with
-        /// AudioSources set to spatialBlend = 0 (pure 2D) â€” those play at full
+        /// AudioSources set to spatialBlend = 0 (pure 2D) — those play at full
         /// volume regardless of where the prefab is instantiated, so a companion
         /// casting an ability across the map sounds like it's right next to you.
         /// This is the structural fix for the "always the same sound, heard from
@@ -523,7 +431,7 @@ namespace FiresCore.Npc.Archetypes
         /// Object.Instantiate is the correct vanilla path (same as EffectList.Create).
         /// ZNetView.Awake registers the instance; TimedDestruction calls ZNetScene.Destroy
         /// when it expires. For effects without TimedDestruction, CleanupExpiredEffects
-        /// will route through NetworkObjectHelper after FALLBACK_CLEANUP_DURATION.
+        /// will route through NetworkObjectHelper after FallbackCleanupDuration.
         /// </summary>
         public static GameObject SpawnEffect(string effectName, Vector3 position, Quaternion? rotation = null, float scale = 1f)
         {
@@ -541,7 +449,7 @@ namespace FiresCore.Npc.Archetypes
             if (scale != 1f)
                 instance.transform.localScale *= scale;
 
-            float dur = EnsureSelfDestruct(instance, FALLBACK_CLEANUP_DURATION);
+            float dur = EnsureSelfDestruct(instance, FallbackCleanupDuration);
             _activeEffects.Add(new TrackedEffect { Instance = instance, SpawnTime = Time.time, Duration = dur });
 
             if (VerboseLogging)
@@ -551,21 +459,8 @@ namespace FiresCore.Npc.Archetypes
         }
 
         /// <summary>
-        /// Spawns an effect at the character's current world position.
-        ///
-        /// NOTE: This used to SetParent the FX to the character so it followed them.
-        /// That parenting was the root cause of the [ZNetSceneStaleInstanceDiagnostic]
-        /// 'vfx_spawn' / 'fx_*' orphan warnings: when the character died before the
-        /// FX's TimedDestruction expired (Hunter's Mark on an enemy that gets killed,
-        /// continuous aura on a companion that dies in combat), Unity cascade-destroyed
-        /// the child without going through ZNetScene.Destroy. Vanilla TimedDestruction
-        /// only routes through ZNetScene.Destroy if it gets a chance to run â€” and
-        /// cascade-destroy never gives it that chance.
-        ///
-        /// FOLLOW-UP: a future change will re-introduce parenting safely by hooking
-        /// Character death and triggering child TimedDestructions before the cascade
-        /// fires (see TODO in code review). Until then, FX stay where the ability
-        /// fired â€” fine for short effects, slightly off for long auras.
+        /// Spawns the effect at the character's current position, deliberately unparented: parented effects were
+        /// cascade-destroyed with a dying character, bypassing ZNetScene.Destroy and leaving orphaned instances.
         /// </summary>
         public static GameObject SpawnEffectOnCharacter(string effectName, Character character, float duration = 5f, float scale = 1f)
         {
@@ -579,7 +474,7 @@ namespace FiresCore.Npc.Archetypes
             }
 
             var instance = Object.Instantiate(prefab, character.transform.position, Quaternion.identity);
-            // SetParent intentionally removed â€” see method docstring.
+            // SetParent intentionally removed — see method docstring.
             ForceSpatial3D(instance);
 
             if (scale != 1f)
@@ -772,7 +667,7 @@ namespace FiresCore.Npc.Archetypes
             float scale = Mathf.Clamp(range / 8f, 0.8f, 2f);
             Vector3 groundPos = GetGroundPosition(berserker.transform.position);
 
-            // SpawnSound + SpawnEffect are now ForceSpatial3D'd â€” the previously
+            // SpawnSound + SpawnEffect are now ForceSpatial3D'd — the previously
             // global eikthyr-stomp SFX is now localized to the berserker's
             // position with ~32m falloff, so it's only audible nearby.
             SpawnSound(SFX_WARCRY, groundPos);
@@ -1064,7 +959,7 @@ namespace FiresCore.Npc.Archetypes
         // ========================
         
         /// <summary>
-        /// Plays the Chi Strike effect â€” fenring frost burst with sound.
+        /// Plays the Chi Strike effect — fenring frost burst with sound.
         /// SFX + FX prefabs are now routed through ForceSpatial3D so the previously
         /// global freeze SFX attenuates with distance (~32m falloff) instead of
         /// playing across the map.

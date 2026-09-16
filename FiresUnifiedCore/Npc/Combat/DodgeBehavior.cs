@@ -6,21 +6,9 @@ using FiresCore.Npc.Core;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Handles dodging, strafing, and tactical movement.
-    /// 
-    /// DODGE DIRECTION RULES:
-    /// - ALWAYS dodge in a direction (never in place)
-    /// - For ranged: dodge AWAY from threat
-    /// - For melee: dodge to the SIDE to flank
-    /// - If no threat, dodge backward from current facing
-  /// 
-    /// MOVEMENT THROTTLING:
-    /// - Movement direction changes are limited to prevent spam
-    /// - Once a movement is committed, it must complete before changing
-    /// 
-    /// RANGED BEHAVIOR - SINGLE DODGE RULE:
-    /// - After ONE dodge, MUST shoot before dodging again
-    /// - No infinite rolling without attacking
+    /// Dodging, strafing and tactical movement. A dodge always moves: away from ranged threats, sideways to flank
+    /// melee, backward when there is no threat. Committed movement completes before the direction changes, and a
+    /// ranged companion must shoot before it dodges again.
     /// </summary>
     public class DodgeBehavior
     {
@@ -37,21 +25,21 @@ namespace FiresCore.Npc.Combat
         // PlayerCommand (90) and Forced (100), so a command or teleport still overrides a dodge.
         private UnifiedMovementAuthority _uma;
         private bool _umaResolved;
-        private const string DODGE_AUTHORITY_OWNER = "CompanionDodge";
+        private const string DodgeAuthorityOwner = "CompanionDodge";
 
         // Dodge state
   private float _lastDodgeTime;
         private bool _isDodging;
         private Coroutine _dodgeCoroutine;
-        private const float DODGE_ANIMATION_DURATION = 0.6f;
+        private const float DodgeAnimationDuration = 0.6f;
 
       // After one dodge, must shoot before next dodge (ranged only)
         private bool _mustShootBeforeNextDodge = false;
   private float _postDodgeShootWindowEnd;
-        private const float POST_DODGE_SHOOT_WINDOW = 3f;
+        private const float PostDodgeShootWindow = 3f;
 
         // Standard dodge cooldown - throttled to prevent spam rolling
-        private const float DODGE_COOLDOWN = 3.0f;
+        private const float DodgeCooldown = 3.0f;
 
    // Strafe state
         private bool _isStrafing;
@@ -59,28 +47,28 @@ namespace FiresCore.Npc.Combat
 private float _strafeTimer;
       private float _strafeDuration;
         private float _lastStrafeTime;
-     private const float STRAFE_COOLDOWN = 2f;
-        private const float STRAFE_SPEED = 0.5f;
+     private const float StrafeCooldown = 2f;
+        private const float StrafeSpeed = 0.5f;
 
         // Ranged positioning constants
-        private const float OPTIMAL_RANGE_MIN = 10f;
-        private const float OPTIMAL_RANGE_MAX = 15f;
-     private const float DANGER_RANGE = 5f;
+        private const float OptimalRangeMin = 10f;
+        private const float OptimalRangeMax = 15f;
+     private const float DangerRange = 5f;
 
     private BowBehavior _bowBehavior;
 
         // MOVEMENT THROTTLING
         private float _lastMovementChange;
-        private const float MIN_MOVEMENT_CHANGE_INTERVAL = 0.2f;
+        private const float MinMovementChangeInterval = 0.2f;
         private Vector3 _committedMoveDir;
         private float _movementCommitEndTime;
         private bool _isMovementCommitted;
         
         // PROJECTILE DODGING
         private float _lastProjectileScan;
-        private const float PROJECTILE_SCAN_INTERVAL = 0.15f;
-        private const float PROJECTILE_DETECT_RANGE = 25f;
-        private const float PROJECTILE_DODGE_TIME = 0.6f; // Dodge if projectile arrives within this time
+        private const float ProjectileScanInterval = 0.15f;
+        private const float ProjectileDetectRange = 25f;
+        private const float ProjectileDodgeTime = 0.6f; // Dodge if projectile arrives within this time
         private Projectile _incomingProjectile;
         private Vector3 _projectileDirection;
         private float _projectileTimeToImpact;
@@ -100,7 +88,7 @@ private float _strafeTimer;
         private MovementState _currentState = MovementState.Idle;
         private float _stateEnterTime;
      private float _reassessTimer;
-    private const float REASSESS_DURATION = 0.2f;
+    private const float ReassessDuration = 0.2f;
 
         private Vector3 _repositionTarget;
         private bool _isRepositioning;
@@ -136,7 +124,7 @@ private float _strafeTimer;
         public bool CanDodge(bool isRanged)
         {
             if (_isDodging) return false;
-            if (Time.time - _lastDodgeTime < DODGE_COOLDOWN) return false;
+            if (Time.time - _lastDodgeTime < DodgeCooldown) return false;
 
             if (isRanged && _mustShootBeforeNextDodge)
             {
@@ -292,7 +280,7 @@ private float _strafeTimer;
   private bool CanChangeMovement()
         {
  if (_isMovementCommitted) return false;
-     if (Time.time - _lastMovementChange < MIN_MOVEMENT_CHANGE_INTERVAL) return false;
+     if (Time.time - _lastMovementChange < MinMovementChangeInterval) return false;
      return true;
         }
 
@@ -305,17 +293,17 @@ private float _strafeTimer;
 
             // Single-writer: drive the committed dodge/strafe through UMA at Animation priority so it
             // preempts CompanionCombatMovement for the window, instead of a raw SetMoveDir that races it.
-            var uma = GetAuthority();
-            if (uma != null)
+            var authority = GetAuthority();
+            if (authority != null)
             {
-                if (uma.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.Animation, DODGE_AUTHORITY_OWNER, Mathf.Max(duration, 0.5f)))
-                    uma.SetMoveDirection(DODGE_AUTHORITY_OWNER, moveDir, walk: false, run: true);
+                if (authority.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.Animation, DodgeAuthorityOwner, Mathf.Max(duration, 0.5f)))
+                    authority.SetMoveDirection(DodgeAuthorityOwner, moveDir, walk: false, run: true);
                 return;
             }
 
             // No-UMA fallback (kinematic-guarded, matches the old behavior).
-            var rb = _owner?.GetComponent<Rigidbody>();
-            if (_context.Character != null && (rb == null || !rb.isKinematic))
+            var body = _owner?.GetComponent<Rigidbody>();
+            if (_context.Character != null && (body == null || !body.isKinematic))
             {
                 _context.Character.SetMoveDir(moveDir);
             }
@@ -340,7 +328,7 @@ private float _strafeTimer;
     if (_currentState == MovementState.Repositioning && _isMovementCommitted)
             {
       _reassessTimer += Time.deltaTime;
- if (_reassessTimer >= REASSESS_DURATION)
+ if (_reassessTimer >= ReassessDuration)
              {
          _reassessTimer = 0f;
     }
@@ -456,15 +444,15 @@ FaceTarget(target);
                 // Single-writer: release our Animation-priority slot whenever a movement is committed
                 // (even one that resolved to a zero vector — otherwise the slot leaks and CombatMovement
                 // is denied for the lease window). ReleaseAuthority does a clean StopMovementImmediate.
-                var uma = GetAuthority();
-                if (uma != null)
+                var authority = GetAuthority();
+                if (authority != null)
                 {
-                    uma.ReleaseAuthority(DODGE_AUTHORITY_OWNER);
+                    authority.ReleaseAuthority(DodgeAuthorityOwner);
                 }
                 else
                 {
-                    var rb = _owner?.GetComponent<Rigidbody>();
-                    if (_context.Character != null && (rb == null || !rb.isKinematic))
+                    var body = _owner?.GetComponent<Rigidbody>();
+                    if (_context.Character != null && (body == null || !body.isKinematic))
                         _context.Character.SetMoveDir(Vector3.zero);
                 }
                 _isMovementCommitted = false;
@@ -534,7 +522,7 @@ FaceTarget(target);
                 // Strafe when close but not dodging
                 if (distToTarget < _context.AttackRange * 1.5f)
                 {
-                    if (!_isStrafing && Time.time - _lastStrafeTime > STRAFE_COOLDOWN && CanChangeMovement())
+                    if (!_isStrafing && Time.time - _lastStrafeTime > StrafeCooldown && CanChangeMovement())
                     {
                         StartStrafe(target, Random.Range(0.8f, 1.5f));
                     }
@@ -582,7 +570,7 @@ FaceTarget(target);
          FaceTarget(target);
 
             Vector3 strafeDir = _context.Transform.right * _strafeDirection;
-            Vector3 moveDir = strafeDir * STRAFE_SPEED;
+            Vector3 moveDir = strafeDir * StrafeSpeed;
 
        if (CanChangeMovement())
       {
@@ -596,15 +584,15 @@ FaceTarget(target);
             _strafeTimer = 0f;
 
             // Single-writer: release our Animation-priority slot (clean stop via the single writer).
-            var uma = GetAuthority();
-            if (uma != null)
+            var authority = GetAuthority();
+            if (authority != null)
             {
-                uma.ReleaseAuthority(DODGE_AUTHORITY_OWNER);
+                authority.ReleaseAuthority(DodgeAuthorityOwner);
             }
             else
             {
-                var rb = _owner?.GetComponent<Rigidbody>();
-                if (_context.Character != null && (rb == null || !rb.isKinematic))
+                var body = _owner?.GetComponent<Rigidbody>();
+                if (_context.Character != null && (body == null || !body.isKinematic))
                     _context.Character.SetMoveDir(Vector3.zero);
             }
             _isMovementCommitted = false;
@@ -624,8 +612,8 @@ FaceTarget(target);
             var facing = _context?.Companion != null ? _context.Companion.GetFacingAuthority() : null;
             if (facing != null)
             {
-                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.Animation, DODGE_AUTHORITY_OWNER, 0.4f))
-                    facing.SetLookTarget(DODGE_AUTHORITY_OWNER, target.transform.position);
+                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.Animation, DodgeAuthorityOwner, 0.4f))
+                    facing.SetLookTarget(DodgeAuthorityOwner, target.transform.position);
                 return;
             }
 
@@ -644,7 +632,7 @@ FaceTarget(target);
             if (_isDodging) return;
             if (!CanDodge(false)) return;
 
-            if (_context != null && !_context.TryLockAnimation("dodge", DODGE_ANIMATION_DURATION, CombatContext.AnimationPriority.Dodge))
+            if (_context != null && !_context.TryLockAnimation("dodge", DodgeAnimationDuration, CombatContext.AnimationPriority.Dodge))
             {
                 return;
             }
@@ -722,7 +710,7 @@ FaceTarget(target);
             if (CompanionCombat.VerboseLogging)
                 Debug.Log($"[DodgeBehavior] Melee dodge from {threat.m_name}, direction: {dodgeDir}");
 
-            _dodgeCoroutine = _owner.StartCoroutine(FinishDodgeCoroutine(DODGE_ANIMATION_DURATION));
+            _dodgeCoroutine = _owner.StartCoroutine(FinishDodgeCoroutine(DodgeAnimationDuration));
         }
 
      /// <summary>
@@ -737,7 +725,7 @@ FaceTarget(target);
          CombatContext.AnimationPriority.EmergencyDodge :
         CombatContext.AnimationPriority.Dodge;
 
-       if (_context != null && !_context.TryLockAnimation("dodge", DODGE_ANIMATION_DURATION, priority))
+       if (_context != null && !_context.TryLockAnimation("dodge", DodgeAnimationDuration, priority))
             {
      if (CompanionCombat.VerboseLogging)
            Debug.Log($"[DodgeBehavior] Retreat dodge blocked by animation lock");
@@ -773,7 +761,7 @@ FaceTarget(target);
 
        // Lock out further dodges until we shoot
             _mustShootBeforeNextDodge = true;
-      _postDodgeShootWindowEnd = Time.time + DODGE_ANIMATION_DURATION + POST_DODGE_SHOOT_WINDOW;
+      _postDodgeShootWindowEnd = Time.time + DodgeAnimationDuration + PostDodgeShootWindow;
 
         PlayDodgeAnimation();
             ApplyDodgeForce(dodgeDir, 5f);
@@ -783,7 +771,7 @@ FaceTarget(target);
             if (CompanionCombat.VerboseLogging)
             Debug.Log($"[DodgeBehavior] Ranged retreat dodge from {threat.m_name}, direction: {dodgeDir}");
 
-            _dodgeCoroutine = _owner.StartCoroutine(FinishDodgeWithShootRequirementCoroutine(DODGE_ANIMATION_DURATION));
+            _dodgeCoroutine = _owner.StartCoroutine(FinishDodgeWithShootRequirementCoroutine(DodgeAnimationDuration));
         }
 
         private void PlayDodgeAnimation()
@@ -873,31 +861,31 @@ FaceTarget(target);
         /// </summary>
         private bool ScanForIncomingProjectiles()
         {
-            if (Time.time - _lastProjectileScan < PROJECTILE_SCAN_INTERVAL)
+            if (Time.time - _lastProjectileScan < ProjectileScanInterval)
             {
                 // Use cached result
-                return _incomingProjectile != null && _projectileTimeToImpact < PROJECTILE_DODGE_TIME;
+                return _incomingProjectile != null && _projectileTimeToImpact < ProjectileDodgeTime;
             }
             _lastProjectileScan = Time.time;
             _incomingProjectile = null;
             _projectileTimeToImpact = float.MaxValue;
             
             // Find all projectiles in range
-            var colliders = Physics.OverlapSphere(_context.Transform.position, PROJECTILE_DETECT_RANGE);
+            var colliders = Physics.OverlapSphere(_context.Transform.position, ProjectileDetectRange);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var projectile = col.GetComponent<Projectile>();
+                var projectile = collider.GetComponent<Projectile>();
                 if (projectile == null) continue;
                 
                 // Check if projectile is heading toward us
-                var rb = projectile.GetComponent<Rigidbody>();
-                if (rb == null) continue;
+                var body = projectile.GetComponent<Rigidbody>();
+                if (body == null) continue;
                 
                 Vector3 projectilePos = projectile.transform.position;
-                Vector3 projectileVel = rb.linearVelocity;
+                Vector3 projectileVel = body.linearVelocity;
                 
                 if (projectileVel.sqrMagnitude < 1f) continue; // Not moving fast enough
                 
@@ -914,7 +902,7 @@ FaceTarget(target);
                 float timeToImpact = distToUs / speed;
                 
                 // Check if this is the most imminent threat
-                if (timeToImpact < _projectileTimeToImpact && timeToImpact < PROJECTILE_DODGE_TIME)
+                if (timeToImpact < _projectileTimeToImpact && timeToImpact < ProjectileDodgeTime)
                 {
                     // Verify it will actually hit us (within ~2m)
                     Vector3 impactPoint = projectilePos + projectileVel * timeToImpact;
@@ -929,7 +917,7 @@ FaceTarget(target);
                 }
             }
             
-            return _incomingProjectile != null && _projectileTimeToImpact < PROJECTILE_DODGE_TIME;
+            return _incomingProjectile != null && _projectileTimeToImpact < ProjectileDodgeTime;
         }
         
         /// <summary>
@@ -941,7 +929,7 @@ FaceTarget(target);
             if (_isDodging) return;
             if (_incomingProjectile == null) return;
             
-            if (_context != null && !_context.TryLockAnimation("dodge", DODGE_ANIMATION_DURATION, CombatContext.AnimationPriority.Dodge))
+            if (_context != null && !_context.TryLockAnimation("dodge", DodgeAnimationDuration, CombatContext.AnimationPriority.Dodge))
             {
                 return;
             }
@@ -987,7 +975,7 @@ FaceTarget(target);
             }
             
             _incomingProjectile = null;
-            _dodgeCoroutine = _owner.StartCoroutine(FinishDodgeCoroutine(DODGE_ANIMATION_DURATION));
+            _dodgeCoroutine = _owner.StartCoroutine(FinishDodgeCoroutine(DodgeAnimationDuration));
         }
   }
 }

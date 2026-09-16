@@ -338,6 +338,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
     /// </summary>
     public class MassRestorationEffect : HybridAbilityEffect
     {
+        private const float VfxReferenceRange = 15f;
+
         public float HealAmount { get; set; } = 100f;
         public float ImmunityDuration { get; set; } = 2f;
         
@@ -379,7 +381,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
             }
             
             m_character.Message(MessageHud.MessageType.Center, $"Mass Restoration! ({healed} healed)");
-            AbilityFXManager.SpawnEffect("fx_DvergerMage_Support_start", m_character.transform.position, null, GroupRange / 15f);
+            AbilityFXManager.SpawnEffect("fx_DvergerMage_Support_start", m_character.transform.position, null, GroupRange / VfxReferenceRange);
         }
         
         public static bool ApplyMassRestoration(Character target, float duration)
@@ -475,6 +477,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
     /// </summary>
     public class BloodSacrificeEffect : HybridAbilityEffect
     {
+        private const float VfxReferenceRange = 8f;
+
         public float HealthCostPercent { get; set; } = 0.2f;
         public float DamageMultiplier { get; set; } = 3.0f;
         public float AoERange { get; set; } = 8f;
@@ -532,7 +536,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
                 }
             }
             
-            AbilityFXManager.SpawnEffect("vfx_fireball_explosion", m_character.transform.position, null, AoERange / 8f);
+            AbilityFXManager.SpawnEffect("vfx_fireball_explosion", m_character.transform.position, null, AoERange / VfxReferenceRange);
         }
         
         public static bool ApplyBloodSacrifice(Character target, float duration)
@@ -745,6 +749,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
     /// </summary>
     public class ElementalArrowEffect : HybridAbilityEffect
     {
+        private const int ElementCount = 3;
+
         public float ElementalDamage { get; set; } = 40f;
         public float ExplosionRadius { get; set; } = 4f;
         
@@ -801,7 +807,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
             }
             
             // Cycle element
-            _currentElement = (_currentElement + 1) % 3;
+            _currentElement = (_currentElement + 1) % ElementCount;
         }
         
         public static bool ApplyElementalArrow(Character target, float duration)
@@ -883,11 +889,13 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
     /// </summary>
     public class InfernoEffect : HybridAbilityEffect
     {
+        private const float VfxReferenceRadius = 5f;
+
         public float DamagePerSecond { get; set; } = 20f;
         public float AuraRadius { get; set; } = 5f;
         
         private float _lastTickTime;
-        private const float TICK_INTERVAL = 0.5f;
+        private const float TickInterval = 0.5f;
         
         public override string Description => 
             $"Burn enemies for {DamagePerSecond:F0} fire damage/sec\n" +
@@ -911,7 +919,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
         {
             base.UpdateStatusEffect(dt);
             
-            if (Time.time - _lastTickTime >= TICK_INTERVAL)
+            if (Time.time - _lastTickTime >= TickInterval)
             {
                 _lastTickTime = Time.time;
                 DamageNearbyEnemies();
@@ -922,7 +930,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
         {
             if (m_character == null) return;
             
-            float damage = DamagePerSecond * TICK_INTERVAL;
+            float damage = DamagePerSecond * TickInterval;
             
             var characters = Character.GetAllCharacters();
             foreach (var character in characters)
@@ -946,7 +954,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
             }
             
             // Visual effect
-            AbilityFXManager.SpawnEffect("vfx_Burning", m_character.transform.position, null, AuraRadius / 5f);
+            AbilityFXManager.SpawnEffect("vfx_Burning", m_character.transform.position, null, AuraRadius / VfxReferenceRadius);
         }
         
         public static bool ApplyInferno(Character target, float duration)
@@ -1038,7 +1046,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
         public float EitrCostPerTick { get; set; } = 5f;
         
         private float _lastTickTime;
-        private const float TICK_INTERVAL = 1f;
+        private const float TickInterval = 1f;
         
         public override bool IsGroupAbility => true;
         
@@ -1064,7 +1072,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
         {
             base.UpdateStatusEffect(dt);
             
-            if (Time.time - _lastTickTime >= TICK_INTERVAL)
+            if (Time.time - _lastTickTime >= TickInterval)
             {
                 _lastTickTime = Time.time;
                 ChannelHealing();
@@ -1186,6 +1194,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
     /// </summary>
     public class ElementalFistEffect : HybridAbilityEffect
     {
+        private const int ElementCount = 3;
+
         public float ElementalDamage { get; set; } = 25f;
         
         private int _currentElement = 0;
@@ -1237,9 +1247,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
                     break;
             }
             
-            _currentElement = (_currentElement + 1) % 3;
+            _currentElement = (_currentElement + 1) % ElementCount;
         }
-        
+
         public static bool ApplyElementalFist(Character target, float duration)
         {
             if (target == null) return false;

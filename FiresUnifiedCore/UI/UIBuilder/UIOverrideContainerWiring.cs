@@ -10,19 +10,9 @@ using HarmonyLib;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Manages wiring of a container (chest/ship/etc.) panel in the override UI.
-    /// When the player opens a container, this component syncs the container's
-    /// inventory grid, name, and weight into tagged override elements.
-    ///
-    /// Attach to a panel tagged <see cref="UIOverrideElementTags.ContainerPanel"/>
-    /// (or wire automatically via <see cref="UIOverrideInventoryWiring"/>).
-    ///
-    /// Child elements are discovered by tag:
-    ///   - <c>override_container_grid</c>  ? grid parent for container slot GameObjects
-    ///   - <c>override_container_name</c>  ? TMP_Text showing container name
-    ///   - <c>override_container_weight</c> ? TMP_Text showing container weight
-    ///   - <c>override_container_take_all</c> ? Button: move all items to player
-    ///   - <c>override_container_stack_all</c> ? Button: stack matching items
+    /// Fills a tagged container panel while a chest or ship is open: the slot grid, name and weight, plus Take All
+    /// and Stack All buttons, found by their override_container_* tags. Attached to a
+    /// <see cref="UIOverrideElementTags.ContainerPanel"/> directly or through <see cref="UIOverrideInventoryWiring"/>.
     /// </summary>
     public class UIOverrideContainerWiring : MonoBehaviour
     {
@@ -79,15 +69,13 @@ namespace FiresCore.UI
             SyncNameAndWeight();
 
             // Check for dimension changes
-            int w = _containerInventory.GetWidth();
-            int h = _containerInventory.GetHeight();
-            if (w != _lastWidth || h != _lastHeight)
+            int width = _containerInventory.GetWidth();
+            int height = _containerInventory.GetHeight();
+            if (width != _lastWidth || height != _lastHeight)
                 RebuildGrid();
         }
 
-        // ???????????????????????????????????????
         //  Child discovery
-        // ???????????????????????????????????????
 
         private void DiscoverChildren()
         {
@@ -96,18 +84,18 @@ namespace FiresCore.UI
                 var tag = child.GetComponent<UIBuilderElementTag>();
                 if (tag == null) continue;
 
-                string t = tag.Tag;
-                if (string.IsNullOrEmpty(t)) continue;
+                string tagName = tag.Tag;
+                if (string.IsNullOrEmpty(tagName)) continue;
 
-                if (string.Equals(t, UIOverrideElementTags.ContainerGrid, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(tagName, UIOverrideElementTags.ContainerGrid, StringComparison.OrdinalIgnoreCase))
                     _gridRoot = child;
-                else if (string.Equals(t, UIOverrideElementTags.ContainerName, StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(tagName, UIOverrideElementTags.ContainerName, StringComparison.OrdinalIgnoreCase))
                     _nameText = child.GetComponent<TMP_Text>();
-                else if (string.Equals(t, UIOverrideElementTags.ContainerWeight, StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(tagName, UIOverrideElementTags.ContainerWeight, StringComparison.OrdinalIgnoreCase))
                     _weightText = child.GetComponent<TMP_Text>();
-                else if (string.Equals(t, UIOverrideElementTags.ContainerTakeAll, StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(tagName, UIOverrideElementTags.ContainerTakeAll, StringComparison.OrdinalIgnoreCase))
                     _takeAllBtn = child.GetComponent<Button>();
-                else if (string.Equals(t, UIOverrideElementTags.ContainerStackAll, StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(tagName, UIOverrideElementTags.ContainerStackAll, StringComparison.OrdinalIgnoreCase))
                     _stackAllBtn = child.GetComponent<Button>();
             }
 
@@ -116,9 +104,7 @@ namespace FiresCore.UI
                 _gridRoot = transform;
         }
 
-        // ???????????????????????????????????????
         //  Button wiring
-        // ???????????????????????????????????????
 
         private void WireButtons()
         {
@@ -201,9 +187,7 @@ namespace FiresCore.UI
             catch { }
         }
 
-        // ???????????????????????????????????????
         //  Container resolution
-        // ???????????????????????????????????????
 
         private Container GetActiveContainer()
         {
@@ -225,9 +209,7 @@ namespace FiresCore.UI
             RebuildGrid();
         }
 
-        // ???????????????????????????????????????
         //  Name and weight sync
-        // ???????????????????????????????????????
 
         private void SyncNameAndWeight()
         {
@@ -248,9 +230,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Grid rebuild
-        // ???????????????????????????????????????
 
         private void RebuildGrid()
         {
@@ -303,9 +283,9 @@ namespace FiresCore.UI
             rect.sizeDelta = new Vector2(CellSize, CellSize);
 
             // Background
-            var bg = go.AddComponent<Image>();
-            bg.color = new Color(0f, 0f, 0f, 0.3f);
-            bg.raycastTarget = true;
+            var image = go.AddComponent<Image>();
+            image.color = new Color(0f, 0f, 0f, 0.3f);
+            image.raycastTarget = true;
 
             // Icon child
             var iconGO = new GameObject("icon", typeof(RectTransform));
@@ -392,10 +372,10 @@ namespace FiresCore.UI
 
         private void Start()
         {
-            var iconT = transform.Find("icon");
-            if (iconT != null) _icon = iconT.GetComponent<Image>();
-            var amountT = transform.Find("amount");
-            if (amountT != null) _amount = amountT.GetComponent<TMP_Text>();
+            var iconTransform = transform.Find("icon");
+            if (iconTransform != null) _icon = iconTransform.GetComponent<Image>();
+            var amountTransform = transform.Find("amount");
+            if (amountTransform != null) _amount = amountTransform.GetComponent<TMP_Text>();
         }
 
         private void LateUpdate()

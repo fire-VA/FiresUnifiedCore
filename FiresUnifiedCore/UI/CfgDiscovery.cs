@@ -124,15 +124,15 @@ namespace FiresCore.UI
             s_modNames.Clear();
             s_sectionsByMod.Clear();
             var sectionSets = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
-            foreach (var d in s_descriptors)
+            foreach (var descriptor in s_descriptors)
             {
-                if (!sectionSets.TryGetValue(d.ModName, out var set))
+                if (!sectionSets.TryGetValue(descriptor.ModName, out var set))
                 {
                     set = new SortedSet<string>(NaturalComparer.Instance);
-                    sectionSets[d.ModName] = set;
-                    s_modNames.Add(d.ModName);
+                    sectionSets[descriptor.ModName] = set;
+                    s_modNames.Add(descriptor.ModName);
                 }
-                set.Add(d.Section);
+                set.Add(descriptor.Section);
             }
             foreach (var name in s_modNames)
                 s_sectionsByMod[name] = new List<string>(sectionSets[name]);
@@ -152,19 +152,19 @@ namespace FiresCore.UI
                 {
                     if (char.IsDigit(a[i]) && char.IsDigit(b[j]))
                     {
-                        int si = i, sj = j;
+                        int numberStartA = i, numberStartB = j;
                         while (i < a.Length && char.IsDigit(a[i])) i++;
                         while (j < b.Length && char.IsDigit(b[j])) j++;
-                        string na = a.Substring(si, i - si).TrimStart('0');
-                        string nb = b.Substring(sj, j - sj).TrimStart('0');
-                        if (na.Length != nb.Length) return na.Length - nb.Length;
-                        int c = string.CompareOrdinal(na, nb);
-                        if (c != 0) return c;
+                        string numberA = a.Substring(numberStartA, i - numberStartA).TrimStart('0');
+                        string numberB = b.Substring(numberStartB, j - numberStartB).TrimStart('0');
+                        if (numberA.Length != numberB.Length) return numberA.Length - numberB.Length;
+                        int comparison = string.CompareOrdinal(numberA, numberB);
+                        if (comparison != 0) return comparison;
                     }
                     else
                     {
-                        int c = char.ToLowerInvariant(a[i]).CompareTo(char.ToLowerInvariant(b[j]));
-                        if (c != 0) return c;
+                        int comparison = char.ToLowerInvariant(a[i]).CompareTo(char.ToLowerInvariant(b[j]));
+                        if (comparison != 0) return comparison;
                         i++; j++;
                     }
                 }
@@ -234,17 +234,17 @@ namespace FiresCore.UI
 
         private static CfgDescriptor Describe(string guid, string modName, ConfigDefinition def, ConfigEntryBase entry)
         {
-            Type t = entry.SettingType;
+            Type settingType = entry.SettingType;
             string desc = entry.Description != null ? entry.Description.Description ?? "" : "";
-            int nl = desc.IndexOf('\n');
-            if (nl >= 0) desc = desc.Substring(0, nl);
+            int newlineIndex = desc.IndexOf('\n');
+            if (newlineIndex >= 0) desc = desc.Substring(0, newlineIndex);
 
             GetAcceptable(entry, out bool hasRange, out double min, out double max, out string[] listOptions);
 
             string[] options = listOptions;
-            if (options == null && t.IsEnum) options = Enum.GetNames(t);
+            if (options == null && settingType.IsEnum) options = Enum.GetNames(settingType);
 
-            CtrlKind kind = ResolveKind(t, hasRange, options);
+            CtrlKind kind = ResolveKind(settingType, hasRange, options);
             double step = 0.0;
             if (kind == CtrlKind.IntRange) step = 1.0;
             else if (kind == CtrlKind.FloatRange) step = NiceStep(min, max);
@@ -257,7 +257,7 @@ namespace FiresCore.UI
                 SectionDisplay = CleanSection(def.Section),
                 Key = def.Key,
                 Label = Prettify(def.Key),
-                Type = t,
+                Type = settingType,
                 Description = desc,
                 Kind = kind,
                 HasRange = hasRange,
@@ -270,52 +270,52 @@ namespace FiresCore.UI
             };
         }
 
-        private static CtrlKind ResolveKind(Type t, bool hasRange, string[] options)
+        private static CtrlKind ResolveKind(Type settingType, bool hasRange, string[] options)
         {
-            if (t == typeof(bool)) return CtrlKind.Bool;
+            if (settingType == typeof(bool)) return CtrlKind.Bool;
             // KeyBind BEFORE the enum check — KeyCode IS an enum, and classifying it as Enum gives the
             // cycle-one-value-per-click widget instead of the click-Set-then-press-a-key recorder.
-            if (t == typeof(KeyboardShortcut) || t == typeof(KeyCode)) return CtrlKind.KeyBind;
-            if (t.IsEnum) return CtrlKind.Enum;
+            if (settingType == typeof(KeyboardShortcut) || settingType == typeof(KeyCode)) return CtrlKind.KeyBind;
+            if (settingType.IsEnum) return CtrlKind.Enum;
             if (options != null && options.Length > 0) return CtrlKind.ValueList;
-            if (t == typeof(Color)) return CtrlKind.Color;
-            if (IsInteger(t)) return hasRange ? CtrlKind.IntRange : CtrlKind.IntField;
-            if (IsFloating(t)) return hasRange ? CtrlKind.FloatRange : CtrlKind.FloatField;
-            if (t == typeof(string)) return CtrlKind.String;
+            if (settingType == typeof(Color)) return CtrlKind.Color;
+            if (IsInteger(settingType)) return hasRange ? CtrlKind.IntRange : CtrlKind.IntField;
+            if (IsFloating(settingType)) return hasRange ? CtrlKind.FloatRange : CtrlKind.FloatField;
+            if (settingType == typeof(string)) return CtrlKind.String;
             return CtrlKind.ReadOnly;
         }
 
-        private static bool IsInteger(Type t)
-            => t == typeof(int) || t == typeof(long) || t == typeof(short) || t == typeof(byte)
-            || t == typeof(uint) || t == typeof(ulong) || t == typeof(ushort) || t == typeof(sbyte);
+        private static bool IsInteger(Type valueType)
+            => valueType == typeof(int) || valueType == typeof(long) || valueType == typeof(short) || valueType == typeof(byte)
+            || valueType == typeof(uint) || valueType == typeof(ulong) || valueType == typeof(ushort) || valueType == typeof(sbyte);
 
-        private static bool IsFloating(Type t)
-            => t == typeof(float) || t == typeof(double);
+        private static bool IsFloating(Type valueType)
+            => valueType == typeof(float) || valueType == typeof(double);
 
         private static void GetAcceptable(ConfigEntryBase entry, out bool hasRange, out double min, out double max, out string[] options)
         {
             hasRange = false; min = 0.0; max = 1.0; options = null;
-            var av = entry.Description != null ? entry.Description.AcceptableValues : null;
-            if (av == null) return;
+            var acceptableValues = entry.Description != null ? entry.Description.AcceptableValues : null;
+            if (acceptableValues == null) return;
             try
             {
-                var at = av.GetType();
-                if (!at.IsGenericType) return;
-                var gd = at.GetGenericTypeDefinition();
-                if (gd == typeof(AcceptableValueRange<>))
+                var type = acceptableValues.GetType();
+                if (!type.IsGenericType) return;
+                var genericDefinition = type.GetGenericTypeDefinition();
+                if (genericDefinition == typeof(AcceptableValueRange<>))
                 {
-                    var lo = at.GetProperty("MinValue")?.GetValue(av);
-                    var hi = at.GetProperty("MaxValue")?.GetValue(av);
-                    if (lo != null && hi != null)
+                    var minValue = type.GetProperty("MinValue")?.GetValue(acceptableValues);
+                    var maxValue = type.GetProperty("MaxValue")?.GetValue(acceptableValues);
+                    if (minValue != null && maxValue != null)
                     {
-                        min = Convert.ToDouble(lo, CultureInfo.InvariantCulture);
-                        max = Convert.ToDouble(hi, CultureInfo.InvariantCulture);
+                        min = Convert.ToDouble(minValue, CultureInfo.InvariantCulture);
+                        max = Convert.ToDouble(maxValue, CultureInfo.InvariantCulture);
                         hasRange = max > min;
                     }
                 }
-                else if (gd == typeof(AcceptableValueList<>))
+                else if (genericDefinition == typeof(AcceptableValueList<>))
                 {
-                    if (at.GetProperty("AcceptableValues")?.GetValue(av) is Array arr)
+                    if (type.GetProperty("AcceptableValues")?.GetValue(acceptableValues) is Array arr)
                     {
                         options = new string[arr.Length];
                         for (int i = 0; i < arr.Length; i++) options[i] = arr.GetValue(i)?.ToString();
@@ -326,9 +326,9 @@ namespace FiresCore.UI
         }
 
         // 1 / 2 / 5 * 10^n step for a float range, mirroring SchemaExporter.Step.
-        private static double NiceStep(double lo, double hi)
+        private static double NiceStep(double min, double max)
         {
-            double range = Math.Abs(hi - lo);
+            double range = Math.Abs(max - min);
             if (range <= 0) return 0.01;
             double raw = range / 100.0;
             double mag = Math.Pow(10, Math.Floor(Math.Log10(raw)));
@@ -354,18 +354,18 @@ namespace FiresCore.UI
         }
 
         // Strip a leading "NN - " ordering prefix from a section for display.
-        private static string CleanSection(string s)
+        private static string CleanSection(string section)
         {
-            if (string.IsNullOrEmpty(s)) return s;
-            int dash = s.IndexOf(" - ", StringComparison.Ordinal);
-            if (dash > 0 && dash <= 5 && IsOrderingPrefix(s.Substring(0, dash))) return s.Substring(dash + 3);
-            return s;
+            if (string.IsNullOrEmpty(section)) return section;
+            int dash = section.IndexOf(" - ", StringComparison.Ordinal);
+            if (dash > 0 && dash <= 5 && IsOrderingPrefix(section.Substring(0, dash))) return section.Substring(dash + 3);
+            return section;
         }
 
-        private static bool IsOrderingPrefix(string p)
+        private static bool IsOrderingPrefix(string prefix)
         {
             bool digit = false;
-            foreach (char c in p)
+            foreach (char c in prefix)
             {
                 if (char.IsDigit(c)) { digit = true; continue; }
                 if (char.IsLetter(c)) continue;
@@ -380,10 +380,10 @@ namespace FiresCore.UI
             Rebuild();
             var perMod = new Dictionary<string, int>(StringComparer.Ordinal);
             var order = new List<string>();
-            foreach (var d in s_descriptors)
+            foreach (var descriptor in s_descriptors)
             {
-                if (!perMod.ContainsKey(d.ModName)) { perMod[d.ModName] = 0; order.Add(d.ModName); }
-                perMod[d.ModName]++;
+                if (!perMod.ContainsKey(descriptor.ModName)) { perMod[descriptor.ModName] = 0; order.Add(descriptor.ModName); }
+                perMod[descriptor.ModName]++;
             }
             FiresConfigUI.Log.LogInfo($"va_config_dump: ({ModCount} mods, {s_descriptors.Count} entries){(ShowAll ? " [show-all]" : "")}");
             foreach (var name in order)

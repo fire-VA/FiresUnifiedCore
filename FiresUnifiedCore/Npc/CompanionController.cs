@@ -19,22 +19,10 @@ using FiresCore.Logging;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Controller for AI companion NPCs using custom CompanionAI.
-    /// These companions can follow, fight, and be equipped by players.
-    /// Uses proper death/respawn system like players (destroy + respawn from vault).
-    /// 
-    /// AI ARCHITECTURE:
-    /// - CompanionAI extends BaseAI (not MonsterAI) for complete control
-    /// - Clean state machine: Idle, Following, Combat, Returning, Fleeing
-    /// - Owner-centric behavior with proactive protection
-    /// - No fighting with MonsterAI's hidden state or patrol logic
-    /// 
-    /// THREAT PRIORITY (handled by CompanionAI):
-    /// 1. Enemies actively targeting the owner (IMMEDIATE response)
-    /// 2. Enemies close to the owner
-    /// 3. Enemies in front of the owner (blocking their path)
-    /// 4. Enemies targeting the companion
-    /// 5. Nearest enemy
+    /// Controller for companion NPCs driven by CompanionAI, a BaseAI subclass with its own state machine (idle,
+    /// following, combat, returning, fleeing) instead of MonsterAI's hidden state. Companions follow, fight and
+    /// can be equipped, and die and respawn like players. Threats are prioritized by whether they target the
+    /// owner, then proximity to the owner, then whether they block the owner's path or target the companion.
     /// </summary>
     public class CompanionController : MonoBehaviour
     {
@@ -173,7 +161,7 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
         // the player actually shows up.  Cleared once follow has been activated.
         private bool _pendingDeferredFollowRestore = false;
         private float _lastDeferredFollowCheck = 0f;
-        private const float DEFERRED_FOLLOW_CHECK_INTERVAL = 0.5f; // seconds between owner-presence polls
+        private const float DeferredFollowCheckInterval = 0.5f; // seconds between owner-presence polls
 
         // RUN-BACK / SNAP STATE (the leash). All thresholds + the snap decision live in the single source of
         // truth FiresCore.Npc.Core.CompanionLeash; CheckFollowTeleport just drives the per-companion run-back
@@ -190,10 +178,10 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
         private float _lastTeleportTime = 0f;
         private float _lastTeleportDistance = 0f;
         private Vector3 _ownerPosAtLastTeleport;   // owner position when we last triggered a teleport
-        private const int MAX_CONSECUTIVE_TELEPORTS = 3;
-        private const float TELEPORT_LOOP_WINDOW = 10f;        // seconds in which we check for loops
-        private const float TELEPORT_SUCCESS_THRESHOLD = 10f;  // companion must be within this distance to count as success
-        private const float LOOP_OWNER_MOVED_THRESHOLD = 8f;   // if owner moved this far since last teleport it is NOT a loop
+        private const int MaxConsecutiveTeleports = 3;
+        private const float TeleportLoopWindow = 10f;        // seconds in which we check for loops
+        private const float TeleportSuccessThreshold = 10f;  // companion must be within this distance to count as success
+        private const float LoopOwnerMovedThreshold = 8f;   // if owner moved this far since last teleport it is NOT a loop
 
         // POST-TELEPORT SETTLE WINDOW
         // After a successful teleport, suppress further pulls for this long even if
@@ -204,8 +192,8 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
         // + RPC broadcast on multiple companions every few seconds.
         // The catastrophic-distance override below still kicks in for true
         // dungeon-entry / cross-map gaps.
-        private const float POST_TELEPORT_SETTLE       = 6f;
-        private const float CATASTROPHIC_DISTANCE_MULT = 4f;   // distance > maxFollow * this bypasses settle window
+        private const float PostTeleportSettle       = 6f;
+        private const float CatastrophicDistanceMult = 4f;   // distance > maxFollow * this bypasses settle window
 
         // Set to true by TeleportToDestination so CheckFollowTeleport skips the owner-speed
         // block on the very next tick (portal teleports look like "owner is flying").
@@ -213,18 +201,17 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
 
         // GLITCH PREVENTION - Owner velocity tracking.
         // We track the owner's recent speed and refuse to teleport while they are
-        // moving faster than OWNER_TELEPORT_MAX_SPEED — that range is reserved for
+        // moving faster than OwnerTeleportMaxSpeed — that range is reserved for
         // admin-flight, portal jumps, and other instant-translation effects where
         // teleporting toward the owner would just produce a chase loop.
         // Normal walking / running / sprinting are all well below this threshold,
         // so the companion no longer requires the owner to come to a full stop.
         private Vector3 _lastOwnerPosition;
         private float _lastOwnerPositionTime;
-        private float _ownerBecameStillTime = -1f; // legacy, kept for telemetry only
-        private const float OWNER_STILL_SPEED          = 1.0f;  // legacy "stopped" threshold (telemetry only)
-        private const float OWNER_STILL_REQUIRED       = 1.5f;  // legacy still-time gate (no longer required for normal teleports)
-        private const float OWNER_TELEPORT_MAX_SPEED   = 15f;   // m/s - above this we assume owner is flying / portal-jumping
-        private const float OWNER_VELOCITY_CHECK_INTERVAL = 0.5f; // how often to sample owner position
+        private const float OwnerStillSpeed          = 1.0f;  // legacy "stopped" threshold (telemetry only)
+        private const float OwnerStillRequired       = 1.5f;  // legacy still-time gate (no longer required for normal teleports)
+        private const float OwnerTeleportMaxSpeed   = 15f;   // m/s - above this we assume owner is flying / portal-jumping
+        private const float OwnerVelocityCheckInterval = 0.5f; // how often to sample owner position
 
 
         // Static counter for generating truly unique IDs
@@ -269,7 +256,7 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
             // If LoadFromZDO ran before the owner Player spawned, _pendingDeferredFollowRestore
             // was set and the AI was left untouched.  Poll for the owner here and
             // activate follow as soon as they actually exist.
-            if (_pendingDeferredFollowRestore && Time.time - _lastDeferredFollowCheck >= DEFERRED_FOLLOW_CHECK_INTERVAL)
+            if (_pendingDeferredFollowRestore && Time.time - _lastDeferredFollowCheck >= DeferredFollowCheckInterval)
             {
                 _lastDeferredFollowCheck = Time.time;
                 TryActivateDeferredFollow();
@@ -794,7 +781,7 @@ if (isTamed && ownerPlayerId == 0 &&
                 // Diagnostic ONLY (never disables follow): surface a sustained owner-lookup gap so the log shows
                 // WHY a companion isn't teleporting. Logs once per sustained gap, not every tick.
                 _consecutiveTeleports++;
-                if (_consecutiveTeleports == MAX_CONSECUTIVE_TELEPORTS)
+                if (_consecutiveTeleports == MaxConsecutiveTeleports)
                     Debug.Log($"[CompanionController] {companionName}: owner not in local scene — follow latch preserved, awaiting server leash / owner return.");
                 return;
             }
@@ -827,7 +814,7 @@ if (isTamed && ownerPlayerId == 0 &&
                 if (timeDelta > 0.01f)
                     ownerSpeed = Vector3.Distance(ownerPos, _lastOwnerPosition) / timeDelta;
             }
-            if (Time.time - _lastOwnerPositionTime >= OWNER_VELOCITY_CHECK_INTERVAL)
+            if (Time.time - _lastOwnerPositionTime >= OwnerVelocityCheckInterval)
             {
                 _lastOwnerPosition = ownerPos;
                 _lastOwnerPositionTime = Time.time;
@@ -920,20 +907,20 @@ if (isTamed && ownerPlayerId == 0 &&
         {
             // Cheap pre-checks first (also covers IsDead — the local player's
             // dead body is still m_localPlayer for a moment, with m_dead=true).
-            var lp = Player.m_localPlayer;
-            if (lp == null) return true;
+            var localPlayer = Player.m_localPlayer;
+            if (localPlayer == null) return true;
             try
             {
-                if (lp.IsDead()) return true;
-                if (lp.GetHealth() <= 0f) return true;
-                if (lp.InBed() || lp.IsSleeping()) return true;
+                if (localPlayer.IsDead()) return true;
+                if (localPlayer.GetHealth() <= 0f) return true;
+                if (localPlayer.InBed() || localPlayer.IsSleeping()) return true;
             }
             catch { return true; }
 
             // Authoritative readiness check. Mirrors what writers use, so a
             // companion that decides "owner is ready, look them up" is using
             // the same predicate as the code that's safe to write at that moment.
-            return !PlayerSpawnGate.IsReadyForCustomDataWrite(lp);
+            return !PlayerSpawnGate.IsReadyForCustomDataWrite(localPlayer);
         }
 
         /// <summary>
@@ -1278,19 +1265,10 @@ if (isTamed && ownerPlayerId == 0 &&
         }
 
         /// <summary>
-        /// Authoritative Stay command. Always go through this method (or the
-        /// parameterless overload) when an owner-issued Stay should persist:
-        /// it sets the runtime AI flag, the runtime stay anchor, the home
-        /// positions on both movement systems, the persistent follow intent
-        /// (vault + ZDO via <see cref="SetPersistentFollowIntent"/>), and
-        /// the player-roster snapshot via <see cref="CompanionRosterWriter.OnStayCommand"/>.
-        ///
-        /// Skipping any of those writes will leave the persistent state out
-        /// of sync with the runtime state — e.g. the death/respawn pipeline
-        /// reads <c>CompanionVault</c> and would see <c>IsFollowing = true</c>
-        /// even though the companion is currently in Stay mode, causing the
-        /// respawned companion to walk back to the player instead of
-        /// returning to its stay anchor.
+        /// The owner's Stay command. It sets the AI flag, stay anchor, both movement systems' home positions, the
+        /// persistent follow intent (<see cref="SetPersistentFollowIntent"/>) and the roster
+        /// (<see cref="CompanionRosterWriter.OnStayCommand"/>) together; skipping any of them left a respawned
+        /// companion walking back to the player instead of its anchor.
         /// </summary>
         public void CommandStay(Vector3 stayPosition)
         {
@@ -1569,11 +1547,11 @@ if (isTamed && ownerPlayerId == 0 &&
 
       // Wild-faction gate: hostile wild companions (Bandit / Cultist) refuse to
       // be recruited regardless of currency or items offered. See
-      // Docs/WILD_COMPANION_SPAWN_PLAN.md ?10 ? the design calls for bandits to
+      // Docs/WILD_COMPANION_SPAWN_PLAN.md ?10 - the design calls for bandits to
       // be kill-and-loot content, not recruit content. Neutrals (faction == 0)
       // fall through to the normal tame flow. If the ZDO has no
       // companion_wild_faction key at all (non-wild spawn: placed NPC, admin
-      // spawn, etc.) we also fall through ? this gate only refuses things that
+      // spawn, etc.) we also fall through - this gate only refuses things that
       // the WildCompanionDresser has positively tagged as hostile.
       if (_nview != null)
       {
@@ -1773,18 +1751,18 @@ _isRespawning = false;
      collider.enabled = !defeated;
             }
        
-            var rb = GetComponent<Rigidbody>();
-    if (rb != null)
+            var body = GetComponent<Rigidbody>();
+    if (body != null)
             {
                 if (defeated)
     {
   // Only set velocity BEFORE making kinematic (Unity 6 doesn't allow setting velocity on kinematic bodies)
-  rb.linearVelocity = Vector3.zero;
-  rb.isKinematic = true;
+  body.linearVelocity = Vector3.zero;
+  body.isKinematic = true;
        }
                 else
      {
-         rb.isKinematic = false;
+         body.isKinematic = false;
          }
     }
 
@@ -1870,12 +1848,12 @@ _isRespawning = false;
             ReleaseAllMovementLocks();
 
             // 2. Stop physics BEFORE the position change (kinematic body can't be moved otherwise).
-            var rb = GetComponent<Rigidbody>();
-            if (rb != null)
+            var body = GetComponent<Rigidbody>();
+            if (body != null)
             {
-                if (rb.isKinematic) rb.isKinematic = false;
-                rb.linearVelocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
+                if (body.isKinematic) body.isKinematic = false;
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
             }
 
             // 3. Drop pre-teleport AI / combat / pathing state so the companion doesn't
@@ -1904,30 +1882,9 @@ _isRespawning = false;
             // 4. Move the transform.
             transform.position = spawnPos;
 
-            // 5. Push the new position into the ZDO so other clients sync correctly.
-            //
-            // Three things have to happen for the position to actually stick on
-            // a long-jump teleport, where the server's locally-cached ZDO copy
-            // still holds the OLD position and is in the middle of broadcasting
-            // it to every peer (including us) on its next sync tick:
-            //
-            //   a) Write the new position to our local ZDO (vanilla SetPosition).
-            //   b) BUMP the ZDO's data revision. Vanilla SetPosition does NOT
-            //      bump DataRevision (it only invalidates the sector cache),
-            //      so without this our write would have the same version as
-            //      the server's stale copy. The server's incoming sync would
-            //      then look like a "new" update and overwrite our local
-            //      write back to the OLD position — the exact silent revert
-            //      the user observed. Bumping ensures our write is provably
-            //      newer; any stale incoming sync gets rejected by ZDOMan's
-            //      version comparison.
-            //   c) ForceSendZDO so the bump + new position propagates to every
-            //      peer on the very next sync tick instead of whenever the
-            //      periodic broadcast happens to run.
-            //
-            // Together these win the race against the post-teleport ownership
-            // flap window where the server momentarily still believes it owns
-            // a stale snapshot of the companion.
+            // Write the position, bump the data revision (SetPosition alone does not) and force-send, so on a
+            // long jump the server's stale cached copy is provably older and cannot revert the teleport on its
+            // next sync.
             if (_nview != null && _nview.IsValid())
             {
                 var zdoForWrite = _nview.GetZDO();
@@ -1963,24 +1920,9 @@ _isRespawning = false;
         /// </summary>
         private Vector3 GetSafeTeleportPositionNearPoint(Vector3 center)
         {
-            // DUNGEON / INTERIOR DETECTION.
-            //
-            // GetGroundHeight ignores the input Y and returns the surface terrain
-            // height for the XZ. If the player is inside a dungeon, that surface
-            // value is wildly different from the player's actual Y, and snapping
-            // to it dumps the companion on the outside ground while the player
-            // is inside the dungeon — which then triggers the 911m / 944m
-            // catastrophic-distance teleport loop (vertical mismatch only).
-            //
-            // The previous heuristic was `center.y > 1000f` — works for vanilla
-            // Burial Chambers / Sunken Crypts (Y > 4000) but fails for custom
-            // dungeons placed at lower altitudes (the user's custom content sits
-            // around Y=900). Replace with a comparison against the actual local
-            // terrain: if the input Y is meaningfully ABOVE the local heightmap
-            // (more than 50m), treat it as interior and skip the snap. That
-            // catches dungeons at any altitude AND tall structures (towers,
-            // Yggdrasil branches, ship masts) without false positives at
-            // surface-level steep terrain.
+            // GetGroundHeight returns the surface height whatever the Y, so snapping an interior destination dumped
+            // the companion outside the dungeon and set off the long-distance teleport loop. A destination well above
+            // local terrain (dungeons at any altitude, towers, masts) is treated as interior and not snapped.
             bool destinationAtInteriorAltitude;
             if (ZoneSystem.instance != null
                 && ZoneSystem.instance.GetGroundHeight(center, out float centerGroundHeight))
@@ -2026,8 +1968,8 @@ _isRespawning = false;
                 {
                     try
                     {
-                        WaterVolume wv = null;
-                        if (Floating.GetWaterLevel(testPos, ref wv) > testPos.y) continue;
+                        WaterVolume waterVolume = null;
+                        if (Floating.GetWaterLevel(testPos, ref waterVolume) > testPos.y) continue;
                     }
                     catch { }
                 }
@@ -2192,11 +2134,11 @@ private void RPC_TameCompanion(long sender)
             transform.position = spawnPos;
             
             // Stop physics to prevent jittering
-            var rb = GetComponent<Rigidbody>();
-            if (rb != null && !rb.isKinematic)
+            var body = GetComponent<Rigidbody>();
+            if (body != null && !body.isKinematic)
             {
-                rb.linearVelocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
             }
         }
         
@@ -2224,11 +2166,11 @@ private void RPC_TameCompanion(long sender)
             transform.position = position;
 
             // Stop physics to prevent jittering after teleport.
-            var rb = GetComponent<Rigidbody>();
-            if (rb != null && !rb.isKinematic)
+            var body = GetComponent<Rigidbody>();
+            if (body != null && !body.isKinematic)
             {
-                rb.linearVelocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
             }
 
             // Stop character movement.
@@ -2791,8 +2733,8 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         /// <summary>Capture this companion's intrinsic state as a portable <see cref="NpcSaveState"/>.</summary>
         public NpcSaveState CaptureState()
         {
-            var sd = CompanionVault.BuildSaveData(this);
-            return sd == null ? null : ToNpcSaveState(sd);
+            var saveData = CompanionVault.BuildSaveData(this);
+            return saveData == null ? null : ToNpcSaveState(saveData);
         }
 
         /// <summary>Apply a portable <see cref="NpcSaveState"/> onto this companion (recall / spawn-from-roster).</summary>
@@ -2808,95 +2750,95 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
             CompanionVault.RestoreCompanion(this, ToCompanionSaveData(state));
         }
 
-        private static NpcSaveState ToNpcSaveState(CompanionSaveData sd)
+        private static NpcSaveState ToNpcSaveState(CompanionSaveData saveData)
         {
             return new NpcSaveState
             {
-                NpcId = sd.CompanionId,
-                PrefabName = sd.PrefabName,
-                DisplayName = !string.IsNullOrEmpty(sd.DisplayNameOverride) ? sd.DisplayNameOverride : sd.CompanionName,
-                BaseName = sd.CompanionName,
-                OwnerPlayerId = sd.OwnerPlayerId,
-                IsFollowing = sd.IsFollowing,
+                NpcId = saveData.CompanionId,
+                PrefabName = saveData.PrefabName,
+                DisplayName = !string.IsNullOrEmpty(saveData.DisplayNameOverride) ? saveData.DisplayNameOverride : saveData.CompanionName,
+                BaseName = saveData.CompanionName,
+                OwnerPlayerId = saveData.OwnerPlayerId,
+                IsFollowing = saveData.IsFollowing,
 
-                IsStationed = sd.IsStationedAsNpc,
-                StationedPositionX = sd.StationedPositionX,
-                StationedPositionY = sd.StationedPositionY,
-                StationedPositionZ = sd.StationedPositionZ,
-                StationedRotationY = sd.StationedRotationY,
-                AllowIdleWandering = sd.AllowIdleWandering,
-                HasHomePosition = sd.HasHomePosition,
-                HomePositionX = sd.HomePositionX,
-                HomePositionY = sd.HomePositionY,
-                HomePositionZ = sd.HomePositionZ,
+                IsStationed = saveData.IsStationedAsNpc,
+                StationedPositionX = saveData.StationedPositionX,
+                StationedPositionY = saveData.StationedPositionY,
+                StationedPositionZ = saveData.StationedPositionZ,
+                StationedRotationY = saveData.StationedRotationY,
+                AllowIdleWandering = saveData.AllowIdleWandering,
+                HasHomePosition = saveData.HasHomePosition,
+                HomePositionX = saveData.HomePositionX,
+                HomePositionY = saveData.HomePositionY,
+                HomePositionZ = saveData.HomePositionZ,
 
-                ModelIndex = sd.ModelIndex,
-                HairStyle = sd.HairStyle,
-                BeardStyle = sd.BeardStyle,
-                HairColorR = sd.HairColorR, HairColorG = sd.HairColorG, HairColorB = sd.HairColorB,
-                SkinColorR = sd.SkinColorR, SkinColorG = sd.SkinColorG, SkinColorB = sd.SkinColorB,
-                EyeColorR = sd.EyeColorR, EyeColorG = sd.EyeColorG, EyeColorB = sd.EyeColorB,
-                HasAppearanceData = sd.HasAppearanceData,
-                Scale = sd.Scale, IsGiant = sd.IsGiant, IsDwarf = sd.IsDwarf,
+                ModelIndex = saveData.ModelIndex,
+                HairStyle = saveData.HairStyle,
+                BeardStyle = saveData.BeardStyle,
+                HairColorR = saveData.HairColorR, HairColorG = saveData.HairColorG, HairColorB = saveData.HairColorB,
+                SkinColorR = saveData.SkinColorR, SkinColorG = saveData.SkinColorG, SkinColorB = saveData.SkinColorB,
+                EyeColorR = saveData.EyeColorR, EyeColorG = saveData.EyeColorG, EyeColorB = saveData.EyeColorB,
+                HasAppearanceData = saveData.HasAppearanceData,
+                Scale = saveData.Scale, IsGiant = saveData.IsGiant, IsDwarf = saveData.IsDwarf,
 
-                EquipmentPrefabs = sd.EquipmentPrefabs != null ? new Dictionary<string, string>(sd.EquipmentPrefabs) : new Dictionary<string, string>(),
-                EquipmentQualities = sd.EquipmentQualities != null ? new Dictionary<string, int>(sd.EquipmentQualities) : new Dictionary<string, int>(),
-                EquipmentStacks = sd.EquipmentStacks != null ? new Dictionary<string, int>(sd.EquipmentStacks) : new Dictionary<string, int>(),
-                StorageInventoryData = sd.StorageInventoryData,
-                SkillsData = sd.SkillsData,
-                ProgressionData = sd.ProgressionData,
-                StatsData = sd.StatsData,
-                KillsData = sd.KillsData,
-                LuckData = sd.LuckData,
-                ArchetypeSkillsData = sd.ArchetypeSkillsData,
+                EquipmentPrefabs = saveData.EquipmentPrefabs != null ? new Dictionary<string, string>(saveData.EquipmentPrefabs) : new Dictionary<string, string>(),
+                EquipmentQualities = saveData.EquipmentQualities != null ? new Dictionary<string, int>(saveData.EquipmentQualities) : new Dictionary<string, int>(),
+                EquipmentStacks = saveData.EquipmentStacks != null ? new Dictionary<string, int>(saveData.EquipmentStacks) : new Dictionary<string, int>(),
+                StorageInventoryData = saveData.StorageInventoryData,
+                SkillsData = saveData.SkillsData,
+                ProgressionData = saveData.ProgressionData,
+                StatsData = saveData.StatsData,
+                KillsData = saveData.KillsData,
+                LuckData = saveData.LuckData,
+                ArchetypeSkillsData = saveData.ArchetypeSkillsData,
             };
         }
 
-        private static CompanionSaveData ToCompanionSaveData(NpcSaveState ns)
+        private static CompanionSaveData ToCompanionSaveData(NpcSaveState saveState)
         {
             return new CompanionSaveData
             {
-                CompanionId = ns.NpcId,
+                CompanionId = saveState.NpcId,
                 // Round-trip both name fields distinctly. BaseName carries the underlying companionName;
                 // DisplayName carries the effective shown name. If they differ, there was a rename override.
                 // Old snapshots (no BaseName) fall back to DisplayName for both = prior behavior.
-                CompanionName = !string.IsNullOrEmpty(ns.BaseName) ? ns.BaseName : ns.DisplayName,
-                DisplayNameOverride = (!string.IsNullOrEmpty(ns.BaseName) && ns.DisplayName != ns.BaseName) ? ns.DisplayName : "",
-                PrefabName = ns.PrefabName,
-                OwnerPlayerId = ns.OwnerPlayerId,
-                IsFollowing = ns.IsFollowing,
+                CompanionName = !string.IsNullOrEmpty(saveState.BaseName) ? saveState.BaseName : saveState.DisplayName,
+                DisplayNameOverride = (!string.IsNullOrEmpty(saveState.BaseName) && saveState.DisplayName != saveState.BaseName) ? saveState.DisplayName : "",
+                PrefabName = saveState.PrefabName,
+                OwnerPlayerId = saveState.OwnerPlayerId,
+                IsFollowing = saveState.IsFollowing,
                 RealmId = GetCurrentRealmId(),
 
-                IsStationedAsNpc = ns.IsStationed,
-                StationedPositionX = ns.StationedPositionX,
-                StationedPositionY = ns.StationedPositionY,
-                StationedPositionZ = ns.StationedPositionZ,
-                StationedRotationY = ns.StationedRotationY,
-                AllowIdleWandering = ns.AllowIdleWandering,
-                HasHomePosition = ns.HasHomePosition,
-                HomePositionX = ns.HomePositionX,
-                HomePositionY = ns.HomePositionY,
-                HomePositionZ = ns.HomePositionZ,
+                IsStationedAsNpc = saveState.IsStationed,
+                StationedPositionX = saveState.StationedPositionX,
+                StationedPositionY = saveState.StationedPositionY,
+                StationedPositionZ = saveState.StationedPositionZ,
+                StationedRotationY = saveState.StationedRotationY,
+                AllowIdleWandering = saveState.AllowIdleWandering,
+                HasHomePosition = saveState.HasHomePosition,
+                HomePositionX = saveState.HomePositionX,
+                HomePositionY = saveState.HomePositionY,
+                HomePositionZ = saveState.HomePositionZ,
 
-                ModelIndex = ns.ModelIndex,
-                HairStyle = ns.HairStyle,
-                BeardStyle = ns.BeardStyle,
-                HairColorR = ns.HairColorR, HairColorG = ns.HairColorG, HairColorB = ns.HairColorB,
-                SkinColorR = ns.SkinColorR, SkinColorG = ns.SkinColorG, SkinColorB = ns.SkinColorB,
-                EyeColorR = ns.EyeColorR, EyeColorG = ns.EyeColorG, EyeColorB = ns.EyeColorB,
-                HasAppearanceData = ns.HasAppearanceData,
-                Scale = ns.Scale, IsGiant = ns.IsGiant, IsDwarf = ns.IsDwarf,
+                ModelIndex = saveState.ModelIndex,
+                HairStyle = saveState.HairStyle,
+                BeardStyle = saveState.BeardStyle,
+                HairColorR = saveState.HairColorR, HairColorG = saveState.HairColorG, HairColorB = saveState.HairColorB,
+                SkinColorR = saveState.SkinColorR, SkinColorG = saveState.SkinColorG, SkinColorB = saveState.SkinColorB,
+                EyeColorR = saveState.EyeColorR, EyeColorG = saveState.EyeColorG, EyeColorB = saveState.EyeColorB,
+                HasAppearanceData = saveState.HasAppearanceData,
+                Scale = saveState.Scale, IsGiant = saveState.IsGiant, IsDwarf = saveState.IsDwarf,
 
-                EquipmentPrefabs = ns.EquipmentPrefabs != null ? new Dictionary<string, string>(ns.EquipmentPrefabs) : new Dictionary<string, string>(),
-                EquipmentQualities = ns.EquipmentQualities != null ? new Dictionary<string, int>(ns.EquipmentQualities) : new Dictionary<string, int>(),
-                EquipmentStacks = ns.EquipmentStacks != null ? new Dictionary<string, int>(ns.EquipmentStacks) : new Dictionary<string, int>(),
-                StorageInventoryData = ns.StorageInventoryData,
-                SkillsData = ns.SkillsData,
-                ProgressionData = ns.ProgressionData,
-                StatsData = ns.StatsData,
-                KillsData = ns.KillsData,
-                LuckData = ns.LuckData,
-                ArchetypeSkillsData = ns.ArchetypeSkillsData,
+                EquipmentPrefabs = saveState.EquipmentPrefabs != null ? new Dictionary<string, string>(saveState.EquipmentPrefabs) : new Dictionary<string, string>(),
+                EquipmentQualities = saveState.EquipmentQualities != null ? new Dictionary<string, int>(saveState.EquipmentQualities) : new Dictionary<string, int>(),
+                EquipmentStacks = saveState.EquipmentStacks != null ? new Dictionary<string, int>(saveState.EquipmentStacks) : new Dictionary<string, int>(),
+                StorageInventoryData = saveState.StorageInventoryData,
+                SkillsData = saveState.SkillsData,
+                ProgressionData = saveState.ProgressionData,
+                StatsData = saveState.StatsData,
+                KillsData = saveState.KillsData,
+                LuckData = saveState.LuckData,
+                ArchetypeSkillsData = saveState.ArchetypeSkillsData,
             };
         }
 
@@ -3106,21 +3048,9 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
             {
                 if (PlayerFollowingRegistry.IsFollowing(owner, companionId))
                     return true;
-                // NOTE: deliberately fall through to the companion-side mirror
-                // even when the registry says false.  The registry lives on
-                // the player ZDO, which Valheim DESTROYS on player death and
-                // recreates on bed-respawn — meaning every player death wipes
-                // every companion's registry entry.  If we returned false here
-                // we'd lose follow-intent across player death and any
-                // BuildSaveData call (e.g. companion dies AFTER the owner
-                // respawned) would write IsFollowing=false to the vault, which
-                // then drops the companion out of the group HUD (the HUD's
-                // pending-respawn filter requires IsFollowing).  The companion-
-                // side ZDO flag does survive the player respawn, so it's the
-                // canonical persistent intent — checking it second means we
-                // honour an explicit owner-issued "stop following" (which
-                // SetPersistentFollowIntent(false) writes to BOTH stores) but
-                // we don't get poisoned by a transient registry wipe.
+                // Fall through to the companion-side flag even when the registry says false: the registry lives on the
+                // player ZDO, which is recreated when the player dies, so trusting it alone would drop follow intent
+                // and hide companions from the group HUD after every owner death.
             }
 
             var nview = _nview ?? GetComponent<ZNetView>();
@@ -3294,9 +3224,9 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         private static long ResolveOwnerSide(Character attacker)
         {
             if (attacker == null) return 0L;
-            if (attacker is Player p) return p.GetPlayerID();
-            var comp = attacker.GetComponent<CompanionController>();
-            return comp != null ? comp.ownerPlayerId : 0L;
+            if (attacker is Player player) return player.GetPlayerID();
+            var attackerCompanion = attacker.GetComponent<CompanionController>();
+            return attackerCompanion != null ? attackerCompanion.ownerPlayerId : 0L;
         }
 
         public void OpenInventory(Player player)

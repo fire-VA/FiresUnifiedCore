@@ -7,22 +7,15 @@ using HarmonyLib;
 
 namespace FiresCore.Identity
 {
-    // Process-global facade over server-side player-identity capture and query, ported faithfully from
-    // VikingLands.Core's PlayerIdentityService. Capture reflects the connecting ZNetPeer for its SteamId
-    // (from the socket host name), session uid (peer m_uid), display name, last IP, and admin status, then
-    // upserts a record into the shared VaultDatabase. Capture is server-gated. All reflection goes through
-    // HarmonyLib.AccessTools (Core already references 0Harmony) with soft fallbacks, so a vanilla field
-    // rename fails to empty rather than throwing.
-    //
-    // Field names re-validated against the current assembly_valheim:
-    //   ZNetPeer.m_socket (ISocket), m_uid (long), m_playerName (string), m_characterID (ZDOID) — present.
-    //   ZNetPeer has NO m_platformUserID in this build; the SteamId comes from m_socket.GetHostName()
-    //   ("Steam_<digits>"). The m_platformUserID / PlatformUserID / m_characterID.UserID lookups are kept
-    //   as soft fallbacks (they no-op on this build).
-    //   ZNet.m_adminList is a private SyncedList — its backing List<string> is obtained via GetList()
-    //   (SyncedList implements no list interface, so `as IList` always returned null).
+    // Server-side player identity capture and lookup, ported from VikingLands.Core's PlayerIdentityService. On connect it
+    // reads the peer's Steam id (from the socket host name), session uid, name, last IP and admin status and upserts a
+    // record into the shared VaultDatabase. Reflection goes through AccessTools with soft fallbacks, so a renamed field
+    // yields empty data rather than an exception; the admin list is read through SyncedList.GetList, since SyncedList
+    // implements no list interface.
     public static class PlayerIdentity
     {
+        private const int MinSteamIdDigits = 8;
+
         private static readonly HashSet<long> CapturedSessions = new HashSet<long>();
         private static readonly object Sync = new object();
 
@@ -349,14 +342,14 @@ namespace FiresCore.Identity
             object value = AccessTools.Field(peer.GetType(), "m_uid")?.GetValue(peer)
                 ?? AccessTools.Property(peer.GetType(), "m_uid")?.GetValue(peer, null);
 
-            if (value is long l)
+            if (value is long longValue)
             {
-                return l;
+                return longValue;
             }
 
-            if (value is ulong ul)
+            if (value is ulong ulongValue)
             {
-                return unchecked((long)ul);
+                return unchecked((long)ulongValue);
             }
 
             return 0L;
@@ -389,7 +382,7 @@ namespace FiresCore.Identity
             }
 
             string digitsOnly = new string(trimmed.Where(char.IsDigit).ToArray());
-            return !string.IsNullOrWhiteSpace(digitsOnly) && digitsOnly.Length >= 8
+            return !string.IsNullOrWhiteSpace(digitsOnly) && digitsOnly.Length >= MinSteamIdDigits
                 ? "Steam_" + digitsOnly
                 : string.Empty;
         }

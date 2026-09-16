@@ -4,24 +4,8 @@ using FiresCore.Npc.Formation;
 namespace FiresCore.Npc.Movement
 {
     /// <summary>
-    /// Handles player idle detection and companion relaxed behavior.
-    /// 
-    /// RESPONSIBILITIES:
-    /// - Track when player is stationary
-    /// - Manage companion relaxed following state
-    /// - Handle relaxed wander behavior
-    /// - Determine when companion should relax vs stay alert
-    /// 
-    /// DESIGN:
-    /// This is a helper class, not a MonoBehaviour. It's instantiated and owned
-    /// by CompanionCombatMovement which calls its methods as needed.
-    /// 
-    /// RELAXED FOLLOWING:
-    /// When the player is idle for a period, the companion can:
-    /// - Stop at a comfortable distance
-    /// - Look around occasionally
-    /// - Wander briefly within a zone
-    /// This makes companions feel more natural and less robotic.
+    /// Relaxed following while the player stands still: the companion stops at a comfortable distance, looks
+    /// around and wanders briefly instead of hovering. Owned and driven by CompanionCombatMovement.
     /// </summary>
     public class PlayerIdleHandler
     {
@@ -60,10 +44,10 @@ namespace FiresCore.Npc.Movement
         private bool _hasRelaxedWanderTarget;
         
         // Constants
-        private const float PLAYER_IDLE_CHECK_INTERVAL = 0.5f;
-        private const float PLAYER_MOVEMENT_THRESHOLD = 0.3f;
-        private const float IDLE_WANDER_RADIUS = 8f;
-        private const float IDLE_REFOLLOW_DISTANCE = 10f;
+        private const float PlayerIdleCheckInterval = 0.5f;
+        private const float PlayerMovementThreshold = 0.3f;
+        private const float IdleWanderRadius = 8f;
+        private const float DefaultIdleRefollowDistance = 10f;
         
         // Damage tracking (to prevent relaxing during combat)
         private float _lastDamageTime = -100f;
@@ -87,7 +71,7 @@ namespace FiresCore.Npc.Movement
         public Vector3 RelaxedWanderTarget => _relaxedWanderTarget;
         
         /// <summary>The idle refollow distance threshold.</summary>
-        public float IdleRefollowDistance => IDLE_REFOLLOW_DISTANCE;
+        public float IdleRefollowDistance => DefaultIdleRefollowDistance;
         
         #endregion
         
@@ -113,7 +97,7 @@ namespace FiresCore.Npc.Movement
         /// </summary>
         public void Update()
         {
-            if (Time.time - _lastPlayerMovementCheck < PLAYER_IDLE_CHECK_INTERVAL) return;
+            if (Time.time - _lastPlayerMovementCheck < PlayerIdleCheckInterval) return;
             _lastPlayerMovementCheck = Time.time;
             
             var owner = _companion?.GetOwner();
@@ -130,7 +114,7 @@ namespace FiresCore.Npc.Movement
             
             // Also check player's actual velocity for more responsive detection
             float playerVelocity = owner.GetVelocity().magnitude;
-            bool playerIsMoving = movementDist > PLAYER_MOVEMENT_THRESHOLD || playerVelocity > 0.5f;
+            bool playerIsMoving = movementDist > PlayerMovementThreshold || playerVelocity > 0.5f;
             
             // Check if player has moved
             if (playerIsMoving)

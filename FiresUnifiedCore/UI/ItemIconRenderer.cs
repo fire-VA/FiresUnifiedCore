@@ -44,7 +44,7 @@ namespace FiresCore.UI
         {
             if (IsClientOnly() || prefab == null) return null;
 
-            Camera cam = null; Light light = null; GameObject model = null; RenderTexture rt = null;
+            Camera cam = null; Light light = null; GameObject model = null; RenderTexture renderTexture = null;
             var prevActive = RenderTexture.active;
             // The tiny-FOV framing puts the camera 70–400m from the model, far enough that Valheim's DISTANCE FOG
             // whites the whole frame out (icons rendered as blank squares whenever the live environment had fog).
@@ -72,13 +72,13 @@ namespace FiresCore.UI
                 ZNetView.m_forceDisableInit = true;
                 try { model = UnityEngine.Object.Instantiate(prefab); }
                 finally { ZNetView.m_forceDisableInit = false; }
-                foreach (var t in model.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = IconLayer;
+                foreach (var child in model.GetComponentsInChildren<Transform>(true)) child.gameObject.layer = IconLayer;
 
                 var rends = model.GetComponentsInChildren<Renderer>()
                                  .Where(r => r != null && r.GetType().Name != "ParticleSystemRenderer").ToArray();
                 if (rends.Length == 0) return null;
                 Vector3 min = Vector3.positiveInfinity, max = Vector3.negativeInfinity;
-                foreach (var r in rends) { min = Vector3.Min(min, r.bounds.min); max = Vector3.Max(max, r.bounds.max); }
+                foreach (var childRenderer in rends) { min = Vector3.Min(min, childRenderer.bounds.min); max = Vector3.Max(max, childRenderer.bounds.max); }
                 Vector3 size = max - min;
 
                 Vector3 center = (min + max) / 2f;
@@ -115,14 +115,14 @@ namespace FiresCore.UI
                     if (animator.HasState(0, movementState)) animator.Play(movementState);
                     animator.Update(0f);
                 }
-                foreach (var smr in model.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-                    smr.updateWhenOffscreen = true;
+                foreach (var skinnedRenderer in model.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                    skinnedRenderer.updateWhenOffscreen = true;
 
-                rt = RenderTexture.GetTemporary(res, res, 16);
-                cam.targetTexture = rt;
+                renderTexture = RenderTexture.GetTemporary(res, res, 16);
+                cam.targetTexture = renderTexture;
                 cam.Render();
 
-                RenderTexture.active = rt;
+                RenderTexture.active = renderTexture;
                 var tex = new Texture2D(res, res, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
                 tex.ReadPixels(new Rect(0, 0, res, res), 0, 0);
                 tex.Apply();
@@ -140,7 +140,7 @@ namespace FiresCore.UI
                 if (model != null) UnityEngine.Object.Destroy(model);
                 if (cam != null) { cam.targetTexture = null; UnityEngine.Object.Destroy(cam.gameObject); }
                 if (light != null) UnityEngine.Object.Destroy(light.gameObject);
-                if (rt != null) RenderTexture.ReleaseTemporary(rt);
+                if (renderTexture != null) RenderTexture.ReleaseTemporary(renderTexture);
             }
         }
     }

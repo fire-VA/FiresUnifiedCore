@@ -9,25 +9,13 @@ using HarmonyLib;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Mirrors a tool hotbar slot from the live Slots.toolHotbarSlots list onto
-    /// an injected override element. Similar to <see cref="UIOverrideSlotMirror"/>
-    /// but specialized for hotbar behavior:
-    ///
-    /// - Works both when inventory is open AND closed (hotbar is always visible)
-    /// - Shows keybind label instead of slot name
-    /// - Hotkey activation (equip/unequip) without requiring inventory UI open
-    /// - Does NOT interfere with the real ToolBar — this is a parallel visual
-    ///   mirror for custom UI layouts that want hotbar slots in a different position
-    ///
-    /// <b>Design principle:</b> Read-only visual mirror + input forwarding to
-    /// the existing ToolBar/HotbarManager activation system. Never modifies
-    /// inventory state directly.
+    /// Mirrors a tool hotbar slot onto an injected override element whether or not the inventory is open, showing the
+    /// keybind label and forwarding hotkey activation to the existing ToolBar and HotbarManager. A parallel visual
+    /// only; it never changes inventory state.
     /// </summary>
     public class UIOverrideHotbarSlotMirror : MonoBehaviour
     {
-        // ???????????????????????????????????????
         //  Configuration
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Index into Slots.toolHotbarSlots (0-based).
@@ -40,9 +28,7 @@ namespace FiresCore.UI
         /// </summary>
         public bool Interactive = false;
 
-        // ???????????????????????????????????????
         //  Cached child references
-        // ???????????????????????????????????????
 
         private Image _icon;
         private Image _bkgImage;
@@ -54,9 +40,7 @@ namespace FiresCore.UI
         private bool _initialized;
         private int _lastUpdateFrame = -1;
 
-        // ???????????????????????????????????????
         //  Init
-        // ???????????????????????????????????????
 
         private void Start()
         {
@@ -69,21 +53,21 @@ namespace FiresCore.UI
 
         private void CacheChildReferences()
         {
-            var t = transform;
-            var iconT = t.Find("icon");
-            if (iconT != null) _icon = iconT.GetComponent<Image>();
+            var root = transform;
+            var iconTransform = root.Find("icon");
+            if (iconTransform != null) _icon = iconTransform.GetComponent<Image>();
 
-            var bkgT = t.Find("bkg") ?? t.Find("background") ?? t.Find("Bkg");
-            if (bkgT != null) _bkgImage = bkgT.GetComponent<Image>();
+            var backgroundTransform = root.Find("bkg") ?? root.Find("background") ?? root.Find("Bkg");
+            if (backgroundTransform != null) _bkgImage = backgroundTransform.GetComponent<Image>();
 
-            var amountT = t.Find("amount");
-            if (amountT != null) _amount = amountT.GetComponent<TMP_Text>();
+            var amountTransform = root.Find("amount");
+            if (amountTransform != null) _amount = amountTransform.GetComponent<TMP_Text>();
 
-            var bindingT = t.Find("binding");
+            var bindingT = root.Find("binding");
             if (bindingT != null) _bindingLabel = bindingT.GetComponent<TMP_Text>();
 
-            _equippedOverlay = t.Find("equiped") ?? t.Find("equipped");
-            _durabilityOverlay = t.Find("durability");
+            _equippedOverlay = root.Find("equiped") ?? root.Find("equipped");
+            _durabilityOverlay = root.Find("durability");
         }
 
         private void WireClickHandler()
@@ -95,10 +79,10 @@ namespace FiresCore.UI
             int idx = HotbarIndex; // Capture for closure
             btn.onClick.AddListener(() =>
             {
-                var mgr = UIOverrideHotbarManager.Instance;
-                if (mgr == null)
-                    mgr = UIOverrideHotbarManager.EnsureInstance();
-                if (mgr == null) return;
+                var manager = UIOverrideHotbarManager.Instance;
+                if (manager == null)
+                    manager = UIOverrideHotbarManager.EnsureInstance();
+                if (manager == null) return;
 
                 InventoryGrid.Modifier modifier = InventoryGrid.Modifier.Select;
                 if (ZInput.GetKey(KeyCode.LeftShift) || ZInput.GetKey(KeyCode.RightShift))
@@ -106,13 +90,11 @@ namespace FiresCore.UI
                 else if (ZInput.GetKey(KeyCode.LeftControl) || ZInput.GetKey(KeyCode.RightControl))
                     modifier = InventoryGrid.Modifier.Move;
 
-                mgr.ActivateSlotByIndex(idx, modifier);
+                manager.ActivateSlotByIndex(idx, modifier);
             });
         }
 
-        // ???????????????????????????????????????
         //  Per-frame visual sync
-        // ???????????????????????????????????????
 
         private void LateUpdate()
         {
@@ -136,9 +118,7 @@ namespace FiresCore.UI
             SyncBinding(slot);
         }
 
-        // ???????????????????????????????????????
         //  Slot resolution
-        // ???????????????????????????????????????
 
         private UIOverrideSlotSystem.Slot ResolveSlot()
         {
@@ -148,9 +128,7 @@ namespace FiresCore.UI
             return UIOverrideSlotSystem.toolHotbarSlots[HotbarIndex];
         }
 
-        // ???????????????????????????????????????
         //  Visual sync helpers
-        // ???????????????????????????????????????
 
         private void SyncIcon(ItemDrop.ItemData item)
         {

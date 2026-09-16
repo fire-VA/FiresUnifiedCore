@@ -66,12 +66,12 @@ namespace FiresCore.Bridge
                 {
                     foreach (var row in rows)
                     {
-                        var f = row.Split(Sep);
-                        if (f.Length < 4) continue;
-                        var (label, color) = StatusStyle(f[0]);
-                        AddRow(_tableContent, f[1],
-                            string.IsNullOrEmpty(f[2]) ? "-" : f[2],
-                            string.IsNullOrEmpty(f[3]) ? "-" : f[3],
+                        var parts = row.Split(Sep);
+                        if (parts.Length < 4) continue;
+                        var (label, color) = StatusStyle(parts[0]);
+                        AddRow(_tableContent, parts[1],
+                            string.IsNullOrEmpty(parts[2]) ? "-" : parts[2],
+                            string.IsNullOrEmpty(parts[3]) ? "-" : parts[3],
                             label, color);
                     }
                 }
@@ -80,7 +80,7 @@ namespace FiresCore.Bridge
                     // Plain reason (no comparison rows): show the body text in the scroll area.
                     var body = UIBuilderHelper.CreateLabel(_tableContent, "Body", sub.ToString(), 20f,
                         new Color(0.90f, 0.88f, 0.84f), Vector2.zero, Vector2.one, TextAlignmentOptions.TopLeft);
-                    body.enableWordWrapping = true;
+                    body.textWrappingMode = TextWrappingModes.Normal;
                     _subheader.text = string.Empty;
                 }
 
@@ -135,12 +135,12 @@ namespace FiresCore.Bridge
 
             _title = UIBuilderHelper.CreateLabel(card.transform, "Title", "", 28f, Color.white,
                 Vector2.zero, Vector2.one, TextAlignmentOptions.Top);
-            _title.enableWordWrapping = true;
+            _title.textWrappingMode = TextWrappingModes.Normal;
             UIBuilderHelper.AddLayoutElement(_title.gameObject, preferredHeight: 46f);
 
             _subheader = UIBuilderHelper.CreateLabel(card.transform, "Subheader", "", 19f, new Color(0.86f, 0.84f, 0.80f),
                 Vector2.zero, Vector2.one, TextAlignmentOptions.Top);
-            _subheader.enableWordWrapping = true;
+            _subheader.textWrappingMode = TextWrappingModes.Normal;
             UIBuilderHelper.AddLayoutElement(_subheader.gameObject, preferredHeight: 30f);
 
             // Fixed column header (stays put above the scrolling rows).
@@ -149,7 +149,7 @@ namespace FiresCore.Bridge
             UIBuilderHelper.AddHorizontalLayout(_colHeader, new RectOffset(14, 14, 4, 4), 10f,
                 childControlWidth: true, childControlHeight: true, childForceExpandWidth: false, childForceExpandHeight: false);
             UIBuilderHelper.AddLayoutElement(_colHeader, minHeight: 30f);
-            var hcol = new Color(0.72f, 0.70f, 0.66f);
+            var headerColor = new Color(0.72f, 0.70f, 0.66f);
             // "Mod" header indented by the icon slot so it lines up with the row names, not the icons.
             var modHdr = new GameObject("ModHdr", typeof(RectTransform));
             modHdr.transform.SetParent(_colHeader.transform, false);
@@ -159,11 +159,11 @@ namespace FiresCore.Bridge
             UIBuilderHelper.AddLayoutElement(modHdr, minWidth: 260f, flexibleWidth: 1f);
             var modSpacer = UIBuilderHelper.CreateImage(modHdr.transform, "Sp", Vector2.zero, Vector2.one, new Color(0f, 0f, 0f, 0f));
             UIBuilderHelper.AddLayoutElement(modSpacer.gameObject, minWidth: 22f, preferredWidth: 22f, flexibleWidth: 0f);
-            var modHdrLbl = UIBuilderHelper.CreateLabel(modHdr.transform, "Mod", "Mod", 18f, hcol, Vector2.zero, Vector2.one, TextAlignmentOptions.Left);
+            var modHdrLbl = UIBuilderHelper.CreateLabel(modHdr.transform, "Mod", "Mod", 18f, headerColor, Vector2.zero, Vector2.one, TextAlignmentOptions.Left);
             UIBuilderHelper.AddLayoutElement(modHdrLbl.gameObject, flexibleWidth: 1f);
-            MakeCell(_colHeader.transform, "You", hcol, width: 130f);
-            MakeCell(_colHeader.transform, "Server", hcol, width: 130f);
-            MakeCell(_colHeader.transform, "Status", hcol, width: 140f);
+            MakeCell(_colHeader.transform, "You", headerColor, width: 130f);
+            MakeCell(_colHeader.transform, "Server", headerColor, width: 130f);
+            MakeCell(_colHeader.transform, "Status", headerColor, width: 140f);
 
             var scroll = UIBuilderHelper.CreateScrollArea(card.transform, "Table", Vector2.zero, Vector2.one, new Color(0f, 0f, 0f, 0.30f));
             RoundedChrome(scroll.Root, FiresRoundedSkin.RoundedSprite(8, FiresPopupTheme.ListBg, FiresPopupTheme.PanelEdge, 1));
@@ -182,20 +182,20 @@ namespace FiresCore.Bridge
             footerLayout.childAlignment = TextAnchor.MiddleCenter;
             UIBuilderHelper.AddLayoutElement(footer, minHeight: 44f, preferredHeight: 48f);
 
-            var okBtn = UIBuilderHelper.CreateButton(footer.transform, "OK", Vector2.zero, Vector2.one, Hide);
+            var okButton = UIBuilderHelper.CreateButton(footer.transform, "OK", Vector2.zero, Vector2.one, Hide);
             // White rounded sprite + palette tint states, the same way FiresPopupTheme styles a button
             // (the Button's ColorTint multiplies the image, so the sprite itself must stay white).
-            RoundedChrome(okBtn.gameObject, FiresRoundedSkin.RoundedSprite(7, Color.white));
-            var okColors = okBtn.colors;
+            RoundedChrome(okButton.gameObject, FiresRoundedSkin.RoundedSprite(7, Color.white));
+            var okColors = okButton.colors;
             okColors.normalColor = FiresPopupTheme.BtnNormal;
             okColors.highlightedColor = FiresPopupTheme.BtnHover;
             okColors.pressedColor = FiresPopupTheme.BtnPressed;
             okColors.selectedColor = FiresPopupTheme.BtnNormal;
             okColors.fadeDuration = 0.08f;
-            okBtn.colors = okColors;
-            foreach (var okLabel in okBtn.GetComponentsInChildren<TMP_Text>(true))
+            okButton.colors = okColors;
+            foreach (var okLabel in okButton.GetComponentsInChildren<TMP_Text>(true))
                 okLabel.color = FiresPopupTheme.TextLight;
-            UIBuilderHelper.AddLayoutElement(okBtn.gameObject, minWidth: 150f, preferredWidth: 160f,
+            UIBuilderHelper.AddLayoutElement(okButton.gameObject, minWidth: 150f, preferredWidth: 160f,
                 minHeight: 38f, preferredHeight: 40f, flexibleWidth: 0f, flexibleHeight: 0f);
 
             _root.SetActive(false);
@@ -250,7 +250,7 @@ namespace FiresCore.Bridge
 
             var name = UIBuilderHelper.CreateLabel(cell.transform, "Name", guid, 18f, nameColor,
                 Vector2.zero, Vector2.one, TextAlignmentOptions.Left);
-            name.enableWordWrapping = false;
+            name.textWrappingMode = TextWrappingModes.NoWrap;
             name.overflowMode = TextOverflowModes.Ellipsis;
             UIBuilderHelper.AddLayoutElement(name.gameObject, minWidth: 150f, flexibleWidth: 1f);
         }
@@ -258,7 +258,7 @@ namespace FiresCore.Bridge
         private static void MakeCell(Transform row, string text, Color color, float width = -1f, bool flexible = false)
         {
             var lbl = UIBuilderHelper.CreateLabel(row, "cell", text, 18f, color, Vector2.zero, Vector2.one, TextAlignmentOptions.Left);
-            lbl.enableWordWrapping = false;
+            lbl.textWrappingMode = TextWrappingModes.NoWrap;
             lbl.overflowMode = TextOverflowModes.Ellipsis;
             if (flexible) UIBuilderHelper.AddLayoutElement(lbl.gameObject, minWidth: 260f, flexibleWidth: 1f);
             else UIBuilderHelper.AddLayoutElement(lbl.gameObject, minWidth: width, preferredWidth: width, flexibleWidth: 0f);

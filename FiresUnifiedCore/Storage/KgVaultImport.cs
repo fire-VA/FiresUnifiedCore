@@ -32,13 +32,13 @@ namespace FiresCore.Storage
             }
 
             List<MailUser> users; List<BankSlot> bank; List<MailEntry> mails; List<MarketListing> market; List<LeaderboardEntry> board;
-            using (var kg = new LiteDatabase(new ConnectionString { Filename = kgDbPath, ReadOnly = true }))
+            using (var kgDatabase = new LiteDatabase(new ConnectionString { Filename = kgDbPath, ReadOnly = true }))
             {
-                users  = SafeAll<MailUser>(kg, VaultDatabase.MailUsersCollection, lines);
-                bank   = SafeAll<BankSlot>(kg, VaultDatabase.BankCollection, lines);
-                mails  = SafeAll<MailEntry>(kg, VaultDatabase.MailEntriesCollection, lines);
-                market = SafeAll<MarketListing>(kg, VaultDatabase.MarketplaceCollection, lines);
-                board  = SafeAll<LeaderboardEntry>(kg, VaultDatabase.LeaderboardCollection, lines);
+                users  = SafeAll<MailUser>(kgDatabase, VaultDatabase.MailUsersCollection, lines);
+                bank   = SafeAll<BankSlot>(kgDatabase, VaultDatabase.BankCollection, lines);
+                mails  = SafeAll<MailEntry>(kgDatabase, VaultDatabase.MailEntriesCollection, lines);
+                market = SafeAll<MarketListing>(kgDatabase, VaultDatabase.MarketplaceCollection, lines);
+                board  = SafeAll<LeaderboardEntry>(kgDatabase, VaultDatabase.LeaderboardCollection, lines);
             }
 
             lines.Add("source: " + users.Count + " user(s), " + bank.Count + " bank slot(s) across "
@@ -50,8 +50,8 @@ namespace FiresCore.Storage
                 return lines;
             }
 
-            var fi = new FileInfo(kgDbPath);
-            string marker = fi.Length + "_" + fi.LastWriteTimeUtc.Ticks;
+            var fileInfo = new FileInfo(kgDbPath);
+            string marker = fileInfo.Length + "_" + fileInfo.LastWriteTimeUtc.Ticks;
 
             using (var db = VaultDatabase.Open())
             {
@@ -65,87 +65,87 @@ namespace FiresCore.Storage
                 // Users: insert-if-absent by UserID (platform id).
                 var usersCol = db.GetCollection<MailUser>(VaultDatabase.MailUsersCollection, BsonAutoId.ObjectId);
                 var knownUsers = new HashSet<string>(usersCol.FindAll().Select(x => x.UserID ?? ""), StringComparer.Ordinal);
-                int uNext = NextId(usersCol.FindAll().Select(x => x._id));
-                int uIns = 0, uSkip = 0;
-                foreach (var u in users)
+                int nextUserId = NextId(usersCol.FindAll().Select(x => x._id));
+                int usersInserted = 0, usersSkipped = 0;
+                foreach (var user in users)
                 {
-                    if (knownUsers.Contains(u.UserID ?? "")) { uSkip++; continue; }
-                    u._id = uNext++;
-                    usersCol.Insert(u);
-                    uIns++;
+                    if (knownUsers.Contains(user.UserID ?? "")) { usersSkipped++; continue; }
+                    user._id = nextUserId++;
+                    usersCol.Insert(user);
+                    usersInserted++;
                 }
 
                 // Bank: merge by (Owner, Prefab) — amounts SUM so nothing a player stored is lost.
                 var bankCol = db.GetCollection<BankSlot>(VaultDatabase.BankCollection, BsonAutoId.ObjectId);
                 var existingBank = bankCol.FindAll().ToList();
                 var bankByKey = new Dictionary<string, BankSlot>(StringComparer.Ordinal);
-                foreach (var b in existingBank) bankByKey[(b.Owner ?? "") + "" + b.Prefab] = b;
-                int bNext = NextId(existingBank.Select(x => x._id));
-                int bIns = 0, bMerged = 0;
-                foreach (var b in bank)
+                foreach (var slot in existingBank) bankByKey[(slot.Owner ?? "") + "" + slot.Prefab] = slot;
+                int nextBankId = NextId(existingBank.Select(x => x._id));
+                int bankInserted = 0, bankMerged = 0;
+                foreach (var slot in bank)
                 {
-                    string key = (b.Owner ?? "") + "" + b.Prefab;
+                    string key = (slot.Owner ?? "") + "" + slot.Prefab;
                     if (bankByKey.TryGetValue(key, out var have))
                     {
-                        have.Amount += b.Amount;
+                        have.Amount += slot.Amount;
                         bankCol.Update(have);
-                        bMerged++;
+                        bankMerged++;
                     }
                     else
                     {
-                        b._id = bNext++;
-                        bankCol.Insert(b);
-                        bankByKey[key] = b;
-                        bIns++;
+                        slot._id = nextBankId++;
+                        bankCol.Insert(slot);
+                        bankByKey[key] = slot;
+                        bankInserted++;
                     }
                 }
 
                 // Mails + market listings: plain inserts with fresh sequential ids.
                 var mailCol = db.GetCollection<MailEntry>(VaultDatabase.MailEntriesCollection, BsonAutoId.ObjectId);
-                int mNext = NextId(mailCol.FindAll().Select(x => x._id));
-                foreach (var m in mails) { m._id = mNext++; mailCol.Insert(m); }
+                int nextMailId = NextId(mailCol.FindAll().Select(x => x._id));
+                foreach (var mail in mails) { mail._id = nextMailId++; mailCol.Insert(mail); }
 
                 var marketCol = db.GetCollection<MarketListing>(VaultDatabase.MarketplaceCollection, BsonAutoId.ObjectId);
-                int sNext = NextId(marketCol.FindAll().Select(x => x._id));
-                foreach (var s in market) { s._id = sNext++; marketCol.Insert(s); }
+                int nextListingId = NextId(marketCol.FindAll().Select(x => x._id));
+                foreach (var listing in market) { listing._id = nextListingId++; marketCol.Insert(listing); }
 
                 // Leaderboard: insert-if-absent by Owner — rows already earned on OUR side stay authoritative.
                 var boardCol = db.GetCollection<LeaderboardEntry>(VaultDatabase.LeaderboardCollection, BsonAutoId.ObjectId);
                 var knownOwners = new HashSet<string>(boardCol.FindAll().Select(x => x.Owner ?? ""), StringComparer.Ordinal);
-                int lNext = NextId(boardCol.FindAll().Select(x => x._id));
-                int lIns = 0, lSkip = 0;
-                foreach (var l in board)
+                int nextBoardId = NextId(boardCol.FindAll().Select(x => x._id));
+                int boardInserted = 0, boardSkipped = 0;
+                foreach (var entry in board)
                 {
-                    if (knownOwners.Contains(l.Owner ?? "")) { lSkip++; continue; }
-                    l._id = lNext++;
-                    l.Season = 0; // live row of the current season
-                    boardCol.Insert(l);
-                    lIns++;
+                    if (knownOwners.Contains(entry.Owner ?? "")) { boardSkipped++; continue; }
+                    entry._id = nextBoardId++;
+                    entry.Season = 0; // live row of the current season
+                    boardCol.Insert(entry);
+                    boardInserted++;
                 }
 
                 var markerDoc = new BsonDocument();
                 markerDoc["_id"] = marker;
                 markerDoc["when"] = DateTime.UtcNow.ToString("o");
-                markerDoc["users"] = uIns;
-                markerDoc["bank"] = bIns + bMerged;
+                markerDoc["users"] = usersInserted;
+                markerDoc["bank"] = bankInserted + bankMerged;
                 markerDoc["mails"] = mails.Count;
                 markerDoc["market"] = market.Count;
-                markerDoc["leaderboard"] = lIns;
+                markerDoc["leaderboard"] = boardInserted;
                 meta.Insert(markerDoc);
 
-                lines.Add("imported: users +" + uIns + " (" + uSkip + " already known), bank +" + bIns + " new slot(s), " + bMerged + " merged, "
-                          + "mails +" + mails.Count + ", market +" + market.Count + ", leaderboard +" + lIns + " (" + lSkip + " kept ours)");
+                lines.Add("imported: users +" + usersInserted + " (" + usersSkipped + " already known), bank +" + bankInserted + " new slot(s), " + bankMerged + " merged, "
+                          + "mails +" + mails.Count + ", market +" + market.Count + ", leaderboard +" + boardInserted + " (" + boardSkipped + " kept ours)");
                 lines.Add("owner keys are platform ids on both sides - players keep their bank/mail/listings across the swap with no relinking.");
             }
             return lines;
         }
 
-        private static List<T> SafeAll<T>(LiteDatabase db, string col, List<string> lines)
+        private static List<T> SafeAll<T>(LiteDatabase db, string collectionName, List<string> lines)
         {
-            try { return db.GetCollection<T>(col, BsonAutoId.ObjectId).FindAll().ToList(); }
+            try { return db.GetCollection<T>(collectionName, BsonAutoId.ObjectId).FindAll().ToList(); }
             catch (Exception ex)
             {
-                lines.Add("read '" + col + "' failed: " + ex.Message);
+                lines.Add("read '" + collectionName + "' failed: " + ex.Message);
                 return new List<T>();
             }
         }

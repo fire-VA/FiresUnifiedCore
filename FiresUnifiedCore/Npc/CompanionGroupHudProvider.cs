@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Linq;
+using BepInEx.Bootstrap;
 using FiresCore.Bridge;
 using FiresCore.UI.GroupHud;
 using UnityEngine;
@@ -6,19 +8,25 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Feeds the local player's following companions into the shared <see cref="GroupHudController"/>
-    /// via <see cref="GroupHudBridge"/>. This is the companion-side adapter that replaces the old
-    /// monolithic companion-scanning HUD — the HUD itself is now generic and Core-owned, and this
-    /// just maps live <see cref="CompanionController"/> state onto <see cref="GroupHudMember"/> rows.
+    /// Maps the local player's following companions onto <see cref="GroupHudMember"/> rows for the
+    /// shared <see cref="GroupHudController"/>.
     /// </summary>
     public static class CompanionGroupHudProvider
     {
         private const string ProviderKey = "fires.companions";
         private const int MaxStatusIcons = 10;
 
+        private static readonly string[] CompanionHostPluginGuids = { "com.Fire.FiresCompanions", "com.Fire.FiresRPGmaker" };
+
         public static void Register() => GroupHudBridge.RegisterProvider(ProviderKey, Collect);
 
         public static void Unregister() => GroupHudBridge.UnregisterProvider(ProviderKey);
+
+        /// <summary>Feeds the HUD only when a mod that actually spawns companions is loaded.</summary>
+        internal static void RegisterIfCompanionHostLoaded()
+        {
+            if (CompanionHostPluginGuids.Any(Chainloader.PluginInfos.ContainsKey)) Register();
+        }
 
         // ── Dead-pending roster (keep dead companions on the HUD) ────────────────────────────────────
         // A dead companion's live GameObject is destroyed ~1s after death, which would blink its HUD
@@ -88,40 +96,40 @@ namespace FiresCore.Npc
                 List<string> stale = null;
                 foreach (var kv in _deadPending)
                 {
-                    var d = kv.Value;
-                    if (d.OwnerPlayerId != playerId || liveIds.Contains(kv.Key) || now > d.GraceExpiry)
+                    var pending = kv.Value;
+                    if (pending.OwnerPlayerId != playerId || liveIds.Contains(kv.Key) || now > pending.GraceExpiry)
                     {
                         (stale ?? (stale = new List<string>())).Add(kv.Key);
                         continue;
                     }
-                    float remaining = d.RespawnDeadline - now;
+                    float remaining = pending.RespawnDeadline - now;
                     yield return new GroupHudMember
                     {
                         Id = "companion_" + kv.Key,
-                        Name = d.Name,
+                        Name = pending.Name,
                         IsDead = true,
                         StatusText = remaining > 0f ? $"({remaining:F0}s)" : "(Respawning…)",
                     };
                 }
-                if (stale != null) foreach (var k in stale) _deadPending.Remove(k);
+                if (stale != null) foreach (var staleId in stale) _deadPending.Remove(staleId);
             }
         }
 
-        private static GroupHudMember ToMember(CompanionController c, Vector3 playerPos)
+        private static GroupHudMember ToMember(CompanionController companion, Vector3 playerPos)
         {
-            var character = c.GetCharacter();
-            bool dead = c.isDefeated || (character != null && character.IsDead());
+            var character = companion.GetCharacter();
+            bool dead = companion.isDefeated || (character != null && character.IsDead());
 
             var member = new GroupHudMember
             {
-                Id = "companion_" + (string.IsNullOrEmpty(c.companionId) ? c.GetInstanceID().ToString() : c.companionId),
-                Name = c.GetDisplayName(),
+                Id = "companion_" + (string.IsNullOrEmpty(companion.companionId) ? companion.GetInstanceID().ToString() : companion.companionId),
+                Name = companion.GetDisplayName(),
                 IsDead = dead
             };
 
             if (dead)
             {
-                float respawnTime = CompanionDeathHandler.GetRespawnTime(c.companionId);
+                float respawnTime = CompanionDeathHandler.GetRespawnTime(companion.companionId);
                 float remaining;
                 if (respawnTime > 0f)
                 {
@@ -132,20 +140,20 @@ namespace FiresCore.Npc
                     // Dedi: the respawn timer was scheduled on whatever peer owns the ZDO, so this
                     // client may lack GetRespawnTime. Approximate from the configured delay (the death
                     // just happened) so the countdown still shows.
-                    var dh = c.GetComponent<CompanionDeathHandler>();
-                    remaining = dh != null ? dh.respawnDelay : 120f;
+                    var deathHandler = companion.GetComponent<CompanionDeathHandler>();
+                    remaining = deathHandler != null ? deathHandler.respawnDelay : 120f;
                 }
                 member.StatusText = remaining > 0f ? $"({remaining:F0}s)" : "(Respawning…)";
 
                 // Persist the row so it survives the corpse's imminent destruction. This provider only
                 // iterates the local player's own companions, so recording here is inherently owner-side.
-                RecordDeath(c.companionId, member.Name, Mathf.Max(0f, remaining), c.ownerPlayerId);
+                RecordDeath(companion.companionId, member.Name, Mathf.Max(0f, remaining), companion.ownerPlayerId);
                 return member;
             }
 
-            member.Distance = Vector3.Distance(playerPos, c.transform.position);
+            member.Distance = Vector3.Distance(playerPos, companion.transform.position);
 
-            var stats = c.GetStats();
+            var stats = companion.GetStats();
             if (stats != null)
             {
                 member.Health = stats.CurrentHealth;
@@ -167,13 +175,13 @@ namespace FiresCore.Npc
             if (effects == null || effects.Count == 0) return null;
 
             List<GroupHudStatusIcon> icons = null;
-            foreach (var se in effects)
+            foreach (var effect in effects)
             {
-                if (se == null || se.m_icon == null) continue;
+                if (effect == null || effect.m_icon == null) continue;
                 (icons ?? (icons = new List<GroupHudStatusIcon>())).Add(new GroupHudStatusIcon
                 {
-                    Icon = se.m_icon,
-                    RemainingSeconds = se.m_ttl > 0f ? Mathf.Max(0f, se.m_ttl - se.m_time) : 0f
+                    Icon = effect.m_icon,
+                    RemainingSeconds = effect.m_ttl > 0f ? Mathf.Max(0f, effect.m_ttl - effect.m_time) : 0f
                 });
                 if (icons.Count >= MaxStatusIcons) break;
             }

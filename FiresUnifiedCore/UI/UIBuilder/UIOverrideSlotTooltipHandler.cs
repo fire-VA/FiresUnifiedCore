@@ -8,7 +8,7 @@ namespace FiresCore.UI
     /// Shows vanilla Valheim tooltips when the pointer hovers over an override
     /// inventory slot. Reads the slot's item data and displays item name + tooltip
     /// text via <see cref="UITooltip"/>. When the slot is empty, shows a hint
-    /// describing the slot type (e.g., "Helmet Slot — Equip a helmet here").
+    /// describing the slot type (e.g., "Helmet Slot â€” Equip a helmet here").
     ///
     /// Attach alongside <see cref="UIOverrideSlotMirror"/> on any interactive
     /// equipment/inventory slot element. The wiring system attaches this
@@ -24,7 +24,6 @@ namespace FiresCore.UI
         public Vector2Int GridPosition = new Vector2Int(-1, -1);
 
         private UITooltip _tooltip;
-        private bool _hovering;
 
         private void Start()
         {
@@ -35,7 +34,6 @@ namespace FiresCore.UI
 
         public void OnPointerEnter(PointerEventData eventData)
         {
-            _hovering = true;
 
             if (InventoryGui.instance == null || InventoryGui.instance.m_playerGrid == null)
                 return;
@@ -62,7 +60,6 @@ namespace FiresCore.UI
 
         public void OnPointerExit(PointerEventData eventData)
         {
-            _hovering = false;
 
             if (InventoryGui.instance != null && InventoryGui.instance.m_playerGrid != null)
                 InventoryGui.instance.m_playerGrid.m_tooltipAnchor.gameObject.SetActive(false);

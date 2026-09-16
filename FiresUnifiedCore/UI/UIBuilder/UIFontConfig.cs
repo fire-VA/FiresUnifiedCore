@@ -5,22 +5,8 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Centralized font and style configuration for all UI elements.
-    /// 
-    /// HOW TO USE:
-    /// 1. Find the UI section you want to change below
-    /// 2. Modify the FontStyle, FontSize, or TextColor
-    /// 3. Available FontStyle options:
-    ///    - FontStyle.Valheim (default game font from HUD - Valheim-Prstartk)
-    ///    - FontStyle.AveriaSerif   (Valheim's main UI font - Valheim-AveriaSerifLibre)
-    ///    - FontStyle.Norse         (Viking runic style - Valheim-Norsebold)
-    ///    - FontStyle.AveriaLibre   (Clean readable font - Valheim-AveriaSansLibre)
-    ///    - FontStyle.Rune          (Runic symbols - Valheim-Rune)
-    /// 
-    /// FONT CATEGORIES (configurable via BepInEx config):
-    /// - Primary: Headers, titles, main UI text (default: Valheim/Prstartk)
-    /// - Decorative: Quest titles, Viking-themed headers (default: Norse)
-    /// - Body: Descriptions, buttons, readable text (default: AveriaSerif)
+    /// Fonts and text styles for every UI element, grouped into primary, decorative and body categories that are
+    /// configurable through BepInEx config.
     /// </summary>
     public static class UIFontConfig
     {

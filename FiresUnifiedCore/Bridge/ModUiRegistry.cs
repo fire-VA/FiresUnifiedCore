@@ -41,8 +41,8 @@ namespace FiresCore.Bridge
         /// <summary>True if any registered screen is currently open.</summary>
         public static bool IsAnyOpen()
         {
-            foreach (var e in _entries.Values)
-                try { if (e.IsOpen != null && e.IsOpen()) return true; } catch { }
+            foreach (var entry in _entries.Values)
+                try { if (entry.IsOpen != null && entry.IsOpen()) return true; } catch { }
             return false;
         }
 
@@ -52,8 +52,8 @@ namespace FiresCore.Bridge
             // Snapshot first: a Close callback very commonly Unregister()s itself (or opens/replaces another
             // screen), which mutates _entries and would otherwise invalidate the live enumerator
             // ("Collection was modified; enumeration operation may not execute").
-            foreach (var e in new List<Entry>(_entries.Values))
-                try { e.Close?.Invoke(); } catch { }
+            foreach (var entry in new List<Entry>(_entries.Values))
+                try { entry.Close?.Invoke(); } catch { }
         }
 
         /// <summary>Invoke <paramref name="action"/> with the root of each currently-open screen.</summary>
@@ -61,12 +61,12 @@ namespace FiresCore.Bridge
         {
             if (action == null) return;
             // Snapshot: the action (font refresh etc.) may touch the registry.
-            foreach (var e in new List<Entry>(_entries.Values))
+            foreach (var entry in new List<Entry>(_entries.Values))
             {
                 try
                 {
-                    if (e.IsOpen == null || !e.IsOpen()) continue;
-                    var go = e.Root?.Invoke();
+                    if (entry.IsOpen == null || !entry.IsOpen()) continue;
+                    var go = entry.Root?.Invoke();
                     if (go != null) action(go);
                 }
                 catch { }

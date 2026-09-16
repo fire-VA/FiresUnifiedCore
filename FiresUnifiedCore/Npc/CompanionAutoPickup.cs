@@ -5,22 +5,9 @@ using System.Linq;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Handles automatic item pickup for companions as they move through the world.
-    /// Mirrors Valheim's Player.AutoPickup() behavior closely.
-    /// 
-    /// FEATURES:
-    /// - Uses OverlapSphere like vanilla Valheim
-    /// - Respects m_autoPickup flag on items
-    /// - Checks weight and inventory capacity
-    /// - Uses "magnet" approach - pulls items toward companion before pickup
-    /// - Handles FloatingTerrainDummy for items on terrain
-    /// - Proper networking with ownership claims
-    /// - Shows message when inventory is full
-    /// 
-    /// DESIGN:
-    /// - Runs every FixedUpdate like vanilla (not on timer)
-    /// - Only picks up items the companion can carry
-    /// - Matches vanilla pickup distance of 2m
+    /// Vanilla-style auto pickup for companions each FixedUpdate: an overlap sphere at the vanilla pickup range,
+    /// honoring m_autoPickup, weight and space, pulling items in before taking them, claiming ownership first, and
+    /// saying so when the inventory is full.
     /// </summary>
     public class CompanionAutoPickup : MonoBehaviour
     {
@@ -72,7 +59,7 @@ namespace FiresCore.Npc
         
         // Throttle magnetizing logs
         private float _lastMagnetizeLogTime = 0f;
-        private const float MAGNETIZE_LOG_INTERVAL = 5f; // Only log magnetizing every 5 seconds
+        private const float MagnetizeLogInterval = 5f; // Only log magnetizing every 5 seconds
         
         // Tracking for gathering sessions
         private Dictionary<string, int> _gatheringSessionItems = new Dictionary<string, int>();
@@ -83,7 +70,7 @@ namespace FiresCore.Npc
         private HashSet<string> _loggedTypeFilterItems = new HashSet<string>();
         private HashSet<string> _loggedCapacityItems = new HashSet<string>();
         private float _lastLogClearTime = 0f;
-        private const float LOG_CLEAR_INTERVAL = 60f; // Clear logged items every 60 seconds
+        private const float LogClearInterval = 60f; // Clear logged items every 60 seconds
         
         #endregion
         
@@ -140,7 +127,7 @@ namespace FiresCore.Npc
             Vector3 center = transform.position + Vector3.up;
             
             // Periodically clear logged items to allow re-logging
-            if (Time.time - _lastLogClearTime > LOG_CLEAR_INTERVAL)
+            if (Time.time - _lastLogClearTime > LogClearInterval)
             {
                 _lastLogClearTime = Time.time;
                 _loggedWeightLimitItems.Clear();
@@ -156,9 +143,9 @@ namespace FiresCore.Npc
                 // Also do a non-layer-filtered scan to see ALL nearby items
                 var allColliders = Physics.OverlapSphere(center, pickupRadius * 2f);
                 int itemCount = 0;
-                foreach (var col in allColliders)
+                foreach (var overlap in allColliders)
                 {
-                    var item = col.GetComponent<ItemDrop>() ?? col.GetComponentInParent<ItemDrop>();
+                    var item = overlap.GetComponent<ItemDrop>() ?? overlap.GetComponentInParent<ItemDrop>();
                     if (item != null)
                     {
                         itemCount++;
@@ -304,7 +291,7 @@ namespace FiresCore.Npc
                         }
                         
                         // Throttle magnetizing logs to reduce spam
-                        if (VerboseLogging && Time.time - _lastMagnetizeLogTime > MAGNETIZE_LOG_INTERVAL)
+                        if (VerboseLogging && Time.time - _lastMagnetizeLogTime > MagnetizeLogInterval)
                         {
                             _lastMagnetizeLogTime = Time.time;
                             Debug.Log($"[CompanionAutoPickup] {_companion?.companionName} magnetizing items...");
@@ -408,7 +395,7 @@ namespace FiresCore.Npc
         {
             // Vanilla Player.AutoPickup uses a ~2m radius.  Use slightly more so
             // we yield even when the player is right at the edge of their magnet.
-            const float PLAYER_AUTOPICK_RADIUS = 2.5f;
+            const float PlayerAutopickRadius = 2.5f;
 
             var localPlayer = Player.m_localPlayer;
             if (localPlayer == null) return false;
@@ -418,7 +405,7 @@ namespace FiresCore.Npc
             Vector3 playerPos = localPlayer.transform.position + Vector3.up;
 
             float playerToItem = Vector3.Distance(playerPos, itemPos);
-            if (playerToItem <= PLAYER_AUTOPICK_RADIUS)
+            if (playerToItem <= PlayerAutopickRadius)
                 return true;
 
             float selfToItem = Vector3.Distance(selfCenter, itemPos);
