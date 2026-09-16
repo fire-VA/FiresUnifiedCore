@@ -5,22 +5,14 @@ using System.Collections.Generic;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Manages companion progression: Experience, Levels (0-100), and Attributes.
-    /// 
-    /// LEVELING:
-    /// - Companions gain XP from kills, skill level-ups, and other activities
-    /// - Each level requires progressively more XP
-    /// - Level cap is 100
-    /// 
-    /// ATTRIBUTES (1 point per level):
-    /// - Strength: Increases melee damage
-    /// - Speed: Increases movement speed
-    /// - Health: Increases maximum health
-    /// - Endurance: Increases maximum stamina
-    /// - Intelligence: Increases maximum eitr and magic damage
+    /// Experience, levels up to 100 with rising XP requirements (from kills, skill-ups and other activity), and one
+    /// attribute point per level across Strength, Speed, Health, Endurance and Intelligence.
     /// </summary>
     public class CompanionProgression : MonoBehaviour
     {
+        private const float BossXpMultiplier = 5f;
+        private const float FallbackLevelScalingPerLevel = 0.00375f;
+
         #region Enums
         
         public enum AttributeType
@@ -274,7 +266,7 @@ namespace FiresCore.Npc
             // Bonus XP for boss-type enemies
             if (target.IsBoss())
             {
-                xp *= 5f;
+                xp *= BossXpMultiplier;
             }
             
             AddXp(xp, $"killing {target.m_name}");
@@ -437,7 +429,7 @@ namespace FiresCore.Npc
             
             // Fallback if luck not available - use average scaling
             if (_level <= 1) return 1f;
-            return 1f + (_level - 1) * 0.00375f;
+            return 1f + (_level - 1) * FallbackLevelScalingPerLevel;
         }
         
         /// <summary>

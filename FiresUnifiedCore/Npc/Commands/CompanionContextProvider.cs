@@ -45,14 +45,14 @@ namespace FiresCore.Npc.Commands
             {
                 rows.Add(ContextMenuItem.Row($"All companions: {verb}", () =>
                 {
-                    foreach (var c in companions)
-                        if (c != null) sys.IssueManualCommand(c, cmd.type, cmd.position, cmd.targetObj, cmd.targetChar);
+                    foreach (var companion in companions)
+                        if (companion != null) sys.IssueManualCommand(companion, cmd.type, cmd.position, cmd.targetObj, cmd.targetChar);
                 }));
                 rows.Add(ContextMenuItem.Sep());
-                foreach (var c in companions)
+                foreach (var companion in companions)
                 {
-                    if (c == null) continue;
-                    var single = c;
+                    if (companion == null) continue;
+                    var single = companion;
                     rows.Add(ContextMenuItem.Row($"{single.GetDisplayName()}: {verb}",
                         () => sys.IssueManualCommand(single, cmd.type, cmd.position, cmd.targetObj, cmd.targetChar)));
                 }

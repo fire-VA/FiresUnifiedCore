@@ -4,17 +4,10 @@ using UnityEngine;
 namespace FiresCore.Bridge
 {
     /// <summary>
-    /// The seam between Core's <see cref="FiresCore.Npc.Anchor.NpcAnchorKeeper"/> (anchor lifecycle:
-    /// presence check, re-link, respawn timing, spawn) and the frontend's NPC data model (appearance +
-    /// module profiles). Mirrors the <see cref="NpcDormancyBridge"/> contract: Core never references a
-    /// concrete frontend store; while no provider is registered every call is a null-safe no-op.
-    ///
-    /// The frontend (FiresRPGmaker / FiresCompanions) registers:
-    ///  • <see cref="SeedBody"/> — copy appearance + profile payload from the anchor ZDO onto a freshly
-    ///    spawned body's ZDO (called AFTER Core has written identity/mode fields, BEFORE the body's
-    ///    initializer coroutine restores from it).
-    ///  • <see cref="CaptureToAnchor"/> — snapshot a live body's appearance + profiles onto its anchor
-    ///    ZDO (called when the admin book saves config, or before a deliberate body replace).
+    /// The link between Core's <see cref="FiresCore.Npc.Anchor.NpcAnchorKeeper"/> and the frontend's NPC data. The
+    /// frontend registers <see cref="SeedBody"/>, which copies appearance and profiles from the anchor onto a newly
+    /// spawned body, and <see cref="CaptureToAnchor"/>, which saves a live body's back to its anchor. Without a provider
+    /// every call is a safe no-op.
     /// </summary>
     public static class NpcAnchorBridge
     {

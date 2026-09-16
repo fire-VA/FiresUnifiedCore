@@ -7,33 +7,17 @@ using UnityEngine;
 namespace FiresCore.Diagnostics
 {
     /// <summary>
-    /// Stops the per-frame NRE spam caused by a destroyed Character lingering in the static
-    /// <c>Character.s_characters</c> list. That list is iterated (and <c>.transform</c> dereferenced)
-    /// by <c>Character.IsCharacterInRange</c> (AnimalAI.UpdateAI — server + client) and by
-    /// <c>EnemyHud.LateUpdate</c> (client) — a single dead entry throws every FixedUpdate/LateUpdate.
-    ///
-    /// Root cause: vanilla <c>Character.OnDestroy</c> runs <c>m_seman.OnDestroy()</c> BEFORE its own
-    /// <c>s_characters.Remove(this)</c>; if the body throws first (e.g. a null SEMan on a baked NPC)
-    /// the Remove is skipped and the dead Character is stuck in the list forever.
-    ///
-    /// Attachment is EXPLICIT via <see cref="Register"/> (called from FiresUnifiedCore.Setup), not
-    /// attribute discovery: the 0.1.60 attribute-based version compiled into the DLL but never
-    /// attached in the field (zero guard logs while the TestShow NRE persisted) — the same
-    /// silent-miss symptom FGN's AILODPatches hit. Explicit Harmony.Patch with a read-back count
-    /// makes attachment deterministic and self-proving in the boot log.
-    ///
-    /// Patches:
-    ///   1. Finalizer on Character.OnDestroy (both sides) — always removes the instance from
-    ///      s_characters even when the body threw, and logs the culprit prefab + exception ONCE.
-    ///   2. Prefix sweep on MonoUpdaters.FixedUpdate (both sides) — clears already-leaked dead
-    ///      entries before the AI pass iterates the list.
-    ///   3. EnemyHud.TestShow prefix + finalizer (client only — patching the client-only EnemyHud
-    ///      type on a headless server native-crashes the Mono IL rewriter): destroyed Character
-    ///      short-circuits to "don't show"; the finalizer swallows any residual throw so one bad
-    ///      entry can never kill the HUD pass.
+    /// Stops the per-frame NRE spam from a destroyed Character left in Character.s_characters. Vanilla's
+    /// OnDestroy removes the instance only after m_seman.OnDestroy, so a throw there (a null SEMan on a baked
+    /// NPC) strands it for AnimalAI and EnemyHud to trip over. A finalizer on Character.OnDestroy always
+    /// removes the instance and logs the culprit once, a MonoUpdaters.FixedUpdate prefix sweeps entries that
+    /// already leaked, and client-only EnemyHud.TestShow guards skip destroyed characters. Attached explicitly
+    /// from Setup with a read-back count, because attribute discovery silently failed to attach in 0.1.60.
     /// </summary>
     internal static class CharacterListLeakGuard
     {
+        private const int SweepLogIntervalFrames = 600;
+
         private static readonly FieldInfo _f_sCharacters = AccessTools.Field(typeof(Character), "s_characters");
         private static List<Character> _sCharacters;
         private static readonly HashSet<string> _loggedThrowers = new HashSet<string>();
@@ -58,22 +42,22 @@ namespace FiresCore.Diagnostics
         {
             try
             {
-                var mi = args != null ? AccessTools.Method(target, method, args) : AccessTools.Method(target, method);
-                if (mi == null)
+                var original = args != null ? AccessTools.Method(target, method, args) : AccessTools.Method(target, method);
+                if (original == null)
                 {
                     Debug.LogError($"[CharacterLeakGuard] {target.Name}.{method} NOT FOUND — guard not attached.");
                     return;
                 }
-                harmony.Patch(mi,
+                harmony.Patch(original,
                     prefix: prefix != null ? new HarmonyMethod(AccessTools.Method(typeof(CharacterListLeakGuard), prefix)) { priority = Priority.First } : null,
                     finalizer: finalizer != null ? new HarmonyMethod(AccessTools.Method(typeof(CharacterListLeakGuard), finalizer)) : null);
 
-                var info = Harmony.GetPatchInfo(mi);
+                var info = Harmony.GetPatchInfo(original);
                 int mine = 0;
                 if (info != null)
                 {
-                    foreach (var p in info.Prefixes) if (p.PatchMethod.DeclaringType == typeof(CharacterListLeakGuard)) mine++;
-                    foreach (var p in info.Finalizers) if (p.PatchMethod.DeclaringType == typeof(CharacterListLeakGuard)) mine++;
+                    foreach (var patch in info.Prefixes) if (patch.PatchMethod.DeclaringType == typeof(CharacterListLeakGuard)) mine++;
+                    foreach (var patch in info.Finalizers) if (patch.PatchMethod.DeclaringType == typeof(CharacterListLeakGuard)) mine++;
                 }
                 Debug.Log($"[CharacterLeakGuard] attached {mine} patch(es) to {target.Name}.{method} (verified by read-back).");
             }
@@ -86,9 +70,9 @@ namespace FiresCore.Diagnostics
         internal static List<Character> Chars()
             => _sCharacters ??= _f_sCharacters?.GetValue(null) as List<Character>;
 
-        internal static string SafeName(Character c)
+        internal static string SafeName(Character character)
         {
-            try { return c != null ? c.name : "<null>"; }
+            try { return character != null ? character.name : "<null>"; }
             catch { return "<destroyed>"; }
         }
 
@@ -118,7 +102,7 @@ namespace FiresCore.Diagnostics
             int before = list.Count;
             list.RemoveAll(c => c == null);
             int removed = before - list.Count;
-            if (removed > 0 && Time.frameCount - _lastSweepLogFrame > 600)
+            if (removed > 0 && Time.frameCount - _lastSweepLogFrame > SweepLogIntervalFrames)
             {
                 _lastSweepLogFrame = Time.frameCount;
                 Debug.LogWarning(

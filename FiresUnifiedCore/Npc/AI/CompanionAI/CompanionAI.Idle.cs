@@ -41,20 +41,20 @@ namespace FiresCore.Npc.AI
 
             if (_shouldFollow && _followTarget != null)
             {
-                // AFK-IDLE BRANCH: We landed in Idle from a Followingâ†’Idle transition
+                // AFK-IDLE BRANCH: We landed in Idle from a Following→Idle transition
                 // because the owner stopped moving for >= playerIdleThreshold. Stay idle
                 // (and let _idleBehavior wander locally) until we detect the owner moving
                 // again, then snap back to Following on the next tick.
                 //
                 // UpdateOwnerIdleState polls owner position with a 0.5s throttle and
-                // resets _isOwnerIdle = false the moment ownerMovement > MOVEMENT_THRESHOLD.
+                // resets _isOwnerIdle = false the moment ownerMovement > MovementThreshold.
                 UpdateOwnerIdleState(_followTarget.transform.position);
                 if (!_isOwnerIdle)
                 {
                     SetState(AIState.Following);
                     return;
                 }
-                // Owner still AFK â€” fall through into idle/wander logic below.
+                // Owner still AFK — fall through into idle/wander logic below.
             }
 
             if (_targetCreature != null && !_targetCreature.IsDead())
@@ -77,7 +77,7 @@ namespace FiresCore.Npc.AI
                     Debug.Log($"[CompanionAI] {m_character?.m_name} executing idle movement to {_idleDestination} (dist: {distToDest:F1}m)");
                 
                 // Use vanilla pathfinding with authority coordination
-                if (MoveToWithAuthority(_idleDestination, false, POSITION_REACHED_THRESHOLD))
+                if (MoveToWithAuthority(_idleDestination, false, PositionReachedThreshold))
                 {
                     if (VerboseLogging)
                         Debug.Log($"[CompanionAI] {m_character?.m_name} reached idle destination");
@@ -124,8 +124,8 @@ namespace FiresCore.Npc.AI
                 ClearAlertedState();
             }
 
-            // OWNER-AFK â†’ IDLE-WANDER:
-            // If the owner has been stationary for â‰¥ playerIdleThreshold seconds,
+            // OWNER-AFK → IDLE-WANDER:
+            // If the owner has been stationary for ≥ playerIdleThreshold seconds,
             // drop the companion into Idle state so _idleBehavior can take over with
             // local wander/sub-behaviors. UpdateIdleState will snap us back to
             // Following the moment the owner moves again.
@@ -243,7 +243,7 @@ namespace FiresCore.Npc.AI
             if (authority != null)
             {
                 var source = GetAIMovementSource();
-                if (!authority.TryAcquireAuthority(source, AI_AUTHORITY_OWNER, 2f))
+                if (!authority.TryAcquireAuthority(source, AIAuthorityOwner, 2f))
                 {
                     // Another system has priority - don't move
                     return false;
@@ -285,7 +285,7 @@ namespace FiresCore.Npc.AI
         private void StopMovementThroughAuthority()
         {
             var authority = GetMovementAuthority();
-            authority?.ReleaseAuthority(AI_AUTHORITY_OWNER);
+            authority?.ReleaseAuthority(AIAuthorityOwner);
 
             // Clear the pathfinding waypoint list so BaseAI doesn't fight us
             if (m_path != null)
@@ -297,14 +297,14 @@ namespace FiresCore.Npc.AI
         /// <summary>
         /// Reads the owner player's movement stance (crouch, walk, run) at a throttled interval.
         /// Valheim's Character class exposes:
-        ///   - IsCrouching() ï¿½ true when sneaking
-        ///   - IsWalking()   ï¿½ true when m_walk is set and moving (toggled walk mode)
-        ///   - IsRunning()   ï¿½ true when sprinting (m_run + moving + stamina)
-        ///   - Default jog   ï¿½ when none of the above are true but moving
+        ///   - IsCrouching() - true when sneaking
+        ///   - IsWalking()   - true when m_walk is set and moving (toggled walk mode)
+        ///   - IsRunning()   - true when sprinting (m_run + moving + stamina)
+        ///   - Default jog   - when none of the above are true but moving
         /// </summary>
         private void UpdateOwnerStance()
         {
-            if (Time.time - _lastOwnerStanceCheck < OWNER_STANCE_CHECK_INTERVAL) return;
+            if (Time.time - _lastOwnerStanceCheck < OwnerStanceCheckInterval) return;
             _lastOwnerStanceCheck = Time.time;
             
             // Lazy-cache the Player component from the follow target
@@ -322,9 +322,9 @@ namespace FiresCore.Npc.AI
                 // Measured horizontal speed is the ground truth for pace matching — the IsRunning/IsWalking flags
                 // read stale (they logged False while the owner was clearly moving). This drives which gait the
                 // companion mirrors once it's tucked into the trail band.
-                Vector3 v = _ownerPlayer.GetVelocity();
-                v.y = 0f;
-                _ownerSpeed = v.magnitude;
+                Vector3 ownerVelocity = _ownerPlayer.GetVelocity();
+                ownerVelocity.y = 0f;
+                _ownerSpeed = ownerVelocity.magnitude;
             }
         }
         
@@ -336,11 +336,11 @@ namespace FiresCore.Npc.AI
             FollowSpeed matched;
             if (_isOwnerSneaking)
                 matched = FollowSpeed.Sneaking;
-            else if (_ownerSpeed < OWNER_STANDING_SPEED)
+            else if (_ownerSpeed < OwnerStandingSpeed)
                 matched = FollowSpeed.Stopped;
-            else if (_isOwnerWalking || _ownerSpeed < OWNER_WALK_SPEED)
+            else if (_isOwnerWalking || _ownerSpeed < OwnerWalkSpeed)
                 matched = FollowSpeed.Walking;
-            else if (_ownerSpeed < OWNER_JOG_SPEED)
+            else if (_ownerSpeed < OwnerJogSpeed)
                 matched = FollowSpeed.Jogging;
             else
                 matched = FollowSpeed.Running;
@@ -405,19 +405,19 @@ namespace FiresCore.Npc.AI
                     break;
                     
                 case FollowSpeed.Walking:
-                    // Toggled walk mode ï¿½ uses m_walkSpeed.
+                    // Toggled walk mode - uses m_walkSpeed.
                     m_character.SetWalk(true);
                     m_character.SetRun(false);
                     break;
                     
                 case FollowSpeed.Jogging:
-                    // Default movement ï¿½ uses m_speed (jog).
+                    // Default movement - uses m_speed (jog).
                     m_character.SetWalk(false);
                     m_character.SetRun(false);
                     break;
                     
                 case FollowSpeed.Running:
-                    // Sprint ï¿½ uses m_runSpeed.
+                    // Sprint - uses m_runSpeed.
                     m_character.SetWalk(false);
                     m_character.SetRun(true);
                     break;
@@ -432,15 +432,15 @@ namespace FiresCore.Npc.AI
         
         private void UpdateOwnerIdleState(Vector3 currentOwnerPos)
         {
-            const float CHECK_INTERVAL = 0.5f;
-            const float MOVEMENT_THRESHOLD = 0.3f;
+            const float CheckInterval = 0.5f;
+            const float MovementThreshold = 0.3f;
             
-            if (Time.time - _lastOwnerIdleCheck < CHECK_INTERVAL) return;
+            if (Time.time - _lastOwnerIdleCheck < CheckInterval) return;
             _lastOwnerIdleCheck = Time.time;
             
             float ownerMovement = Vector3.Distance(currentOwnerPos, _lastOwnerPosition);
             
-            if (ownerMovement > MOVEMENT_THRESHOLD)
+            if (ownerMovement > MovementThreshold)
             {
                 _ownerIdleStartTime = Time.time;
                 _isOwnerIdle = false;

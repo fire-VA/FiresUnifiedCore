@@ -69,43 +69,43 @@ namespace FiresCore.Queue
             _defs[def.Id] = def;
         }
 
-        public static FiresQueueDef GetDef(string id) => id != null && _defs.TryGetValue(id, out var d) ? d : null;
+        public static FiresQueueDef GetDef(string id) => id != null && _defs.TryGetValue(id, out var definition) ? definition : null;
 
         public static void Initialize()
         {
-            var cur = ZRoutedRpc.instance;
-            if (cur == null) return;
-            if (_registered && _registeredOn == cur) return;
-            cur.Register<ZPackage>(RpcReq, new Action<long, ZPackage>(RPC_Req));
-            cur.Register<ZPackage>(RpcState, new Action<long, ZPackage>(RPC_State));
-            _registered = true; _registeredOn = cur;
+            var routedRpc = ZRoutedRpc.instance;
+            if (routedRpc == null) return;
+            if (_registered && _registeredOn == routedRpc) return;
+            routedRpc.Register<ZPackage>(RpcReq, new Action<long, ZPackage>(RPC_Req));
+            routedRpc.Register<ZPackage>(RpcState, new Action<long, ZPackage>(RPC_State));
+            _registered = true; _registeredOn = routedRpc;
             _server.Clear(); _client.Clear();   // new world/server → fresh rosters
         }
 
         // ── client API ──────────────────────────────────────────────────────────────────────────────────────────
-        public static IReadOnlyList<FiresQueueMember> Roster(string queueId) => _client.TryGetValue(queueId, out var l) ? l : Empty;
+        public static IReadOnlyList<FiresQueueMember> Roster(string queueId) => _client.TryGetValue(queueId, out var members) ? members : Empty;
         public static void Join(string queueId) => Send(queueId, Op.Join);
         public static void Leave(string queueId) => Send(queueId, Op.Leave);
         public static void SetReady(string queueId, bool ready) => Send(queueId, ready ? Op.Ready : Op.Unready);
 
         public static bool LocalInQueue(string queueId)
         {
-            long me = LocalId();
-            if (me == 0L) return false;
-            foreach (var m in Roster(queueId)) if (m.Id == me) return true;
+            long localId = LocalId();
+            if (localId == 0L) return false;
+            foreach (var member in Roster(queueId)) if (member.Id == localId) return true;
             return false;
         }
 
         public static bool LocalReady(string queueId)
         {
-            long me = LocalId();
-            foreach (var m in Roster(queueId)) if (m.Id == me) return m.Ready;
+            long localId = LocalId();
+            foreach (var member in Roster(queueId)) if (member.Id == localId) return member.Ready;
             return false;
         }
 
         private static long LocalId() => Player.m_localPlayer != null ? Player.m_localPlayer.GetPlayerID() : 0L;
 
-        private static void Send(string queueId, Op op)
+        private static void Send(string queueId, Op operation)
         {
             if (ZRoutedRpc.instance == null || string.IsNullOrEmpty(queueId)) return;
             var local = Player.m_localPlayer;
@@ -116,7 +116,7 @@ namespace FiresCore.Queue
             pkg.Write(queueId);
             pkg.Write(id);
             pkg.Write(local.GetPlayerName() ?? "");
-            pkg.Write((byte)op);
+            pkg.Write((byte)operation);
             ZRoutedRpc.instance.InvokeRoutedRPC(0L, RpcReq, pkg);
         }
 
@@ -129,22 +129,22 @@ namespace FiresCore.Queue
                 string queueId = pkg.ReadString();
                 long id = pkg.ReadLong();
                 string name = pkg.ReadString();
-                var op = (Op)pkg.ReadByte();
+                var operation = (Op)pkg.ReadByte();
 
                 var def = GetDef(queueId);
                 if (def == null) return;
                 if (!_server.TryGetValue(queueId, out var list)) { list = new List<FiresQueueMember>(); _server[queueId] = list; }
-                var mem = list.Find(m => m.Id == id);
+                var member = list.Find(m => m.Id == id);
 
-                switch (op)
+                switch (operation)
                 {
                     case Op.Join:
-                        if (mem == null && list.Count < def.MaxPlayers) list.Add(new FiresQueueMember { Id = id, Name = name });
-                        else if (mem != null) mem.Name = name;
+                        if (member == null && list.Count < def.MaxPlayers) list.Add(new FiresQueueMember { Id = id, Name = name });
+                        else if (member != null) member.Name = name;
                         break;
-                    case Op.Leave: if (mem != null) list.Remove(mem); break;
-                    case Op.Ready: if (mem != null) mem.Ready = true; break;
-                    case Op.Unready: if (mem != null) mem.Ready = false; break;
+                    case Op.Leave: if (member != null) list.Remove(member); break;
+                    case Op.Ready: if (member != null) member.Ready = true; break;
+                    case Op.Unready: if (member != null) member.Ready = false; break;
                 }
 
                 Broadcast(queueId);
@@ -156,7 +156,7 @@ namespace FiresCore.Queue
         private static void TryReady(FiresQueueDef def, string queueId, List<FiresQueueMember> list)
         {
             if (def.OnReady == null || list.Count < def.MinPlayers) return;
-            foreach (var m in list) if (!m.Ready) return;
+            foreach (var member in list) if (!member.Ready) return;
             bool consume;
             try { consume = def.OnReady(new List<FiresQueueMember>(list)); }
             catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresQueue] OnReady '{queueId}': {ex.Message}"); return; }
@@ -165,15 +165,15 @@ namespace FiresCore.Queue
 
         private static void Broadcast(string queueId)
         {
-            var list = _server.TryGetValue(queueId, out var l) ? l : Empty;
+            var list = _server.TryGetValue(queueId, out var members) ? members : Empty;
             var pkg = new ZPackage();
             pkg.Write(queueId ?? "");
             pkg.Write(list.Count);
-            foreach (var m in list)
+            foreach (var member in list)
             {
-                pkg.Write(m.Id);
-                pkg.Write(m.Name ?? "");
-                pkg.Write((byte)(m.Ready ? 1 : 0));
+                pkg.Write(member.Id);
+                pkg.Write(member.Name ?? "");
+                pkg.Write((byte)(member.Ready ? 1 : 0));
             }
             ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.Everybody, RpcState, pkg);
         }
@@ -185,9 +185,9 @@ namespace FiresCore.Queue
             try
             {
                 string queueId = pkg.ReadString();
-                int n = pkg.ReadInt();
-                var list = new List<FiresQueueMember>(n);
-                for (int i = 0; i < n; i++)
+                int memberCount = pkg.ReadInt();
+                var list = new List<FiresQueueMember>(memberCount);
+                for (int i = 0; i < memberCount; i++)
                     list.Add(new FiresQueueMember { Id = pkg.ReadLong(), Name = pkg.ReadString(), Ready = pkg.ReadByte() != 0 });
                 _client[queueId] = list;
                 StateChanged?.Invoke(queueId);

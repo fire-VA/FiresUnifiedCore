@@ -62,20 +62,10 @@ namespace FiresCore.Sync
         }
 
         /// <summary>
-        /// The ONE canonical "is the LOCAL player an admin" check for the whole Fires family. Every
-        /// FUC-consuming mod should call this instead of rolling its own — it unions every signal so
-        /// whichever arrives first grants admin, and the only window that reads false is the brief moment
-        /// right after connect before ANY signal lands:
-        ///   • server/host (dedicated console + listen host) — <c>ZNet.IsServer()</c>
-        ///   • Valheim's server-synced admin list, valid on a pure client — <c>ZNet.LocalPlayerIsAdminOrHost()</c>
-        ///   • the Fires admin-status push that set <c>ConfigSync.lockExempt</c> (covers the window before
-        ///     Valheim's own admin sync lands, and vice-versa — each has gaps the others fill).
-        /// For an init-time gate that ran too early, subscribe to <see cref="AdminStatusChanged"/> and re-run
-        /// when it flips (the FiresAdminPrefabs deferred-init pattern), rather than caching a one-shot result.
-        ///
-        /// DO NOT use this for a SERVER-SIDE per-player check of a REMOTE player. It short-circuits true on
-        /// <c>IsServer()</c>, so on a dedicated server it returns true for everyone — which would e.g. grant
-        /// every player admin bypass. For "is player X (by id) an admin", use <see cref="IsAdmin(long)"/>.
+        /// The Fires family's check for whether the local player is an admin, true as soon as any signal says so:
+        /// ZNet.IsServer, Valheim's synced admin list, or the Fires admin-status push. Code that ran too early
+        /// should subscribe to <see cref="AdminStatusChanged"/> rather than cache a result. Never use it server-side
+        /// for a remote player, since it is always true on a server; use <see cref="IsAdmin(long)"/> for that.
         /// </summary>
         public static bool IsLocalAdmin()
         {
@@ -90,7 +80,7 @@ namespace FiresCore.Sync
         // adminlist.txt entries may be stored bare ("7656...") or platform-prefixed ("Steam_7656..."),
         // but the socket hostname is the bare form. Mirror Valheim's ZNet.ListContainsId so either stored
         // form resolves the same host - a raw Contains would drop a real admin whose entry is "Steam_...".
-        private static bool AdminListContains(string hostName)
+        internal static bool AdminListContains(string hostName)
         {
             if (string.IsNullOrEmpty(hostName)) return false;
             var list = GetAdminList();
@@ -105,8 +95,8 @@ namespace FiresCore.Sync
         private static string NormalizeId(string id)
         {
             if (string.IsNullOrEmpty(id)) return string.Empty;
-            int us = id.IndexOf('_');
-            return (us >= 0 ? id.Substring(us + 1) : id).Trim();
+            int underscoreIndex = id.IndexOf('_');
+            return (underscoreIndex >= 0 ? id.Substring(underscoreIndex + 1) : id).Trim();
         }
 
         // Peers already told their admin status (by m_uid), so a fresh connection gets pushed even when the admin
@@ -144,7 +134,7 @@ namespace FiresCore.Sync
         }
 
         // Send each given peer its admin/non-admin status (via the normalized admin-list match) and mark it sent.
-        private static void PushAdminStatus(IEnumerable<ZNetPeer> targets)
+        internal static void PushAdminStatus(IEnumerable<ZNetPeer> targets)
         {
             var list = targets?.ToList();
             if (list == null || list.Count == 0) return;
@@ -152,7 +142,7 @@ namespace FiresCore.Sync
             var nonAdminPeers = list.Except(adminPeers).ToList();
             SendAdminStatus(nonAdminPeers, isAdmin: false);
             SendAdminStatus(adminPeers, isAdmin: true);
-            foreach (var p in list) _sentPeers.Add(p.m_uid);
+            foreach (var peer in list) _sentPeers.Add(peer.m_uid);
         }
 
         private static void SendAdminStatus(List<ZNetPeer> peers, bool isAdmin)
@@ -190,6 +180,7 @@ namespace FiresCore.Sync
         {
             bool isAdmin = package.ReadBool();
             ConfigSync.lockExempt = isAdmin;
+            ConfigSync.RefreshReadOnlyFlagsForAll();
 
             if (ConfigManager.Instance?.configVerboseLogging?.Value == true)
                 Debug.Log($"{FiresCoreRoot.PluginName}: Admin status received: {(isAdmin ? "ADMIN" : "NON-ADMIN")}");

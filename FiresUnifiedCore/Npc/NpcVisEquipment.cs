@@ -76,20 +76,9 @@ namespace FiresCore.Npc
             _nview = GetComponent<ZNetView>();
             NpcBodyMeshGuard.EnsureInstalled();
             
-            // CRITICAL: If there's already a VisEquipment, we need to prevent it from trying to
-            // attach equipment before the skeleton/joints are ready.
-            // 
-            // VisEquipment.UpdateVisuals() and GetModelIndex() are called by MonoUpdaters every frame.
-            // These methods access m_models array which may be null, causing NullReferenceException.
-            // If the attachment points (m_rightHand, m_helmet, etc.) aren't set up yet, 
-            // AttachArmor/AttachItem will also throw NullReferenceException.
-            //
-            // Strategy:
-            // 1. DISABLE the VisEquipment component to stop MonoUpdaters from calling it
-            // 2. Initialize m_models to an empty array to prevent NRE from CharacterAnimEvent.GetModelIndex()
-            // 3. Clear all equipment hashes (both target and current) to prevent immediate attachment
-            // 4. Block ZDO access by clearing m_nViewOverride
-            // 5. Re-enable the component and restore ZDO access after initialization in DelayedInitialize
+            // VisEquipment runs every frame and NREs before the skeleton and model table exist. Until DelayedInitialize
+            // it is disabled, given an empty model table, has its equipment hashes cleared and its ZDO override removed,
+            // so nothing attaches early.
             _visEquipment = GetComponent<VisEquipment>();
             if (_visEquipment != null)
             {
@@ -131,7 +120,7 @@ namespace FiresCore.Npc
                     };
                 }
                 
-                // Block ZDO reads FIRST (synchronous) â€” these gates are
+                // Block ZDO reads FIRST (synchronous) — these gates are
                 // what makes deferring ClearAllEquipmentHashes safe. With
                 // m_nview = null + m_nViewOverride = null + enabled = false,
                 // no UpdateEquipmentVisuals path can read ZDO or fire from
@@ -156,12 +145,12 @@ namespace FiresCore.Npc
 
                 // Defer the hash-clearing pass to next frame. Even after
                 // the #14 reflection caching, walking 28 FieldInfo.SetValue
-                // calls per NPC Ã— 4-12 NPCs per stream-in batch contributes
+                // calls per NPC × 4-12 NPCs per stream-in batch contributes
                 // 5-10 ms to the spawn frame. With the four ZDO/MonoUpdater
                 // gates above already in place (enabled=false, m_models
                 // seeded, m_nView/m_nViewOverride nulled), there's no
                 // consumer that can read the hash fields between now and
-                // next frame's Invoke firing â€” DelayedInitialize is on a
+                // next frame's Invoke firing — DelayedInitialize is on a
                 // 2-second Invoke timer, and all public mutators
                 // (ApplyEquipment / SetModel / SetAppearance) check
                 // _initialized first which only becomes true in
@@ -174,29 +163,12 @@ namespace FiresCore.Npc
         private ZNetView _originalNviewOverride;
         private ZNetView _originalNview;
         
-        /// <summary>
-        /// Clears ALL equipment hash values (both current and target).
-        /// This prevents VisEquipment.UpdateEquipmentVisuals from trying to attach items
-        /// before the joint transforms are set up.
-        /// 
-        /// We clear BOTH m_xxxItemHash (the target/desired hashes loaded from ZDO)
-        /// and m_currentXxxItemHash (the currently displayed hashes).
-        /// This ensures no attachment attempts happen until we explicitly set equipment.
-        /// </summary>
-        // Reflection FieldInfo cache â€” resolved ONCE per AppDomain instead of
-        // per Awake. Previously every NpcVisEquipment.Awake walked 28 reflection
-        // lookups (22 hashes + 6 variants) Ã— 4-12 NPCs per spawn batch = 100-300
-        // VisEquipment.GetField calls per zone-stream. Each GetField is ~30Âµs
-        // on .NET Framework, so caching cuts the per-batch reflection cost
-        // from ~3-10 ms to "one nanosecond array iteration."
-        //
-        // Lazy-initialised on first Awake (static so all instances share it).
-        // Null entries mean the underlying VisEquipment field doesn't exist on
-        // this Valheim build â€” we tolerate that and skip silently.
+        // VisEquipment hash and variant FieldInfos, resolved once for all instances instead of on every Awake.
+        // A null entry means this game build doesn't have that field.
         private static System.Reflection.FieldInfo[] _cachedHashFields;
         private static System.Reflection.FieldInfo[] _cachedVariantFields;
 
-        // Field names â€” never change between builds; static readonly so the
+        // Field names — never change between builds; static readonly so the
         // arrays don't allocate per ClearAllEquipmentHashes call.
         private static readonly string[] _hashFieldNames =
         {
@@ -230,8 +202,8 @@ namespace FiresCore.Npc
                 _cachedHashFields = new System.Reflection.FieldInfo[_hashFieldNames.Length];
                 for (int i = 0; i < _hashFieldNames.Length; i++)
                 {
-                    var f = visType.GetField(_hashFieldNames[i], flags);
-                    _cachedHashFields[i] = (f != null && f.FieldType == typeof(int)) ? f : null;
+                    var field = visType.GetField(_hashFieldNames[i], flags);
+                    _cachedHashFields[i] = (field != null && field.FieldType == typeof(int)) ? field : null;
                 }
             }
             if (_cachedVariantFields == null)
@@ -239,12 +211,13 @@ namespace FiresCore.Npc
                 _cachedVariantFields = new System.Reflection.FieldInfo[_variantFieldNames.Length];
                 for (int i = 0; i < _variantFieldNames.Length; i++)
                 {
-                    var f = visType.GetField(_variantFieldNames[i], flags);
-                    _cachedVariantFields[i] = (f != null && f.FieldType == typeof(int)) ? f : null;
+                    var field = visType.GetField(_variantFieldNames[i], flags);
+                    _cachedVariantFields[i] = (field != null && field.FieldType == typeof(int)) ? field : null;
                 }
             }
         }
 
+        /// <summary>Clears both the target and current equipment hashes so nothing attaches before the joints exist.</summary>
         private void ClearAllEquipmentHashes()
         {
             if (_visEquipment == null) return;
@@ -291,16 +264,16 @@ namespace FiresCore.Npc
             if (_hasPendingModelOverride)
             {
                 _delayedInitRetries++;
-                if (_delayedInitRetries >= MAX_DELAYED_INIT_RETRIES)
+                if (_delayedInitRetries >= MaxDelayedInitRetries)
                 {
-                    Debug.LogWarning($"[NpcVisEquipment] Model override was pending but never applied for {gameObject.name} after {MAX_DELAYED_INIT_RETRIES} retries. Initializing anyway.");
+                    Debug.LogWarning($"[NpcVisEquipment] Model override was pending but never applied for {gameObject.name} after {MaxDelayedInitRetries} retries. Initializing anyway.");
                     _hasPendingModelOverride = false;
                     // Fall through to normal init
                 }
                 else
                 {
                     if (VerboseLogging)
-                        Debug.Log($"[NpcVisEquipment] Deferring init for {gameObject.name} ï¿½ model override pending (attempt {_delayedInitRetries}/{MAX_DELAYED_INIT_RETRIES})");
+                        Debug.Log($"[NpcVisEquipment] Deferring init for {gameObject.name} - model override pending (attempt {_delayedInitRetries}/{MaxDelayedInitRetries})");
                     Invoke(nameof(DelayedInitialize), 1.0f);
                     return;
                 }
@@ -310,14 +283,14 @@ namespace FiresCore.Npc
             if (!IsSkeletonReady())
             {
                 _delayedInitRetries++;
-                if (_delayedInitRetries >= MAX_DELAYED_INIT_RETRIES)
+                if (_delayedInitRetries >= MaxDelayedInitRetries)
                 {
-                    Debug.LogWarning($"[NpcVisEquipment] Max init retries ({MAX_DELAYED_INIT_RETRIES}) reached for {gameObject.name}, skeleton never became ready. Component will not function properly.");
+                    Debug.LogWarning($"[NpcVisEquipment] Max init retries ({MaxDelayedInitRetries}) reached for {gameObject.name}, skeleton never became ready. Component will not function properly.");
                     return;
                 }
                 
                 if (VerboseLogging)
-                    Debug.Log($"[NpcVisEquipment] Skeleton not ready for {gameObject.name}, retrying... (attempt {_delayedInitRetries}/{MAX_DELAYED_INIT_RETRIES})");
+                    Debug.Log($"[NpcVisEquipment] Skeleton not ready for {gameObject.name}, retrying... (attempt {_delayedInitRetries}/{MaxDelayedInitRetries})");
                 Invoke(nameof(DelayedInitialize), 1.0f);
                 return;
             }
@@ -327,7 +300,7 @@ namespace FiresCore.Npc
         
         // Track delayed init retries
         private int _delayedInitRetries = 0;
-        private const int MAX_DELAYED_INIT_RETRIES = 10;
+        private const int MaxDelayedInitRetries = 10;
         
         /// <summary>
         /// Checks if the skeleton/joints are ready for equipment attachment.
@@ -391,7 +364,7 @@ namespace FiresCore.Npc
             _initialized = false;
             _lastEquipment.Clear();
 
-            // Clear the pending model override flag ï¿½ the model has been applied,
+            // Clear the pending model override flag - the model has been applied,
             // so Initialize() should now evaluate the new model's shader/body.
             _hasPendingModelOverride = false;
 
@@ -650,12 +623,12 @@ namespace FiresCore.Npc
                 // Fallback to any SMR on an active child (skip hidden original visuals)
                 if (_visEquipment.m_bodyModel == null)
                 {
-                    foreach (var smr in visual.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                    foreach (var skinnedRenderer in visual.GetComponentsInChildren<SkinnedMeshRenderer>(true))
                     {
-                        if (smr == null) continue;
+                        if (skinnedRenderer == null) continue;
                         // Skip renderers under hidden original visuals from model override
                         bool isUnderHidden = false;
-                        Transform check = smr.transform;
+                        Transform check = skinnedRenderer.transform;
                         while (check != null && check != visual)
                         {
                             if (!check.gameObject.activeSelf && check.name.StartsWith("__OriginalVisual_"))
@@ -667,7 +640,7 @@ namespace FiresCore.Npc
                         }
                         if (!isUnderHidden)
                         {
-                            _visEquipment.m_bodyModel = smr;
+                            _visEquipment.m_bodyModel = skinnedRenderer;
                             break;
                         }
                     }
@@ -721,20 +694,9 @@ namespace FiresCore.Npc
                 }
             }
 
-            // CRITICAL: The body model MUST use Valheim's "Custom/Player" shader for armor
-            // overlays to work. CompanionPrefabManager fixes this for companion prefabs at
-            // load time, but StaticNpc prefabs are loaded by VAPieceManager and only go through
-            // the general ShaderReplacement pass ï¿½ which won't fix a "Standard" shader because
-            // it only targets "InternalErrorShader" and "Custom/" prefixed shaders.
-            // Fix it here at runtime by copying the material from the Player prefab.
-            //
-            // Headless dedi: no GPU → no shaders load (everything resolves to
-            // Hidden/InternalErrorShader), so the donor copy can never succeed — every
-            // NPC spawn burned a failed fix attempt plus two warnings (~2k log lines per
-            // server session). Skip entirely: Initialize() keeps VisEquipment disabled
-            // there exactly as before, and each rendering client repairs its own body
-            // shader locally. Appearance is data-driven via ZDO, so the server needs none
-            // of this.
+            // Armor overlays need the body on Custom/Player. Static NPC prefabs skip CompanionPrefabManager's load-time
+            // fix, so the Player prefab's material is copied here. Headless servers skip it: no shaders load there, and
+            // each client repairs its own body material from the synced appearance.
             if (_visEquipment.m_bodyModel != null
                 && SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
             {
@@ -898,20 +860,9 @@ namespace FiresCore.Npc
         public static bool VerboseLogging = false;
 
         /// <summary>
-        /// Returns true when the given shader name is one the player-vis-equipment pipeline can
-        /// drive — i.e. it exposes the texture properties (<c>_SkinBumpMap</c>, <c>_ChestTex</c>,
-        /// <c>_LegsTex</c>, <c>_SkinColor</c>) that <see cref="VisEquipment.UpdateColors"/> writes.
-        ///
-        /// <para>Vanilla ships exactly one such shader (<c>Custom/Player</c>). FiresTossinShade
-        /// runtime-swaps it to <c>Custom/FiresPlayer</c> (a superset that adds eye-color control)
-        /// when its <c>configFiresPlayerEnabled</c> toggle is on (default true). Before this gate
-        /// accepted FiresPlayer, every NPC body that the swap touched had its VisEquipment kept
-        /// disabled here — items hashed correctly inside VisEquipment but UpdateEquipmentVisuals
-        /// never ran (MonoUpdater skips disabled components), so companions appeared nude even
-        /// with full inventories.</para>
-        ///
-        /// <para>Centralized here so any future Custom/...Player variant is a one-line add and
-        /// every gate stays in sync.</para>
+        /// True for shaders the player equipment pipeline can drive, meaning they expose the textures
+        /// VisEquipment.UpdateColors writes: vanilla Custom/Player and FiresTossinShade's Custom/FiresPlayer. Leaving
+        /// FiresPlayer out kept VisEquipment disabled on swapped bodies, so companions appeared unequipped.
         /// </summary>
         internal static bool IsPlayerCompatibleShader(string shaderName)
         {
@@ -922,7 +873,7 @@ namespace FiresCore.Npc
         
         // Retry tracking to prevent infinite retry loops
         private int _retryCount = 0;
-        private const int MAX_RETRIES = 5;
+        private const int MaxRetries = 5;
         
         public void ApplyEquipment(Dictionary<CompanionInventory.EquipmentSlot, string> equipment)
         {
@@ -946,9 +897,9 @@ namespace FiresCore.Npc
             if (!IsSkeletonReady())
             {
                 // Check retry limit to prevent infinite loops
-                if (_retryCount >= MAX_RETRIES)
+                if (_retryCount >= MaxRetries)
                 {
-                    Debug.LogWarning($"[NpcVisEquipment] Max retries ({MAX_RETRIES}) reached for {gameObject.name}, skeleton never became ready. Proceeding anyway.");
+                    Debug.LogWarning($"[NpcVisEquipment] Max retries ({MaxRetries}) reached for {gameObject.name}, skeleton never became ready. Proceeding anyway.");
                     // Don't return - proceed with equipment application even if skeleton check fails
                     // The underlying VisEquipment may still work
                     _pendingEquipment = null;
@@ -957,7 +908,7 @@ namespace FiresCore.Npc
                 else
                 {
                     if (VerboseLogging)
-                        Debug.Log($"[NpcVisEquipment] Skeleton not ready for equipment on {gameObject.name}, deferring... (retry {_retryCount + 1}/{MAX_RETRIES})");
+                        Debug.Log($"[NpcVisEquipment] Skeleton not ready for equipment on {gameObject.name}, deferring... (retry {_retryCount + 1}/{MaxRetries})");
                         
                     // Store equipment and retry later
                     _pendingEquipment = equipment;
@@ -1055,7 +1006,7 @@ namespace FiresCore.Npc
                 
                 // Only log if verbose logging is enabled
                 if (VerboseLogging)
-                    Debug.Log($"[NpcVisEquipment] Retrying equipment application for {gameObject.name} (attempt {_retryCount}/{MAX_RETRIES})");
+                    Debug.Log($"[NpcVisEquipment] Retrying equipment application for {gameObject.name} (attempt {_retryCount}/{MaxRetries})");
                     
                 ApplyEquipment(_pendingEquipment);
             }
@@ -1220,8 +1171,8 @@ namespace FiresCore.Npc
         // Eye material system - uses custom eye materials that overlay on the body mesh
         // These are full player body materials with everything but the eyes made transparent
         // FiresEyes = male model, FiresEyesFem = female model
-        private const string EYE_MATERIAL_MALE = "FiresEyes";
-        private const string EYE_MATERIAL_FEMALE = "FiresEyesFem";
+        private const string EyeMaterialMale = "FiresEyes";
+        private const string EyeMaterialFemale = "FiresEyesFem";
         private static Material _cachedEyeMaterialMale;
         private static Material _cachedEyeMaterialFemale;
         private static bool _eyeMaterialsCached;
@@ -1279,15 +1230,15 @@ namespace FiresCore.Npc
             if (_eyeOverlayObject == null) return;
             if (_visEquipment?.m_bodyModel == null) return;
             
-            var smr = _eyeOverlayObject.GetComponent<SkinnedMeshRenderer>();
-            if (smr == null) return;
+            var overlayRenderer = _eyeOverlayObject.GetComponent<SkinnedMeshRenderer>();
+            if (overlayRenderer == null) return;
             
             try
             {
-                smr.sharedMesh = _visEquipment.m_bodyModel.sharedMesh;
-                smr.bones = _visEquipment.m_bodyModel.bones;
-                smr.rootBone = _visEquipment.m_bodyModel.rootBone;
-                smr.localBounds = _visEquipment.m_bodyModel.localBounds;
+                overlayRenderer.sharedMesh = _visEquipment.m_bodyModel.sharedMesh;
+                overlayRenderer.bones = _visEquipment.m_bodyModel.bones;
+                overlayRenderer.rootBone = _visEquipment.m_bodyModel.rootBone;
+                overlayRenderer.localBounds = _visEquipment.m_bodyModel.localBounds;
                 
                 // Reapply color in case material was affected
                 ApplyEyeColorToMaterial();
@@ -1300,21 +1251,11 @@ namespace FiresCore.Npc
             }
         }
         
-        /// <summary>
-        /// Sets the player model index (0 = male, 1 = female).
-        /// Switches the body mesh directly ï¿½ VisEquipment.UpdateEquipmentVisuals() handles
-        /// hair and beard without needing m_isPlayer=true.
-        /// </summary>
-        // Last value passed to vanilla VisEquipment.SetModel â€” used to skip
-        // redundant calls. The log showed 4Ã— SetModel-with-same-index per
-        // spawn batch (Awake default, then loadout, then ZDO restore, then
-        // CompanionRandomLoadout's apply). Each redundant call still ticks
-        // through UpdateColors and the hash-diff loop even though
-        // VisEquipment's own SetModel early-returns on unchanged index â€”
-        // we save the surrounding work too by short-circuiting earlier.
-        // -1 sentinel = "never set" so the first call always runs.
+        // The model index last passed to VisEquipment.SetModel, so the repeated identical calls during a spawn skip the
+        // surrounding color and hash work. -1 means never set.
         private int _lastSetModelIndex = -1;
 
+        /// <summary>Sets the body model (0 male, 1 female) by swapping the body mesh directly.</summary>
         public void SetModel(int modelIndex)
         {
             // CRITICAL: Don't run on hammer ghosts - they don't have valid ZDOs
@@ -1344,11 +1285,11 @@ namespace FiresCore.Npc
             // 3-4 times per NPC with the same index (default, loadout
             // restore, ZDO restore, randomiser). Subsequent calls were
             // ticking UpdateColors + body-mesh reassignment for no visual
-            // change â€” pure waste. Mesh is already correct after the first
+            // change — pure waste. Mesh is already correct after the first
             // call so this is safe to short-circuit.
             if (modelIndex == _lastSetModelIndex) return;
 
-            // Apply the model switch directly â€” do NOT set m_isPlayer=true.
+            // Apply the model switch directly — do NOT set m_isPlayer=true.
             // Setting m_isPlayer=true causes UpdateBaseModel() to replace the body material with
             // model.m_baseMaterial (which may be Standard shader) and UpdateColors() to crash on
             // player-only arrays that are never populated for our NPCs (VisEquipment.Start() blocked).
@@ -1362,58 +1303,48 @@ namespace FiresCore.Npc
                 Debug.Log($"[NpcVisEquipment] Set model index to {modelIndex}");
         }
         
-        /// <summary>
-        /// Swaps the body renderer's mesh, but only onto a skeleton that can actually skin it and only
-        /// when Unity hasn't already rejected that exact (mesh, rig) pairing this session
-        /// ("does not match the expected mesh data size and vertex stride" → render-stop, invisible NPC).
-        ///
-        /// Candidate order matters: the prefab's OWN model-table mesh first. On baked bundles the rig,
-        /// body and bodyfem are rip-consistent (53 bones/bindposes) and are the only meshes guaranteed
-        /// to skin on that rig. The LIVE Player prefab's mesh is a fallback for legacy tables only: the
-        /// live game's bodyfem has drifted from the ripped rig — same bindpose COUNT, different vertex
-        /// layout — so Unity rejects it at skin time, which the count check cannot predict (that layout
-        /// rejection is caught post-hoc by NpcBodyMeshGuard and blacklisted). An earlier pass preferred
-        /// the live mesh here based on a misdiagnosis: the model tables had been silently overwritten
-        /// with the live Player's array at prefab-load time, so the stride failures blamed on the baked
-        /// meshes were live-mesh failures all along. Returns true when a mesh was assigned.
-        /// </summary>
         private static readonly HashSet<string> _meshAssignLogged = new HashSet<string>();
         private Mesh _nativeBodyMesh;
 
+        /// <summary>
+        /// Swaps the body mesh only onto a rig that can skin it, and never onto a pairing Unity already rejected this
+        /// session. The prefab's own model-table mesh is tried first because it is the only one guaranteed to match a
+        /// baked rig; the live Player mesh is a legacy fallback. Returns true when a mesh was assigned.
+        /// </summary>
         private bool TryAssignBodyMesh(Mesh mesh, int modelIndex = -1)
         {
-            var smr = _visEquipment != null ? _visEquipment.m_bodyModel : null;
-            if (smr == null) return false;
+            var bodyRenderer = _visEquipment != null ? _visEquipment.m_bodyModel : null;
+            if (bodyRenderer == null) return false;
 
             Mesh live = null;
             if (modelIndex >= 0)
             {
                 try
                 {
-                    var pp = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab("Player") : null;
-                    var pv = pp != null ? pp.GetComponent<VisEquipment>() : null;
-                    if (pv != null && pv.m_models != null && modelIndex < pv.m_models.Length)
-                        live = pv.m_models[modelIndex].m_mesh;
+                    var playerPrefab = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab("Player") : null;
+                    var playerVis = playerPrefab != null ? playerPrefab.GetComponent<VisEquipment>() : null;
+                    if (playerVis != null && playerVis.m_models != null && modelIndex < playerVis.m_models.Length)
+                        live = playerVis.m_models[modelIndex].m_mesh;
                 }
                 catch { }
             }
 
             Mesh chosen = null;
             string source = "none";
-            if (NpcBodyMeshGuard.IsAssignable(mesh, smr)) { chosen = mesh; source = ReferenceEquals(mesh, live) ? "table(live)" : "table"; }
-            else if (live != null && !ReferenceEquals(live, mesh) && NpcBodyMeshGuard.IsAssignable(live, smr)) { chosen = live; source = "vanilla-player"; }
+            if (NpcBodyMeshGuard.IsAssignable(mesh, bodyRenderer)) { chosen = mesh; source = ReferenceEquals(mesh, live) ? "table(live)" : "table"; }
+            else if (live != null && !ReferenceEquals(live, mesh) && NpcBodyMeshGuard.IsAssignable(live, bodyRenderer)) { chosen = live; source = "vanilla-player"; }
 
             var probe = chosen ?? mesh;
             if (probe != null && _meshAssignLogged.Add($"{gameObject.name}|{probe.name}|{modelIndex}"))
             {
-                int boneCount = smr.bones != null ? smr.bones.Length : 0;
+                int boneCount = bodyRenderer.bones != null ? bodyRenderer.bones.Length : 0;
                 var bindposes = probe.bindposes;
                 Debug.Log($"[NpcVisEquipment] body mesh '{probe.name}' (idx={modelIndex}, src={source}) on {gameObject.name}: " +
                           $"smrBones={boneCount} bindposes={(bindposes != null ? bindposes.Length : 0)} verts={probe.vertexCount} → {(chosen != null ? "assign" : "SKIP (no skinnable candidate)")}");
             }
 
             if (chosen == null) return false;
-            if (!ReferenceEquals(smr.sharedMesh, chosen)) smr.sharedMesh = chosen;
+            if (!ReferenceEquals(bodyRenderer.sharedMesh, chosen)) bodyRenderer.sharedMesh = chosen;
             return true;
         }
 
@@ -1430,35 +1361,35 @@ namespace FiresCore.Npc
         {
             try
             {
-                var ve = _visEquipment != null ? _visEquipment : GetComponent<VisEquipment>();
-                var smr = ve != null ? ve.m_bodyModel : null;
-                if (smr == null) smr = GetComponentInChildren<SkinnedMeshRenderer>(true);
-                if (smr == null || smr.sharedMesh == null) return false;
-                if (smr.gameObject.name != goName || smr.sharedMesh.name != meshName) return false;
+                var visEquipment = _visEquipment != null ? _visEquipment : GetComponent<VisEquipment>();
+                var bodyRenderer = visEquipment != null ? visEquipment.m_bodyModel : null;
+                if (bodyRenderer == null) bodyRenderer = GetComponentInChildren<SkinnedMeshRenderer>(true);
+                if (bodyRenderer == null || bodyRenderer.sharedMesh == null) return false;
+                if (bodyRenderer.gameObject.name != goName || bodyRenderer.sharedMesh.name != meshName) return false;
 
-                var bad = smr.sharedMesh;
-                NpcBodyMeshGuard.MarkRejected(bad, smr);
+                var bad = bodyRenderer.sharedMesh;
+                NpcBodyMeshGuard.MarkRejected(bad, bodyRenderer);
 
                 // The table/live entries the rejected mesh was standing in for, matched by name so
                 // ghost clones (no ZDO model index) resolve too.
-                Mesh table = FindModelMeshByName(ve != null ? ve.m_models : null, meshName);
+                Mesh table = FindModelMeshByName(visEquipment != null ? visEquipment.m_models : null, meshName);
                 Mesh live = null;
                 try
                 {
-                    var pp = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab("Player") : null;
-                    var pv = pp != null ? pp.GetComponent<VisEquipment>() : null;
-                    live = FindModelMeshByName(pv != null ? pv.m_models : null, meshName);
+                    var playerPrefab = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab("Player") : null;
+                    var playerVis = playerPrefab != null ? playerPrefab.GetComponent<VisEquipment>() : null;
+                    live = FindModelMeshByName(playerVis != null ? playerVis.m_models : null, meshName);
                 }
                 catch { }
 
                 Mesh replacement = null;
                 string source = null;
-                if (table != null && !ReferenceEquals(table, bad) && NpcBodyMeshGuard.IsAssignable(table, smr)) { replacement = table; source = "table"; }
-                else if (live != null && !ReferenceEquals(live, bad) && NpcBodyMeshGuard.IsAssignable(live, smr)) { replacement = live; source = "vanilla-player"; }
-                else if (_nativeBodyMesh != null && !ReferenceEquals(_nativeBodyMesh, bad) && NpcBodyMeshGuard.IsAssignable(_nativeBodyMesh, smr)) { replacement = _nativeBodyMesh; source = "native-default"; }
+                if (table != null && !ReferenceEquals(table, bad) && NpcBodyMeshGuard.IsAssignable(table, bodyRenderer)) { replacement = table; source = "table"; }
+                else if (live != null && !ReferenceEquals(live, bad) && NpcBodyMeshGuard.IsAssignable(live, bodyRenderer)) { replacement = live; source = "vanilla-player"; }
+                else if (_nativeBodyMesh != null && !ReferenceEquals(_nativeBodyMesh, bad) && NpcBodyMeshGuard.IsAssignable(_nativeBodyMesh, bodyRenderer)) { replacement = _nativeBodyMesh; source = "native-default"; }
 
                 if (replacement == null) return false;
-                smr.sharedMesh = replacement;
+                bodyRenderer.sharedMesh = replacement;
                 NpcBodyMeshGuard.LogOnce(
                     $"heal|{GetInstanceID()}|{meshName}",
                     $"[NpcBodyMeshGuard] '{meshName}' rejected by Unity at skin time on {gameObject.name} — swapped body to '{replacement.name}' ({source}); pairing blacklisted for this session.");
@@ -1470,9 +1401,9 @@ namespace FiresCore.Npc
         private static Mesh FindModelMeshByName(VisEquipment.PlayerModel[] models, string meshName)
         {
             if (models == null) return null;
-            foreach (var pm in models)
+            foreach (var model in models)
             {
-                if (pm != null && pm.m_mesh != null && pm.m_mesh.name == meshName) return pm.m_mesh;
+                if (model != null && model.m_mesh != null && model.m_mesh.name == meshName) return model.m_mesh;
             }
             return null;
         }
@@ -1610,12 +1541,12 @@ namespace FiresCore.Npc
 
                 foreach (var renderer in visual.GetComponentsInChildren<Renderer>(true))
                 {
-                    string n = renderer.gameObject.name.ToLowerInvariant();
-                    bool isHairOrBeard = n.StartsWith("hair") || n.StartsWith("beard")
-                                     || n.StartsWith("npc_hair_") || n.StartsWith("npc_beard_");
+                    string rendererName = renderer.gameObject.name.ToLowerInvariant();
+                    bool isHairOrBeard = rendererName.StartsWith("hair") || rendererName.StartsWith("beard")
+                                     || rendererName.StartsWith("npc_hair_") || rendererName.StartsWith("npc_beard_");
                     if (!isHairOrBeard) continue;
 
-                    // _HairColor is not in the shader's Properties block so HasProperty returns false ï¿½
+                    // _HairColor is not in the shader's Properties block so HasProperty returns false -
                     // call SetColor unconditionally, exactly as VisEquipment.UpdateColors() does.
                     var mats = renderer.materials;
                     for (int i = 0; i < mats.Length; i++)
@@ -1626,7 +1557,7 @@ namespace FiresCore.Npc
                     renderer.materials = mats;
                 }
 
-                // Body material ï¿½ same as UpdateColors() setting _HairColor on m_baseMaterial
+                // Body material - same as UpdateColors() setting _HairColor on m_baseMaterial
                 if (_visEquipment.m_bodyModel != null)
                 {
                     var bodyMat = _visEquipment.m_bodyModel.material;
@@ -1831,17 +1762,17 @@ namespace FiresCore.Npc
                 _eyeOverlayObject.transform.localScale = Vector3.one;
                 
                 // Add a SkinnedMeshRenderer that shares the same mesh and bones as the body
-                var smr = _eyeOverlayObject.AddComponent<SkinnedMeshRenderer>();
-                smr.sharedMesh = _visEquipment.m_bodyModel.sharedMesh;
-                smr.bones = _visEquipment.m_bodyModel.bones;
-                smr.rootBone = _visEquipment.m_bodyModel.rootBone;
-                smr.material = _eyeMaterialInstance;
+                var overlayRenderer = _eyeOverlayObject.AddComponent<SkinnedMeshRenderer>();
+                overlayRenderer.sharedMesh = _visEquipment.m_bodyModel.sharedMesh;
+                overlayRenderer.bones = _visEquipment.m_bodyModel.bones;
+                overlayRenderer.rootBone = _visEquipment.m_bodyModel.rootBone;
+                overlayRenderer.material = _eyeMaterialInstance;
                 
                 // Set rendering order to render on top of body
-                smr.sortingOrder = 1;
+                overlayRenderer.sortingOrder = 1;
                 
                 // Match the bounds
-                smr.localBounds = _visEquipment.m_bodyModel.localBounds;
+                overlayRenderer.localBounds = _visEquipment.m_bodyModel.localBounds;
                 
                 // Track the current body mesh for change detection
                 _lastBodyMesh = _visEquipment.m_bodyModel.sharedMesh;
@@ -1901,13 +1832,13 @@ namespace FiresCore.Npc
                     
                     if (getMethod != null)
                     {
-                        _cachedEyeMaterialMale = getMethod.Invoke(null, new object[] { EYE_MATERIAL_MALE }) as Material;
-                        _cachedEyeMaterialFemale = getMethod.Invoke(null, new object[] { EYE_MATERIAL_FEMALE }) as Material;
+                        _cachedEyeMaterialMale = getMethod.Invoke(null, new object[] { EyeMaterialMale }) as Material;
+                        _cachedEyeMaterialFemale = getMethod.Invoke(null, new object[] { EyeMaterialFemale }) as Material;
                         
                         if (_cachedEyeMaterialMale != null)
-                            Debug.Log($"[NpcVisEquipment] Loaded eye material '{EYE_MATERIAL_MALE}' from MiscAssetManager");
+                            Debug.Log($"[NpcVisEquipment] Loaded eye material '{EyeMaterialMale}' from MiscAssetManager");
                         if (_cachedEyeMaterialFemale != null)
-                            Debug.Log($"[NpcVisEquipment] Loaded eye material '{EYE_MATERIAL_FEMALE}' from MiscAssetManager");
+                            Debug.Log($"[NpcVisEquipment] Loaded eye material '{EyeMaterialFemale}' from MiscAssetManager");
                         
                         return;
                     }
@@ -1917,13 +1848,13 @@ namespace FiresCore.Npc
                 var assetBundle = GetCompanionAssetBundle();
                 if (assetBundle != null)
                 {
-                    _cachedEyeMaterialMale = assetBundle.LoadAsset<Material>(EYE_MATERIAL_MALE);
-                    _cachedEyeMaterialFemale = assetBundle.LoadAsset<Material>(EYE_MATERIAL_FEMALE);
+                    _cachedEyeMaterialMale = assetBundle.LoadAsset<Material>(EyeMaterialMale);
+                    _cachedEyeMaterialFemale = assetBundle.LoadAsset<Material>(EyeMaterialFemale);
                     
                     if (_cachedEyeMaterialMale != null)
-                        Debug.Log($"[NpcVisEquipment] Loaded eye material '{EYE_MATERIAL_MALE}' from asset bundle");
+                        Debug.Log($"[NpcVisEquipment] Loaded eye material '{EyeMaterialMale}' from asset bundle");
                     if (_cachedEyeMaterialFemale != null)
-                        Debug.Log($"[NpcVisEquipment] Loaded eye material '{EYE_MATERIAL_FEMALE}' from asset bundle");
+                        Debug.Log($"[NpcVisEquipment] Loaded eye material '{EyeMaterialFemale}' from asset bundle");
                     
                     return;
                 }
@@ -2065,7 +1996,7 @@ namespace FiresCore.Npc
             if (!_initialized) Initialize();
             if (_visEquipment == null) return;
             
-            // Store hair item ï¿½ UpdateEquipmentVisuals() will spawn it; m_isPlayer=true is NOT needed.
+            // Store hair item - UpdateEquipmentVisuals() will spawn it; m_isPlayer=true is NOT needed.
             VisEquipmentCompat.SetHairItem(_visEquipment, hairName ?? "");
 
             // Reapply hair color after hair mesh is created
@@ -2087,7 +2018,7 @@ namespace FiresCore.Npc
             if (!_initialized) Initialize();
             if (_visEquipment == null) return;
             
-            // Store beard item ï¿½ UpdateEquipmentVisuals() will spawn it; m_isPlayer=true is NOT needed.
+            // Store beard item - UpdateEquipmentVisuals() will spawn it; m_isPlayer=true is NOT needed.
             VisEquipmentCompat.SetBeardItem(_visEquipment, beardName ?? "");
 
             // Reapply hair color after beard mesh is created (beards use hair color)
@@ -2120,7 +2051,7 @@ namespace FiresCore.Npc
                 SetupPlayerModels();
             }
             
-            // Set model if requested ï¿½ switch mesh directly (no m_isPlayer=true needed/wanted)
+            // Set model if requested - switch mesh directly (no m_isPlayer=true needed/wanted)
             if (modelIndex >= 0 && _visEquipment.m_models != null && _visEquipment.m_models.Length > modelIndex)
             {
                 _visEquipment.SetModel(modelIndex); // stores index in ZDO
@@ -2138,7 +2069,7 @@ namespace FiresCore.Npc
                     Debug.Log($"[NpcVisEquipment] SetAppearance - Model: {modelIndex} (cleared current hashes to re-apply armor underlay)");
             }
 
-            // Set hair if requested ï¿½ UpdateEquipmentVisuals() will spawn it without m_isPlayer=true
+            // Set hair if requested - UpdateEquipmentVisuals() will spawn it without m_isPlayer=true
             if (hairItem != null)
             {
                 VisEquipmentCompat.SetHairItem(_visEquipment, hairItem);
@@ -2183,17 +2114,9 @@ namespace FiresCore.Npc
         #endregion
 
         /// <summary>
-        /// Attempts to fix the body shader by copying the material from Valheim's Player prefab.
-        /// This mirrors the approach used by CompanionPrefabManager for companion NPCs.
-        /// The Player's body material has the real Custom/Player shader with working bytecode,
-        /// which is required for VisEquipment armor overlays (_ChestTex, _LegsTex, etc.).
-        /// </summary>
-        /// <summary>
-        /// Finds a player-compatible body donor material. The Player PREFAB's VisEquipment model
-        /// table (m_models[*].m_baseMaterial) is checked FIRST — prefab-side materials are immune to
-        /// live shader swaps (FiresTossinShade, or a foreign pack hijacking the live body material,
-        /// e.g. the observed 'Lux Lit Particles/ Bumped'), which used to poison every fallback donor
-        /// and leave all static NPC bodies on the broken bundle Standard material (invisible/grey).
+        /// Finds a player-compatible body material. The Player prefab's own model table is checked first because
+        /// prefab-side materials are immune to live shader swaps, which had poisoned every other donor and left static
+        /// NPC bodies invisible or grey.
         /// </summary>
         internal static Material FindPlayerBodyDonor()
         {
@@ -2242,8 +2165,8 @@ namespace FiresCore.Npc
                 var body = vis != null ? vis.m_bodyModel : null;
                 if (body == null)
                 {
-                    foreach (var smr in prefab.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-                        if (smr.name == "body") { body = smr; break; }
+                    foreach (var skinnedRenderer in prefab.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                        if (skinnedRenderer.name == "body") { body = skinnedRenderer; break; }
                 }
                 if (body == null) return false;
 
@@ -2251,9 +2174,9 @@ namespace FiresCore.Npc
                 bool bodyBroken = !IsPlayerCompatibleShader(current);
                 bool modelsBroken = false;
                 if (vis != null && vis.m_models != null)
-                    foreach (var m in vis.m_models)
-                        if (m != null && (m.m_baseMaterial == null || m.m_baseMaterial.shader == null
-                            || !IsPlayerCompatibleShader(m.m_baseMaterial.shader.name)))
+                    foreach (var playerModel in vis.m_models)
+                        if (playerModel != null && (playerModel.m_baseMaterial == null || playerModel.m_baseMaterial.shader == null
+                            || !IsPlayerCompatibleShader(playerModel.m_baseMaterial.shader.name)))
                         { modelsBroken = true; break; }
                 if (!bodyBroken && !modelsBroken) return true;
 
@@ -2269,11 +2192,11 @@ namespace FiresCore.Npc
                 {
                     for (int i = 0; i < vis.m_models.Length; i++)
                     {
-                        var m = vis.m_models[i];
-                        if (m == null) continue;
-                        if (m.m_baseMaterial == null || m.m_baseMaterial.shader == null
-                            || !IsPlayerCompatibleShader(m.m_baseMaterial.shader.name))
-                            m.m_baseMaterial = new Material(donor);
+                        var model = vis.m_models[i];
+                        if (model == null) continue;
+                        if (model.m_baseMaterial == null || model.m_baseMaterial.shader == null
+                            || !IsPlayerCompatibleShader(model.m_baseMaterial.shader.name))
+                            model.m_baseMaterial = new Material(donor);
                     }
                 }
                 Debug.Log($"[NpcVisEquipment] prefab body material repaired for {prefab.name} (donor '{donor.shader.name}')");
@@ -2286,6 +2209,7 @@ namespace FiresCore.Npc
             }
         }
 
+        /// <summary>Gives the body the working Custom/Player material copied from the Player prefab, which armor overlays need.</summary>
         private void TryFixBodyShader(SkinnedMeshRenderer bodyRenderer)
         {
             if (bodyRenderer == null) return;
@@ -2312,9 +2236,9 @@ namespace FiresCore.Npc
                         var bodyTransform = FindTransformRecursive(playerPrefab.transform, "body");
                         if (bodyTransform != null)
                         {
-                            var smr = bodyTransform.GetComponent<SkinnedMeshRenderer>();
-                            if (smr != null)
-                                playerBodyMaterial = smr.sharedMaterial;
+                            var skinnedRenderer = bodyTransform.GetComponent<SkinnedMeshRenderer>();
+                            if (skinnedRenderer != null)
+                                playerBodyMaterial = skinnedRenderer.sharedMaterial;
                         }
                     }
                 }
@@ -2383,9 +2307,9 @@ namespace FiresCore.Npc
                 {
                     for (int i = 0; i < _visEquipment.m_models.Length; i++)
                     {
-                        var m = _visEquipment.m_models[i];
-                        if (m == null) continue;
-                        var baseMat = m.m_baseMaterial;
+                        var model = _visEquipment.m_models[i];
+                        if (model == null) continue;
+                        var baseMat = model.m_baseMaterial;
                         if (baseMat == null || baseMat.shader == null || !IsPlayerCompatibleShader(baseMat.shader.name))
                         {
                             var repaired = new Material(newMaterial);
@@ -2394,7 +2318,7 @@ namespace FiresCore.Npc
                                 var tex = baseMat.GetTexture("_MainTex");
                                 if (tex != null) repaired.SetTexture("_MainTex", tex);
                             }
-                            m.m_baseMaterial = repaired;
+                            model.m_baseMaterial = repaired;
                         }
                     }
                 }
@@ -2426,21 +2350,10 @@ namespace FiresCore.Npc
     }
 
     /// <summary>
-    /// Refreshes BACK-weapon visuals for Fires NPCs/companions every frame.
-    ///
-    /// Vanilla VisEquipment.UpdateEquipmentVisuals only attaches/detaches back weapons inside
-    /// `if (m_isPlayer)` (it calls the private SetBackEquipped only there). NpcVisEquipment keeps
-    /// m_isPlayer == false on companions so that UpdateBaseModel/UpdateColors never clobber the
-    /// armor body material. The side effect: the per-frame loop refreshes HAND weapons but NEVER
-    /// touches the back slots — so a weapon drawn from the back stays stuck on the back, and a
-    /// weapon holstered to the back never appears there.
-    ///
-    /// This postfix runs after the vanilla per-frame update on EVERY client and, for our NPCs only,
-    /// drives vanilla's own SetBackEquipped using the back hashes from the synced ZDO. SetBackEquipped
-    /// cache-compares m_current*BackItemHash, so it is a cheap no-op when nothing changed and a correct
-    /// destroy+reattach on a real swap. It touches only the back slots (never hair/beard/armor/body),
-    /// so the armor-underlay fix (m_isPlayer == false) is fully preserved, and because it reads the
-    /// replicated ZDO it corrects both the owning machine and remote observers.
+    /// Refreshes back-slot weapon visuals for Fires NPCs every frame. Vanilla only updates back weapons for players,
+    /// and NPCs keep m_isPlayer false so the armor body material isn't overwritten, so drawn weapons stayed on the
+    /// back. This postfix calls vanilla's SetBackEquipped with the synced ZDO hashes, which is a no-op when nothing
+    /// changed, on every client.
     /// </summary>
     [HarmonyPatch(typeof(VisEquipment), "UpdateEquipmentVisuals")]
     internal static class VisEquipmentBackWeaponRefreshPatch

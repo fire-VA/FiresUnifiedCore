@@ -250,6 +250,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Berserker
     /// </summary>
     public class BloodMageEffect : HybridAbilityEffect
     {
+        private const float FireballFxBaseRadius = 8f;
+        private const float SpiritBoltFxBaseRadius = 10f;
+
         public float HealthCostPercent { get; set; } = 0.2f;
         public float DamageMultiplier { get; set; } = 3.0f;
         public float AoERange { get; set; } = 8f;
@@ -307,8 +310,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Berserker
                 }
             }
             
-            AbilityFXManager.SpawnEffect("vfx_fireball_explosion", m_character.transform.position, null, AoERange / 8f);
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character.transform.position, null, AoERange / 10f);
+            AbilityFXManager.SpawnEffect("vfx_fireball_explosion", m_character.transform.position, null, AoERange / FireballFxBaseRadius);
+            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character.transform.position, null, AoERange / SpiritBoltFxBaseRadius);
         }
         
         public static bool Apply(Character target, float duration)

@@ -5,51 +5,11 @@ using UnityEngine;
 namespace FiresCore.Npc.Vault
 {
     /// <summary>
-    /// Centralised "where do I read companion save data from?" helper for
-    /// Phase 4 of the save-system refactor. Every read site (login restore,
-    /// per-companion lookup before respawn, resurrect from corpse, etc.)
-    /// goes through this class so the priority order is consistent.
-    /// 
-    /// PRIORITY ORDER (high ? low)
-    /// ---------------------------
-    ///   1. Player roster on <c>Player.m_customData</c>
-    ///      (the new authoritative source, scoped to the owner player and
-    ///      filtered by current server world UID).
-    ///   2. JSON vault via <see cref="VaultOfKnowledge"/>
-    ///      (legacy path, kept as fallback during the side-by-side window
-    ///      and for migration of existing saves).
-    /// 
-    /// If neither produces data, callers get null/empty and MUST NOT
-    /// fabricate a default companion — that is the structural fix for the
-    /// "respawned with wrong name / wrong scale" bug.
-    /// 
-    /// SERVER BINDING
-    /// --------------
-    /// Roster entries are filtered against
-    /// <see cref="PlayerCompanionStorage.BelongsToCurrentServer"/> at read
-    /// time. An entry stamped with a different server's world UID is
-    /// silently skipped — character files moved between worlds do not
-    /// drag their companions along.
-    /// 
-    /// PENDING-RESPAWN TIMER TRANSLATION
-    /// ---------------------------------
-    /// The roster stores absolute wall-clock deadlines
-    /// (<see cref="PlayerCompanionRosterEntry.RespawnDeadlineUtcTicks"/>).
-    /// The downstream consumer (<see cref="CompanionRespawnManager"/>)
-    /// works in seconds-remaining, so this resolver computes the remaining
-    /// time and stamps it onto the snapshot's
-    /// <see cref="CompanionSaveData.RespawnTimeRemaining"/> /
-    /// <see cref="CompanionSaveData.IsPendingRespawn"/> fields before
-    /// returning. A deadline that has already passed yields 0 remaining
-    /// (i.e. "respawn immediately") — that's how a crash mid-timer
-    /// recovers.
-    /// 
-    /// DISMISSED COMPANIONS
-    /// --------------------
-    /// Entries with <see cref="CompanionFollowState.Dismissed"/> are
-    /// EXCLUDED from <see cref="ResolveAllForPlayer"/> — dismissed
-    /// companions don't auto-spawn on login. They remain accessible via
-    /// <see cref="ResolveByCompanionId"/> for the recall flow.
+    /// The single read path for companion save data. The owner's roster in Player.m_customData wins, filtered
+    /// to the current server's world UID, with the legacy JSON vault as the fallback; callers get nothing
+    /// rather than a fabricated default when neither has data. Roster respawn deadlines are wall-clock and
+    /// are converted to seconds remaining, so a deadline that passed during a crash respawns immediately.
+    /// Dismissed companions are left out of the full list but can still be resolved by id.
     /// </summary>
     public static class CompanionSavedDataResolver
     {
@@ -76,7 +36,7 @@ namespace FiresCore.Npc.Vault
             {
                 // Use TryGetRoster so we can distinguish:
                 //   rosterKeyExists=true  ? the key is in m_customData (even if Entries is empty)
-                //   rosterKeyExists=false ? key was never written (genuine first-login / pre-migration)
+                //   rosterKeyExists=false - key was never written (genuine first-login / pre-migration)
                 // This matters for the vault-fallback decision below.
                 bool rosterKeyExists = PlayerCompanionStorage.TryGetRoster(owner, out var roster);
 
@@ -104,7 +64,7 @@ namespace FiresCore.Npc.Vault
                                 continue;
                             }
 
-                            // ?? Self-healing migration ????????????????????????????????????
+                            // Self-healing migration
                             // ServerWorldUid == 0 means the entry was created before ZNet
                             // was ready (GetWorldUID returned 0 at tame-time). Now that we
                             // know the current world UID, stamp it so the entry is properly
@@ -118,7 +78,6 @@ namespace FiresCore.Npc.Vault
                                 entry.ServerWorldUid = currentWorldUid;
                                 needsRosterSave = true;
                             }
-                            // ??????????????????????????????????????????????????????????????
 
                             if (!PlayerCompanionStorage.BelongsToCurrentServer(entry))
                             {
@@ -126,7 +85,7 @@ namespace FiresCore.Npc.Vault
                                 continue;
                             }
 
-                            // Translate roster deadline ? snapshot seconds-remaining
+                            // Translate roster deadline - snapshot seconds-remaining
                             // so the downstream pipeline (which uses the snapshot
                             // fields) sees consistent values regardless of source.
                             StampPendingFields(entry);
@@ -203,12 +162,12 @@ namespace FiresCore.Npc.Vault
                 if (companions == null) return null;
                 for (int i = 0; i < companions.Count; i++)
                 {
-                    var c = companions[i];
-                    if (c != null && c.CompanionId == companionId)
+                    var companion = companions[i];
+                    if (companion != null && companion.CompanionId == companionId)
                     {
                         if (VerboseLogging)
                             Debug.Log($"{LogPrefix} ResolveByCompanionId({companionId}) ? vault");
-                        return c;
+                        return companion;
                     }
                 }
             }
@@ -285,7 +244,7 @@ namespace FiresCore.Npc.Vault
                 }
             }
 
-            // Roster key doesn't exist ? first-time login or pre-migration player.
+            // Roster key doesn't exist - first-time login or pre-migration player.
             // Fall back to vault (debug mirror) to seed the initial display.
             try
             {
@@ -318,8 +277,8 @@ namespace FiresCore.Npc.Vault
                 {
                     for (int i = 0; i < all.Count; i++)
                     {
-                        var p = all[i];
-                        if (p != null && p.GetPlayerID() == ownerPlayerId) return p;
+                        var player = all[i];
+                        if (player != null && player.GetPlayerID() == ownerPlayerId) return player;
                     }
                 }
             }

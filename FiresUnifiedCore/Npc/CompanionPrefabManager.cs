@@ -25,7 +25,7 @@ public static readonly List<string> CompanionPrefabNames = new List<string>
         // own activeSelf is true, so Awake never fires on the prefab or on
         // components AddComponent'd to it. When Object.Instantiate(prefab,
         // pos, rot) runs at spawn time, the clone is created WITHOUT this
-        // parent Ã¯Â¿Â½ activeInHierarchy flips to true and Awake fires fresh
+        // parent - activeInHierarchy flips to true and Awake fires fresh
         // with ZNetScene alive. This is the same "prefab container" trick
         // used by Jotunn and other Valheim mods to keep runtime-built
         // prefabs lifecycle-equivalent to bundle-loaded ones.
@@ -73,7 +73,7 @@ public static readonly List<string> CompanionPrefabNames = new List<string>
             // RegisterWithZNetScene adds it to both m_prefabs and
             // m_namedPrefabs. The clone is produced while the CompanionNpc
             // source is still inactive (asset-bundle prefabs load inactive),
-            // so Awake is queued Ã¯Â¿Â½ not fired Ã¯Â¿Â½ on the clone. This is the
+            // so Awake is queued - not fired - on the clone. This is the
             // same lifecycle invariant the bundle-loaded prefabs rely on.
             BuildWildCompanionVariant();
 
@@ -84,7 +84,7 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
         /// Clones <c>CompanionNpc</c> into <c>CompanionNpc_Wild</c> and attaches
         /// the four wild-spawn components. The clone follows the standard
         /// companion-prefab pattern: it goes through <see cref="SetupCompanionPrefab"/>
-        /// (idempotent Ã¯Â¿Â½ the cloned components are already there, we only
+        /// (idempotent - the cloned components are already there, we only
         /// re-run configuration) and is added to <c>_loadedCompanions</c> so
         /// <see cref="RegisterWithZNetScene"/> registers it like every other
         /// companion prefab. No alias / reflection hacks required.
@@ -116,38 +116,11 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
                 return;
             }
 
-            // CRITICAL LIFECYCLE INVARIANT
-            // ----------------------------
-            // We need the wild prefab to satisfy two contradictory-looking
-            // requirements:
-            //
-            //   (A) Its activeSelf must be TRUE at registration time. Vanilla
-            //       Terminal.spawn / ZNetScene.CreateObject use plain
-            //       Object.Instantiate(prefab, pos, rot) and never call
-            //       SetActive(true) afterwards. If the prefab is inactive,
-            //       the spawned clone is inactive too Ã¯Â¿Â½ invisible, no Awake,
-            //       silently no-op. (This is why the previous "keep it
-            //       inactive forever" attempt produced zero spawns.)
-            //
-            //   (B) Awake must NOT fire on the prefab itself or on any
-            //       component we AddComponent to it. Otherwise ZNetView.Awake
-            //       runs while ZNetScene.instance is still null (we're early
-            //       in mod init), throws, and leaves the cloned prefab in a
-            //       half-initialised state. Every spawn instance then NREs
-            //       on m_nview because Instantiate copies those broken
-            //       bindings forward.
-            //
-            // Bundle-loaded prefabs (the base CompanionNpc included) get
-            // both for free: AssetBundle.LoadAsset returns a GameObject with
-            // activeSelf=true that is NOT in any loaded scene, so its
-            // activeInHierarchy is false and Awake is queued, not fired.
-            //
-            // We replicate that exact state by parking the wild prefab under
-            // a permanently-inactive holder GameObject. The wild prefab's
-            // activeSelf can be true (so spawn-time clones inherit that and
-            // activate normally once unparented), while activeInHierarchy is
-            // false for as long as it stays under the holder Ã¯Â¿Â½ so Awake is
-            // never fired during construction.
+            // The wild prefab must be activeSelf at registration, because Terminal.spawn and
+            // ZNetScene.CreateObject instantiate without ever activating the clone, yet Awake must not run on
+            // it this early (ZNetView.Awake throws before ZNetScene exists and every clone inherits the broken
+            // state). Parking it under a permanently inactive holder gives exactly the state bundle-loaded
+            // prefabs have: active itself, inactive in the hierarchy.
             var holder = GetPrefabHolder();
 
             // While we Instantiate, force the source inactive too. Instantiate
@@ -213,7 +186,7 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             if (prefab.GetComponent<WildSpawn.WildCompanionSeed>() == null)
             {
                 var seed = prefab.AddComponent<WildSpawn.WildCompanionSeed>();
-                // Cohesion toggles only Ã¯Â¿Â½ faction / archetype / gear / stars
+                // Cohesion toggles only - faction / archetype / gear / stars
                 // are biome-driven inside WildCompanionDresser.
                 seed.Faction = WildSpawn.CompanionFaction.Neutral;
                 seed.AllowedArchetypesMask = ~0;
@@ -878,7 +851,7 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             companionAI.runDistanceInner = 4f;
             companionAI.runDistanceOuter = 6f;
             companionAI.catchUpDistance = 12f;
-            // teleportDistance removed Ã¯Â¿Â½ recall is owned by CompanionController.CheckFollowTeleport()
+            // teleportDistance removed - recall is owned by CompanionController.CheckFollowTeleport()
             // Escort-scale leash (mirrors ConfigureCompanionAI in CompanionController): fights stay
             // around the owner; a chase breaks off 15 m out instead of 40.
             companionAI.combatLeashDistance = 15f;
@@ -1103,12 +1076,12 @@ return companion;
         
         /// <summary>True when the prefab ships a body-model table usable for male/female switching —
         /// both entries present with meshes (the baked bundles serialize rip-consistent body/bodyfem).</summary>
-        private static bool HasUsableModelTable(VisEquipment ve)
+        private static bool HasUsableModelTable(VisEquipment visEquipment)
         {
-            if (ve.m_models == null || ve.m_models.Length < 2) return false;
+            if (visEquipment.m_models == null || visEquipment.m_models.Length < 2) return false;
             for (int i = 0; i < 2; i++)
             {
-                if (ve.m_models[i] == null || ve.m_models[i].m_mesh == null) return false;
+                if (visEquipment.m_models[i] == null || visEquipment.m_models[i].m_mesh == null) return false;
             }
             return true;
         }
@@ -1130,18 +1103,9 @@ return companion;
         }
 
         /// <summary>
-        /// Fixes the body material shader on all companion prefabs.
-        ///
-        /// PROBLEM: The Custom/Player shader in our asset bundle is broken.
-        /// Unity exports the shader reference but not the compiled shader bytecode.
-        /// This causes "Failed to find expected binary shader data in 'Custom/Player'" warnings.
-        /// 
-        /// SOLUTION: Copy the REAL material from Valheim's Player prefab.
-        /// This gives us a working Custom/Player shader with all the proper texture slots.
-        /// 
-        /// EYE COLOR: Before swapping shaders, we capture the emission texture from the
-        /// Standard shader material. This texture has only the eye area visible and can
-        /// be used to create an eye overlay mesh that we tint at runtime.
+        /// Gives every companion prefab a working body material. The bundle's Custom/Player shader ships without
+        /// compiled bytecode, so the real material is copied from Valheim's Player prefab; the eye emission texture is
+        /// captured first for the tintable eye overlay.
         /// </summary>
         private static void FixCompanionShaders()
         {
@@ -1156,17 +1120,17 @@ return companion;
             // Copy hit / death effects from the Player prefab so companions play
             // the correct flesh-hit VFX and sounds when struck. Without this the
             // m_hitEffects EffectList stays empty and Character.ApplyDamage() has
-            // nothing to spawn Ã¯Â¿Â½ the player sees no visual or audio feedback.
+            // nothing to spawn - the player sees no visual or audio feedback.
             var playerHumanoid = playerPrefab.GetComponent<Humanoid>();
             if (playerHumanoid != null)
             {
                 foreach (var prefab in _loadedCompanions)
                 {
                     if (prefab == null) continue;
-                    var h = prefab.GetComponent<Humanoid>();
-                    if (h == null) continue;
-                    h.m_hitEffects   = playerHumanoid.m_hitEffects;
-                    h.m_deathEffects = playerHumanoid.m_deathEffects;
+                    var humanoid = prefab.GetComponent<Humanoid>();
+                    if (humanoid == null) continue;
+                    humanoid.m_hitEffects   = playerHumanoid.m_hitEffects;
+                    humanoid.m_deathEffects = playerHumanoid.m_deathEffects;
                 }
             }
             
@@ -1206,10 +1170,10 @@ return companion;
                 var bodyTransform = FindTransformRecursive(playerPrefab.transform, "body");
                 if (bodyTransform != null)
                 {
-                    var smr = bodyTransform.GetComponent<SkinnedMeshRenderer>();
-                    if (smr != null)
+                    var skinnedRenderer = bodyTransform.GetComponent<SkinnedMeshRenderer>();
+                    if (skinnedRenderer != null)
                     {
-                        playerBodyMaterial = smr.sharedMaterial;
+                        playerBodyMaterial = skinnedRenderer.sharedMaterial;
                     }
                 }
             }

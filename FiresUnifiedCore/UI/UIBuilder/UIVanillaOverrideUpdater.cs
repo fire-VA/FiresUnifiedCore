@@ -3,19 +3,9 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// MonoBehaviour that processes pending vanilla UI overrides each frame.
-    /// Attached to the FiresRPGmaker root object during initialization.
-    ///
-    /// Responsibilities:
-    /// - Drains the RPC send queue for chunked layout transfers
-    /// - Detects logout transitions and cleans up override state
-    /// - Processes pending overrides (targets not yet available at enable time)
-    /// - Syncs injected element visibility with their vanilla root's active state
-    ///   (injected elements are new GOs that don't inherit the game's show/hide logic)
-    ///
-    /// Only processes overrides during active gameplay sessions (Player.m_localPlayer != null).
-    /// When the player logs out, all active overrides are cleaned up so stale GO references
-    /// don't cause warnings or errors on the menu screen.
+    /// Per-frame driver for vanilla UI overrides during play: drains the chunked layout send queue, applies overrides
+    /// whose targets have since appeared, and syncs injected elements' visibility with their vanilla roots. All
+    /// overrides are cleaned up on logout so the menu holds no stale references.
     /// </summary>
     public class UIVanillaOverrideUpdater : MonoBehaviour
     {
@@ -34,7 +24,7 @@ namespace FiresCore.UI
             bool inGame = Player.m_localPlayer != null;
 
             // Detect logout transition: we were in-game but now we're not.
-            // Clean up all active overrides — the vanilla GOs they reference are being destroyed
+            // Clean up all active overrides â€” the vanilla GOs they reference are being destroyed
             // as the game scene unloads, so holding onto them would cause null-ref spam.
             if (_wasInGame && !inGame)
             {
@@ -48,7 +38,7 @@ namespace FiresCore.UI
             if (!inGame) return;
 
             // Sync injected mod element visibility with their vanilla roots every frame.
-            // Injected elements are new GameObjects added to the vanilla hierarchy —
+            // Injected elements are new GameObjects added to the vanilla hierarchy â€”
             // they don't inherit the game's show/hide logic (InventoryGui.Show/Hide etc.),
             // so we must manually match their active state to the vanilla root's state.
             UIVanillaOverrideManager.SyncInjectedVisibility();
@@ -66,7 +56,7 @@ namespace FiresCore.UI
             // When the mod/game is shutting down, clear runtime references but do NOT
             // remove entries from the active overrides dictionary or re-persist state.
             // DisableAll() was previously called here, but it removes entries and then
-            // calls PersistOverrides() which writes an empty file — wiping the user's
+            // calls PersistOverrides() which writes an empty file â€” wiping the user's
             // persisted override state on every game exit. The vanilla GOs are being
             // destroyed by Unity anyway, so there's nothing to "restore".
             // OnSessionEnd() safely nulls out GO references without touching persistence.

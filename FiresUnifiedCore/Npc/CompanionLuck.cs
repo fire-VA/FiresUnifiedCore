@@ -4,28 +4,8 @@ using System;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Manages the Luck stat for companions.
-    /// 
-    /// LUCK SYSTEM:
-    /// - Each companion spawns with a random base Luck stat (0-100)
-    /// - Luck influences ALL level-based scaling rolls throughout the companion system
-    /// - Higher luck = better rolls toward the 50% max bonus
-    /// - Lower luck = rolls toward the 25% minimum bonus
-    /// 
-    /// SCALING FORMULA:
-    /// - Base scaling range: +0.25% to +0.5% per level
-    /// - Luck interpolates within this range:
-    ///   - 0 Luck: Always rolls minimum (0.25%/level) = 25% at level 100
-    ///   - 50 Luck: Average rolls (0.375%/level) = 37.5% at level 100
-    ///   - 100 Luck: Always rolls maximum (0.5%/level) = 50% at level 100
-    /// 
-    /// USAGE:
-    /// - All systems that need level-based scaling should use GetLevelScalingMultiplier()
-    /// - This includes: damage bonuses, healing, stat gains, ability effects, etc.
-    /// 
-    /// DISPLAY:
-    /// - Luck is shown on the companion stats screen
-    /// - Lucky companions are visually indicated (future: special effects)
+    /// A companion's random 0-100 Luck stat, which biases every level-based scaling roll between the minimum
+    /// and maximum per-level bonus. Anything that scales with level should use GetLevelScalingMultiplier.
     /// </summary>
     public class CompanionLuck : MonoBehaviour
     {

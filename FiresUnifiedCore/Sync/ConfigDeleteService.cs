@@ -8,25 +8,10 @@ using FiresCore.Net;
 
 namespace FiresCore.Sync
 {
-    // Admin config DELETE on the server — the third command in the set alongside
-    // pushconfigs / pullconfigs, sharing their pattern semantics, wildcard rules,
-    // tab-completion and extension allowlist (ConfigPushService.ResolveMatches /
-    // BuildCompletionOptions), so none of the three can drift apart.
-    //
-    //   deleteconfig expand_world_spawns.yaml   — one exact file
-    //   deleteconfig expand_world               — a whole folder (recursive)
-    //   deleteconfig expand_world*              — wildcard: every matching folder + file
-    //   deleteconfig expand_world* confirm      — actually do it
-    //
-    // DESTRUCTIVE, so it follows the family's scan→confirm pattern (purge_custom):
-    // without the trailing `confirm` it only REPORTS what would be deleted — and it
-    // reports the SERVER's matches, not the client's, so the admin sees exactly what
-    // is about to go. Deleted files are moved to
-    // <BepInEx>/config_deleted_backups/<timestamp>/<relpath> (deliberately OUTSIDE
-    // BepInEx/config so no mod can rescan them) — a mistyped wildcard is recoverable.
-    //
-    // Only config extensions can ever match (the shared allowlist), so this can never
-    // remove a .dll/.bundle even if one sits in a config subfolder.
+    // Admin config delete, the third of pushconfigs and pullconfigs, sharing their matching, completion and
+    // extension allowlist: "deleteconfig <file | folder | wildcard>" only reports the server's matches, and adding
+    // "confirm" deletes them. Deleted files move to <BepInEx>/config_deleted_backups/<timestamp>/, outside the
+    // config folder so no mod rescans them, and only config extensions can ever match.
     public static class ConfigDeleteService
     {
         private const string ReqRpc = "FiresCore_DeleteConfigReq";
@@ -160,7 +145,7 @@ namespace FiresCore.Sync
                 if (!confirm)
                 {
                     ConfigPullService.SendMsg(sender, $"[ConfigDelete] '{pattern}' matches {matches.Count} file(s) on the server:");
-                    foreach (var m in matches) ConfigPullService.SendMsg(sender, "   " + m.rel);
+                    foreach (var match in matches) ConfigPullService.SendMsg(sender, "   " + match.rel);
                     ConfigPullService.SendMsg(sender, $"[ConfigDelete] Nothing deleted yet. Re-run with 'confirm' to delete these {matches.Count} file(s):");
                     ConfigPullService.SendMsg(sender, $"   deleteconfig {pattern} confirm");
                     return;
@@ -171,22 +156,22 @@ namespace FiresCore.Sync
                 int deleted = 0, failed = 0;
                 var touchedDirs = new List<string>();
 
-                foreach (var m in matches)
+                foreach (var match in matches)
                 {
                     try
                     {
-                        string dir = Path.GetDirectoryName(m.abs);
-                        BackupBeforeDelete(m.rel, m.abs, backupRoot);
-                        File.Delete(m.abs);
+                        string dir = Path.GetDirectoryName(match.abs);
+                        BackupBeforeDelete(match.rel, match.abs, backupRoot);
+                        File.Delete(match.abs);
                         deleted++;
                         if (!string.IsNullOrEmpty(dir) && !touchedDirs.Contains(dir)) touchedDirs.Add(dir);
-                        ConfigPullService.SendMsg(sender, "   deleted " + m.rel);
+                        ConfigPullService.SendMsg(sender, "   deleted " + match.rel);
                     }
                     catch (Exception ex)
                     {
                         failed++;
-                        FiresLogger.LogWarning($"[ConfigDelete] delete failed '{m.rel}': {ex.Message}");
-                        ConfigPullService.SendMsg(sender, $"   FAILED {m.rel} — {ex.Message}");
+                        FiresLogger.LogWarning($"[ConfigDelete] delete failed '{match.rel}': {ex.Message}");
+                        ConfigPullService.SendMsg(sender, $"   FAILED {match.rel} — {ex.Message}");
                     }
                 }
 
@@ -234,21 +219,21 @@ namespace FiresCore.Sync
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             foreach (var start in dirs)
             {
-                string d = start;
+                string directory = start;
                 try
                 {
-                    while (!string.IsNullOrEmpty(d))
+                    while (!string.IsNullOrEmpty(directory))
                     {
-                        string full = Path.GetFullPath(d).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                        string full = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                         if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase)) break;
                         if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) break;
                         if (!Directory.Exists(full)) break;
                         if (Directory.GetFileSystemEntries(full).Length != 0) break;
                         Directory.Delete(full);
-                        d = Path.GetDirectoryName(full);
+                        directory = Path.GetDirectoryName(full);
                     }
                 }
-                catch (Exception ex) { FiresLogger.LogWarning($"[ConfigDelete] prune '{d}' failed: {ex.Message}"); }
+                catch (Exception ex) { FiresLogger.LogWarning($"[ConfigDelete] prune '{directory}' failed: {ex.Message}"); }
             }
         }
     }

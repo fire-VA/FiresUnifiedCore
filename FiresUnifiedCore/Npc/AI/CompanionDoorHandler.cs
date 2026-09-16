@@ -3,35 +3,16 @@
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// Gives companions the ability to open doors that block their path and
-    /// close them again a few seconds after passing through.
-    ///
-    /// Design overview
-    /// ---------------
-    /// The handler runs on a simple three-phase state machine:
-    ///   Idle          ï¿½ watching for a nearby closed door to interact with.
-    ///   Opening       ï¿½ companion has walked close enough and called Door.Interact.
-    ///   WaitingToClose ï¿½ companion is past the door; a timer counts down before
-    ///                    closing it behind them.
-    ///
-    /// Triggering
-    /// ----------
-    /// Every <see cref="ScanInterval"/> seconds the handler checks whether the
-    /// companion has been stuck (barely moved) for at least <see cref="StuckThreshold"/>
-    /// seconds.  If so it scans for the nearest closed, unlocked door within
-    /// <see cref="ScanRadius"/> metres and starts approaching it.
-    ///
-    /// Closing behind
-    /// --------------
-    /// Once the companion is more than <see cref="CloseDistance"/> metres from the
-    /// door (i.e. clearly past it) a <see cref="AutoCloseDelay"/> second countdown
-    /// begins.  When it expires the door is closed provided no player or other
-    /// companion is standing in the doorway.
+    /// Opens doors that block a stuck companion and closes them again behind it. Every
+    /// <see cref="ScanInterval"/> it checks whether the companion has barely moved for
+    /// <see cref="StuckThreshold"/>, walks to the nearest closed, unlocked door within <see cref="ScanRadius"/>
+    /// and opens it; once the companion is past <see cref="CloseDistance"/> the door closes after
+    /// <see cref="AutoCloseDelay"/> unless someone is standing in the doorway.
     /// </summary>
     [DisallowMultipleComponent]
     public class CompanionDoorHandler : MonoBehaviour
     {
-        // ?? tuneable constants ??????????????????????????????????????????????
+        // tuneable constants
 
         /// <summary>How often (seconds) we poll for stuck-detection and door scanning.</summary>
         private const float ScanInterval = 0.5f;
@@ -60,24 +41,24 @@ namespace FiresCore.Npc.AI
         /// <summary>Cooldown (seconds) applied after completing a door interaction so we don't immediately re-trigger.</summary>
         private const float PostCloseCooldown = 4f;
 
-        // ?? state machine ???????????????????????????????????????????????????
+        // state machine
 
         private enum Phase { Idle, Approaching, WaitingToClose }
 
         private Phase _phase = Phase.Idle;
 
-        // ?? cached references ????????????????????????????????????????????????
+        // cached references
 
         private CompanionAI _ai;
         private Humanoid _humanoid;
         private ZNetView _nview;
 
-        // ?? door tracking ????????????????????????????????????????????????????
+        // door tracking
 
         private Door _targetDoor;
         private Vector3 _doorPos;
 
-        // ?? timers / position snapshots ??????????????????????????????????????
+        // timers / position snapshots
 
         private float _scanTimer;
         private float _stuckTimer;
@@ -86,13 +67,13 @@ namespace FiresCore.Npc.AI
         private float _closeTimer;     // counts down in WaitingToClose
         private float _cooldownTimer;  // post-close cooldown
 
-        // ?? door cache (shared across all instances) ?????????????????????????
+        // door cache (shared across all instances)
 
         private static Door[] _doorCache;
         private static float _doorCacheExpiry;
         private const float DoorCacheLifetime = 5f;
 
-        // ?? Unity lifecycle ??????????????????????????????????????????????????
+        // Unity lifecycle
 
         private void Awake()
         {
@@ -108,23 +89,23 @@ namespace FiresCore.Npc.AI
             if (_nview == null || _nview.GetZDO() == null || !_nview.IsOwner())
                 return;
 
-            float dt = Time.deltaTime;
+            float deltaTime = Time.deltaTime;
 
             if (_cooldownTimer > 0f)
             {
-                _cooldownTimer -= dt;
+                _cooldownTimer -= deltaTime;
                 return;
             }
 
             switch (_phase)
             {
-                case Phase.Idle:         UpdateIdle(dt);         break;
-                case Phase.Approaching:  UpdateApproaching(dt);  break;
-                case Phase.WaitingToClose: UpdateWaitingToClose(dt); break;
+                case Phase.Idle:         UpdateIdle(deltaTime);         break;
+                case Phase.Approaching:  UpdateApproaching(deltaTime);  break;
+                case Phase.WaitingToClose: UpdateWaitingToClose(deltaTime); break;
             }
         }
 
-        // ?? phase updates ?????????????????????????????????????????????????????
+        // phase updates
 
         private void UpdateIdle(float dt)
         {
@@ -145,7 +126,7 @@ namespace FiresCore.Npc.AI
             if (_stuckTimer < StuckThreshold)
                 return;
 
-            // Companion appears stuck ï¿½ look for a door that might be blocking it.
+            // Companion appears stuck - look for a door that might be blocking it.
             Door door = FindNearestClosedDoor();
             if (door == null)
                 return;
@@ -170,7 +151,7 @@ namespace FiresCore.Npc.AI
                 return;
             }
 
-            // Close enough ï¿½ interact (opens the door).
+            // Close enough - interact (opens the door).
             _targetDoor.Interact(_humanoid, false, false);
 
             _phase      = Phase.WaitingToClose;
@@ -189,7 +170,7 @@ namespace FiresCore.Npc.AI
             // Only start counting down once the companion has actually passed the door.
             if (distFromDoor < CloseDistance)
             {
-                // Still right at the door ï¿½ keep resetting the timer so we wait
+                // Still right at the door - keep resetting the timer so we wait
                 // until after we're through before closing.
                 _closeTimer = AutoCloseDelay;
                 return;
@@ -198,14 +179,14 @@ namespace FiresCore.Npc.AI
             if (_closeTimer > 0f)
                 return;
 
-            // Timer elapsed ï¿½ close the door if no one is blocking it.
+            // Timer elapsed - close the door if no one is blocking it.
             if (!IsAnyoneNearDoor())
                 TryCloseDoor();
 
             ResetToIdle(withCooldown: true);
         }
 
-        // ?? helpers ??????????????????????????????????????????????????????????
+        // helpers
 
         private void TryCloseDoor()
         {
@@ -232,10 +213,10 @@ namespace FiresCore.Npc.AI
                 if (door == null) continue;
                 if (!IsValidClosedDoor(door)) continue;
 
-                float d = Vector3.Distance(transform.position, door.transform.position);
-                if (d < ScanRadius && d < bestDist)
+                float doorDistance = Vector3.Distance(transform.position, door.transform.position);
+                if (doorDistance < ScanRadius && doorDistance < bestDist)
                 {
-                    bestDist = d;
+                    bestDist = doorDistance;
                     best     = door;
                 }
             }
@@ -249,23 +230,9 @@ namespace FiresCore.Npc.AI
             // Skip locked doors.
             if (door.m_keyItem != null) return false;
 
-            // Guard-stone protected doors: vanilla PrivateArea.CheckAccess
-            // â†’ HaveLocalAccess derefs this.m_piece and Player.m_localPlayer
-            // with NO null guards. Either can be null in normal play:
-            //   * this.m_piece is null on a ward whose Awake hasn't finished
-            //     (zone-stream-in race; the PrivateArea registers itself
-            //     in m_allAreas during Awake but m_piece is wired later)
-            //   * Player.m_localPlayer is null mid-teleport / mid-disconnect
-            //     / mid-respawn (Game destroys the player GO and recreates
-            //     it across the loading screen)
-            //
-            // Companions tick Update independently of player state, so
-            // they CAN call CheckAccess during either window and trip a
-            // raw NRE from vanilla. We pre-gate on the player-ready case
-            // and wrap the call to absorb the stale-ward case. On either
-            // failure we treat the door as inaccessible (skip it), which
-            // is the same behaviour as a real ward block â€” companion just
-            // walks past instead of trying to open.
+            // Vanilla PrivateArea.CheckAccess dereferences the ward's m_piece and Player.m_localPlayer unguarded, and
+            // either can be null (a ward mid-Awake, a player mid-teleport). Skip the check without a local player and
+            // treat a throw as no access, so the companion walks past as it would a real ward block.
             if (door.m_checkGuardStone)
             {
                 if (Player.m_localPlayer == null) return false;
@@ -300,10 +267,10 @@ namespace FiresCore.Npc.AI
 
             // Check other characters (companions, enemies) nearby.
             var hits = Physics.OverlapSphere(_doorPos, ProximityBlock);
-            foreach (var col in hits)
+            foreach (var collider in hits)
             {
-                if (col == null || col.gameObject == gameObject) continue;
-                if (col.GetComponent<Character>() != null)
+                if (collider == null || collider.gameObject == gameObject) continue;
+                if (collider.GetComponent<Character>() != null)
                     return true;
             }
 
@@ -331,7 +298,7 @@ namespace FiresCore.Npc.AI
                 _cooldownTimer = PostCloseCooldown;
         }
 
-        // ?? door cache ????????????????????????????????????????????????????????
+        // door cache
 
         private static Door[] GetDoorCache()
         {

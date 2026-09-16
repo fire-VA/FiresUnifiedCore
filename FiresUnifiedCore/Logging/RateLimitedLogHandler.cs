@@ -3,25 +3,10 @@ using UnityEngine;
 
 namespace FiresCore.Logging
 {
-    // Wraps Unity's default ILogHandler to throttle / suppress known noisy
-    // messages. Verbose mode is a pass-through - when the FiresLogger
-    // verbose toggle is on, nothing is filtered.
-    //
-    // Suppressed categories (non-verbose only):
-    //   - Steam k_EResultLimitExceeded floods (throttled to 1/30s)
-    //   - Shader binary-data warnings during bundle load (our shader
-    //     replacement handles the missing-on-export shaders)
-    //   - "Referenced script is missing" warnings (bundle prefabs whose
-    //     C# refs point at SpaceCraft / DungeonGenerator / other content
-    //     mods not in the user's profile - cosmetic, no functional impact)
-    //   - Kinematic-rigidbody velocity warnings (Valheim sets velocity on
-    //     attached Characters and the warning is benign)
-    //   - Known Valheim NRE stacks that we have no fix for (ShieldGenerator,
-    //     ArcheryTarget) - summary line emitted every NreSummaryEmitInterval
-    //     suppressions so the user knows the suppression is alive.
-    //
-    // Summaries (one line per N suppressed) provide ongoing visibility
-    // without flooding the log per-occurrence.
+    // Wraps Unity's default ILogHandler to throttle or drop known noise: Steam k_EResultLimitExceeded floods,
+    // shader binary-data warnings during bundle load, missing-script warnings from other mods' prefabs, benign
+    // kinematic-velocity warnings, and known unfixable vanilla NRE stacks. Suppressed categories emit a periodic
+    // summary line so the filter's activity stays visible. Verbose mode passes everything through.
     internal sealed class RateLimitedLogHandler : ILogHandler
     {
         private const string LogPrefix = "[FiresUnifiedCore]";
@@ -238,9 +223,9 @@ namespace FiresCore.Logging
         // the routed-RPC dispatch wraps the real throw in a TargetInvocationException.
         private static bool IsKnownNoFixNre(Exception exception)
         {
-            for (Exception e = exception; e != null; e = e.InnerException)
+            for (Exception current = exception; current != null; current = current.InnerException)
             {
-                string stack = e.StackTrace;
+                string stack = current.StackTrace;
                 if (string.IsNullOrEmpty(stack)) continue;
                 if (stack.Contains(ShieldGeneratorStackFragment)) return true;
                 if (stack.Contains(ArcheryTargetStackFragment)) return true;

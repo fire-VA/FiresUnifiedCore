@@ -46,6 +46,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
     /// </summary>
     public class ConsecrationEffect : CompanionStatusEffectBase
     {
+        private const float DurationSeconds = 10f;
+
         public Vector3 GroundPosition { get; set; }
         public float Radius { get; set; } = 5f;
         public float HealPerTick { get; set; } = 8f;
@@ -63,7 +65,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         {
             m_name = "Consecration";
             m_tooltip = "Holy ground that heals allies and burns undead";
-            Duration = 10f;
+            Duration = DurationSeconds;
         }
         
         protected override void OnEffectApplied()
@@ -149,7 +151,10 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
     /// </summary>
     public class DivineShieldEffect : CompanionStatusEffectBase
     {
-        public override string Description => 
+        private const float AuraVfxChance = 0.3f;
+        private const float DurationSeconds = 3f;
+
+        public override string Description =>
             $"<color=gold>Divine Shield</color>\n" +
             $"Immune to all damage\n" +
             $"Cannot attack";
@@ -161,7 +166,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         {
             m_name = "Divine Shield";
             m_tooltip = "Protected by divine light, but cannot attack";
-            Duration = 3f;
+            Duration = DurationSeconds;
         }
         
         protected override void OnEffectApplied()
@@ -194,7 +199,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             base.UpdateStatusEffect(dt);
             
             // Shield aura
-            if (m_character != null && Random.value < 0.3f)
+            if (m_character != null && Random.value < AuraVfxChance)
             {
                 SpawnVFX("fx_shield_start", m_character.transform.position);
             }
@@ -349,6 +354,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
     /// </summary>
     public class EvasionEffect : CompanionStatusEffectBase
     {
+        private const float DurationSeconds = 8f;
+
         public float DodgeChance { get; set; } = 0.5f; // 50% dodge
         
         public override string Description => 
@@ -359,7 +366,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         {
             m_name = "Evasion";
             m_tooltip = "High chance to dodge incoming attacks";
-            Duration = 8f;
+            Duration = DurationSeconds;
         }
         
         protected override void OnEffectApplied()
@@ -415,6 +422,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
     /// </summary>
     public class MultishotEffect : CompanionStatusEffectBase
     {
+        private const float ExpireAfterUseDuration = 0.1f;
+        private const float DurationSeconds = 15f;
+
         public int ArrowCount { get; set; } = 3;
         public float DamagePerArrow { get; set; } = 0.6f; // 60% damage each
         public float SpreadAngle { get; set; } = 15f;
@@ -430,7 +440,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         {
             m_name = "Multishot";
             m_tooltip = "Next shot fires multiple arrows";
-            Duration = 15f;
+            Duration = DurationSeconds;
         }
         
         protected override void OnEffectApplied()
@@ -464,7 +474,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
                 }
                 
                 // Remove effect after use
-                Duration = 0.1f;
+                Duration = ExpireAfterUseDuration;
             }
         }
         
@@ -492,6 +502,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
     /// </summary>
     public class OverchargeEffect : CompanionStatusEffectBase
     {
+        private const float DurationSeconds = 20f;
+
         public float EitrCostMultiplier { get; set; } = 1.5f; // +50% cost
         public float DamageMultiplier { get; set; } = 1.75f; // +75% damage
         
@@ -504,7 +516,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         {
             m_name = "Overcharge";
             m_tooltip = "Increased magic power at higher eitr cost";
-            Duration = 20f;
+            Duration = DurationSeconds;
         }
         
         protected override void OnEffectApplied()
@@ -596,15 +608,15 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         public float ReviveHealthPercent { get; set; } = 0.5f; // 50% HP
         
         private float _lastResurrectTime = -1000f;
-        private const float RESURRECT_COOLDOWN = 300f; // 5 minutes
+        private const float ResurrectCooldown = 300f; // 5 minutes
         
         public override string Description
         {
             get
             {
-                float cd = GetCooldownRemaining();
-                if (cd > 0)
-                    return $"Resurrection on cooldown ({cd:F0}s)";
+                float cooldownRemaining = GetCooldownRemaining();
+                if (cooldownRemaining > 0)
+                    return $"Resurrection on cooldown ({cooldownRemaining:F0}s)";
                 return "Can resurrect a defeated companion";
             }
         }
@@ -618,7 +630,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         
         public float GetCooldownRemaining()
         {
-            return Mathf.Max(0, RESURRECT_COOLDOWN - (Time.time - _lastResurrectTime));
+            return Mathf.Max(0, ResurrectCooldown - (Time.time - _lastResurrectTime));
         }
         
         public bool CanResurrect => GetCooldownRemaining() <= 0;
@@ -683,6 +695,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
     /// </summary>
     public class FlurryOfBlowsEffect : CompanionStatusEffectBase
     {
+        private const float DurationSeconds = 5f;
+
         public int BonusAttacks { get; set; } = 4; // 5 total attacks
         public float DamagePerHit { get; set; } = 0.4f; // 40% damage each
         
@@ -697,7 +711,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         {
             m_name = "Flurry of Blows";
             m_tooltip = "Unleashing a rapid series of strikes";
-            Duration = 5f;
+            Duration = DurationSeconds;
         }
         
         protected override void OnEffectApplied()
@@ -759,6 +773,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
     /// </summary>
     public class IronBodyEffect : CompanionStatusEffectBase
     {
+        private const float AuraVfxChance = 0.1f;
+        private const float DurationSeconds = 10f;
+
         public float DamageReduction { get; set; } = 0.7f; // Take 70% damage (30% reduction)
         
         public override string Description => 
@@ -769,7 +786,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         {
             m_name = "Iron Body";
             m_tooltip = "Body hardened against damage";
-            Duration = 10f;
+            Duration = DurationSeconds;
         }
         
         protected override void OnEffectApplied()
@@ -791,7 +808,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             base.UpdateStatusEffect(dt);
             
             // Iron aura
-            if (m_character != null && Random.value < 0.1f)
+            if (m_character != null && Random.value < AuraVfxChance)
             {
                 SpawnVFX("fx_shaman_protect", m_character.transform.position);
             }

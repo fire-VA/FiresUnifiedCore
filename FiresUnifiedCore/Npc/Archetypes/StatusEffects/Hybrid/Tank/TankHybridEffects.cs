@@ -191,8 +191,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Tank
         public float AuraRange { get; set; } = 10f;
         
         private float _lastTickTime;
-        private const float TICK_INTERVAL = 1f;
-        
+        private const float TickInterval = 1f;
+        private const float SupportFxUnscaledRadius = 15f;
+
         public override bool IsGroupAbility => true;
         
         public override string Description => 
@@ -214,14 +215,14 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Tank
             _lastTickTime = Time.time;
             m_character?.Message(MessageHud.MessageType.TopLeft, "Protective Aura active!");
             
-            AbilityFXManager.SpawnEffect("fx_DvergerMage_Support_start", m_character?.transform.position ?? Vector3.zero, null, GroupRange / 15f);
+            AbilityFXManager.SpawnEffect("fx_DvergerMage_Support_start", m_character?.transform.position ?? Vector3.zero, null, GroupRange / SupportFxUnscaledRadius);
         }
         
         public override void UpdateStatusEffect(float dt)
         {
             base.UpdateStatusEffect(dt);
             
-            if (Time.time - _lastTickTime >= TICK_INTERVAL)
+            if (Time.time - _lastTickTime >= TickInterval)
             {
                 _lastTickTime = Time.time;
                 HealNearbyAllies();

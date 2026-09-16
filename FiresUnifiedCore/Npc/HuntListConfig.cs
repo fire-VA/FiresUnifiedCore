@@ -72,8 +72,8 @@ namespace FiresCore.Npc
             if (string.IsNullOrWhiteSpace(raw)) return set;
             foreach (var token in raw.Split(','))
             {
-                var k = token.Trim().ToLowerInvariant();
-                if (k.Length > 0) set.Add(k);
+                var normalized = token.Trim().ToLowerInvariant();
+                if (normalized.Length > 0) set.Add(normalized);
             }
             return set;
         }

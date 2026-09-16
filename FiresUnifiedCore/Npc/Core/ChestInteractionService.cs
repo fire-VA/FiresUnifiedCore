@@ -7,48 +7,10 @@ using FiresCore.Npc.IdleBehaviors;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// Service for physically interacting with chests - pathfinding to them, opening, 
-    /// pulling/depositing items, and returning.
-    /// 
-    /// This is the PHYSICAL INTERACTION layer on top of ResourceAccessService.
-    /// - ResourceAccessService: Data operations (find chests, check items, move items between inventories)
-    /// - ChestInteractionService: Physical operations (pathfind to chest, open, interact, return)
-    /// 
-    /// CHEST INTERACTION FLOW:
-    /// 1. FindingChest: Locate a chest with the needed items (via ContainerRegistry)
-    /// 2. MovingToChest: Pathfind using vanilla BaseAI.MoveTo() through CompanionAI
-    /// 3. OpeningChest: Face chest, play interact animation, set ZDO "InUse" flag
-    /// 4. Interacting: Transfer items between inventories
-    /// 5. ClosingChest: Clear ZDO "InUse" flag, wait for close animation
-    /// 6. ReturningToOrigin: Pathfind back to starting position
-    /// 
-    /// PROPER CHEST OPEN/CLOSE:
-    /// - Uses ZDO.Set(ZDOVars.s_inUse, 1) to mark chest as "in use" (prevents other players)
-    /// - Uses ZDO.Set(ZDOVars.s_inUse, 0) to release the chest when done
-    /// - This is the same mechanism Valheim uses when players open containers
-    /// 
-    /// PATHFINDING:
-    /// - Uses CompanionAI.RequestPathfindingMovement() which wraps vanilla BaseAI.MoveTo()
-    /// - This ensures proper obstacle avoidance using Valheim's NavMesh system
-    /// - Movement authority is coordinated via UnifiedMovementAuthority
-    /// 
-    /// USAGE IN BEHAVIORS:
-    /// 1. Create ChestInteractionService with companion references
-    /// 2. Call StartPullOperation() or StartDepositOperation() to begin
-    /// 3. Call Update() every frame - returns true when complete
-    /// 4. Check LastResult for what happened
-    /// 
-    /// WORKFLOW EXAMPLE (SmelterOperator needs coal):
-    /// 1. SmelterOperator detects it needs coal from chests
-    /// 2. Calls chestService.StartPullOperation("Coal", 10)
-    /// 3. ChestInteractionService:
-    ///    a. Finds nearest chest with coal (via ContainerRegistry)
-    ///    b. Pathfinds to chest (using vanilla MoveTo)
-    ///    c. Opens chest (sets ZDO InUse flag)
-    ///    d. Pulls coal from chest inventory
-    ///    e. Closes chest (clears ZDO InUse flag)
-    ///    f. Returns to original position
-    /// 4. SmelterOperator continues with coal in inventory
+    /// The physical side of chest access, on top of ResourceAccessService's data operations: find a chest with
+    /// the items, path to it through CompanionAI, open it with the ZDO in-use flag as vanilla does for players,
+    /// transfer the items, close it and walk back. Start with StartPullOperation or StartDepositOperation, call
+    /// Update each frame until it returns true, then read LastResult.
     /// </summary>
     public class ChestInteractionService
     {
@@ -159,11 +121,14 @@ namespace FiresCore.Npc.Core
         private Vector3 _interactionPoint;
         
         // Timing constants
-        private const float OPEN_ANIMATION_DURATION = 0.8f;   // Time for chest lid to open
-        private const float CLOSE_ANIMATION_DURATION = 0.5f;  // Time for chest lid to close
-        private const float INTERACT_DURATION = 0.3f;         // Time to transfer items
-        private const float PHASE_TIMEOUT = 30f;
-        private const float MOVEMENT_TIMEOUT = 60f;
+        private const float OpenAnimationDuration = 0.8f;   // Time for chest lid to open
+        private const float CloseAnimationDuration = 0.5f;  // Time for chest lid to close
+        private const float InteractDuration = 0.3f;         // Time to transfer items
+        private const float PhaseTimeout = 30f;
+        private const float MovementTimeout = 60f;
+        private const float PhaseEntryWindow = 0.1f;
+        private const float FacingLeaseDuration = 0.4f;
+        private const float FallbackTurnSpeed = 5f;
         
         // Logging
         public bool VerboseLogging { get; set; } = false;
@@ -527,7 +492,7 @@ namespace FiresCore.Npc.Core
             FaceTarget(_targetChestPosition);
             
             // On first frame, try to open the chest
-            if (TimeInCurrentPhase < 0.1f)
+            if (TimeInCurrentPhase < PhaseEntryWindow)
             {
                 // Check if chest is in use by someone else
                 if (_targetChest.IsInUse())
@@ -544,24 +509,15 @@ namespace FiresCore.Npc.Core
             }
             
             // Wait for open animation duration
-            if (TimeInCurrentPhase >= OPEN_ANIMATION_DURATION)
+            if (TimeInCurrentPhase >= OpenAnimationDuration)
             {
                 SetPhase(InteractionPhase.Interacting);
             }
         }
         
         /// <summary>
-        /// Opens the chest properly, triggering:
-        /// - The chest lid animation (m_open/m_closed GameObjects)
-        /// - The open sound effects
-        /// - Sets the "InUse" ZDO state
-        /// - Forces immediate ZDO sync to all nearby clients
-        /// 
-        /// HOW VALHEIM'S CONTAINER SYNC WORKS:
-        /// 1. Owner sets m_inUse = true and calls UpdateUseVisual()
-        /// 2. UpdateUseVisual() sets ZDO s_inUse flag and toggles m_open/m_closed GameObjects
-        /// 3. Non-owners poll ZDO every 1 second in CheckForChanges() and update visuals
-        /// 4. For IMMEDIATE sync, use ZDOMan.ForceSendZDO() to push ZDO to nearby clients
+        /// Opens the chest the way the owner of a container does (in-use flag, lid visuals and sound) and force-sends the
+        /// ZDO, since other clients otherwise only poll for the change about once a second.
         /// </summary>
         private void TryOpenChest()
         {
@@ -618,7 +574,7 @@ namespace FiresCore.Npc.Core
         private void UpdateInteracting()
         {
             // Wait for interact duration then perform the operation
-            if (TimeInCurrentPhase >= INTERACT_DURATION)
+            if (TimeInCurrentPhase >= InteractDuration)
             {
                 PerformItemTransfer();
                 
@@ -630,13 +586,13 @@ namespace FiresCore.Npc.Core
         private void UpdateClosingChest()
         {
             // Close the chest on first frame
-            if (TimeInCurrentPhase < 0.1f)
+            if (TimeInCurrentPhase < PhaseEntryWindow)
             {
                 TryCloseChest();
             }
             
             // Wait for close animation
-            if (TimeInCurrentPhase >= CLOSE_ANIMATION_DURATION)
+            if (TimeInCurrentPhase >= CloseAnimationDuration)
             {
                 // Decide next phase
                 if (_shouldReturnToOrigin)
@@ -880,9 +836,9 @@ namespace FiresCore.Npc.Core
             {
                 case InteractionPhase.MovingToChest:
                 case InteractionPhase.ReturningToOrigin:
-                    return MOVEMENT_TIMEOUT;
+                    return MovementTimeout;
                 default:
-                    return PHASE_TIMEOUT;
+                    return PhaseTimeout;
             }
         }
         
@@ -998,7 +954,7 @@ namespace FiresCore.Npc.Core
             var facing = _companion.GetFacingAuthority();
             if (facing != null)
             {
-                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.SubBehavior, "ChestInteraction", 0.4f))
+                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.SubBehavior, "ChestInteraction", FacingLeaseDuration))
                     facing.SetLookDirection("ChestInteraction", dir);
                 return;
             }
@@ -1007,7 +963,7 @@ namespace FiresCore.Npc.Core
             _companion.transform.rotation = Quaternion.Slerp(
                 _companion.transform.rotation,
                 Quaternion.LookRotation(dir),
-                Time.deltaTime * 5f);
+                Time.deltaTime * FallbackTurnSpeed);
         }
         
         private void PlayInteractAnimation()

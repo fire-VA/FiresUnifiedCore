@@ -5,18 +5,8 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Expanded archetype definitions with RPG-style roles.
-    /// Each archetype has unique stat bonuses, weapon preferences, and combat behaviors.
-    /// 
-    /// ARCHETYPE HIERARCHY:
-    /// - Guardian: Shield + melee, high defense, uses taunt, protects allies
-    /// - Berserker: Two-handed or dual wield, high offense, aggressive combos
-    /// - Rogue: Daggers/knives, high mobility, backstab bonuses, evasion
-    /// - Ranger: Bows/crossbows, kiting, trap awareness, long-range support
-    /// - Mage: Staves, eitr-based, elemental damage, AoE attacks
-    /// - Cleric: Support staves, buff/heal allies, stays at range
-    /// - Paladin: Shield + mace/sword, balanced offense/defense, can heal
-    /// - Monk: Unarmed/clubs, high mobility, chi abilities, meditation
+    /// Companion archetypes, each with its own stat bonuses, weapon preferences and combat style: Guardian, Berserker,
+    /// Rogue, Ranger, Mage, Cleric, Paladin and Monk.
     /// </summary>
     public enum ArchetypeClass
     {

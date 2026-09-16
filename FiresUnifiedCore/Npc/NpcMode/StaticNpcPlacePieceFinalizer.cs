@@ -7,18 +7,9 @@ using UnityEngine;
 namespace FiresCore.Npc.NpcMode
 {
     /// <summary>
-    /// Diagnostic Harmony patch on <see cref="Player.PlacePiece"/>. When the call throws
-    /// <c>ArgumentException: The Object you want to instantiate is null</c> for one of our
-    /// quest-NPC pieces (<c>StaticNpc</c> / <c>BaseNpc</c> / <c>CompanionNpc</c>), the
-    /// finalizer dumps every prefab-typed field on <see cref="Piece"/> that could plausibly
-    /// feed an <c>Object.Instantiate</c> call ? including fields that don't exist on older
-    /// Valheim builds, via reflection so we stay forward-compatible across game updates.
-    ///
-    /// The exception is NOT swallowed: the user reported that the NPC never visually
-    /// appears, which means the exception is fatal to placement rather than a cosmetic
-    /// post-placement side effect. Surfacing the underlying null lets us fix the bundle
-    /// import (or set a safe default in <c>SetupNpcPieceDefaults</c>) rather than masking
-    /// the symptom.
+    /// Diagnoses "The Object you want to instantiate is null" from Player.PlacePiece for quest-NPC pieces by logging
+    /// every prefab field on the Piece, found by reflection so it works across game versions. The exception is not
+    /// swallowed, since placement genuinely fails; the log points at the bundle field to fix.
     /// </summary>
     [HarmonyPatch(typeof(Player), nameof(Player.PlacePiece))]
     internal static class StaticNpcPlacePieceFinalizer
@@ -43,14 +34,14 @@ namespace FiresCore.Npc.NpcMode
         private static void Prefix(Piece piece)
         {
             if (piece == null) return;
-            string n = piece.name ?? string.Empty;
+            string pieceName = piece.name ?? string.Empty;
             bool whitelisted = false;
             for (int i = 0; i < WhitelistedPrefixes.Length; i++)
-                if (n.StartsWith(WhitelistedPrefixes[i], StringComparison.OrdinalIgnoreCase))
+                if (pieceName.StartsWith(WhitelistedPrefixes[i], StringComparison.OrdinalIgnoreCase))
                 { whitelisted = true; break; }
             if (!whitelisted) return;
 
-            Debug.Log($"[FiresRPGmaker] PlacePiece prefix: about to place '{n}'. " +
+            Debug.Log($"[FiresRPGmaker] PlacePiece prefix: about to place '{pieceName}'. " +
                       $"gameObject={(piece.gameObject != null ? "ok" : "<NULL>")} " +
                       $"m_placeEffect={(piece.m_placeEffect != null ? "ok" : "<NULL>")} " +
                       $"m_resources.Length={(piece.m_resources != null ? piece.m_resources.Length : -1)}");
@@ -80,7 +71,7 @@ namespace FiresCore.Npc.NpcMode
 
             if (!whitelisted) return __exception; // unrelated mod, let it bubble
 
-            // Build the diagnostic dump ? logged ONCE per placement attempt so the log
+            // Build the diagnostic dump - logged ONCE per placement attempt so the log
             // isn't swamped even if someone spam-clicks the hammer.
             var sb = new StringBuilder();
             sb.AppendLine($"[FiresRPGmaker] PlacePiece Instantiate(null) on piece '{pieceName}'. Diagnostic dump:");
@@ -91,35 +82,35 @@ namespace FiresCore.Npc.NpcMode
                 sb.AppendLine($"  piece.m_category         : {(piece != null ? piece.m_category.ToString() : "<piece null>")}");
 
                 // Sweep every instance field on Piece whose declared type inherits from
-                // UnityEngine.Object ? ANY of them could be the null Instantiate target.
+                // UnityEngine.Object -> ANY of them could be the null Instantiate target.
                 // This is version-proof: new fields in future Valheim builds show up
                 // automatically without us having to update an allowlist.
                 var pieceType = typeof(Piece);
                 var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-                foreach (var fi in pieceType.GetFields(flags))
+                foreach (var fieldInfo in pieceType.GetFields(flags))
                 {
-                    var ft = fi.FieldType;
-                    bool isObjectRef = typeof(UnityEngine.Object).IsAssignableFrom(ft);
-                    bool isObjectArray = ft.IsArray && typeof(UnityEngine.Object).IsAssignableFrom(ft.GetElementType());
+                    var fieldType = fieldInfo.FieldType;
+                    bool isObjectRef = typeof(UnityEngine.Object).IsAssignableFrom(fieldType);
+                    bool isObjectArray = fieldType.IsArray && typeof(UnityEngine.Object).IsAssignableFrom(fieldType.GetElementType());
                     if (!isObjectRef && !isObjectArray) continue;
 
-                    object val = piece != null ? fi.GetValue(piece) : null;
+                    object val = piece != null ? fieldInfo.GetValue(piece) : null;
                     if (isObjectArray)
                     {
                         var arr = val as Array;
                         if (arr == null)
                         {
-                            sb.AppendLine($"  {fi.Name,-30} : <null array>");
+                            sb.AppendLine($"  {fieldInfo.Name,-30} : <null array>");
                             continue;
                         }
                         int nullCount = 0;
                         for (int k = 0; k < arr.Length; k++)
                             if (arr.GetValue(k) == null) nullCount++;
-                        sb.AppendLine($"  {fi.Name,-30} : {arr.Length} entries ({nullCount} null)");
+                        sb.AppendLine($"  {fieldInfo.Name,-30} : {arr.Length} entries ({nullCount} null)");
                     }
                     else
                     {
-                        sb.AppendLine($"  {fi.Name,-30} : {SafeRefDesc(val as UnityEngine.Object)}");
+                        sb.AppendLine($"  {fieldInfo.Name,-30} : {SafeRefDesc(val as UnityEngine.Object)}");
                     }
                 }
 
@@ -161,20 +152,20 @@ namespace FiresCore.Npc.NpcMode
                 }
 
                 // Resource icons are another recurring null-Instantiate culprit in vanilla
-                // ? Player.ConsumeResources calls Instantiate on each requirement's
+                // - Player.ConsumeResources calls Instantiate on each requirement's
                 // m_resItem.m_itemData.m_shared.m_icons[0].
                 if (piece != null && piece.m_resources != null)
                 {
-                    for (int r = 0; r < piece.m_resources.Length; r++)
+                    for (int resourceIndex = 0; resourceIndex < piece.m_resources.Length; resourceIndex++)
                     {
-                        var req = piece.m_resources[r];
+                        var req = piece.m_resources[resourceIndex];
                         if (req == null)
                         {
-                            sb.AppendLine($"  m_resources[{r}] <null requirement>");
+                            sb.AppendLine($"  m_resources[{resourceIndex}] <null requirement>");
                             continue;
                         }
                         var resItem = req.m_resItem;
-                        sb.AppendLine($"  m_resources[{r}] resItem={SafeRefDesc(resItem)} amount={req.m_amount}");
+                        sb.AppendLine($"  m_resources[{resourceIndex}] resItem={SafeRefDesc(resItem)} amount={req.m_amount}");
                     }
                 }
             }

@@ -37,7 +37,7 @@ namespace FiresCore.Npc.Patrol
         {
             if (string.IsNullOrEmpty(name)) return null;
             if (!_initialized) Initialize();
-            return _routes.TryGetValue(name, out var r) ? r : null;
+            return _routes.TryGetValue(name, out var route) ? route : null;
         }
 
         public static IEnumerable<string> GetAllRouteNames()
@@ -95,8 +95,8 @@ namespace FiresCore.Npc.Patrol
         {
             var sb = new StringBuilder();
             sb.Append('[').Append(name).Append("]\n");
-            foreach (var p in points)
-                sb.Append(F2(p.x)).Append(',').Append(F2(p.y)).Append(',').Append(F2(p.z)).Append('\n');
+            foreach (var point in points)
+                sb.Append(F2(point.x)).Append(',').Append(F2(point.y)).Append(',').Append(F2(point.z)).Append('\n');
 
             if (meta != null)
             {
@@ -121,26 +121,26 @@ namespace FiresCore.Npc.Patrol
             if (preset == null || string.IsNullOrEmpty(preset.Name)) return;
             sb.Append("[preset:").Append(preset.Name).Append("]\n");
             sb.Append("runThreshold=").Append(N(preset.RunThreshold)).Append('\n');
-            foreach (var s in preset.Sections)
+            foreach (var section in preset.Sections)
             {
-                sb.Append("section=").Append(s.Low).Append(',').Append(s.High)
-                  .Append(",peak=").Append(N(s.Peak))
-                  .Append(",floor=").Append(N(s.Floor))
-                  .Append(",shape=").Append(s.Shape.ToString())
-                  .Append(",k=").Append(N(s.ShapeK));
-                if (s.Shape == SpeedShape.Custom && s.CustomCurve != null && s.CustomCurve.Count > 0)
+                sb.Append("section=").Append(section.Low).Append(',').Append(section.High)
+                  .Append(",peak=").Append(N(section.Peak))
+                  .Append(",floor=").Append(N(section.Floor))
+                  .Append(",shape=").Append(section.Shape.ToString())
+                  .Append(",k=").Append(N(section.ShapeK));
+                if (section.Shape == SpeedShape.Custom && section.CustomCurve != null && section.CustomCurve.Count > 0)
                 {
                     sb.Append(",curve=");
-                    for (int i = 0; i < s.CustomCurve.Count; i++)
+                    for (int i = 0; i < section.CustomCurve.Count; i++)
                     {
                         if (i > 0) sb.Append('|');
-                        sb.Append(N(s.CustomCurve[i].x)).Append(':').Append(N(s.CustomCurve[i].y));
+                        sb.Append(N(section.CustomCurve[i].x)).Append(':').Append(N(section.CustomCurve[i].y));
                     }
                 }
                 sb.Append('\n');
             }
-            foreach (var st in preset.StopPoints)
-                sb.Append("stop=").Append(st.Index).Append(",dur=").Append(N(st.Duration)).Append('\n');
+            foreach (var stop in preset.StopPoints)
+                sb.Append("stop=").Append(stop.Index).Append(",dur=").Append(N(stop.Duration)).Append('\n');
         }
 
         private static string F2(float v) => v.ToString("F2", CultureInfo.InvariantCulture);
@@ -216,11 +216,11 @@ namespace FiresCore.Npc.Patrol
                 if (line.IndexOf('=') > 0) { ParseRouteMetaLine(route, line); continue; }
 
                 // Otherwise it's an XYZ point line (the block that stays first — unchanged format).
-                var c = line.Split(',');
-                if (c.Length < 3) continue;
-                if (float.TryParse(c[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var x) &&
-                    float.TryParse(c[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var y) &&
-                    float.TryParse(c[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var z))
+                var parts = line.Split(',');
+                if (parts.Length < 3) continue;
+                if (float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var x) &&
+                    float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var y) &&
+                    float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var z))
                     route.Points.Add(new Vector3(x, y, z));
             }
             if (string.IsNullOrEmpty(route.Name)) route.Name = Path.GetFileNameWithoutExtension(fileName);
@@ -231,21 +231,21 @@ namespace FiresCore.Npc.Patrol
         // clamped to sane bounds so a hand-edited or corrupt cfg can't break the follower.
         private static void ParseRouteMetaLine(PatrolRoute route, string line)
         {
-            int eq = line.IndexOf('=');
-            string key = line.Substring(0, eq).Trim();
-            string val = line.Substring(eq + 1).Trim();
+            int equalsIndex = line.IndexOf('=');
+            string key = line.Substring(0, equalsIndex).Trim();
+            string val = line.Substring(equalsIndex + 1).Trim();
 
             if (key.Equals("arrivalRadius", StringComparison.OrdinalIgnoreCase))
             {
-                if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) route.ArrivalRadius = Mathf.Clamp(v, 0.4f, 12f);
+                if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)) route.ArrivalRadius = Mathf.Clamp(parsed, 0.4f, 12f);
             }
             else if (key.Equals("lookAhead", StringComparison.OrdinalIgnoreCase))
             {
-                if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) route.LookAhead = Mathf.Clamp(v, 0.5f, 30f);
+                if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)) route.LookAhead = Mathf.Clamp(parsed, 0.5f, 30f);
             }
             else if (key.Equals("smoothing", StringComparison.OrdinalIgnoreCase))
             {
-                if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) route.Smoothing = Mathf.Clamp01(v);
+                if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)) route.Smoothing = Mathf.Clamp01(parsed);
             }
             else if (key.Equals("mustHit", StringComparison.OrdinalIgnoreCase))
             {
@@ -256,25 +256,25 @@ namespace FiresCore.Npc.Patrol
 
         private static void ParsePresetLine(SpeedPreset preset, string line)
         {
-            int eq = line.IndexOf('=');
-            if (eq <= 0) return;
-            string key = line.Substring(0, eq).Trim();
-            string val = line.Substring(eq + 1).Trim();
+            int equalsIndex = line.IndexOf('=');
+            if (equalsIndex <= 0) return;
+            string key = line.Substring(0, equalsIndex).Trim();
+            string val = line.Substring(equalsIndex + 1).Trim();
 
             if (key.Equals("runThreshold", StringComparison.OrdinalIgnoreCase))
             {
-                if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var rt))
-                    preset.RunThreshold = rt;
+                if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var runThreshold))
+                    preset.RunThreshold = runThreshold;
             }
             else if (key.Equals("section", StringComparison.OrdinalIgnoreCase))
             {
-                var s = ParseSection(val);
-                if (s != null) preset.Sections.Add(s);
+                var section = ParseSection(val);
+                if (section != null) preset.Sections.Add(section);
             }
             else if (key.Equals("stop", StringComparison.OrdinalIgnoreCase))
             {
-                var st = ParseStop(val);
-                if (st != null) preset.StopPoints.Add(st);
+                var stop = ParseStop(val);
+                if (stop != null) preset.StopPoints.Add(stop);
             }
         }
 
@@ -287,22 +287,22 @@ namespace FiresCore.Npc.Patrol
             if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var start)) return null;
             if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var end)) return null;
 
-            var s = new Section { StartIndex = start, EndIndex = end };
+            var section = new Section { StartIndex = start, EndIndex = end };
             for (int i = 2; i < parts.Length; i++)
             {
-                var kv = parts[i].Split(new[] { '=' }, 2);
-                if (kv.Length != 2) continue;
-                string k = kv[0].Trim(), v = kv[1].Trim();
-                switch (k.ToLowerInvariant())
+                var pair = parts[i].Split(new[] { '=' }, 2);
+                if (pair.Length != 2) continue;
+                string key = pair[0].Trim(), valueText = pair[1].Trim();
+                switch (key.ToLowerInvariant())
                 {
-                    case "peak":  if (float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var pk)) s.Peak = pk; break;
-                    case "floor": if (float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var fl)) s.Floor = fl; break;
-                    case "shape": if (Enum.TryParse(v, true, out SpeedShape sh)) s.Shape = sh; break;
-                    case "k":     if (float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var kk)) s.ShapeK = kk; break;
-                    case "curve": s.CustomCurve = ParseCurve(v); break;
+                    case "peak":  if (float.TryParse(valueText, NumberStyles.Float, CultureInfo.InvariantCulture, out var peak)) section.Peak = peak; break;
+                    case "floor": if (float.TryParse(valueText, NumberStyles.Float, CultureInfo.InvariantCulture, out var floor)) section.Floor = floor; break;
+                    case "shape": if (Enum.TryParse(valueText, true, out SpeedShape shape)) section.Shape = shape; break;
+                    case "k":     if (float.TryParse(valueText, NumberStyles.Float, CultureInfo.InvariantCulture, out var shapeK)) section.ShapeK = shapeK; break;
+                    case "curve": section.CustomCurve = ParseCurve(valueText); break;
                 }
             }
-            return s;
+            return section;
         }
 
         private static List<Vector2> ParseCurve(string val)
@@ -310,11 +310,11 @@ namespace FiresCore.Npc.Patrol
             var list = new List<Vector2>();
             foreach (var seg in val.Split('|'))
             {
-                var uv = seg.Split(':');
-                if (uv.Length != 2) continue;
-                if (float.TryParse(uv[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var u) &&
-                    float.TryParse(uv[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var sp))
-                    list.Add(new Vector2(u, sp));
+                var parts = seg.Split(':');
+                if (parts.Length != 2) continue;
+                if (float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var u) &&
+                    float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var speed))
+                    list.Add(new Vector2(u, speed));
             }
             list.Sort((a, b) => a.x.CompareTo(b.x));
             return list.Count > 0 ? list : null;
@@ -326,15 +326,15 @@ namespace FiresCore.Npc.Patrol
             var parts = val.Split(',');
             if (parts.Length < 1) return null;
             if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx)) return null;
-            var st = new StopPoint { Index = idx };
+            var stop = new StopPoint { Index = idx };
             for (int i = 1; i < parts.Length; i++)
             {
-                var kv = parts[i].Split(new[] { '=' }, 2);
-                if (kv.Length == 2 && kv[0].Trim().Equals("dur", StringComparison.OrdinalIgnoreCase)
-                    && float.TryParse(kv[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                    st.Duration = d;
+                var pair = parts[i].Split(new[] { '=' }, 2);
+                if (pair.Length == 2 && pair[0].Trim().Equals("dur", StringComparison.OrdinalIgnoreCase)
+                    && float.TryParse(pair[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var duration))
+                    stop.Duration = duration;
             }
-            return st;
+            return stop;
         }
 
         private static void EnsureFolderExists()

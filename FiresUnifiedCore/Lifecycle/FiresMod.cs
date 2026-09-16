@@ -143,11 +143,11 @@ namespace FiresCore.Lifecycle
         // True when a patch type (or any of its nesting parents) is in the dedicated-server skip set.
         private static bool IsDedicatedServerSkip(Type type, System.Collections.Generic.IReadOnlyCollection<string> skipTypes)
         {
-            for (var t = type; t != null; t = t.DeclaringType)
+            for (var current = type; current != null; current = current.DeclaringType)
             {
-                var name = t.FullName;
-                foreach (var s in skipTypes)
-                    if (s == name) return true;
+                var name = current.FullName;
+                foreach (var skipType in skipTypes)
+                    if (skipType == name) return true;
             }
             return false;
         }
@@ -177,11 +177,11 @@ namespace FiresCore.Lifecycle
 
                     if (hasDormant)
                     {
-                        var ns = type.Namespace;
+                        var typeNamespace = type.Namespace;
                         bool skip = false;
-                        if (ns != null)
-                            foreach (var d in dormant)
-                                if (ns == d || ns.StartsWith(d + ".", StringComparison.Ordinal)) { skip = true; break; }
+                        if (typeNamespace != null)
+                            foreach (var dormantName in dormant)
+                                if (typeNamespace == dormantName || typeNamespace.StartsWith(dormantName + ".", StringComparison.Ordinal)) { skip = true; break; }
                         if (skip) continue;
                     }
 

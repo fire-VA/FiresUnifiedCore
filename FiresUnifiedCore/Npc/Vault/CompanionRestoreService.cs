@@ -9,46 +9,11 @@ using FiresCore.Bridge;
 namespace FiresCore.Npc.Vault
 {
     /// <summary>
-    /// Server-authoritative companion restoration on player connect.
-    ///
-    /// HISTORY:
-    /// - First iteration triggered on <c>ZNet.OnNewConnection</c> postfix
-    ///   and waited for the connecting peer's <c>Player</c> MonoBehaviour
-    ///   to materialise via a 60s coroutine poll of
-    ///   <c>Player.GetAllPlayers()</c>. Confirmed in field testing
-    ///   (server log line "Player MonoBehaviour for peer ... did not
-    ///   materialise within 60s â€” skipping restore") that on a dedicated
-    ///   server, ZNetScene never instantiates Player MonoBehaviours for
-    ///   remote peers â€” their character ZDO sits in ZDOMan as raw data
-    ///   only. The architectural assumption was wrong.
-    /// - Second iteration switched to <c>ZNet.RPC_CharacterID</c> postfix
-    ///   to get a reliable <c>peer.m_uid</c>. Same outcome â€” peer.m_uid
-    ///   was reliable but the wait-for-Player coroutine still timed out
-    ///   for the same reason.
-    /// - Third iteration (this file): trigger on FiresRPGmaker's own
-    ///   <c>VaultOfKnowledge.RPC_AnnouncePlayerInfo</c>. That handler
-    ///   already extracts <c>playerId</c> from the package and is the
-    ///   canonical "the server now knows who this peer is" event. We
-    ///   piggyback via Harmony Prefix+Postfix using a saved
-    ///   <c>__state</c> playerId, then run the restore IMMEDIATELY with
-    ///   <c>player == null</c>. Restoration is now a pure ZDO + vault
-    ///   operation: walk the disk-backed vault for the player's
-    ///   companions, scan ZDOMan to see which already exist, adopt or
-    ///   spawn-from-vault as needed. No <c>Player.m_customData</c>
-    ///   reads, no <c>CommandFollow(player)</c> calls â€” the follow
-    ///   intent is written directly to each companion's ZDO via
-    ///   <c>companion_wasfollowing</c>, which the client-side
-    ///   <c>CompanionController</c> reads on <c>LoadFromZDO</c> and
-    ///   reconciles when the local Player exists.
-    ///
-    /// LISTEN-HOST / SINGLE-PLAYER:
-    /// Vanilla Valheim runs single-player as a self-hosted listen-server.
-    /// AnnouncePlayerInfo still fires from the host's client to itself
-    /// via the routed RPC self-loop, so the same path runs. The host's
-    /// local Player is reachable (same process), but we still pass
-    /// <c>player == null</c> for symmetry â€” restore writes ZDO state
-    /// only, and the host's CompanionController instances reconcile
-    /// from their loaded ZDOs the same way a remote client's would.
+    /// Restores a player's companions on the server when they connect. Once CompanionVaultBridge raises
+    /// PlayerAnnouncedToServer and config sync has finished for that peer, it walks the player's saved
+    /// companions, adopts any that already exist in ZDOMan and spawns the rest from their saved data. It only
+    /// writes ZDO state, follow intent included, so it behaves the same on a dedicated server, where remote
+    /// players have no Player object, as on a listen host.
     /// </summary>
     [HarmonyPatch]
     public static class CompanionRestoreService
@@ -60,19 +25,6 @@ namespace FiresCore.Npc.Vault
         private static readonly HashSet<long> _restoredPlayerIds = new HashSet<long>();
         private static readonly HashSet<long> _pendingPlayerIds  = new HashSet<long>();
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // Trigger: Harmony Prefix+Postfix on VaultOfKnowledge.RPC_AnnouncePlayerInfo
-        //
-        // The package layout (verified in VaultOfKnowledge.RPC_AnnouncePlayerInfo):
-        //   long  playerId
-        //   string playerName
-        //   string platformId
-        //   string platform
-        //
-        // The original handler READS the package, consuming positions. We
-        // peek at the playerId in our prefix using GetPos/SetPos, save it
-        // via __state, then read it back in the postfix to trigger restore.
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         // Subscribe (server-side, once) to the Core player-announced hook. A provider (the host's
         // Marketplace vault in integrated mode, or the standalone kennel) raises it after a player
@@ -113,7 +65,7 @@ namespace FiresCore.Npc.Vault
         /// it returns true (or the fallback timeout elapses), then runs
         /// <see cref="RestoreForPlayerServerSide"/>. Bails if the peer disconnects.
         ///
-        /// 150s ceiling is intentionally generous â€” config sync on a slow client
+        /// 150s ceiling is intentionally generous — config sync on a slow client
         /// can take 60+ seconds, and missing the signal is far less harmful than
         /// firing restore mid-config-push.
         /// </summary>
@@ -123,7 +75,7 @@ namespace FiresCore.Npc.Vault
             const float maxWaitSec = 150f;
             float waited = 0f;
 
-            Debug.Log($"{LogPrefix} Waiting for config sync to complete on peer {peerUid} before restoring player {playerId} (fallback {maxWaitSec:0}s)â€¦");
+            Debug.Log($"{LogPrefix} Waiting for config sync to complete on peer {peerUid} before restoring player {playerId} (fallback {maxWaitSec:0}s)…");
 
             while (waited < maxWaitSec)
             {
@@ -150,7 +102,7 @@ namespace FiresCore.Npc.Vault
 
             if (waited >= maxWaitSec)
             {
-                Debug.LogWarning($"{LogPrefix} Config-sync signal never arrived for peer {peerUid} within {maxWaitSec:0}s â€” running RestoreForPlayerServerSide anyway for player {playerId} (companions may briefly race ongoing config traffic).");
+                Debug.LogWarning($"{LogPrefix} Config-sync signal never arrived for peer {peerUid} within {maxWaitSec:0}s — running RestoreForPlayerServerSide anyway for player {playerId} (companions may briefly race ongoing config traffic).");
             }
 
             try
@@ -187,23 +139,14 @@ namespace FiresCore.Npc.Vault
             FiresCore.Bridge.CompanionVaultBridge.ClearRestoreGateFor(peer.m_uid);
         }
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // Server-side restore â€” pure ZDO + vault, no Player MonoBehaviour
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
+        // Server-side restore — pure ZDO + vault, no Player MonoBehaviour
+        // ──────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Server-side restore for the given playerId.
-        ///
-        /// Resolves the peer's spawn position from their character ZDO
-        /// (<c>peer.m_characterID</c> â†’ <c>ZDOMan.GetZDO(...)</c>), then
-        /// calls <c>CompanionPatches.RestoreCompanionsFromVault(null,
-        /// playerId, ownerPos)</c>. The <c>null</c> Player triggers the
-        /// no-Player code paths inside that method â€” it falls back to
-        /// vault.IsFollowing for follow decisions, writes the
-        /// <c>companion_wasfollowing</c> ZDO field directly instead of
-        /// calling <c>CompanionController.CommandFollow(player)</c>, and
-        /// uses <paramref name="ownerPos"/> for spawn-near-player
-        /// positions.
+        /// Server-side restore for <paramref name="playerId"/>: finds the player's character position and calls
+        /// CompanionPatches.RestoreCompanionsFromVault with no Player, which uses the saved follow flag, writes
+        /// companion_wasfollowing directly and spawns near that position.
         /// </summary>
         public static void RestoreForPlayerServerSide(long playerId)
         {
@@ -213,7 +156,7 @@ namespace FiresCore.Npc.Vault
             Vector3 ownerPos = ResolvePeerCharacterPosition(playerId);
             if (ownerPos == Vector3.zero)
             {
-                Debug.LogWarning($"{LogPrefix} Could not resolve character position for player {playerId} â€” using world origin (followers won't be teleported to player; vault-spawn fallback may also place them at the wrong height)");
+                Debug.LogWarning($"{LogPrefix} Could not resolve character position for player {playerId} — using world origin (followers won't be teleported to player; vault-spawn fallback may also place them at the wrong height)");
             }
 
             Debug.Log($"{LogPrefix} Restoring companions for player {playerId} (server-authoritative, ownerPos={ownerPos})");
@@ -227,12 +170,12 @@ namespace FiresCore.Npc.Vault
                 Debug.LogWarning($"{LogPrefix} DedupeCompanionZdosInWorld threw: {ex.Message}");
             }
 
-            // â”€â”€ Persistent-mode adopt pass â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Persistent-mode adopt pass ────────────────────────────────
             // Walk ZDOMan for every companion ZDO whose companion_owner
             // matches this player and claim ownership server-side. For
             // followers, rewrite the ZDO position to the player so they
             // re-materialise next to them when zones load. This pass is
-            // independent of the vault â€” companions persist in the world
+            // independent of the vault — companions persist in the world
             // as ZDOs (Bug 1 architecture), so the world IS the canonical
             // source of truth. The vault below is the migration fallback
             // for players whose last logout was under legacy mode (no
@@ -295,7 +238,7 @@ namespace FiresCore.Npc.Vault
                     long zdoOwner = zdo.GetLong("companion_owner", 0L);
                     if (zdoOwner != playerId) continue;
 
-                    // Skip stationed NPCs â€” they live in the world for
+                    // Skip stationed NPCs — they live in the world for
                     // everyone and shouldn't be teleported on player login.
                     if (zdo.GetBool("npc_stationed", false)) continue;
 
@@ -307,7 +250,7 @@ namespace FiresCore.Npc.Vault
                     // already-saturated login window which has been observed
                     // to lock the client up (heavy-state old characters fail
                     // to spawn, fresh characters at the same coords spawn fine).
-                    // We still count it as "adopted" for telemetry â€” the
+                    // We still count it as "adopted" for telemetry — the
                     // companion is logically restored, just nothing to write.
                     if (!wasFollowing)
                     {
@@ -341,17 +284,9 @@ namespace FiresCore.Npc.Vault
         // ──────────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Spawns this player's recall-ready dormant companions from <see cref="NpcDormancyBridge"/>
-        /// (kennel standalone / vault integrated). Dismissed entries wait for an explicit Recall;
-        /// pending-respawn entries whose deadline hasn't elapsed stay dormant. Bulletproofing:
-        /// <list type="bullet">
-        ///   <item><description>I1 (single live instance): an NpcId already live in the world is
-        ///     skipped — the adopt-pass + the live scene own it; the stale dormant copy is cleared.</description></item>
-        ///   <item><description>I3 (no silent loss): a spawn failure leaves the dormant entry in
-        ///     place to retry on the next announce, rather than dropping it.</description></item>
-        ///   <item><description>I6 (owner-offline): entries simply remain dormant until a login that
-        ///     resolves the owner position — no infinite in-memory reschedule.</description></item>
-        /// </list>
+        /// Spawns this player's recall-ready dormant companions from <see cref="NpcDormancyBridge"/>. Dismissed entries wait
+        /// for an explicit recall and unexpired respawns stay dormant. A companion already live in the world is skipped and
+        /// its stale dormant copy cleared, and a failed spawn leaves the entry for the next login rather than dropping it.
         /// </summary>
         private static int RestoreDormantViaSeam(long playerId, Vector3 ownerPos)
         {
@@ -400,9 +335,9 @@ namespace FiresCore.Npc.Vault
             if (string.IsNullOrEmpty(npcId)) return false;
             var all = CompanionController.AllCompanions;
             if (all == null) return false;
-            foreach (var c in all)
+            foreach (var companion in all)
             {
-                if (c != null && string.Equals(c.companionId, npcId, StringComparison.Ordinal))
+                if (companion != null && string.Equals(companion.companionId, npcId, StringComparison.Ordinal))
                     return true;
             }
             return false;
@@ -554,23 +489,9 @@ namespace FiresCore.Npc.Vault
         };
 
         /// <summary>
-        /// Resolves the position of the player's character on the server.
-        ///
-        /// IMPORTANT: <c>peer.m_uid</c> is the NETWORK UID (Steam-ish), NOT
-        /// the player ID we get from <c>RPC_AnnouncePlayerInfo</c>. The
-        /// previous version of this method matched on <c>peer.m_uid ==
-        /// playerId</c> and always failed; field-tested 2026-05-09 server
-        /// log showed `Could not resolve character position for player
-        /// 1107448868` while the actual peer's UID was 928082033. Two
-        /// different IDs.
-        ///
-        /// The correct path is to walk every connected peer's
-        /// <c>m_characterID</c>, fetch the character ZDO, and read the
-        /// <c>playerID</c> long stored inside it (the same value
-        /// <c>Player.GetPlayerID()</c> returns client-side). When that
-        /// matches the playerId we received from AnnouncePlayerInfo,
-        /// we've found the right character ZDO and can return its
-        /// position. Returns <c>Vector3.zero</c> if either lookup fails.
+        /// Finds the server-side position of a player's character by matching the playerID stored in each
+        /// connected peer's character ZDO. A peer's m_uid is its network id, not the player id, so matching on it
+        /// always failed. Returns Vector3.zero when nothing matches.
         /// </summary>
         private static Vector3 ResolvePeerCharacterPosition(long playerId)
         {
@@ -600,9 +521,9 @@ namespace FiresCore.Npc.Vault
                 // remote peers), so the scan above misses them. Fall back to the live local Player —
                 // without this, the local player's restore resolves position 0 and followers spawn at
                 // world origin instead of next to the player.
-                var lp = Player.m_localPlayer;
-                if (lp != null && lp.GetPlayerID() == playerId)
-                    return lp.transform.position;
+                var localPlayer = Player.m_localPlayer;
+                if (localPlayer != null && localPlayer.GetPlayerID() == playerId)
+                    return localPlayer.transform.position;
 
                 return Vector3.zero;
             }
@@ -613,9 +534,9 @@ namespace FiresCore.Npc.Vault
             }
         }
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
         // Public: manual force-restore (debug command)
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
 
         /// <summary>
         /// Force a companion restore for the local player NOW. Only works
@@ -639,7 +560,7 @@ namespace FiresCore.Npc.Vault
             }
             if (!PlayerSpawnGate.IsReadyForCustomDataWrite(player))
             {
-                Debug.LogWarning($"{LogPrefix} ForceRestoreForLocalPlayer: spawn gate not open â€” try again after the loading screen clears");
+                Debug.LogWarning($"{LogPrefix} ForceRestoreForLocalPlayer: spawn gate not open — try again after the loading screen clears");
                 return;
             }
 
@@ -652,7 +573,7 @@ namespace FiresCore.Npc.Vault
 
             try
             {
-                // Listen-host has the local Player available â€” pass it so
+                // Listen-host has the local Player available — pass it so
                 // the restore takes the Player-aware code paths
                 // (CommandFollow, m_customData writes). On dedicated this
                 // path is unreachable because of the IsServer gate above.
@@ -681,9 +602,9 @@ namespace FiresCore.Npc.Vault
             return _restoredPlayerIds.Contains(playerId);
         }
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
         // Diagnostics
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ──────────────────────────────────────────────────────────────────
 
         public static bool Verbose = false;
     }

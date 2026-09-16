@@ -9,7 +9,7 @@ namespace FiresCore.UI
     /// When attached to a button tagged <see cref="UIOverrideElementTags.SkillsPanel"/>,
     /// clicking it toggles the vanilla skills dialog visibility.
     ///
-    /// This is intentionally simple — the skills dialog is already a fully functional
+    /// This is intentionally simple â€” the skills dialog is already a fully functional
     /// vanilla panel. We just need to provide a way to open/close it from our custom UI.
     /// </summary>
     public class UIOverrideSkillsWiring : MonoBehaviour

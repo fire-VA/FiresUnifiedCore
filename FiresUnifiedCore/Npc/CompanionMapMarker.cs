@@ -10,7 +10,7 @@ namespace FiresCore.Npc
     /// Tracks all companions that are following the local player on the minimap.
     ///
     /// Uses Minimap.AddPin / RemovePin so position math (UV rect, zoom, both map modes)
-    /// is handled entirely by the vanilla system â€” no manual coordinate replication needed.
+    /// is handled entirely by the vanilla system — no manual coordinate replication needed.
     ///
     /// Each following companion appears as a blue Player pin labelled with the companion's name.
     /// Pins are cleaned up when companions stop following or when the component is destroyed.
@@ -51,21 +51,21 @@ namespace FiresCore.Npc
             UpdatePositionsAndColors();
         }
 
-        // â”€â”€ Following companion query â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Following companion query ──────────────────────────────────────────
 
         private void BuildFollowingList(Player player)
         {
             _followingBuffer.Clear();
             long pid = player.GetPlayerID();
-            foreach (var c in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (c == null || c.isDefeated || !c.isTamed) continue;
-                if (c.ownerPlayerId != pid) continue;
-                if (c.ShouldBeFollowing) _followingBuffer.Add(c);
+                if (companion == null || companion.isDefeated || !companion.isTamed) continue;
+                if (companion.ownerPlayerId != pid) continue;
+                if (companion.ShouldBeFollowing) _followingBuffer.Add(companion);
             }
         }
 
-        // â”€â”€ Pin sync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Pin sync ──────────────────────────────────────────────────────────
 
         private void SyncPins()
         {
@@ -80,23 +80,23 @@ namespace FiresCore.Npc
             }
 
             // Add pins for companions not yet tracked.
-            foreach (var c in _followingBuffer)
+            foreach (var companion in _followingBuffer)
             {
                 bool exists = false;
-                foreach (var (ec, _) in _pins) { if (ec == c) { exists = true; break; } }
+                foreach (var (pinned, _) in _pins) { if (pinned == companion) { exists = true; break; } }
                 if (exists) continue;
 
                 var pin = Minimap.instance.AddPin(
-                    c.transform.position,
+                    companion.transform.position,
                     Minimap.PinType.Player,
-                    c.companionName,
+                    companion.companionName,
                     save: false,
                     isChecked: false);
-                _pins.Add((c, pin));
+                _pins.Add((companion, pin));
             }
         }
 
-        // â”€â”€ Position / colour update â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Position / colour update ──────────────────────────────────────────
 
         private void UpdatePositionsAndColors()
         {
@@ -123,14 +123,14 @@ namespace FiresCore.Npc
                 AccessTools.FieldRefAccess<Minimap, bool>(Minimap.instance, "m_pinUpdateRequired") = true;
         }
 
-        // â”€â”€ Role colour â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Role colour ───────────────────────────────────────────────────────
 
         private static Color GetRoleColor(CompanionController companion)
         {
-            var ac = companion.GetArchetypeController();
-            if (ac == null) return DefaultColor;
+            var archetypeController = companion.GetArchetypeController();
+            if (archetypeController == null) return DefaultColor;
 
-            switch (ac.CurrentArchetypeClass)
+            switch (archetypeController.CurrentArchetypeClass)
             {
                 case ArchetypeClass.Tank:
                 case ArchetypeClass.Paladin:
@@ -151,7 +151,7 @@ namespace FiresCore.Npc
             }
         }
 
-        // â”€â”€ Cleanup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Cleanup ───────────────────────────────────────────────────────────
 
         private void CleanupAllPins()
         {

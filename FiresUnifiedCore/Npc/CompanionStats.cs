@@ -10,6 +10,15 @@ namespace FiresCore.Npc
     /// </summary>
     public class CompanionStats : MonoBehaviour
     {
+        private const float FoodLoadSettleDelay = 0.75f;
+        private const float DefaultHealthBonusPerPoint = 5f;
+        private const float HealthValidationTolerance = 5f;
+        private const float NearFullRatio = 0.95f;
+        private const float MinScaleHealthMultiplier = 0.7f;
+        private const float MaxScaleHealthMultiplier = 1.5f;
+        private const float StaminaSkillMaxReduction = 0.33f;
+        private const float EitrSkillMaxReduction = 0.25f;
+
         #region Settings
         
         [Header("Base Stats")]
@@ -163,7 +172,7 @@ namespace FiresCore.Npc
         // This should match CompanionPrefabManager.ConfigureHumanoid() which sets m_health = 200f
         // Do NOT read from Character.GetMaxHealth() because CompanionRandomLoadout may have already
         // modified it with scale/biome multipliers, causing health to balloon on reload.
-        private const float CANONICAL_BASE_HEALTH = 200f;
+        private const float CanonicalBaseHealth = 200f;
         
         private void Start()
         {
@@ -174,7 +183,7 @@ namespace FiresCore.Npc
             // 
             // Instead, we always use 200 as the base, and let CompanionRandomLoadout handle
             // scale/biome multipliers separately which we'll read from the ZDO.
-            baseMaxHealth = CANONICAL_BASE_HEALTH;
+            baseMaxHealth = CanonicalBaseHealth;
             
             // Initial calculation with base values
             RecalculateMaxStats();
@@ -225,7 +234,7 @@ namespace FiresCore.Npc
             
             // Wait a bit longer to ensure food effects are loaded from ZDO
             // CompanionConsumables.DeferredLoad() only waits 2 frames, so we wait longer
-            yield return new WaitForSeconds(0.75f);
+            yield return new WaitForSeconds(FoodLoadSettleDelay);
             
             // CRITICAL: Re-fetch component references in case they were added after Awake()
             EnsureComponentReferences();
@@ -237,7 +246,7 @@ namespace FiresCore.Npc
             
             // If consumables loaded food and our health already reflects it, skip recalculation
             // This prevents race conditions where DeferredStatsRecalculation overwrites correct values
-            float attributeHealthBonus = _progression?.GetAttributeValue(CompanionProgression.AttributeType.Health) * (_progression?.healthBonusPerPoint ?? 5f) ?? 0f;
+            float attributeHealthBonus = _progression?.GetAttributeValue(CompanionProgression.AttributeType.Health) * (_progression?.healthBonusPerPoint ?? DefaultHealthBonusPerPoint) ?? 0f;
             float expectedMaxWithFood = ComputeMaxHealth(attributeHealthBonus, currentFoodBonus);
             
             bool healthAlreadyCorrect = Mathf.Abs(_maxHealth - expectedMaxWithFood) < 1f && _currentHealth > 0;
@@ -355,7 +364,7 @@ namespace FiresCore.Npc
         }
         
         private float _lastHealthValidation;
-        private const float HEALTH_VALIDATION_INTERVAL = 3f; // Check every 3 seconds instead of 5
+        private const float HealthValidationInterval = 3f; // Check every 3 seconds instead of 5
         private int _healthValidationFailures = 0;
         
         /// <summary>
@@ -364,7 +373,7 @@ namespace FiresCore.Npc
         /// </summary>
         private void ValidateHealthPeriodically()
         {
-            if (Time.time - _lastHealthValidation < HEALTH_VALIDATION_INTERVAL) return;
+            if (Time.time - _lastHealthValidation < HealthValidationInterval) return;
             _lastHealthValidation = Time.time;
             
             // Validate for ALL following companions, not just active ones
@@ -376,7 +385,7 @@ namespace FiresCore.Npc
             float expectedMaxHealth = CalculateExpectedMaxHealth();
             
             // If our tracked max is significantly lower than expected, something went wrong
-            if (expectedMaxHealth > _maxHealth + 5f)
+            if (expectedMaxHealth > _maxHealth + HealthValidationTolerance)
             {
                 _healthValidationFailures++;
                 
@@ -391,7 +400,7 @@ namespace FiresCore.Npc
             }
             // ALSO check if current health is stuck below max for too long
             // This catches the 159/230 situation where max is correct but current isn't updating
-            else if (_currentHealth < _maxHealth - 5f && !IsInCombat)
+            else if (_currentHealth < _maxHealth - HealthValidationTolerance && !IsInCombat)
             {
                 // Health should be regenerating - if it's stuck, something is wrong
                 // Note: we don't fail here, just log for debugging
@@ -601,7 +610,7 @@ namespace FiresCore.Npc
             if (_maxHealth > oldMaxHealth && oldMaxHealth > 0)
             {
                 float healthRatio = _currentHealth / oldMaxHealth;
-                if (healthRatio >= 0.95f) // Was at or near full health
+                if (healthRatio >= NearFullRatio) // Was at or near full health
                 {
                     _currentHealth = _maxHealth;
                     if (VerboseLogging)
@@ -689,7 +698,7 @@ namespace FiresCore.Npc
             
             // Scale health: giants get up to 1.5x health, dwarves get 0.7x minimum
             // This matches the logic in CompanionRandomLoadout.ApplyScale()
-            float scaleMultiplier = Mathf.Lerp(0.7f, 1.5f, Mathf.InverseLerp(CompanionRandomLoadout.MIN_SCALE, CompanionRandomLoadout.MAX_SCALE, scale));
+            float scaleMultiplier = Mathf.Lerp(MinScaleHealthMultiplier, MaxScaleHealthMultiplier, Mathf.InverseLerp(CompanionRandomLoadout.MIN_SCALE, CompanionRandomLoadout.MAX_SCALE, scale));
             
             // Also get biome multiplier from ZDO if available
             float biomeMultiplier = 1f;
@@ -848,7 +857,7 @@ namespace FiresCore.Npc
             {
                 // Higher skill = lower stamina cost (up to 33% reduction at level 100)
                 float skillFactor = skills.GetSkillFactor(skillType);
-                skillReduction = baseCost * skillFactor * 0.33f;
+                skillReduction = baseCost * skillFactor * StaminaSkillMaxReduction;
             }
             
             return Mathf.Max(baseCost - skillReduction, baseCost * 0.5f);
@@ -904,7 +913,7 @@ namespace FiresCore.Npc
             {
                 // Higher magic skill = lower eitr cost (up to 25% reduction at level 100)
                 float skillFactor = skills.GetSkillFactor(magicSkill);
-                skillReduction = baseCost * skillFactor * 0.25f;
+                skillReduction = baseCost * skillFactor * EitrSkillMaxReduction;
             }
             
             return Mathf.Max(baseCost - skillReduction, baseCost * 0.5f);
@@ -918,7 +927,7 @@ namespace FiresCore.Npc
         /// Bonus stamina regen per endurance point (0.1 = 10% faster regen per point)
         /// At 50 endurance, this provides 50% faster stamina regeneration.
         /// </summary>
-        private const float STAMINA_REGEN_BONUS_PER_ENDURANCE = 0.01f;
+        private const float StaminaRegenBonusPerEndurance = 0.01f;
         
         // Cache stamina manager reference
         private Combat.StaminaManager _staminaManager;
@@ -965,7 +974,7 @@ namespace FiresCore.Npc
                     int endurance = _progression.GetAttributeValue(CompanionProgression.AttributeType.Endurance);
                     // Each point adds 1% faster regen
                     // At 50 endurance = 50% faster, at 100 endurance = 100% faster (double speed)
-                    enduranceBonus = 1f + (endurance * STAMINA_REGEN_BONUS_PER_ENDURANCE);
+                    enduranceBonus = 1f + (endurance * StaminaRegenBonusPerEndurance);
                 }
                 
                 // Get retreat regen boost from StaminaManager
@@ -1089,7 +1098,7 @@ namespace FiresCore.Npc
             {
                 // Max health increased since save (food bonuses?) - scale up proportionally
                 float ratio = savedHealth / savedMaxHealth;
-                _currentHealth = ratio >= 0.95f ? _maxHealth : Mathf.Min(savedHealth + (_maxHealth - savedMaxHealth), _maxHealth);
+                _currentHealth = ratio >= NearFullRatio ? _maxHealth : Mathf.Min(savedHealth + (_maxHealth - savedMaxHealth), _maxHealth);
             }
             else
             {
@@ -1105,7 +1114,7 @@ namespace FiresCore.Npc
             {
                 // Max increased since save - scale up
                 float ratio = savedStamina / savedMaxStamina;
-                _currentStamina = ratio >= 0.95f ? _maxStamina : Mathf.Min(savedStamina + (_maxStamina - savedMaxStamina), _maxStamina);
+                _currentStamina = ratio >= NearFullRatio ? _maxStamina : Mathf.Min(savedStamina + (_maxStamina - savedMaxStamina), _maxStamina);
             }
             else
             {
@@ -1121,7 +1130,7 @@ namespace FiresCore.Npc
             {
                 // Max increased since save - scale up
                 float ratio = savedEitr / savedMaxEitr;
-                _currentEitr = ratio >= 0.95f ? _maxEitr : Mathf.Min(savedEitr + (_maxEitr - savedMaxEitr), _maxEitr);
+                _currentEitr = ratio >= NearFullRatio ? _maxEitr : Mathf.Min(savedEitr + (_maxEitr - savedMaxEitr), _maxEitr);
             }
             else
             {
@@ -1219,11 +1228,11 @@ namespace FiresCore.Npc
 
         private void ApplyArchetypeSpeedToCharacter()
         {
-            var ch = _companion != null ? _companion.GetComponent<Character>() : GetComponent<Character>();
-            if (ch == null) return;
-            if (_baseWalkSpeed < 0f) { _baseWalkSpeed = ch.m_walkSpeed; _baseRunSpeed = ch.m_runSpeed; }
-            ch.m_walkSpeed = _baseWalkSpeed * _archetypeSpeedMultiplier;
-            ch.m_runSpeed = _baseRunSpeed * _archetypeSpeedMultiplier;
+            var character = _companion != null ? _companion.GetComponent<Character>() : GetComponent<Character>();
+            if (character == null) return;
+            if (_baseWalkSpeed < 0f) { _baseWalkSpeed = character.m_walkSpeed; _baseRunSpeed = character.m_runSpeed; }
+            character.m_walkSpeed = _baseWalkSpeed * _archetypeSpeedMultiplier;
+            character.m_runSpeed = _baseRunSpeed * _archetypeSpeedMultiplier;
         }
 
         #endregion

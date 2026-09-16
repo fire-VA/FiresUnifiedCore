@@ -6,25 +6,10 @@ using UnityEngine;
 
 namespace FiresCore.Services
 {
-    // Cross-mod AssetBundle loading service. Exposes the fast-path Unity
-    // API (LoadFromFile + LoadFromFileAsync) wrapped in a dedup cache,
-    // folder-scan helpers, and header sniffing so consumer mods don't
-    // re-implement the same boilerplate.
-    //
-    // Why this is in FUC:
-    // - Most third-party mods (HD textures, content packs) call
-    //   `File.ReadAllBytes(path)` and then `AssetBundle.LoadFromMemory`.
-    //   That path double-copies the bundle: managed byte[] → unmanaged
-    //   bundle data. LoadFromFile mmaps the file into native memory in
-    //   one pass — typically 5-10x faster on large bundles, with half
-    //   the peak memory usage.
-    // - Each mod also tracks its own "already loaded" set to avoid the
-    //   "bundle already loaded" error Unity throws on double-load. With
-    //   a shared cache here, two mods loading the same bundle path just
-    //   share the result.
-    //
-    // Stays no-op until called — no scanning, no caching, no allocation
-    // on import unless a consumer invokes a method.
+    // Shared AssetBundle loading: LoadFromFile and LoadFromFileAsync behind a cache keyed by path, plus folder
+    // scans and header sniffing. File loading avoids the managed copy of ReadAllBytes plus LoadFromMemory, and the
+    // shared cache stops two mods loading the same bundle from hitting Unity's "already loaded" error. Nothing is
+    // scanned or cached until a method is called.
     public static class BundleLoader
     {
         // Standard extensions Valheim's mod ecosystem ships bundles as.
@@ -282,10 +267,10 @@ namespace FiresCore.Services
 
             try
             {
-                using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
                     var header = new byte[UnityFsHeaderProbeBytes];
-                    int read = fs.Read(header, 0, UnityFsHeaderProbeBytes);
+                    int read = stream.Read(header, 0, UnityFsHeaderProbeBytes);
                     if (read < UnityFsHeaderMagic.Length) return false;
 
                     for (int i = 0; i < UnityFsHeaderMagic.Length; i++)
@@ -310,7 +295,7 @@ namespace FiresCore.Services
             try
             {
                 var key = Path.GetFullPath(path);
-                return Cache.TryGetValue(key, out var b) ? b : null;
+                return Cache.TryGetValue(key, out var bundle) ? bundle : null;
             }
             catch { return null; }
         }
@@ -351,7 +336,7 @@ namespace FiresCore.Services
         private static HashSet<string> ToOrdinalSet(IReadOnlyCollection<string> source)
         {
             var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var s in source) set.Add(s ?? string.Empty);
+            foreach (var item in source) set.Add(item ?? string.Empty);
             return set;
         }
     }

@@ -6,24 +6,17 @@ using UnityEngine;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// Ported from FiresValcast's NaturalWalk (VerdantsAscent.Modules.NaturalWalk). NaturalWalk eases the
-    /// LOCAL PLAYER from a slow walk up to full run by ramping <c>Character.m_speed</c> (the jog branch,
-    /// hardcoded 1..7). Companions run through the <c>m_runSpeed</c> branch of <c>Character.UpdateWalking</c>
-    /// instead, and their top speed varies per archetype, so we keep the EXACT ramp concept but change only
-    /// what has to change for our situation:
-    ///   1. target companions, not the local player;
-    ///   2. trigger on the companion's own move + run intent, not held-Forward input;
-    ///   3. ramp between the companion's OWN walk speed (min) and run speed (max), not hardcoded 1..7;
-    ///   4. write the ramped value into <c>m_runSpeed</c> for the duration of one UpdateWalking and restore
-    ///      the real value afterwards (a finalizer, so it restores even if the method throws - otherwise a
-    ///      single un-restored frame would poison the next frame's max-read).
-    /// Touches ONLY m_runSpeed (a speed scalar) - never m_moveDir - so the movement single-writer rule is
-    /// untouched. Same patch target as NaturalWalk (Character.UpdateWalking); each opts out for the other's
-    /// subject, and Harmony isolates __state per patch class.
+    /// Eases companions from a walk up to a run, ported from FiresValcast's NaturalWalk. Companions move through
+    /// Character.UpdateWalking's m_runSpeed branch with per-archetype top speeds, so the ramp runs between the
+    /// companion's own walk and run speeds, triggers on its move and run intent, and writes m_runSpeed only for one
+    /// UpdateWalking call, restored by a finalizer. It never touches m_moveDir, and each patch skips the other's
+    /// subject.
     /// </summary>
     [HarmonyPatch]
     public static class CompanionSpeedRamp
     {
+        private const float MinRampSeconds = 0.05f;
+
         // m_moveDir is protected and m_running is private on Character; read them with fast Harmony field refs.
         private static readonly AccessTools.FieldRef<Character, Vector3> MoveDir =
             AccessTools.FieldRefAccess<Character, Vector3>("m_moveDir");
@@ -62,14 +55,14 @@ namespace FiresCore.Npc.Core
         }
 
         private static float GetCatchUp(Character ch) =>
-            _catchUp.TryGetValue(ch, out var m) ? m.Value : 1f;
+            _catchUp.TryGetValue(ch, out var catchUp) ? catchUp.Value : 1f;
 
         // Only the SPRINTING follow tier snaps straight to full speed; RUNNING and below RAMP. The catch-up
         // table carries the tier's boost (CompanionAI SprintCatchUpBoost=1.5, RunCatchUpBoost=1.15), so a value
         // at/above this threshold means "sprint emergency, close the gap NOW" — snap; anything below eases. This
         // keeps genuine fall-behinds instant (no mosey) while restoring smooth accel/decel for normal keep-pace
         // following (the "always sprinting, never ramps" regression was this snap firing for the Running tier too).
-        private const float SPRINT_SNAP_MULTIPLIER = 1.35f;
+        private const float SprintSnapMultiplier = 1.35f;
 
         // Which speed field(s) this frame's prefix overrode, and their real values for the finalizer to
         // restore. -1 = untouched. The companion branch uses Run only; DBSM patrol uses Walk OR Run
@@ -123,7 +116,7 @@ namespace FiresCore.Npc.Core
             // one-frame lag that is invisible.
             bool runningIntent = Running(__instance) && MoveDir(__instance).sqrMagnitude > 0.0001f;
             float target = runningIntent ? max : min;
-            float rate = (max - min) / Mathf.Max(0.05f, MovementRampConfig.Seconds);
+            float rate = (max - min) / Mathf.Max(MinRampSeconds, MovementRampConfig.Seconds);
 
             // FLOOR AT CURRENT PACE. A follower enters the run tier FROM A JOG (m_speed=4 > m_walkSpeed=2),
             // and follow-tier hysteresis bounces it run<->jog while catching up. Ramping run speed up from
@@ -144,10 +137,10 @@ namespace FiresCore.Npc.Core
             }
 
             // SPRINT SNAPS, RUN RAMPS. When the follow path signals a SPRINT-tier catch-up (owner pulled far
-            // ahead, boost at/above SPRINT_SNAP_MULTIPLIER) we snap straight to full speed so a distant follower
+            // ahead, boost at/above SprintSnapMultiplier) we snap straight to full speed so a distant follower
             // closes instantly instead of moseying. The RUNNING tier and below ease over RampSeconds, so a
             // follower keeping pace accelerates/decelerates smoothly rather than blasting at max the whole time.
-            if (catchUp >= SPRINT_SNAP_MULTIPLIER)
+            if (catchUp >= SprintSnapMultiplier)
                 ramp.Current = max;                                                 // sprint emergency → instant
             else
                 ramp.Current = Mathf.MoveTowards(ramp.Current, target, rate * dt);  // run/jog → smooth ramp
@@ -172,7 +165,7 @@ namespace FiresCore.Npc.Core
             // Ease at "walk→run span per RampSeconds" so the feel matches the follow-ramp regardless of the
             // target; the section curve already changes u gradually, this just smooths tier/boundary steps.
             float refSpan = Mathf.Max(0.5f, ch.m_runSpeed - baseWalk);
-            float rate = refSpan / Mathf.Max(0.05f, MovementRampConfig.Seconds);
+            float rate = refSpan / Mathf.Max(MinRampSeconds, MovementRampConfig.Seconds);
             ramp.Current = Mathf.MoveTowards(ramp.Current, targetSpeed, rate * dt);
 
             if (run)

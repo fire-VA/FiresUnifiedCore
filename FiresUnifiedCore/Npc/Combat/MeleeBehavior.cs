@@ -4,23 +4,9 @@ using System.Collections;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Combat behavior for melee weapons (swords, axes, clubs, etc.)
-    /// Handles both one-handed and two-handed melee weapons.
-    /// Uses weapon data from ItemDrop.SharedData for accurate timing.
-    /// 
-    /// COMBO SYSTEM:
-    /// Melee weapons with multiple chain levels will execute proper combos:
-    /// - swing_longsword0 -> swing_longsword1 -> swing_longsword2 -> repeat
-    /// - Combos reset after 2.5 seconds of no attacks
-    /// - Each swing in a combo is faster than starting a new combo
-    /// 
-    /// SECONDARY ATTACKS:
-    /// Used when tactically advantageous:
-    /// - Target is staggered (guaranteed hit)
-    /// - Target is blocking (guard break attempt)
-    /// - Random chance for combat variety
-    /// 
-    /// Features target tracking during combos.
+    /// One- and two-handed melee combat using each weapon's own timing data. Multi-chain weapons combo until a
+    /// pause resets the chain, and secondary attacks go to staggered or blocking targets and occasionally for
+    /// variety, with the target tracked through the combo.
     /// </summary>
     public class MeleeBehavior : WeaponBehavior
     {
@@ -28,8 +14,6 @@ namespace FiresCore.Npc.Combat
   private Coroutine _targetTrackingCoroutine;
         
     // Track combo state for continuous facing
-        private int _comboHitsRemaining;
-        private float _comboEndTime;
         
         // Aggression settings for melee
         private float _aggressionLevel = 0.5f; // 0-1, affects secondary attack frequency

@@ -70,9 +70,9 @@ namespace FiresCore.Npc.AI
         // Owner-speed -> matched-gait thresholds (m/s). Once tucked into the trail band the companion mirrors how
         // fast the owner is ACTUALLY moving (pace matching) instead of always running at range. Measured owner
         // speed is the source of truth (the IsRunning flag reads stale), with stance flags layered for crouch/walk.
-        private const float OWNER_STANDING_SPEED = 0.5f;   // below this the owner is standing -> companion stops
-        private const float OWNER_WALK_SPEED     = 2.6f;   // walk / crouch-walk pace -> companion walks
-        private const float OWNER_JOG_SPEED      = 4.6f;   // medium pace -> companion jogs; at/above -> runs
+        private const float OwnerStandingSpeed = 0.5f;   // below this the owner is standing -> companion stops
+        private const float OwnerWalkSpeed     = 2.6f;   // walk / crouch-walk pace -> companion walks
+        private const float OwnerJogSpeed      = 4.6f;   // medium pace -> companion jogs; at/above -> runs
         
         private enum FollowSpeed { Stopped, Sneaking, Walking, Jogging, Running, Sprinting }
         private FollowSpeed _currentFollowSpeed = FollowSpeed.Stopped;
@@ -86,7 +86,7 @@ namespace FiresCore.Npc.AI
         private float _lastOwnerStanceCheck = -10f;
         private float _ownerSpeed = 0f;      // owner horizontal speed (m/s), sampled in UpdateOwnerStance -> pace matching
         private bool _isClosingGap = false;  // hysteresis: true while catching up to the trail band, until tucked in
-        private const float OWNER_STANCE_CHECK_INTERVAL = 0.2f;
+        private const float OwnerStanceCheckInterval = 0.2f;
         
         // Vanilla's crouch animator parameter ("crouching", replicated by ZSyncAnimation) — the ONLY
         // crouch state a non-player Humanoid has. Shared with the stealth-factor patch so enemy
@@ -97,7 +97,7 @@ namespace FiresCore.Npc.AI
         // Detection radius for the threat scan loop. Lowered from 20 to 15 m
         // because the owner-defense gate in CompanionAI.Targeting now decides
         // which detected threats are actually engaged (see
-        // OWNER_DEFENSE_RADIUS); a wider scan radius is just perf overhead
+        // OwnerDefenseRadius); a wider scan radius is just perf overhead
         // for threats we'd ignore anyway.
         public float aggroRange = 15f;
         public float attackRange = 2.5f;
@@ -138,22 +138,10 @@ namespace FiresCore.Npc.AI
         private float _timeSinceAttacking;
         private bool _beenAtLastTargetPos;
 
-        // Post-teleport combat suppression.
-        // Set by OnTeleportedFar (long-distance teleports: forced stranded-pull,
-        // dungeon entry, portal jump, owner respawn).  While Time.time is below
-        // this timestamp, UpdateTargetDetection bails out early and any current
-        // target is dropped ï¿½ this gives the companion a brief window to walk
-        // back to the player and "calm down" instead of immediately re-entering
-        // combat with whatever is still nearby.  After the window expires,
-        // normal threat scanning resumes; if there are real local threats they
-        // get picked up at that point, exactly as before.
-        //
-        // The suppression deliberately does NOT touch MovementAuthority ï¿½ the
-        // existing priority/incumbency rules stay in charge of who drives the
-        // motor.  All we change is whether CompanionAI tries to acquire a new
-        // _targetCreature for this short window.
+        // After a long-distance teleport, target detection pauses until this time so the companion regroups with the
+        // player instead of picking a fight on arrival. Movement authority is unaffected.
         private float _combatSuppressedUntilTime = 0f;
-        private const float POST_TELEPORT_COMBAT_SUPPRESS_SECONDS = 3.0f;
+        private const float PostTeleportCombatSuppressSeconds = 3.0f;
         
         // Weapon type caching
         private bool _isRangedWeapon = false;
@@ -186,23 +174,12 @@ namespace FiresCore.Npc.AI
         
         // Stay mode aggro control
         private float _lastDirectlyDamagedTime = -100f;
-        private const float STAY_MODE_AGGRO_RANGE = 5f;
-        private const float DIRECT_DAMAGE_ALERT_DURATION = 15f;
+        private const float StayModeAggroRange = 5f;
+        private const float DirectDamageAlertDuration = 15f;
 
-        // OWNER-DEFENSE RADIUS
-        // For aggressive (non-passive) enemies in Follow mode, a companion
-        // will only engage if the threat is within this radius of its owner,
-        // OR is currently targeting the owner / a player / this companion,
-        // OR this companion has been directly attacked recently. Outside
-        // those conditions the enemy is left alone even though it's inside
-        // aggroRange ï¿½ this stops companions from chasing every hostile in
-        // the forest while their owner is doing something else.
-        //
-        // Passive wildlife (boar, deer, neck, etc.) is governed separately
-        // by the per-companion Hunting toggle in CompanionBehaviorToggles.
-        // Stay-mode is governed by STAY_MODE_AGGRO_RANGE and is unaffected
-        // by this constant.
-        private const float OWNER_DEFENSE_RADIUS = 8f;
+        // In Follow mode an aggressive enemy is only engaged within this distance of the owner, unless it is targeting
+        // the owner, a player or this companion, or the companion was hit recently.
+        private const float OwnerDefenseRadius = 8f;
 
         // Timers
         private float _lastIdleWanderTime;
@@ -219,13 +196,13 @@ namespace FiresCore.Npc.AI
         private float _lastOwnerIdleCheck;
 
         // Cached for performance
-        private const float TARGET_SCAN_INTERVAL = 0.25f;
-        private const float POSITION_REACHED_THRESHOLD = 1.5f;
+        private const float TargetScanInterval = 0.25f;
+        private const float PositionReachedThreshold = 1.5f;
         private static readonly List<Character> _tempCharacterList = new List<Character>();
         
         // STATE OSCILLATION PREVENTION
-        private const float MIN_COMBAT_STATE_TIME = 1.0f;
-        private const float MIN_RETURNING_STATE_TIME = 0.5f;
+        private const float MinCombatStateTime = 1.0f;
+        private const float MinReturningStateTime = 0.5f;
         
         // Pathfinding
         private Vector3 _lastPathfindingPos;
@@ -237,14 +214,14 @@ namespace FiresCore.Npc.AI
         private float _lastProgressTime;
         private float _lastDistanceToTarget = float.MaxValue;
         
-        private const float PATH_RECALC_INTERVAL = 0.5f;
-        private const float STUCK_CHECK_INTERVAL = 1.0f;
-        private const float STUCK_MOVEMENT_THRESHOLD = 0.5f;
-        private const int STUCK_FRAMES_BEFORE_RECALC = 3;
-        private const float PROGRESS_TIMEOUT = 5.0f;
-        private const float DIRECT_MOVE_DISTANCE = 3f;
-        private const float WAYPOINT_SEARCH_RADIUS = 5f;
-        private const int MAX_PATHFINDING_ATTEMPTS = 5;
+        private const float PathRecalcInterval = 0.5f;
+        private const float StuckCheckInterval = 1.0f;
+        private const float StuckMovementThreshold = 0.5f;
+        private const int StuckFramesBeforeRecalc = 3;
+        private const float ProgressTimeout = 5.0f;
+        private const float DirectMoveDistance = 3f;
+        private const float WaypointSearchRadius = 5f;
+        private const int MaxPathfindingAttempts = 5;
 
         #endregion
 
@@ -255,12 +232,12 @@ namespace FiresCore.Npc.AI
         public static bool ArchetypeCombatLogging = true;
         
         private float _lastStateLogTime = -100f;
-        private const float STATE_LOG_INTERVAL = 5f;
+        private const float StateLogInterval = 5f;
         private AIState _lastLoggedState = AIState.Idle;
         private bool _lastLoggedCriticalRecovery = false;
         private bool _lastLoggedRecovery = false;
         private float _lastArchetypeLogTime = -100f;
-        private const float ARCHETYPE_LOG_INTERVAL = 10f;
+        private const float ArchetypeLogInterval = 10f;
 
         #endregion
 
@@ -477,7 +454,7 @@ namespace FiresCore.Npc.AI
                         {
                             _loggedReachedDestination = true;
                             
-                            if (VerboseLogging && Time.time - _lastDestinationReachedLogTime >= DESTINATION_REACHED_LOG_INTERVAL)
+                            if (VerboseLogging && Time.time - _lastDestinationReachedLogTime >= DestinationReachedLogInterval)
                             {
                                 _lastDestinationReachedLogTime = Time.time;
                                 Debug.Log($"[CompanionAI] {m_character?.m_name} reached command destination");
@@ -589,7 +566,7 @@ namespace FiresCore.Npc.AI
 
             // PLAYER COMMAND OVERRIDES FLEE.
             // If the player has issued a move/attack command we obey it even when
-            // we would otherwise panic ï¿½ "do what they're told, even unto death".
+            // we would otherwise panic - "do what they're told, even unto death".
             // The flee branch is only allowed when no command is active.
             bool underPlayerCommand = _combatMovement != null && _combatMovement.HasCommandPriority;
             if (!underPlayerCommand && ShouldFlee())
@@ -734,7 +711,7 @@ namespace FiresCore.Npc.AI
             if (_companion == null) return;
             
             // Rate-limit combat entry logging to prevent spam when state oscillates rapidly
-            if (Time.time - _lastArchetypeLogTime < ARCHETYPE_LOG_INTERVAL)
+            if (Time.time - _lastArchetypeLogTime < ArchetypeLogInterval)
                 return;
             _lastArchetypeLogTime = Time.time;
             
@@ -859,7 +836,7 @@ namespace FiresCore.Npc.AI
                 var authority = _companion?.GetMovementAuthority();
                 if (authority != null)
                 {
-                    authority.ReleaseAuthority(AI_AUTHORITY_OWNER);
+                    authority.ReleaseAuthority(AIAuthorityOwner);
                     if (VerboseLogging)
                         Debug.Log($"[CompanionAI] {m_character?.m_name} released authority when entering stay mode");
                 }
@@ -960,7 +937,7 @@ namespace FiresCore.Npc.AI
         private bool _loggedReachedDestination = false;
         
         private static float _lastDestinationReachedLogTime = -100f;
-        private const float DESTINATION_REACHED_LOG_INTERVAL = 10f;
+        private const float DestinationReachedLogInterval = 10f;
         
         public void SetCommandDestination(Vector3 destination)
         {
@@ -987,21 +964,10 @@ namespace FiresCore.Npc.AI
         public bool HasCommandDestination => _hasCommandDestination;
         
         /// <summary>
-        /// Requests movement to a destination using vanilla pathfinding with authority coordination.
-        /// This is the PUBLIC API for behaviors to request pathfinding-based movement.
-        /// 
-        /// Call this every frame until it returns true (destination reached).
-        /// 
-        /// CORRECT ARCHITECTURE:
-        /// - Authority = coordination (decides WHO can move)
-        /// - Vanilla MoveTo() = pathfinding (handles HOW to move around obstacles)
+        /// Pathfinding movement for behaviors: acquires movement authority for <paramref name="authorityOwner"/> at
+        /// <paramref name="authoritySource"/> and lets vanilla MoveTo find the way. Call every frame until it returns
+        /// true on arrival.
         /// </summary>
-        /// <param name="destination">Target position to reach</param>
-        /// <param name="run">True for running, false for walking</param>
-        /// <param name="reachDistance">How close to get before considering "reached"</param>
-        /// <param name="authoritySource">Movement source priority level</param>
-        /// <param name="authorityOwner">Name of the system requesting movement</param>
-        /// <returns>True when destination reached, false while still moving</returns>
         public bool RequestPathfindingMovement(
             Vector3 destination, 
             bool run, 
@@ -1124,7 +1090,7 @@ namespace FiresCore.Npc.AI
             _currentMoveTarget = Vector3.zero;
         }
         
-        public bool IsStuck => _consecutiveStuckFrames >= STUCK_FRAMES_BEFORE_RECALC;
+        public bool IsStuck => _consecutiveStuckFrames >= StuckFramesBeforeRecalc;
         public int StuckCheckCount => _consecutiveStuckFrames;
         
         /// <summary>

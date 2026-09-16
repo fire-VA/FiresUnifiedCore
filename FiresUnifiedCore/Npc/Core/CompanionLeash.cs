@@ -3,19 +3,11 @@ using UnityEngine;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// THE single source of truth for the companion "leash" — every distance/time constant and every shared
-    /// predicate that governs "my follower has drifted too far; run it back or snap it to me." Both the
-    /// client-side run-back (<see cref="CompanionController.CheckFollowTeleport"/>) and the server-side safety
-    /// net (<see cref="CompanionTeleportService"/>) read from HERE, so the two can never disagree on the numbers.
-    /// Before this existed the thresholds were smeared across both files (follow radius 30, hard-strand 75,
-    /// reconcile 30, heartbeat 40) with no single owner — this collapses them into one model:
-    ///
-    ///   0 .. LeashDistance (50m)         normal following. The AI follows at its own gait and may fight along
-    ///                                    the way. No tether intervention.
-    ///   LeashDistance .. SnapDistance    LEASHED. The companion drops ALL other decision-making (combat, idle
-    ///     (50 .. 80m)                    work) and commits to running back to the owner at full speed.
-    ///   >= SnapDistance (80m) OR          SNAP. Teleport to the owner (server-authoritative) — the last resort,
-    ///     "can't close the gap"          only when running back won't work (hit the ceiling, or blocked/outpaced).
+    /// Every distance, timing and predicate for the companion leash, shared by the client run-back
+    /// (<see cref="CompanionController.CheckFollowTeleport"/>) and the server safety net
+    /// (<see cref="CompanionTeleportService"/>) so they never disagree. Within <see cref="LeashDistance"/> the
+    /// companion follows normally; past it, it drops everything and runs back; past <see cref="SnapDistance"/>, or
+    /// when it can't close the gap, the server teleports it to the owner.
     /// </summary>
     public static class CompanionLeash
     {

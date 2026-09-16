@@ -54,14 +54,14 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private float ChestDetectionRange => CompanionSettings.ChestSearchRadius;
         private float ChestClusterRange => CompanionSettings.ChestAutoSortRadius;
-        private const float INTERACTION_RANGE = 2.5f;
-        private const float MAX_DEPOSIT_TIME = 90f;
+        private const float InteractionRange = 2.5f;
+        private const float MaxDepositTime = 90f;
         
         // CRITICAL: These thresholds determine when deposit is HIGH priority (100)
         // At 60%, we were missing cases where companions said "bags full" but didn't deposit
         // Lowered to 50% to ensure deposit happens BEFORE inventory is completely full
-        private const float WEIGHT_THRESHOLD_PERCENT = 0.50f;
-        private const float SLOT_THRESHOLD_PERCENT = 0.50f;
+        private const float WeightThresholdPercent = 0.50f;
+        private const float SlotThresholdPercent = 0.50f;
         
         private static readonly HashSet<ItemDrop.ItemData.ItemType> DepositableTypes = new HashSet<ItemDrop.ItemData.ItemType>
         {
@@ -158,7 +158,7 @@ namespace FiresCore.Npc.IdleBehaviors
         public override void Initialize(CompanionController companion, CompanionIdleBehavior idleBehavior)
         {
             base.Initialize(companion, idleBehavior);
-            MaxDuration = MAX_DEPOSIT_TIME;
+            MaxDuration = MaxDepositTime;
         }
         
         public void SetCommandedTarget(GameObject target)
@@ -396,7 +396,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check if we're close enough to the CHEST (not the move target) to interact
             // This handles cases where pathfinding takes us to a slightly different spot
             float distToChest = DistanceTo(_targetChest.transform.position);
-            if (distToChest < INTERACTION_RANGE)
+            if (distToChest < InteractionRange)
             {
                 // Close enough to interact!
                 StopMovement();
@@ -454,7 +454,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             LogVerbose($"Deposited {deposited} items across {_clusterChests.Count} chests");
 
-            // Always run the organize pass ï¿½ even a single chest benefits from stack
+            // Always run the organize pass - even a single chest benefits from stack
             // consolidation, and it ensures chests are saved after deposit.
             SetPhase(DepositPhase.Organizing);
             
@@ -530,13 +530,13 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var status = Resources.GetInventoryStatus();
             // WeightPercent is 0-1 (as fraction), THRESHOLD is 0-1, so multiply by 100 to compare
-            bool weightNearFull = status.WeightPercent >= WEIGHT_THRESHOLD_PERCENT;
+            bool weightNearFull = status.WeightPercent >= WeightThresholdPercent;
             
             // Calculate slot usage from FreeSlots and TotalSlots
             float slotUsage = status.TotalSlots > 0 
                 ? (float)(status.TotalSlots - status.FreeSlots) / status.TotalSlots 
                 : 1f;
-            bool slotsNearFull = slotUsage >= SLOT_THRESHOLD_PERCENT;
+            bool slotsNearFull = slotUsage >= SlotThresholdPercent;
             
             return weightNearFull || slotsNearFull;
         }
@@ -680,7 +680,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 var chestInv = chest.GetInventory();
                 if (chestInv == null || chestInv.GetEmptySlots() == 0) continue;
 
-                // Skip chests we can't pathfind to â€” mark visited so we don't retry this session.
+                // Skip chests we can't pathfind to — mark visited so we don't retry this session.
                 if (!IsReachable(chest.transform.position))
                 {
                     _visitedChests.Add(chest);

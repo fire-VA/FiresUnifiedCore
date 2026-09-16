@@ -10,28 +10,11 @@ using FiresCoreRoot = FiresCore.FiresUnifiedCore;
 
 namespace FiresCore.Sync
 {
-    // Generic admin ← server config PULL — the mirror of ConfigPushService. Lets an
-    // admin fetch the server's live copy of ANY mod's config file(s) down to their
-    // own BepInEx/config without FTP:
-    //
-    //   pullconfigs expand_world_spawns.yaml   — one exact file
-    //   pullconfigs expand_world               — a whole folder (recursive)
-    //   pullconfigs expand_world*              — wildcard: every matching folder + file
-    //
-    // Same pattern semantics, same tab-completion and the same extension allowlist
-    // as pushconfigs — both share ConfigPushService.ResolveMatches / IsSafeRelPath /
-    // WriteConfigAtomic / BuildCompletionOptions so the two commands can't drift.
-    //
-    // Flow: client sends the PATTERN to the server; the server (after verifying the
-    // requester is an admin) resolves it against ITS OWN config tree and streams each
-    // file back to that one client — never broadcast, so no other player sees or
-    // receives anything. The client writes into its own config folder, overwriting
-    // its local copy with the server's.
-    //
-    // Security: the request RPC gates on AdminSyncing.IsAdmin(sender) server-side, and
-    // the client only accepts inbound file data while it has a pull in flight (and
-    // still validates every relpath against the config root + extension allowlist), so
-    // a rogue peer can't write files onto an admin's machine.
+    // Admin config pull, the mirror of ConfigPushService: "pullconfigs <file | folder | wildcard>" fetches the
+    // server's live copy of any mod's config into the admin's own BepInEx/config, with the same matching, tab
+    // completion and extension allowlist as pushconfigs (both share ConfigPushService's helpers). The server
+    // verifies the requester is an admin and streams the files to that client only; the client accepts file
+    // data only while a pull is in flight and re-validates every path.
     public static class ConfigPullService
     {
         private const string ReqRpc = "FiresCore_PullConfigReq";
@@ -301,7 +284,7 @@ namespace FiresCore.Sync
 
         // Shared admin-reply channel: ConfigPushService reports its per-file merge outcomes
         // through this same RPC so both commands print results the same way.
-        internal static void SetReplyTerminal(Terminal t) => _replyTerminal = t;
+        internal static void SetReplyTerminal(Terminal terminal) => _replyTerminal = terminal;
 
         internal static void SendMsg(long target, string message)
         {

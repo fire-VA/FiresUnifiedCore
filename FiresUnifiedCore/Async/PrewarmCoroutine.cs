@@ -6,29 +6,11 @@ using UnityEngine;
 
 namespace FiresCore.Async
 {
-    // Frame-budgeted batch prefab Instantiate. Walks a prefab list,
-    // Instantiates each into a hidden world position, and Destroys at the
-    // next frame boundary — the goal is to force Unity's shader-variant
-    // compilation, material warm-up, and asset import to happen during a
-    // controlled coroutine instead of mid-gameplay when the first real
-    // instance spawns.
-    //
-    // Why this matters: first-Instantiate cost on a bundled prefab is
-    // dominated by shader-variant compilation which BLOCKS the main thread
-    // synchronously. A 4-second compile in the middle of a player swing
-    // animation freezes the game. Warming during a controlled phase
-    // (loading screen, world-init banner) absorbs that cost where the
-    // user expects it.
-    //
-    // Decoupled from any mod's config: pass PrewarmOptions in. The skip
-    // mechanisms (stateful components + name-substring + runtime-slow)
-    // are all optional and configurable.
-    //
-    // ZNetView.m_forceDisableInit scoping is the critical bit: without it,
-    // every Instantiate creates a ZDO that ZNetScene.RemoveObjects then
-    // tries to traverse forever — NRE spam. The flag is global static, so
-    // we set per-Instantiate in try/finally to avoid collision with any
-    // OTHER code path Instantiating prefabs during our yields.
+    // Frame-budgeted warm-up: instantiates each prefab at a hidden position and destroys it at the next frame so
+    // shader-variant compilation and asset import happen during loading instead of on the first real spawn, where
+    // a multi-second compile freezes the game. Callers pass PrewarmOptions, including optional skip rules.
+    // ZNetView.m_forceDisableInit is set around each Instantiate in try/finally: without it every clone creates a
+    // ZDO that ZNetScene.RemoveObjects keeps tripping over, and being global it must not leak into other code.
     public static class PrewarmCoroutine
     {
         private static readonly Vector3 BelowWorld = new Vector3(0f, -1000f, 0f);
@@ -112,7 +94,7 @@ namespace FiresCore.Async
                     continue;
                 }
 
-                long t0 = Stopwatch.GetTimestamp();
+                long startTicks = Stopwatch.GetTimestamp();
                 GameObject inst = null;
 
                 // ZNetView.m_forceDisableInit scoping: per-Instantiate
@@ -136,7 +118,7 @@ namespace FiresCore.Async
                     ZNetView.m_forceDisableInit = false;
                 }
 
-                long elapsed = Stopwatch.GetTimestamp() - t0;
+                long elapsed = Stopwatch.GetTimestamp() - startTicks;
                 totalTicks += elapsed;
                 if (elapsed > worstTicks) { worstTicks = elapsed; worstName = prefab.name; }
                 processed++;
@@ -203,8 +185,8 @@ namespace FiresCore.Async
             var tokens = new List<string>(parts.Length);
             foreach (var part in parts)
             {
-                string t = part?.Trim();
-                if (!string.IsNullOrEmpty(t)) tokens.Add(t);
+                string trimmed = part?.Trim();
+                if (!string.IsNullOrEmpty(trimmed)) tokens.Add(trimmed);
             }
             return tokens.ToArray();
         }
@@ -222,11 +204,11 @@ namespace FiresCore.Async
         // Transform-hierarchy node count with an early-exit cap, so probing a
         // 10k-node mega-prefab costs cap+1 visits instead of a full traversal
         // (and no array allocation like GetComponentsInChildren would).
-        private static int CountTransforms(Transform t, int cap)
+        private static int CountTransforms(Transform root, int cap)
         {
             int count = 1;
-            for (int i = 0; i < t.childCount && count < cap; i++)
-                count += CountTransforms(t.GetChild(i), cap - count);
+            for (int i = 0; i < root.childCount && count < cap; i++)
+                count += CountTransforms(root.GetChild(i), cap - count);
             return count;
         }
 
@@ -240,9 +222,9 @@ namespace FiresCore.Async
                 int added = 0;
                 foreach (var line in System.IO.File.ReadAllLines(path))
                 {
-                    string t = line?.Trim();
-                    if (string.IsNullOrEmpty(t) || t.StartsWith("#", StringComparison.Ordinal)) continue;
-                    if (into.Add(t)) added++;
+                    string trimmed = line?.Trim();
+                    if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("#", StringComparison.Ordinal)) continue;
+                    if (into.Add(trimmed)) added++;
                 }
                 if (added > 0)
                     logInfo($"[Prewarm] Loaded {added} persisted slow-prefab skip(s) from {System.IO.Path.GetFileName(path)}.");
@@ -269,11 +251,9 @@ namespace FiresCore.Async
             }
         }
 
-        // Prefabs whose Awake / OnDestroy depends on world state that
-        // doesn't exist at our (0,-1000,0) prewarm position. Each of these
-        // was caught throwing NRE during prewarm in production logs.
-        // Skipping costs us shader pre-compile on these specific prefabs
-        // (worth it — they're rarely spawned in the early game anyway).
+        // Prefabs that throw or log errors when instantiated at the prewarm position before a world exists: their Awake
+        // needs world state (TreeLog reads the biome, TerrainComp the heightmap), a component requires the ZNetView that disabled init destroys
+        // (TriggerPersistentEventOnDestroy), or vanilla authoring left a cloth wind shelter without its cloth.
         private static bool HasStatefulComponent(GameObject prefab)
         {
             if (prefab.GetComponentInChildren<Player>()           != null) return true;
@@ -289,6 +269,11 @@ namespace FiresCore.Async
             if (prefab.GetComponentInChildren<Ragdoll>()          != null) return true;
             if (prefab.GetComponentInChildren<DungeonGenerator>() != null) return true;
             if (prefab.GetComponentInChildren<LocationProxy>()    != null) return true;
+            if (prefab.GetComponentInChildren<TreeLog>()          != null) return true;
+            if (prefab.GetComponentInChildren<TerrainComp>()      != null) return true;
+            if (prefab.GetComponentInChildren<TriggerPersistentEventOnDestroy>() != null) return true;
+            foreach (PlayerClothWindShelter shelter in prefab.GetComponentsInChildren<PlayerClothWindShelter>())
+                if (shelter.GetComponent<MagicaCloth2.MagicaCloth>() == null) return true;
             return false;
         }
     }

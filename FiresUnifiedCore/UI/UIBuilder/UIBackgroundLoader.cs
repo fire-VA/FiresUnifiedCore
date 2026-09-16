@@ -43,9 +43,9 @@ namespace FiresCore.UI
                 if (!LoadImageReflected(tex, File.ReadAllBytes(path))) { _cache[fileName] = null; return null; }
 
                 // A uniform border keeps Image.Type.Sliced corners crisp when the panel stretches the art.
-                float b = Mathf.Min(tex.width, tex.height) * 0.25f;
+                float border = Mathf.Min(tex.width, tex.height) * 0.25f;
                 var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f),
-                    100f, 0, SpriteMeshType.FullRect, new Vector4(b, b, b, b));
+                    100f, 0, SpriteMeshType.FullRect, new Vector4(border, border, border, border));
                 _cache[fileName] = sprite;
                 return sprite;
             }
@@ -68,8 +68,8 @@ namespace FiresCore.UI
             if (!_loadImageResolved)
             {
                 _loadImageResolved = true;
-                var t = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
-                _loadImage = t?.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]) });
+                var type = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
+                _loadImage = type?.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]) });
             }
             if (_loadImage == null) return false;
             try { return (bool)_loadImage.Invoke(null, new object[] { tex, data }); }

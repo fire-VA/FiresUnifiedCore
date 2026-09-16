@@ -6,21 +6,9 @@ using UnityEngine;
 namespace FiresCore.Storage
 {
     /// <summary>
-    /// The single shared config root for the whole Fires mod family — like Expand World's one <c>expand_world</c>
-    /// folder. Everything lives under <c>BepInEx/config/FiresRPGmaker/</c>, grouped by feature, and EVERY Fires mod
-    /// resolves its folders through here so the structure is defined in exactly one place. Reorganizing later is a
-    /// one-file change; <see cref="Migrate"/> then moves any existing data into the new layout on next launch.
-    ///
-    /// Layout:
-    ///   FiresRPGmaker/
-    ///     NPCs/        SavedNPCs, Dialogues, ServerInfos, PatrolRoutes, StaticRespawns, StaticPlacements, Sounds
-    ///     Marketplace/ Traders, Bankers, Gamblers, Mail, Transmogrifications, Store
-    ///     Leaderboard/ Achievements, Local
-    ///     Quests/      Database, Profiles, Sprites
-    ///     Buffs/       Definitions, Profiles
-    ///     World/       Worlds, Players, server.json
-    ///     UI/          Assets, Layouts, Overrides, Audits
-    ///     Territories/ Guilds/ Debug/ (+ Debug/Cache)
+    /// The shared config root for every Fires mod: BepInEx/config/FiresRPGmaker/, grouped by feature (NPCs,
+    /// Marketplace, Leaderboard, Quests, Buffs, World, UI, Territories, Guilds, Debug). All folders resolve through
+    /// here so the layout is defined once, and <see cref="Migrate"/> moves existing data when it changes.
     /// </summary>
     public static class FiresConfigPaths
     {
@@ -207,8 +195,8 @@ namespace FiresCore.Storage
             if (string.Equals(srcFull, dstFull, StringComparison.OrdinalIgnoreCase)) return;   // same folder, nothing to do
             Ensure(dst);
 
-            foreach (var f in Directory.GetFiles(src))
-                MoveFileInto(f, Path.Combine(dst, Path.GetFileName(f)));
+            foreach (var filePath in Directory.GetFiles(src))
+                MoveFileInto(filePath, Path.Combine(dst, Path.GetFileName(filePath)));
 
             // If the destination lives INSIDE the source (Quests -> Quests/Database, Marketplace -> Marketplace/Store,
             // leaderboard -> Leaderboard/Local), ONLY the top-level files move; never recurse into subfolders — that

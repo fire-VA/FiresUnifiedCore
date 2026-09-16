@@ -160,10 +160,10 @@ namespace FiresCore.UI
         private void BuildIdMap()
         {
             _byId.Clear();
-            foreach (var d in CfgDiscovery.Descriptors) _byId[IdOf(d)] = d;
+            foreach (var descriptor in CfgDiscovery.Descriptors) _byId[IdOf(descriptor)] = descriptor;
         }
 
-        private static string IdOf(CfgDescriptor d) => d.ModGuid + "|" + d.Section + "|" + d.Key;
+        private static string IdOf(CfgDescriptor descriptor) => descriptor.ModGuid + "|" + descriptor.Section + "|" + descriptor.Key;
 
         // ---------------------------------------------------------------- draw
         private void OnGUI()
@@ -201,11 +201,11 @@ namespace FiresCore.UI
             DrawHeader();
             GUILayout.Space(4f);
 
-            float bodyH = _rect.height - 92f;
+            float bodyHeight = _rect.height - 92f;
             GUILayout.BeginHorizontal();
-            DrawNav(bodyH);
+            DrawNav(bodyHeight);
             GUILayout.Space(6f);
-            DrawBody(bodyH);
+            DrawBody(bodyHeight);
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
@@ -262,8 +262,8 @@ namespace FiresCore.UI
                 for (int i = 0; i < sections.Count; i++)
                 {
                     string section = sections[i];
-                    bool on = section == _navSection;
-                    if (GUILayout.Button((i + 1) + ". " + CleanSection(section), on ? FiresRoundedSkin.NavSubOn : FiresRoundedSkin.NavSub))
+                    bool isCurrent = section == _navSection;
+                    if (GUILayout.Button((i + 1) + ". " + CleanSection(section), isCurrent ? FiresRoundedSkin.NavSubOn : FiresRoundedSkin.NavSub))
                     {
                         _navSection = section;
                         string key = CollapseKey(mod, section);
@@ -286,17 +286,17 @@ namespace FiresCore.UI
                 GUILayout.Label("Results for \"" + _search + "\"", FiresRoundedSkin.Title);
                 string lastGroup = null;
                 int shown = 0;
-                foreach (var d in CfgDiscovery.Descriptors)
+                foreach (var descriptor in CfgDiscovery.Descriptors)
                 {
-                    if (!Matches(d, _search)) continue;
-                    string group = d.ModName + "  -  " + d.SectionDisplay;
+                    if (!Matches(descriptor, _search)) continue;
+                    string group = descriptor.ModName + "  -  " + descriptor.SectionDisplay;
                     if (group != lastGroup)
                     {
                         lastGroup = group;
                         GUILayout.Space(3f);
                         GUILayout.Label("<b>" + group + "</b>", FiresRoundedSkin.SectionBar);
                     }
-                    DrawRow(d);
+                    DrawRow(descriptor);
                     shown++;
                 }
                 if (shown == 0) GUILayout.Label("No matches.", FiresRoundedSkin.Label);
@@ -321,16 +321,16 @@ namespace FiresCore.UI
                     }
                     if (Event.current.type == EventType.Repaint)
                     {
-                        var r = GUILayoutUtility.GetLastRect();
-                        _sectionY[key] = r.y;
-                        if (_pendingJump == key) { _bodyScroll.y = Mathf.Max(0f, r.y - 6f); _pendingJump = null; }
+                        var lastRect = GUILayoutUtility.GetLastRect();
+                        _sectionY[key] = lastRect.y;
+                        if (_pendingJump == key) { _bodyScroll.y = Mathf.Max(0f, lastRect.y - 6f); _pendingJump = null; }
                     }
                     if (collapsed) continue;
 
-                    foreach (var d in CfgDiscovery.Descriptors)
+                    foreach (var descriptor in CfgDiscovery.Descriptors)
                     {
-                        if (d.ModName != _mod || d.Section != section) continue;
-                        DrawRow(d);
+                        if (descriptor.ModName != _mod || descriptor.Section != section) continue;
+                        DrawRow(descriptor);
                     }
                 }
                 if (sections.Count == 0) GUILayout.Label("No settings.", FiresRoundedSkin.Label);
@@ -339,97 +339,97 @@ namespace FiresCore.UI
             GUILayout.EndScrollView();
         }
 
-        private void DrawRow(CfgDescriptor d)
+        private void DrawRow(CfgDescriptor descriptor)
         {
             try
             {
                 GUILayout.BeginHorizontal();
-                bool changed = IsChanged(d);
-                string name = changed ? "<b><color=#FFD980>" + d.Label + "</color></b>" : d.Label;
+                bool changed = IsChanged(descriptor);
+                string name = changed ? "<b><color=#FFD980>" + descriptor.Label + "</color></b>" : descriptor.Label;
                 GUILayout.Label(name, FiresRoundedSkin.Label, GUILayout.Width(NameWidth));
-                DrawWidget(d);
+                DrawWidget(descriptor);
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button("Reset", FiresRoundedSkin.ButtonSmall, GUILayout.Width(56f)))
                 {
-                    try { d.Entry.BoxedValue = d.Entry.DefaultValue; } catch { }
-                    _editBuf.Remove(IdOf(d));
+                    try { descriptor.Entry.BoxedValue = descriptor.Entry.DefaultValue; } catch { }
+                    _editBuf.Remove(IdOf(descriptor));
                 }
                 GUILayout.EndHorizontal();
 
-                if (!string.IsNullOrEmpty(d.Description))
-                    GUILayout.Label(d.Description, FiresRoundedSkin.Desc);
+                if (!string.IsNullOrEmpty(descriptor.Description))
+                    GUILayout.Label(descriptor.Description, FiresRoundedSkin.Desc);
             }
             catch (Exception ex)
             {
                 GUILayout.EndHorizontal();
-                FiresConfigUI.Log.LogWarning($"row '{d.Section}/{d.Key}' failed: {ex.Message}");
+                FiresConfigUI.Log.LogWarning($"row '{descriptor.Section}/{descriptor.Key}' failed: {ex.Message}");
             }
         }
 
         // ---------------------------------------------------------------- typed widgets
-        private void DrawWidget(CfgDescriptor d)
+        private void DrawWidget(CfgDescriptor descriptor)
         {
-            object val = d.BoxedValue;
-            switch (d.Kind)
+            object val = descriptor.BoxedValue;
+            switch (descriptor.Kind)
             {
                 case CtrlKind.Bool:
                 {
-                    bool b = val is bool bv && bv;
-                    string txt = b ? "<b><color=#66DD66>Enabled</color></b>" : "<color=#997F55>Disabled</color>";
-                    if (GUILayout.Button(txt, FiresRoundedSkin.Button, GUILayout.Width(92f))) Set(d, !b);
+                    bool isOn = val is bool flag && flag;
+                    string txt = isOn ? "<b><color=#66DD66>Enabled</color></b>" : "<color=#997F55>Disabled</color>";
+                    if (GUILayout.Button(txt, FiresRoundedSkin.Button, GUILayout.Width(92f))) Set(descriptor, !isOn);
                     break;
                 }
                 case CtrlKind.IntRange:
                 case CtrlKind.FloatRange:
                 {
-                    float v = Convert.ToSingle(val, CultureInfo.InvariantCulture);
-                    float nv = GUILayout.HorizontalSlider(v, (float)d.Min, (float)d.Max,
+                    float current = Convert.ToSingle(val, CultureInfo.InvariantCulture);
+                    float updated = GUILayout.HorizontalSlider(current, (float)descriptor.Min, (float)descriptor.Max,
                         FiresRoundedSkin.Slider, FiresRoundedSkin.SliderThumb, GUILayout.Width(190f));
-                    if (!Mathf.Approximately(nv, v))
+                    if (!Mathf.Approximately(updated, current))
                     {
-                        float snapped = SnapStep(nv, d);
-                        if (d.Kind == CtrlKind.IntRange) Set(d, Convert.ChangeType((int)Math.Round(snapped), d.Type));
-                        else Set(d, Convert.ChangeType(snapped, d.Type));
-                        v = snapped;
+                        float snapped = SnapStep(updated, descriptor);
+                        if (descriptor.Kind == CtrlKind.IntRange) Set(descriptor, Convert.ChangeType((int)Math.Round(snapped), descriptor.Type));
+                        else Set(descriptor, Convert.ChangeType(snapped, descriptor.Type));
+                        current = snapped;
                     }
-                    GUILayout.Label(FormatNum(d, v), FiresRoundedSkin.Field, GUILayout.Width(58f));
+                    GUILayout.Label(FormatNum(descriptor, current), FiresRoundedSkin.Field, GUILayout.Width(58f));
                     break;
                 }
                 case CtrlKind.Enum:
                 case CtrlKind.ValueList:
                 {
-                    var names = d.Options ?? Array.Empty<string>();
-                    string cur = val?.ToString() ?? "";
-                    if (GUILayout.Button(cur, FiresRoundedSkin.Button, GUILayout.Width(170f)) && names.Length > 0)
+                    var names = descriptor.Options ?? Array.Empty<string>();
+                    string currentText = val?.ToString() ?? "";
+                    if (GUILayout.Button(currentText, FiresRoundedSkin.Button, GUILayout.Width(170f)) && names.Length > 0)
                     {
-                        int now = Math.Max(0, Array.IndexOf(names, cur));
-                        SetOption(d, names[(now + 1) % names.Length]);
+                        int now = Math.Max(0, Array.IndexOf(names, currentText));
+                        SetOption(descriptor, names[(now + 1) % names.Length]);
                     }
                     break;
                 }
                 case CtrlKind.IntField:
                 case CtrlKind.FloatField:
                 {
-                    string typed = BufferedField(d, val?.ToString() ?? "", 110f);
-                    if (typed != null && TryParseNumber(typed, d.Type, out object parsed) && !Equals(parsed, val))
-                        Set(d, parsed);
+                    string typed = BufferedField(descriptor, val?.ToString() ?? "", 110f);
+                    if (typed != null && TryParseNumber(typed, descriptor.Type, out object parsed) && !Equals(parsed, val))
+                        Set(descriptor, parsed);
                     break;
                 }
                 case CtrlKind.String:
                 {
-                    string typed = BufferedField(d, (string)val ?? "", 280f);
-                    if (typed != null && typed != (string)val && !IsFocused(IdOf(d)))
-                        Set(d, typed);   // commit on focus loss (CommitOnFocusChange also covers Enter-less blur)
+                    string typed = BufferedField(descriptor, (string)val ?? "", 280f);
+                    if (typed != null && typed != (string)val && !IsFocused(IdOf(descriptor)))
+                        Set(descriptor, typed);   // commit on focus loss (CommitOnFocusChange also covers Enter-less blur)
                     break;
                 }
                 case CtrlKind.Color:
                 {
-                    var c = val is Color cv ? cv : Color.white;
-                    string typed = BufferedField(d, ColorToText(c), 130f);
-                    if (typed != null && TryParseColor(typed, out Color nc) && nc != c)
-                        Set(d, nc);
+                    var color = val is Color colorValue ? colorValue : Color.white;
+                    string typed = BufferedField(descriptor, ColorToText(color), 130f);
+                    if (typed != null && TryParseColor(typed, out Color typedColor) && typedColor != color)
+                        Set(descriptor, typedColor);
                     var old = GUI.color;
-                    GUI.color = c;
+                    GUI.color = color;
                     GUILayout.Label(GUIContent.none, FiresRoundedSkin.Swatch, GUILayout.Width(20f), GUILayout.Height(18f));
                     GUI.color = old;
                     break;
@@ -442,7 +442,7 @@ namespace FiresCore.UI
                     // value; X when idle clears the bind. Keys accumulate while recording —
                     // modifiers collect, the last non-modifier is the main key — so chords like
                     // L + LeftAlt are recordable. Nothing commits until the second click.
-                    bool capturingThis = _capturing && _captureTarget == d.Entry;
+                    bool capturingThis = _capturing && _captureTarget == descriptor.Entry;
                     string boxLabel;
                     if (capturingThis)
                     {
@@ -459,32 +459,32 @@ namespace FiresCore.UI
                     }
                     if (GUILayout.Button(boxLabel, FiresRoundedSkin.Button, GUILayout.Width(200f)))
                     {
-                        if (capturingThis) CommitCapture(d);
-                        else BeginCapture(d.Entry);
+                        if (capturingThis) CommitCapture(descriptor);
+                        else BeginCapture(descriptor.Entry);
                     }
                     if (capturingThis && Event.current.type == EventType.Repaint)
                     {
                         // Remember the box + Apply + X area in SCREEN space so PollKeyCapture
                         // (which runs in Update, outside GUI) can ignore mouse presses that are
                         // really commit/cancel clicks rather than binds.
-                        var r = GUILayoutUtility.GetLastRect();
-                        var tl = GUIUtility.GUIToScreenPoint(new Vector2(r.x, r.y));
-                        _capButtonsScreenRect = new Rect(tl.x - 4f, tl.y - 4f, r.width + 56f + 26f + 20f, r.height + 8f);
+                        var lastRect = GUILayoutUtility.GetLastRect();
+                        var topLeft = GUIUtility.GUIToScreenPoint(new Vector2(lastRect.x, lastRect.y));
+                        _capButtonsScreenRect = new Rect(topLeft.x - 4f, topLeft.y - 4f, lastRect.width + 56f + 26f + 20f, lastRect.height + 8f);
                     }
                     var prevBg = GUI.backgroundColor;
                     if (capturingThis) GUI.backgroundColor = new Color(0.35f, 0.75f, 0.30f);
                     if (GUILayout.Button(capturingThis ? "Apply" : "Set", FiresRoundedSkin.ButtonSmall, GUILayout.Width(56f)))
                     {
-                        if (capturingThis) CommitCapture(d);
-                        else BeginCapture(d.Entry);
+                        if (capturingThis) CommitCapture(descriptor);
+                        else BeginCapture(descriptor.Entry);
                     }
                     GUI.backgroundColor = prevBg;
                     if (GUILayout.Button("X", FiresRoundedSkin.ButtonSmall, GUILayout.Width(26f)))
                     {
                         if (capturingThis) { CancelCapture(); }
-                        else Set(d, d.Type == typeof(KeyboardShortcut) ? (object)KeyboardShortcut.Empty : (object)KeyCode.None);
+                        else Set(descriptor, descriptor.Type == typeof(KeyboardShortcut) ? (object)KeyboardShortcut.Empty : (object)KeyCode.None);
                     }
-                    if (_capNotice != null && _capNoticeId == IdOf(d))
+                    if (_capNotice != null && _capNoticeId == IdOf(descriptor))
                     {
                         if (Time.unscaledTime > _capNoticeUntil) { _capNotice = null; _capNoticeId = null; }
                         else GUILayout.Label("<color=#CC9944>" + _capNotice + "</color>", FiresRoundedSkin.Hint);
@@ -501,9 +501,9 @@ namespace FiresCore.UI
 
         // A text field with a per-setting edit buffer: while focused the raw typed text survives even when it
         // doesn't parse yet ("1.", "-"); when not focused the field always shows the live value.
-        private string BufferedField(CfgDescriptor d, string liveText, float width)
+        private string BufferedField(CfgDescriptor descriptor, string liveText, float width)
         {
-            string id = IdOf(d);
+            string id = IdOf(descriptor);
             bool focused = IsFocused(id);
             string shown = focused && _editBuf.TryGetValue(id, out var buf) ? buf : liveText;
             GUI.SetNextControlName(id);
@@ -523,8 +523,8 @@ namespace FiresCore.UI
             _lastFocus = now;
             if (string.IsNullOrEmpty(prev) || !_editBuf.TryGetValue(prev, out var buf)) return;
             _editBuf.Remove(prev);
-            if (!_byId.TryGetValue(prev, out var d)) return;
-            if (d.Kind == CtrlKind.String && buf != (string)(d.BoxedValue as string)) Set(d, buf ?? "");
+            if (!_byId.TryGetValue(prev, out var descriptor)) return;
+            if (descriptor.Kind == CtrlKind.String && buf != (string)(descriptor.BoxedValue as string)) Set(descriptor, buf ?? "");
         }
 
         // ---------------------------------------------------------------- write-back
@@ -534,15 +534,15 @@ namespace FiresCore.UI
             catch (Exception ex) { FiresConfigUI.Log.LogWarning($"set '{d.Key}' failed: {ex.Message}"); }
         }
 
-        private void SetOption(CfgDescriptor d, string chosen)
+        private void SetOption(CfgDescriptor descriptor, string chosen)
         {
             if (chosen == null) return;
             try
             {
-                if (d.Type.IsEnum) { d.Entry.BoxedValue = Enum.Parse(d.Type, chosen); return; }
-                d.Entry.SetSerializedValue(chosen);
+                if (descriptor.Type.IsEnum) { descriptor.Entry.BoxedValue = Enum.Parse(descriptor.Type, chosen); return; }
+                descriptor.Entry.SetSerializedValue(chosen);
             }
-            catch (Exception ex) { FiresConfigUI.Log.LogWarning($"set option '{d.Key}'='{chosen}' failed: {ex.Message}"); }
+            catch (Exception ex) { FiresConfigUI.Log.LogWarning($"set option '{descriptor.Key}'='{chosen}' failed: {ex.Message}"); }
         }
 
         // ---------------------------------------------------------------- keybind capture
@@ -570,31 +570,31 @@ namespace FiresCore.UI
             if (_captureTarget == null) { _capturing = false; return; }
             if (UnityEngine.Input.GetKeyDown(KeyCode.Escape)) { CancelCapture(); return; }
 
-            foreach (KeyCode kc in Enum.GetValues(typeof(KeyCode)))
+            foreach (KeyCode keyCode in Enum.GetValues(typeof(KeyCode)))
             {
-                if (!UnityEngine.Input.GetKeyDown(kc)) continue;
+                if (!UnityEngine.Input.GetKeyDown(keyCode)) continue;
 
                 // A mouse press over the Apply/X buttons is a CLICK, not a bind — recording it would
                 // overwrite the chord on the way to committing it. (GUI screen space: y grows down.)
-                if (kc >= KeyCode.Mouse0 && kc <= KeyCode.Mouse6)
+                if (keyCode >= KeyCode.Mouse0 && keyCode <= KeyCode.Mouse6)
                 {
                     var mouseGui = new Vector2(UnityEngine.Input.mousePosition.x,
                         Screen.height - UnityEngine.Input.mousePosition.y);
                     if (_capButtonsScreenRect.Contains(mouseGui)) continue;
                 }
 
-                if (Array.IndexOf(s_modifiers, kc) >= 0)
+                if (Array.IndexOf(s_modifiers, keyCode) >= 0)
                 {
-                    if (!_capMods.Contains(kc)) _capMods.Add(kc);
+                    if (!_capMods.Contains(keyCode)) _capMods.Add(keyCode);
                 }
                 else
                 {
-                    _capMain = kc;   // last non-modifier wins; keep recording until Apply
+                    _capMain = keyCode;   // last non-modifier wins; keep recording until Apply
                 }
             }
         }
 
-        private void CommitCapture(CfgDescriptor d)
+        private void CommitCapture(CfgDescriptor descriptor)
         {
             bool wantsShortcut = _captureTarget != null && _captureTarget.SettingType == typeof(KeyboardShortcut);
             KeyCode main = _capMain;
@@ -621,7 +621,7 @@ namespace FiresCore.UI
                     // LeftShift); a chord stores its main key and says so instead of silently
                     // dropping the modifiers.
                     if (main == KeyCode.None) main = mods[0];
-                    else if (mods.Count > 0) Notice(d, $"single-key setting — stored {main}, modifiers ignored");
+                    else if (mods.Count > 0) Notice(descriptor, $"single-key setting — stored {main}, modifiers ignored");
                     _captureTarget.BoxedValue = main;
                 }
             }
@@ -630,17 +630,17 @@ namespace FiresCore.UI
             CancelCapture();
         }
 
-        private void Notice(CfgDescriptor d, string text)
+        private void Notice(CfgDescriptor descriptor, string text)
         {
             _capNotice = text;
-            _capNoticeId = IdOf(d);
+            _capNoticeId = IdOf(descriptor);
             _capNoticeUntil = Time.unscaledTime + 5f;
         }
 
         private string FormatChord()
         {
             var parts = new List<string>();
-            foreach (var m in _capMods) parts.Add(m.ToString());
+            foreach (var modifier in _capMods) parts.Add(modifier.ToString());
             if (_capMain != KeyCode.None) parts.Add(_capMain.ToString());
             return string.Join(" + ", parts);
         }
@@ -650,15 +650,15 @@ namespace FiresCore.UI
         {
             var grip = new Rect(_rect.width - 22f, _rect.height - 22f, 20f, 20f);
             GUI.Label(grip, "//", FiresRoundedSkin.Hint);
-            var e = Event.current;
-            if (e.type == EventType.MouseDown && grip.Contains(e.mousePosition)) { _resizing = true; e.Use(); }
-            else if (_resizing && e.type == EventType.MouseDrag)
+            var currentEvent = Event.current;
+            if (currentEvent.type == EventType.MouseDown && grip.Contains(currentEvent.mousePosition)) { _resizing = true; currentEvent.Use(); }
+            else if (_resizing && currentEvent.type == EventType.MouseDrag)
             {
-                _size.x = Mathf.Clamp(_size.x + e.delta.x, MinSize.x, Screen.width - 20f);
-                _size.y = Mathf.Clamp(_size.y + e.delta.y, MinSize.y, Screen.height - 20f);
-                e.Use();
+                _size.x = Mathf.Clamp(_size.x + currentEvent.delta.x, MinSize.x, Screen.width - 20f);
+                _size.y = Mathf.Clamp(_size.y + currentEvent.delta.y, MinSize.y, Screen.height - 20f);
+                currentEvent.Use();
             }
-            else if (_resizing && e.type == EventType.MouseUp) { _resizing = false; e.Use(); }
+            else if (_resizing && currentEvent.type == EventType.MouseUp) { _resizing = false; currentEvent.Use(); }
         }
 
         // ---------------------------------------------------------------- helpers
@@ -666,82 +666,82 @@ namespace FiresCore.UI
 
         private bool SectionHasChanged(string mod, string section)
         {
-            foreach (var d in CfgDiscovery.Descriptors)
-                if (d.ModName == mod && d.Section == section && IsChanged(d)) return true;
+            foreach (var descriptor in CfgDiscovery.Descriptors)
+                if (descriptor.ModName == mod && descriptor.Section == section && IsChanged(descriptor)) return true;
             return false;
         }
 
-        private static bool IsChanged(CfgDescriptor d)
+        private static bool IsChanged(CfgDescriptor descriptor)
         {
             try
             {
-                object cur = d.BoxedValue, def = d.Entry.DefaultValue;
-                if (cur == null) return def != null;
-                return !cur.Equals(def);
+                object current = descriptor.BoxedValue, def = descriptor.Entry.DefaultValue;
+                if (current == null) return def != null;
+                return !current.Equals(def);
             }
             catch { return false; }
         }
 
-        private static bool Matches(CfgDescriptor d, string q)
+        private static bool Matches(CfgDescriptor descriptor, string query)
         {
-            q = q.ToLowerInvariant();
-            return d.Key.ToLowerInvariant().Contains(q) || d.Section.ToLowerInvariant().Contains(q)
-                || d.ModName.ToLowerInvariant().Contains(q)
-                || (!string.IsNullOrEmpty(d.Description) && d.Description.ToLowerInvariant().Contains(q));
+            query = query.ToLowerInvariant();
+            return descriptor.Key.ToLowerInvariant().Contains(query) || descriptor.Section.ToLowerInvariant().Contains(query)
+                || descriptor.ModName.ToLowerInvariant().Contains(query)
+                || (!string.IsNullOrEmpty(descriptor.Description) && descriptor.Description.ToLowerInvariant().Contains(query));
         }
 
-        private static float SnapStep(float v, CfgDescriptor d)
+        private static float SnapStep(float raw, CfgDescriptor descriptor)
         {
-            if (d.Step <= 0.0) return v;
-            double n = Math.Round((v - d.Min) / d.Step);
-            return (float)Math.Min(d.Max, Math.Max(d.Min, d.Min + n * d.Step));
+            if (descriptor.Step <= 0.0) return raw;
+            double steps = Math.Round((raw - descriptor.Min) / descriptor.Step);
+            return (float)Math.Min(descriptor.Max, Math.Max(descriptor.Min, descriptor.Min + steps * descriptor.Step));
         }
 
-        private static string FormatNum(CfgDescriptor d, float v)
-            => d.Kind == CtrlKind.IntRange ? ((int)Math.Round(v)).ToString() : v.ToString("0.###", CultureInfo.InvariantCulture);
+        private static string FormatNum(CfgDescriptor descriptor, float number)
+            => descriptor.Kind == CtrlKind.IntRange ? ((int)Math.Round(number)).ToString() : number.ToString("0.###", CultureInfo.InvariantCulture);
 
-        private static bool TryParseNumber(string text, Type t, out object value)
+        private static bool TryParseNumber(string text, Type targetType, out object value)
         {
             value = null;
             if (string.IsNullOrWhiteSpace(text)) return false;
-            if (t == typeof(float) || t == typeof(double))
+            if (targetType == typeof(float) || targetType == typeof(double))
             {
-                if (!double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out double dv)
-                    && !double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out dv)) return false;
-                value = Convert.ChangeType(dv, t); return true;
+                if (!double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out double parsedDouble)
+                    && !double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out parsedDouble)) return false;
+                value = Convert.ChangeType(parsedDouble, targetType); return true;
             }
-            if (!long.TryParse(text, NumberStyles.Integer, CultureInfo.CurrentCulture, out long lv)
-                && !long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out lv)) return false;
-            try { value = Convert.ChangeType(lv, t); return true; } catch { return false; }
+            if (!long.TryParse(text, NumberStyles.Integer, CultureInfo.CurrentCulture, out long parsedLong)
+                && !long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsedLong)) return false;
+            try { value = Convert.ChangeType(parsedLong, targetType); return true; } catch { return false; }
         }
 
-        private static string ColorToText(Color c) => $"{c.r:0.##},{c.g:0.##},{c.b:0.##},{c.a:0.##}";
+        private static string ColorToText(Color color) => $"{color.r:0.##},{color.g:0.##},{color.b:0.##},{color.a:0.##}";
 
-        private static bool TryParseColor(string s, out Color c)
+        private static bool TryParseColor(string text, out Color color)
         {
-            c = Color.white;
-            if (string.IsNullOrWhiteSpace(s)) return false;
-            var p = s.Split(',');
-            if (p.Length < 3) return false;
+            color = Color.white;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var parts = text.Split(',');
+            if (parts.Length < 3) return false;
             float r, g, b, a = 1f;
-            if (!float.TryParse(p[0], NumberStyles.Float, CultureInfo.InvariantCulture, out r)) return false;
-            if (!float.TryParse(p[1], NumberStyles.Float, CultureInfo.InvariantCulture, out g)) return false;
-            if (!float.TryParse(p[2], NumberStyles.Float, CultureInfo.InvariantCulture, out b)) return false;
-            if (p.Length >= 4) float.TryParse(p[3], NumberStyles.Float, CultureInfo.InvariantCulture, out a);
-            c = new Color(r, g, b, a); return true;
+            if (!float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out r)) return false;
+            if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out g)) return false;
+            if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out b)) return false;
+            if (parts.Length >= 4) float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out a);
+            color = new Color(r, g, b, a); return true;
         }
 
-        private static string CleanSection(string s)
+        private static string CleanSection(string section)
         {
-            if (string.IsNullOrEmpty(s)) return s;
-            int dash = s.IndexOf(" - ", StringComparison.Ordinal);
+            if (string.IsNullOrEmpty(section)) return section;
+            int dash = section.IndexOf(" - ", StringComparison.Ordinal);
             if (dash > 0 && dash <= 5)
             {
                 bool digit = false, ok = true;
-                foreach (char ch in s.Substring(0, dash)) { if (char.IsDigit(ch)) digit = true; else if (!char.IsLetter(ch)) { ok = false; break; } }
-                if (digit && ok) return s.Substring(dash + 3);
+                foreach (char ch in section.Substring(0, dash)) { if (char.IsDigit(ch)) digit = true; else if (!char.IsLetter(ch)) { ok = false; break; } }
+                if (digit && ok) return section.Substring(dash + 3);
             }
-            return s;
+            return section;
         }
     }
 }

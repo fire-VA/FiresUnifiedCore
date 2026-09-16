@@ -5,19 +5,9 @@ using FiresCore.Npc.Combat;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Bow training sub-behavior. When idle with a bow equipped and near an archery target,
-    /// the companion will practice their archery skills.
-    /// 
-    /// FLOW:
-    /// 1. Find nearby ArcheryTarget component (within 20m)
-    /// 2. Walk to a good firing position (5-10m from target, facing it)
-    /// 3. Fire 5-10 practice shots at the target's center (m_center)
-    /// 4. Walk to target to "retrieve arrows"
-    /// 5. Complete and transition to another idle behavior
-    /// 
-    /// SKILL GAIN:
-    /// Uses the ArcheryTarget's m_raiseSkillMultiplier for proper skill gain.
-    /// Practice shots give skill based on accuracy (distance from center).
+    /// Archery practice while idle with a bow near an archery target: take a firing position facing it, loose a
+    /// handful of shots at its center, walk over to collect the arrows, then move on. Skill gain follows the target's
+    /// own multiplier and each shot's accuracy.
     /// </summary>
     public class BowTrainingBehavior : IdleSubBehavior
     {
@@ -32,16 +22,16 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float TARGET_DETECTION_RANGE = 25f;
-        private const float MIN_FIRING_DISTANCE = 6f;
-        private const float MAX_FIRING_DISTANCE = 15f;
-        private const float OPTIMAL_FIRING_DISTANCE = 10f;
-        private const int MIN_SHOTS = 5;
-        private const int MAX_SHOTS = 10;
-        private const float DRAW_DURATION = 1.5f;
-        private const float SHOT_INTERVAL = 2.5f;
-        private const float POSITION_TOLERANCE = 1.5f;
-        private const float ARROW_RETRIEVE_TIME = 2f;  // Time to wait after interacting with target
+        private const float TargetDetectionRange = 25f;
+        private const float MinFiringDistance = 6f;
+        private const float MaxFiringDistance = 15f;
+        private const float OptimalFiringDistance = 10f;
+        private const int MinShots = 5;
+        private const int MaxShots = 10;
+        private const float DrawDuration = 1.5f;
+        private const float ShotInterval = 2.5f;
+        private const float PositionTolerance = 1.5f;
+        private const float ArrowRetrieveTime = 2f;  // Time to wait after interacting with target
         
         #endregion
         
@@ -84,8 +74,8 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool _hasRetrievedArrows = false;
         
         // Perpendicular firing angle (80-100 degrees to target face)
-        private const float MIN_FIRING_ANGLE = 80f;
-        private const float MAX_FIRING_ANGLE = 100f;
+        private const float MinFiringAngle = 80f;
+        private const float MaxFiringAngle = 100f;
         
         #endregion
    
@@ -123,7 +113,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (target == null)
             {
                 if (CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[BowTraining] {Companion.companionName} found no archery target within {GetEffectiveSearchRadius(TARGET_DETECTION_RANGE)}m");
+                    Debug.Log($"[BowTraining] {Companion.companionName} found no archery target within {GetEffectiveSearchRadius(TargetDetectionRange)}m");
                 return false;
             }
             
@@ -138,7 +128,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             _currentPhase = TrainingPhase.FindingTarget;
             _shotsFired = 0;
-            _totalShots = Random.Range(MIN_SHOTS, MAX_SHOTS + 1);
+            _totalShots = Random.Range(MinShots, MaxShots + 1);
             _phaseStartTime = Time.time;
             _hasRetrievedArrows = false;
             
@@ -180,7 +170,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (!VerifyBowInHand())
                 {
                     if (CompanionIdleBehavior.VerboseLogging)
-                        Debug.Log($"[BowTraining] {Companion?.companionName} bow left hand â€” re-equipping");
+                        Debug.Log($"[BowTraining] {Companion?.companionName} bow left hand — re-equipping");
                     EnsureBowEquipped();
                 }
             }
@@ -277,7 +267,7 @@ namespace FiresCore.Npc.IdleBehaviors
             float distToPosition = Vector3.Distance(Transform.position, _firingPosition);
             
             // Check if we've arrived
-            if (distToPosition < POSITION_TOLERANCE)
+            if (distToPosition < PositionTolerance)
             {
                 StopMovement();
                 SetPhase(TrainingPhase.Aiming);
@@ -294,7 +284,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 // Try to shoot from current position if close enough to target
                 float distToTarget = Vector3.Distance(Transform.position, _targetCenterPosition);
-                if (distToTarget >= MIN_FIRING_DISTANCE && distToTarget <= MAX_FIRING_DISTANCE * 1.5f)
+                if (distToTarget >= MinFiringDistance && distToTarget <= MaxFiringDistance * 1.5f)
                 {
                     StopMovement();
                     SetPhase(TrainingPhase.Aiming);
@@ -341,7 +331,7 @@ namespace FiresCore.Npc.IdleBehaviors
             FaceTargetAndLock(_targetCenterPosition);
             
             // Update draw animation
-            float drawProgress = Mathf.Clamp01((Time.time - _drawStartTime) / DRAW_DURATION);
+            float drawProgress = Mathf.Clamp01((Time.time - _drawStartTime) / DrawDuration);
             UpdateDrawAnimation(drawProgress);
             
             // Fire when fully drawn
@@ -395,7 +385,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 FaceTargetAndLock(_targetCenterPosition);
 
             // Wait between shots
-            if (Time.time - _lastShotTime >= SHOT_INTERVAL)
+            if (Time.time - _lastShotTime >= ShotInterval)
             {
                 SetPhase(TrainingPhase.Aiming);
             }
@@ -428,7 +418,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 
                 // Wait a moment after retrieving arrows
-                if (Time.time - _phaseStartTime > ARROW_RETRIEVE_TIME)
+                if (Time.time - _phaseStartTime > ArrowRetrieveTime)
                 {
                     if (CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[BowTraining] {Companion.companionName} finished training - {_shotsFired} shots fired, arrows retrieved");
@@ -867,7 +857,7 @@ namespace FiresCore.Npc.IdleBehaviors
             float bestDistance = float.MaxValue;
             
             // Use the effective search radius (50m for staying companions)
-            float searchRadius = GetEffectiveSearchRadius(TARGET_DETECTION_RANGE);
+            float searchRadius = GetEffectiveSearchRadius(TargetDetectionRange);
             
             // Find all ArcheryTarget components in the scene
             var allTargets = Object.FindObjectsByType<ArcheryTarget>(FindObjectsSortMode.None);
@@ -895,12 +885,12 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 Collider[] colliders = Physics.OverlapSphere(SearchCenter, searchRadius);
                 
-                foreach (var col in colliders)
+                foreach (var collider in colliders)
                 {
-                    if (col == null) continue;
+                    if (collider == null) continue;
                     
                     // Check for ArcheryTarget component
-                    var archeryTarget = col.GetComponent<ArcheryTarget>() ?? col.GetComponentInParent<ArcheryTarget>();
+                    var archeryTarget = collider.GetComponent<ArcheryTarget>() ?? collider.GetComponentInParent<ArcheryTarget>();
                     if (archeryTarget != null)
                     {
                         Vector3 targetPos = archeryTarget.m_center != null 
@@ -925,7 +915,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             // Calculate a good position to fire from
             // MUST be at 80-100 degrees (perpendicular) to target's facing direction
-            // and at OPTIMAL_FIRING_DISTANCE from target
+            // and at OptimalFiringDistance from target
             
             Vector3 targetPos = _targetCenterPosition;
             
@@ -945,7 +935,7 @@ namespace FiresCore.Npc.IdleBehaviors
             idealShootFromDir = Quaternion.Euler(0, angleVariation, 0) * idealShootFromDir;
             
             // Calculate position at optimal distance
-            Vector3 firingPos = targetPos + idealShootFromDir * OPTIMAL_FIRING_DISTANCE;
+            Vector3 firingPos = targetPos + idealShootFromDir * OptimalFiringDistance;
             
             // Get ground height at that position
             if (ZoneSystem.instance != null)

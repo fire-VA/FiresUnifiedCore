@@ -8,6 +8,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Base
     /// </summary>
     public class BuffEffect : CompanionStatusEffectBase
     {
+        private const float MinMovingSpeed = 0.1f;
+        private const float DefaultDurationSeconds = 30f;
+
         /// <summary>Damage multiplier (1.0 = no change, 1.5 = 50% more damage).</summary>
         public float DamageMultiplier { get; set; } = 1.0f;
         
@@ -38,7 +41,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Base
         {
             m_name = "Buff";
             m_tooltip = "Enhanced abilities";
-            Duration = 30f;
+            Duration = DefaultDurationSeconds;
         }
         
         protected override void OnEffectApplied()
@@ -66,7 +69,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Base
                 Vector3 velocity = _rb.linearVelocity;
                 float horizontalMag = new Vector3(velocity.x, 0, velocity.z).magnitude;
                 
-                if (horizontalMag > 0.1f)
+                if (horizontalMag > MinMovingSpeed)
                 {
                     Vector3 horizontalDir = new Vector3(velocity.x, 0, velocity.z).normalized;
                     _rb.linearVelocity = horizontalDir * horizontalMag * SpeedMultiplier + Vector3.up * velocity.y;

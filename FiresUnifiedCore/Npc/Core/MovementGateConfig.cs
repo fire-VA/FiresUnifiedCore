@@ -4,18 +4,10 @@ using FiresCore.Sync;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// Opt-in gate for HARD single-writer movement enforcement.
-    ///
-    /// When OFF (the default), the Character.SetMoveDir prefix keeps the legacy COOPERATIVE behavior
-    /// (it only blocks kinematic bodies and true frozen states). When ON, the prefix additionally DROPS
-    /// any companion SetMoveDir that did not originate from <see cref="UnifiedMovementAuthority"/>'s own
-    /// apply — making the single-writer rule structurally impossible to violate, so a stray raw write in
-    /// a future behavior is silently no-op'd instead of fighting the authority.
-    ///
-    /// Default OFF on purpose: enabling it is an explicit, instantly-reversible opt-in. The vanilla
-    /// pathfinding path (BaseAI.MoveTo → SetMoveDir) is allowed through a per-call escape hatch
-    /// (DisableExternalBlocking around the MoveTo), so follow/patrol/work movement keeps working — but
-    /// it should be verified in-game before relying on the gate. Flip the config off to revert at once.
+    /// Opt-in hard enforcement of the movement single-writer rule. Off by default, the SetMoveDir prefix only blocks
+    /// kinematic bodies and frozen states; on, it also drops any companion SetMoveDir that didn't come from
+    /// <see cref="UnifiedMovementAuthority"/>, with vanilla MoveTo pathfinding let through. Verify in game before
+    /// relying on it; turning it off reverts instantly.
     /// </summary>
     public static class MovementGateConfig
     {

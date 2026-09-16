@@ -5,19 +5,9 @@ using FiresCore.Npc.AI;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Comprehensive threat analysis system that evaluates enemies and combat situations.
-    /// Provides tactical recommendations based on:
-    /// - Enemy health pools (higher = more dangerous, more sustained damage likely)
-    /// - Enemy level/stars (stronger variants deal more damage)
-    /// - Boss detection (requires special tactics)
-    /// - Companion health state (affects aggression/caution)
-    /// - Number of simultaneous threats
-    /// - Enemy targeting behavior (who are they attacking?)
-    /// 
-    /// OUTPUT:
-    /// - ThreatProfile: Detailed analysis of a single enemy
-    /// - CombatSituation: Overall tactical assessment
-    /// - CombatStance: Recommended playstyle (Aggressive, Balanced, Defensive, Survival)
+    /// Assesses individual enemies (health, stars, bosses, what they are targeting) and the overall fight (companion
+    /// health, number of threats), producing a ThreatProfile per enemy, a CombatSituation, and a recommended stance
+    /// from aggressive to survival.
     /// </summary>
     public class ThreatAnalyzer : MonoBehaviour
     {

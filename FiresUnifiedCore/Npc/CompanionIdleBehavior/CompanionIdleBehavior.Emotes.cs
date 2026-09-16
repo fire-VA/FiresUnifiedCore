@@ -24,7 +24,7 @@ namespace FiresCore.Npc
         {
             // Currently empty - headbang and dance moved to persistent
         };
-        private const float LONGER_EMOTE_DURATION = 10f;
+        private const float LongerEmoteDuration = 10f;
 
         // Persistent emotes that hold a pose/animation for extended periods
         // NOTE: emote_relax was removed because it doesn't reset correctly

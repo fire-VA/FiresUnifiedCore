@@ -3,20 +3,9 @@
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Centralized helpers for spawning and destroying ZNetView-bearing GameObjects.
-    ///
-    /// WHY THIS EXISTS:
-    /// Valheim tracks every networked object through ZNetScene. Using raw
-    /// Object.Destroy() bypasses that tracking, leaving orphaned ZDOs that cause
-    /// NullReferenceExceptions deep inside engine code (GraphicsSettingsManager,
-    /// PresentManager, etc.) and duplicate companions.
-    ///
-    /// RULES:
-    /// - SPAWN:  Object.Instantiate() is fine — ZNetView.Awake() registers with
-    ///           ZNetScene automatically. Spawn() is a thin wrapper for consistency.
-    /// - DESTROY: ALWAYS use CompanionNetworkHelper.Destroy() which goes through
-    ///            ZNetScene.instance.Destroy() to properly remove the ZDO. Never
-    ///            fall back to Object.Destroy() on a ZNetView object.
+    /// Spawning and destroying networked companion objects. Instantiate is fine because ZNetView.Awake registers
+    /// with ZNetScene, but destroying must always go through ZNetScene.Destroy: Object.Destroy leaves orphaned ZDOs
+    /// that cause engine NREs and duplicate companions.
     /// </summary>
     public static class CompanionNetworkHelper
     {
@@ -74,21 +63,9 @@ namespace FiresCore.Npc
                 try { nview.ClaimOwnership(); } catch { /* ownership races are non-fatal */ }
             }
 
-            // ALWAYS route through ZNetScene.Destroy when a ZNetView is present,
-            // even if nview.IsValid() is false. Vanilla ZNetScene.Destroy is
-            // safe to call in either case:
-            //   • Valid ZDO  ? ResetZDO + m_instances.Remove(zdo) + Object.Destroy(go)
-            //   • Null ZDO   ? just Object.Destroy(go)
-            //
-            // Skipping ZNetScene.Destroy and doing raw Object.Destroy on a
-            // ZNetView whose ZDO has been reset (but whose entry might still
-            // be in m_instances under a different code path) leaves a stale
-            // dictionary entry pointing at a Unity-destroyed Component. The
-            // next ZNetScene.RemoveObjects tick iterates m_instances.Values,
-            // calls znetView.GetZDO() on the destroyed Component, and NREs.
-            // That's the spam pattern we've been chasing. Letting vanilla
-            // make the call removes the race entirely — the dict cleanup and
-            // the Unity destroy are now atomic from our perspective.
+            // Always destroy through ZNetScene.Destroy when there is a ZNetView, valid ZDO or not. A raw Object.Destroy
+            // could leave a stale m_instances entry pointing at a destroyed component, which NREs the next
+            // RemoveObjects pass; vanilla handles both cases.
             if (ZNetScene.instance != null)
             {
                 ZNetScene.instance.Destroy(go);

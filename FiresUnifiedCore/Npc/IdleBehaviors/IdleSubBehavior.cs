@@ -6,43 +6,12 @@ using FiresCore.Npc.AI;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Base class for idle sub-behaviors that companions can perform while idle.
-    /// Sub-behaviors are more complex activities like training, crafting, or interacting with objects.
-    /// 
-    /// LIFECYCLE:
-    /// 1. CanStart() - Called to check if this behavior can begin (equipment, nearby objects, etc.)
-    /// 2. Start() - Initialize the behavior, set up state
-    /// 3. Update() - Called each frame while active, returns true when complete
-    /// 4. Cancel() - Called if interrupted (combat, owner command, etc.)
-    /// 
-    /// INVENTORY AWARENESS:
-    /// Behaviors can override InventoryPriority to influence selection order:
-    /// - Priority > 0: Should run BEFORE other behaviors (e.g., deposit when full)
-    /// - Priority = 0: Normal priority (default)
-    /// - Priority < 0: Should run AFTER other behaviors
-    /// 
-    /// Behaviors can also use GetInventoryStatus() to check inventory state
-    /// and make decisions (e.g., don't start gathering if inventory is full).
-    /// 
-    /// COMBAT INTERRUPTION AND RESUMPTION:
-    /// Long-form work behaviors (smelter operation, kiln tending, etc.) support being interrupted
-    /// by combat and resumed afterwards. Override SupportsResumption and SaveState/RestoreState
-    /// to enable this for your behavior.
-    /// 
-    /// COMMAND AUTHORITY:
-    /// When a behavior is started via player command (IsCommandInitiated = true), it has ABSOLUTE
-    /// authority over the companion. Normal AI behaviors (following, combat targeting, idle activities)
-    /// are completely suppressed until the command completes or is cancelled by another command.
-    /// 
-    /// UNIFIED MOVEMENT AUTHORITY:
-    /// All behaviors should use the movement helpers (TryMoveToPosition, StopMovement) which
-    /// integrate with UnifiedMovementAuthority to prevent movement conflicts.
-    /// 
-    /// DESIGN:
-    /// - Sub-behaviors are self-contained and manage their own state
-    /// - They communicate with CompanionIdleBehavior through events
-    /// - They can request movement to specific positions
-    /// - They should have a hard timeout to prevent getting stuck
+    /// Base class for the longer idle activities (training, crafting, tending stations). The lifecycle is
+    /// CanStart, Start, Update each frame until it returns true, and Cancel on interruption. InventoryPriority
+    /// orders selection (positive runs first, such as depositing when full); SupportsResumption with SaveState
+    /// and RestoreState lets long work survive a fight; a command-initiated behavior suppresses all autonomous
+    /// AI until it ends; and movement goes through TryMoveToPosition and StopMovement so it respects
+    /// UnifiedMovementAuthority.
     /// </summary>
     public abstract class IdleSubBehavior
     {
@@ -151,23 +120,9 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         /// <summary>
-        /// Gets the effective search radius for finding nearby objects.
-        /// 
-        /// For STAYING companions (set to stay mode):
-        /// - Uses CompanionSettings.GetStayModeWorkSearchRadius() which returns 50m by default
-        /// - If in a territory, uses the larger of 50m or territory bounds
-        /// - This allows companions to find work anywhere in their designated area
-        /// 
-        /// For FOLLOWING companions:
-        /// - Uses the base radius provided (typically 10-15m)
-        /// - No multiplier applied - following companions only interact with nearby objects
-        /// 
-        /// The baseRadius parameter is used as a MINIMUM - staying companions will always
-        /// search at least the StayModeWorkRadius (50m), but will use the larger of
-        /// baseRadius or StayModeWorkRadius.
+        /// The search radius for finding work. A following companion uses <paramref name="baseRadius"/>; a staying
+        /// companion uses at least the stay-mode work radius, widened to its territory when it has one.
         /// </summary>
-        /// <param name="baseRadius">The behavior's default search radius (used for following companions)</param>
-        /// <returns>The effective search radius to use</returns>
         protected float GetEffectiveSearchRadius(float baseRadius)
         {
             if (IdleBehavior != null && IdleBehavior.HasHomePosition && Companion != null && !Companion.ShouldBeFollowing)
@@ -186,21 +141,21 @@ namespace FiresCore.Npc.IdleBehaviors
             return baseRadius;
         }
 
-        // Scratch buffer for path queries â€” safe as static since Unity is single-threaded.
+        // Scratch buffer for path queries — safe as static since Unity is single-threaded.
         private static readonly List<Vector3> _reachabilityBuffer = new List<Vector3>();
 
-        // Per-companion TTL cache: target position (rounded to 1 m grid) â†’ (reachable, timestamp).
-        // Keeps the expensive GetPath call to at most once per REACH_CACHE_TTL seconds per target,
+        // Per-companion TTL cache: target position (rounded to 1 m grid) → (reachable, timestamp).
+        // Keeps the expensive GetPath call to at most once per ReachCacheTtl seconds per target,
         // even when scanning phases run every frame across many companions.
         // Must be per-instance (not static) because reachability depends on where THIS companion stands.
         private readonly Dictionary<Vector3Int, (bool ok, float checkedAt)> _reachCache =
             new Dictionary<Vector3Int, (bool ok, float checkedAt)>();
-        private const float REACH_CACHE_TTL = 5f;
+        private const float ReachCacheTtl = 5f;
 
         /// <summary>
         /// Returns true if Valheim's pathfinding can find a route from the companion's
         /// current position to <paramref name="targetPos"/>. Results are cached per target
-        /// position for <see cref="REACH_CACHE_TTL"/> seconds so scanning phases that run
+        /// position for <see cref="ReachCacheTtl"/> seconds so scanning phases that run
         /// every frame don't trigger a full A* query on each tick.
         /// Falls back to true when <see cref="Pathfinding.instance"/> is unavailable.
         /// </summary>
@@ -209,7 +164,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Transform == null || Pathfinding.instance == null) return true;
 
             var key = Vector3Int.RoundToInt(targetPos);
-            if (_reachCache.TryGetValue(key, out var cached) && Time.time - cached.checkedAt < REACH_CACHE_TTL)
+            if (_reachCache.TryGetValue(key, out var cached) && Time.time - cached.checkedAt < ReachCacheTtl)
                 return cached.ok;
 
             _reachabilityBuffer.Clear();
@@ -335,19 +290,9 @@ namespace FiresCore.Npc.IdleBehaviors
         protected CompanionAI CompanionAI { get; private set; }
         
         /// <summary>
-        /// Tries to move to a position using VANILLA PATHFINDING via CompanionAI.
-        /// 
-        /// CORRECT ARCHITECTURE (Post-Bug #8 Fix):
-        /// - Authority = coordination (decides WHO can move)
-        /// - Vanilla MoveTo() = pathfinding (handles obstacles)
-        /// 
-        /// Call this every frame until destination is reached.
-        /// Returns true if movement was successfully requested (NOT when destination reached).
-        /// Check distance separately to know when you've arrived.
+        /// Requests pathfinding movement toward <paramref name="position"/> through CompanionAI. Returns true when the
+        /// request was accepted, not on arrival; call every frame and check the distance yourself.
         /// </summary>
-        /// <param name="position">Target position to move to</param>
-        /// <param name="walk">Use walking speed</param>
-        /// <param name="run">Use running speed</param>
         protected bool TryMoveToPosition(Vector3 position, bool walk = true, bool run = false)
         {
             // Get CompanionAI if we don't have it

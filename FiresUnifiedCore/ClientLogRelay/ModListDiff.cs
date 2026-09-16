@@ -36,7 +36,7 @@ namespace FiresCore.ClientLogRelay
             string brandLabel,
             DateTime capturedUtc)
         {
-            var r = new Result();
+            var result = new Result();
             if (clientMods == null) clientMods = new Dictionary<string, string>(0, StringComparer.OrdinalIgnoreCase);
             if (serverMods == null) serverMods = new Dictionary<string, string>(0, StringComparer.OrdinalIgnoreCase);
 
@@ -50,12 +50,12 @@ namespace FiresCore.ClientLogRelay
             {
                 if (!server.TryGetValue(kv.Key, out var srvVer))
                 {
-                    r.ClientOnly.Add(kv.Key);
+                    result.ClientOnly.Add(kv.Key);
                     continue;
                 }
                 if (!string.Equals(kv.Value ?? string.Empty, srvVer ?? string.Empty, StringComparison.OrdinalIgnoreCase))
                 {
-                    r.VersionMismatches.Add(new VersionMismatch
+                    result.VersionMismatches.Add(new VersionMismatch
                     {
                         Guid = kv.Key,
                         ClientVersion = kv.Value ?? string.Empty,
@@ -64,25 +64,25 @@ namespace FiresCore.ClientLogRelay
                 }
                 else
                 {
-                    r.SharedMatching++;
+                    result.SharedMatching++;
                 }
             }
             foreach (var kv in server)
             {
-                if (!client.ContainsKey(kv.Key)) r.ServerOnly.Add(kv.Key);
+                if (!client.ContainsKey(kv.Key)) result.ServerOnly.Add(kv.Key);
             }
 
-            r.ClientOnly.Sort(StringComparer.OrdinalIgnoreCase);
-            r.ServerOnly.Sort(StringComparer.OrdinalIgnoreCase);
-            r.VersionMismatches = r.VersionMismatches
+            result.ClientOnly.Sort(StringComparer.OrdinalIgnoreCase);
+            result.ServerOnly.Sort(StringComparer.OrdinalIgnoreCase);
+            result.VersionMismatches = result.VersionMismatches
                 .OrderBy(v => v.Guid, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            r.Report = Render(r, client, server, playerName, platformId, brandLabel, capturedUtc);
-            return r;
+            result.Report = Render(result, client, server, playerName, platformId, brandLabel, capturedUtc);
+            return result;
         }
 
-        private static string Render(Result r,
+        private static string Render(Result result,
             IReadOnlyDictionary<string, string> client,
             IReadOnlyDictionary<string, string> server,
             string playerName, string platformId, string brandLabel, DateTime capturedUtc)
@@ -95,33 +95,33 @@ namespace FiresCore.ClientLogRelay
             sb.AppendLine($"# Captured:        {capturedUtc:yyyy-MM-dd HH:mm:ss} UTC");
             sb.AppendLine($"# Client mods:     {client.Count}");
             sb.AppendLine($"# Server mods:     {server.Count}");
-            sb.AppendLine($"# Shared matching: {r.SharedMatching}");
-            sb.AppendLine($"# Client-only:     {r.ClientOnly.Count}");
-            sb.AppendLine($"# Server-only:     {r.ServerOnly.Count}");
-            sb.AppendLine($"# Version mismatches: {r.VersionMismatches.Count}");
+            sb.AppendLine($"# Shared matching: {result.SharedMatching}");
+            sb.AppendLine($"# Client-only:     {result.ClientOnly.Count}");
+            sb.AppendLine($"# Server-only:     {result.ServerOnly.Count}");
+            sb.AppendLine($"# Version mismatches: {result.VersionMismatches.Count}");
             sb.AppendLine();
 
-            if (r.VersionMismatches.Count > 0)
+            if (result.VersionMismatches.Count > 0)
             {
                 sb.AppendLine("## Version mismatches (client ? server)");
-                foreach (var m in r.VersionMismatches)
-                    sb.AppendLine($"  {m.Guid,-55} client={m.ClientVersion}  server={m.ServerVersion}");
+                foreach (var mismatch in result.VersionMismatches)
+                    sb.AppendLine($"  {mismatch.Guid,-55} client={mismatch.ClientVersion}  server={mismatch.ServerVersion}");
                 sb.AppendLine();
             }
 
-            if (r.ClientOnly.Count > 0)
+            if (result.ClientOnly.Count > 0)
             {
                 sb.AppendLine("## Client-only (installed on client, missing on server)");
-                foreach (var g in r.ClientOnly)
-                    sb.AppendLine($"  {g,-55} version={SafeLookup(client, g)}");
+                foreach (var guid in result.ClientOnly)
+                    sb.AppendLine($"  {guid,-55} version={SafeLookup(client, guid)}");
                 sb.AppendLine();
             }
 
-            if (r.ServerOnly.Count > 0)
+            if (result.ServerOnly.Count > 0)
             {
                 sb.AppendLine("## Server-only (installed on server, missing on client)");
-                foreach (var g in r.ServerOnly)
-                    sb.AppendLine($"  {g,-55} version={SafeLookup(server, g)}");
+                foreach (var guid in result.ServerOnly)
+                    sb.AppendLine($"  {guid,-55} version={SafeLookup(server, guid)}");
                 sb.AppendLine();
             }
 
@@ -137,10 +137,10 @@ namespace FiresCore.ClientLogRelay
             return sb.ToString();
         }
 
-        private static string SafeLookup(IReadOnlyDictionary<string, string> d, string key)
+        private static string SafeLookup(IReadOnlyDictionary<string, string> lookup, string key)
         {
-            if (d == null) return string.Empty;
-            return d.TryGetValue(key, out var v) ? (v ?? string.Empty) : string.Empty;
+            if (lookup == null) return string.Empty;
+            return lookup.TryGetValue(key, out var found) ? (found ?? string.Empty) : string.Empty;
         }
     }
 }

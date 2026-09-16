@@ -6,21 +6,10 @@ using UnityEngine;
 namespace FiresCore.Bridge
 {
     /// <summary>
-    /// The one place the family reads <see cref="PieceTable"/>'s per-category piece lists.
-    ///
-    /// Valheim 1.0 SPLIT the old field in two:
-    ///   pre-1.0  <c>m_availablePieces</c>            : <c>List&lt;List&lt;Piece&gt;&gt;</c>  (per category)
-    ///   1.0      <c>m_availablePieces</c>            : <c>HashSet&lt;Piece&gt;</c>            (FLAT, public readonly)
-    ///   1.0      <c>m_availablePiecesByCategory</c>  : <c>List&lt;List&lt;Piece&gt;&gt;</c>  (per category, PRIVATE)
-    ///
-    /// So code that indexed <c>m_availablePieces[(int)category]</c> now wants
-    /// <c>m_availablePiecesByCategory</c> — and that field is <b>private</b>. Reading it directly
-    /// compiles fine against the publicized assembly and then throws
-    /// <see cref="FieldAccessException"/> on first touch at runtime, which inside a try/catch is
-    /// the silent-feature-death mode. Hence AccessTools.
-    ///
-    /// Five Fires mods index this per-category list (AdminPrefabs, DungeonMaster, RPGmaker,
-    /// Mausoleum, VikingLands), which is why it lives in Core instead of being copied five times.
+    /// Reads PieceTable's per-category piece lists. Valheim 1.0 turned m_availablePieces into a flat HashSet and
+    /// moved the per-category lists into the private m_availablePiecesByCategory, which compiles against the
+    /// publicized assembly but throws FieldAccessException at runtime, so it is read through AccessTools. Several
+    /// Fires mods need it, hence Core.
     /// </summary>
     public static class PieceTableAccess
     {

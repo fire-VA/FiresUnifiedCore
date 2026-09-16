@@ -21,8 +21,8 @@ namespace FiresCore.UI
             var hud = Hud.instance;
             var cross = hud != null ? FindByName(hud.transform, "crosshair") : null;
             if (cross == null) return;
-            foreach (var g in cross.GetComponentsInChildren<Graphic>(true))
-                if (g != null && g.raycastTarget) { g.raycastTarget = false; store.Add(g); }
+            foreach (var graphic in cross.GetComponentsInChildren<Graphic>(true))
+                if (graphic != null && graphic.raycastTarget) { graphic.raycastTarget = false; store.Add(graphic); }
         }
 
         public static void Reassert(List<Graphic> store)
@@ -35,7 +35,7 @@ namespace FiresCore.UI
         public static void Restore(List<Graphic> store)
         {
             if (store == null) return;
-            foreach (var g in store) if (g != null) g.raycastTarget = true;
+            foreach (var graphic in store) if (graphic != null) graphic.raycastTarget = true;
             store.Clear();
         }
 
@@ -45,8 +45,8 @@ namespace FiresCore.UI
             if (root.name == name) return root;
             for (int i = 0; i < root.childCount; i++)
             {
-                var r = FindByName(root.GetChild(i), name);
-                if (r != null) return r;
+                var found = FindByName(root.GetChild(i), name);
+                if (found != null) return found;
             }
             return null;
         }
@@ -80,9 +80,9 @@ namespace FiresCore.UI
           rect.offsetMin = Vector2.zero;
     rect.offsetMax = Vector2.zero;
 
-        var bg = panelGO.AddComponent<Image>();
-        bg.color = backgroundColor ?? UIFontConfig.Colors.PanelBackground;
-        FiresRoundedSprite.Apply(bg);   // soft corners on every codegen panel
+        var image = panelGO.AddComponent<Image>();
+        image.color = backgroundColor ?? UIFontConfig.Colors.PanelBackground;
+        FiresRoundedSprite.Apply(image);   // soft corners on every codegen panel
 
        return panelGO;
         }
@@ -453,14 +453,14 @@ scrollbar.colors = scrollbarColors;
             rootRect.offsetMax = Vector2.zero;
 
             // Background track
-            var bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
-            bg.transform.SetParent(root.transform, false);
-            var bgRect = bg.GetComponent<RectTransform>();
+            var background = new GameObject("Background", typeof(RectTransform), typeof(Image));
+            background.transform.SetParent(root.transform, false);
+            var bgRect = background.GetComponent<RectTransform>();
             bgRect.anchorMin = new Vector2(0f, 0.3f);
             bgRect.anchorMax = new Vector2(1f, 0.7f);
             bgRect.offsetMin = Vector2.zero;
             bgRect.offsetMax = Vector2.zero;
-            bg.GetComponent<Image>().color = UIFontConfig.Colors.ScrollbarBackground;
+            background.GetComponent<Image>().color = UIFontConfig.Colors.ScrollbarBackground;
 
             // Fill Area > Fill
             var fillArea = new GameObject("Fill Area", typeof(RectTransform));
@@ -681,14 +681,14 @@ public GameObject Root { get; set; }
  rect.sizeDelta = new Vector2(-4, height);
 
       // Background image
-      var bg = go.AddComponent<Image>();
-      bg.color = UIFontConfig.Colors.ItemNormal;
-bg.raycastTarget = true;
-            result.Background = bg;
+      var image = go.AddComponent<Image>();
+      image.color = UIFontConfig.Colors.ItemNormal;
+image.raycastTarget = true;
+            result.Background = image;
 
     // Button component
   var button = go.AddComponent<Button>();
- button.targetGraphic = bg;
+ button.targetGraphic = image;
 
    var colors = button.colors;
 colors.normalColor = UIFontConfig.Colors.ItemNormal;
@@ -878,11 +878,11 @@ result.StatusText = statusText;
             
             // Last resort: any TMP font
             var allFonts = Resources.FindObjectsOfTypeAll<TMP_FontAsset>();
-            foreach (var f in allFonts)
+            foreach (var font in allFonts)
             {
-                if (f != null && !string.IsNullOrEmpty(f.name))
+                if (font != null && !string.IsNullOrEmpty(font.name))
                 {
-                    _cachedDefaultFont = f;
+                    _cachedDefaultFont = font;
                     SetTMPDefault(_cachedDefaultFont);
                     return;
                 }
@@ -1111,14 +1111,14 @@ result.StatusText = statusText;
             var bgColor = backgroundColor ?? UIFontConfig.Colors.SectionBackground;
 
   // Create background as a sibling, positioned behind the target
-    var bgGO = new GameObject($"{targetElement.name}_Background");
-        bgGO.transform.SetParent(targetElement.parent, false);
+    var backgroundGO = new GameObject($"{targetElement.name}_Background");
+        backgroundGO.transform.SetParent(targetElement.parent, false);
 
             // Position it right before the target element in hierarchy
             int targetIndex = targetElement.GetSiblingIndex();
-          bgGO.transform.SetSiblingIndex(targetIndex);
+          backgroundGO.transform.SetSiblingIndex(targetIndex);
 
-      var bgRect = bgGO.AddComponent<RectTransform>();
+      var bgRect = backgroundGO.AddComponent<RectTransform>();
       var targetRect = targetElement.GetComponent<RectTransform>();
 
         if (targetRect != null)
@@ -1135,7 +1135,7 @@ result.StatusText = statusText;
                 bgRect.offsetMax = targetRect.offsetMax + new Vector2(padding.right, padding.top);
             }
 
-  var bgImage = bgGO.AddComponent<Image>();
+  var bgImage = backgroundGO.AddComponent<Image>();
       bgImage.color = bgColor;
             bgImage.raycastTarget = false;
 
@@ -1156,17 +1156,17 @@ result.StatusText = statusText;
 
       var bgColor = backgroundColor ?? UIFontConfig.Colors.SectionBackground;
 
-       var bgGO = new GameObject(name);
-bgGO.transform.SetParent(parentElement, false);
-  bgGO.transform.SetAsFirstSibling(); // Put behind other children
+       var backgroundGO = new GameObject(name);
+backgroundGO.transform.SetParent(parentElement, false);
+  backgroundGO.transform.SetAsFirstSibling(); // Put behind other children
 
-     var bgRect = bgGO.AddComponent<RectTransform>();
+     var bgRect = backgroundGO.AddComponent<RectTransform>();
             bgRect.anchorMin = Vector2.zero;
             bgRect.anchorMax = Vector2.one;
       bgRect.offsetMin = Vector2.zero;
           bgRect.offsetMax = Vector2.zero;
 
-         var bgImage = bgGO.AddComponent<Image>();
+         var bgImage = backgroundGO.AddComponent<Image>();
          bgImage.color = bgColor;
    bgImage.raycastTarget = false;
 

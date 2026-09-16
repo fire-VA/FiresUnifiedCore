@@ -6,22 +6,9 @@ using FiresCore.Npc.Movement;
 namespace FiresCore.Npc.Commands
 {
     /// <summary>
-    /// Coordinates commands across multiple companions in the player's group.
-    /// 
-    /// RESPONSIBILITIES:
-    /// 1. Select the BEST companion for a command (closest, not busy)
-    /// 2. Prevent duplicate commands (two companions targeting same object)
-    /// 3. Handle the "whistle" command (Shift+RightClick) to summon closest companion
-    /// 
-    /// COMMAND SELECTION PRIORITY:
-    /// - Closest companion that is not already doing a task
-    /// - If all companions are busy, closest companion overall (interrupts current task)
-    /// 
-    /// WHISTLE COMMAND:
-    /// - Shift + Right Click = "Come here" whistle
-    /// - Summons closest companion to stand in front of player
-    /// - Companion stays for 30 seconds before resuming normal behavior
-    /// - Useful for inventory management when companions are wandering
+    /// Coordinates commands across a player's companions: sends each to the closest companion that isn't busy
+    /// (or the closest overall), keeps two from taking the same target, and handles the Shift + right-click
+    /// whistle that calls the closest companion to stand in front of the player for a while.
     /// </summary>
     public class CompanionCommandCoordinator : MonoBehaviour
     {
@@ -67,7 +54,7 @@ namespace FiresCore.Npc.Commands
         
         // Last whistle time to prevent spam
         private float _lastWhistleTime;
-        private const float WHISTLE_COOLDOWN = 1f;
+        private const float WhistleCooldown = 1f;
         
         #endregion
         
@@ -144,7 +131,7 @@ namespace FiresCore.Npc.Commands
             if (WhistleSuppressor != null) { try { if (WhistleSuppressor()) return; } catch { } }
             
             // Check cooldown
-            if (Time.time - _lastWhistleTime < WHISTLE_COOLDOWN) return;
+            if (Time.time - _lastWhistleTime < WhistleCooldown) return;
             
             // Notify patches that shift-click was used (blocks player kick)
             CompanionPatches.NotifyPingUsed();
@@ -360,20 +347,9 @@ namespace FiresCore.Npc.Commands
         #region Command Coordination
         
         /// <summary>
-        /// Selects the best companion to handle a command to a specific target.
-        /// Returns null if no suitable companion is available.
-        /// 
-        /// SELECTION PRIORITY:
-        /// 1. Closest companion that is not busy with another task
-        /// 2. If all busy AND allowInterrupt is true, returns the closest busy one
-        /// 
-        /// CRITICAL: For Move commands, allowInterrupt should be true since player
-        /// movement commands have ABSOLUTE priority and should override anything.
+        /// The best companion for a command: the closest one that isn't busy, or the closest busy one when
+        /// <paramref name="allowInterrupt"/> is set (always the case for move commands). Null when none qualifies.
         /// </summary>
-        /// <param name="player">The player issuing the command</param>
-        /// <param name="targetObject">The target object (can be null for position-only commands)</param>
-        /// <param name="targetPosition">The target position</param>
-        /// <param name="allowInterrupt">If true, will interrupt a busy companion if all are busy</param>
         public CompanionController SelectBestCompanionForCommand(
             Player player, 
             GameObject targetObject, 

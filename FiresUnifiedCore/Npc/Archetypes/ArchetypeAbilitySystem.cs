@@ -9,34 +9,109 @@ using FiresCore.Npc.Archetypes.StatusEffects.Ultimate;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Manages and triggers archetype-specific abilities for companions.
-    /// Each archetype has a self-buff ability and a group/attack ability.
-    /// 
-    /// ABILITY UNLOCKING:
-    /// Abilities are gated by companion level. Check AbilityUnlockSystem for requirements.
-    /// - Starter abilities: Level 1
-    /// - Basic abilities: Level 5-10
-    /// - Advanced abilities: Level 15-25
-    /// - Expert abilities: Level 35-50
-    /// - Master abilities: Level 75+
-    /// - Ultimate abilities: Level 100
-    /// 
-    /// ABILITIES BY ARCHETYPE:
-    /// - Tank: Fortify (self), Taunt (handled by ArchetypeController)
-    /// - Paladin: Holy Smite (self), Divine Protection (group)
-    /// - Berserker: Berserk Rage (self), Warcry (group)
-    /// - Rogue: Stealth (self), Poison/Caltrops (on attack)
-    /// - Monk: Chi Strike (self), Inner Peace (group heal aura)
-    /// - Ranger: Eagle Eye (self), Hunter's Mark (on enemy)
-    /// - Mage: Elemental Infusion (self), Arcane Shield (self/group)
-    /// - Healer: Purify (self/ally), Sanctuary/Purifying Circle (group)
-    /// 
-    /// MULTIPLAYER:
-    /// All abilities use AbilityRPCManager for proper sync across dedicated servers.
-    /// Visual effects use AbilityFXManager for consistent VFX on all clients.
+    /// Triggers archetype abilities for companions: each archetype has a self buff and a group or attack
+    /// ability, unlocked by companion level (see AbilityUnlockSystem). Abilities sync through AbilityRPCManager
+    /// and play their effects through AbilityFXManager so every client sees the same thing.
     /// </summary>
     public class ArchetypeAbilitySystem : MonoBehaviour
     {
+        private const float CombatAssessmentRange = 20f;
+        private const float AllySupportRange = 15f;
+        private const int EnemyCrowdSize = 3;
+
+        private const float ImmortalStanceHealthThreshold = 0.15f;
+        private const float ImmortalStanceRange = 10f;
+        private const float ImmortalStanceDuration = 5f;
+        private const float FortifyDuration = 10f;
+
+        private const float LayOnHandsHealthThreshold = 0.15f;
+        private const float DivineShieldHealthThreshold = 0.2f;
+        private const float DivineShieldDuration = 3f;
+        private const float ConsecrationRange = 5f;
+        private const float ConsecrationDuration = 10f;
+        private const float HolySmiteHealthThreshold = 0.6f;
+        private const float HolySmiteEngageRange = 5f;
+        private const float HolySmiteDuration = 15f;
+        private const float DivineProtectionRange = 12f;
+        private const float DivineProtectionDuration = 12f;
+        private const float AvatarOfLightDuration = 30f;
+
+        private const float AvatarOfWarHealthThreshold = 0.3f;
+        private const float AvatarOfWarRange = 10f;
+        private const float AvatarOfWarDuration = 20f;
+        private const float DeathWishHealthThreshold = 0.10f;
+        private const float DeathWishDuration = 60f;
+        private const float BerserkRageHealthThreshold = 0.35f;
+        private const float BerserkRageDuration = 12f;
+        private const float WarcryCombatStartWindow = 5f;
+        private const float WarcryRange = 15f;
+        private const float WarcryDuration = 15f;
+
+        private const float ShadowDanceHealthThreshold = 0.25f;
+        private const float ShadowDanceRange = 8f;
+        private const float ShadowDanceDuration = 10f;
+        private const float DeathMarkDuration = 30f;
+        private const float EvasionDuration = 8f;
+        private const float StealthDuration = 12f;
+        private const float PoisonDuration = 8f;
+
+        private const float WayOfPerfectionRange = 5f;
+        private const float WayOfPerfectionDuration = 15f;
+        private const float ChiExplosionRange = 6f;
+        private const float IronBodyHealthThreshold = 0.4f;
+        private const float IronBodyDuration = 10f;
+        private const float MonkEngageRange = 3f;
+        private const float FlurryOfBlowsDuration = 5f;
+        private const float ChiStrikeDuration = 15f;
+        private const float InnerPeaceDuration = 8f;
+
+        private const float PerfectShotRange = 30f;
+        private const float PerfectShotDuration = 15f;
+        private const float RangerCloseQuartersRange = 5f;
+        private const float RainOfArrowsRange = 15f;
+        private const float RainOfArrowsDuration = 5f;
+        private const float MultishotRange = 15f;
+        private const float MultishotDuration = 15f;
+        private const float EagleEyeRange = 20f;
+        private const float EagleEyeDuration = 15f;
+        private const float HuntersMarkDuration = 20f;
+
+        private const float ArcaneFormRange = 15f;
+        private const float ArcaneFormDuration = 15f;
+        private const float MeteorRange = 10f;
+        private const float MeteorDuration = 3f;
+        private const float OverchargeRange = 15f;
+        private const float OverchargeDuration = 20f;
+        private const float ElementalInfusionDuration = 20f;
+        private const float ArcaneShieldHealthThreshold = 0.6f;
+        private const float ArcaneShieldDuration = 15f;
+
+        private const int HealerStatusLogIntervalFrames = 300;
+        private const float AvatarOfLifeHealthThreshold = 0.3f;
+        private const float AvatarOfLifeDuration = 20f;
+        private const float DivineHymnDuration = 8f;
+        private const float ResurrectionDuration = 3f;
+        private const float EmergencySanctuaryRange = 15f;
+        private const float EmergencySanctuaryDuration = 12f;
+        private const float TankSupportHealthThreshold = 0.70f;
+        private const float PurifyHealthThreshold = 0.7f;
+        private const float PurifyDuration = 10f;
+        private const float SanctuaryCombatStartWindow = 10f;
+        private const float SanctuaryRange = 10f;
+        private const float SanctuaryDuration = 10f;
+        private const float PurifyingCircleRange = 10f;
+        private const float PurifyingCircleDuration = 12f;
+
+        private const int BossMaxHealthThreshold = 5000;
+        private const int HighThreatMaxHealthThreshold = 1000;
+        private const int MediumThreatMaxHealthThreshold = 200;
+        private const int TrivialThreatMaxHealthThreshold = 100;
+        private const int ThreatEscalationEnemyCount = 3;
+        private const float LongCooldownSeconds = 30f;
+        private const float VeryLongCooldownSeconds = 60f;
+        private const int LongCooldownMinEnemies = 4;
+        private const int VeryLongCooldownMinEnemies = 5;
+
         [Header("Cooldowns (seconds)")]
         public float selfBuffCooldown = 20f; // Reduced from 30s for more active ability usage
         public float groupAbilityCooldown = 30f; // Reduced from 45s for more group support
@@ -97,7 +172,7 @@ namespace FiresCore.Npc.Archetypes
             // Pause ability ticking during the local player's respawn / loading-screen
             // window. The RPC broadcasts these abilities trigger have been observed
             // to deadlock the zone stream (see CompanionPatches.cs). Cooldowns aren't
-            // consumed while suppressed â€” abilities resume cleanly post-respawn.
+            // consumed while suppressed — abilities resume cleanly post-respawn.
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
 
             // Check if we're in combat
@@ -122,15 +197,15 @@ namespace FiresCore.Npc.Archetypes
             // CRITICAL ENEMY-PRESENCE GATE
             // ----------------------------
             // _inCombat reflects this companion's AI state machine, which can
-            // get stuck on Combat after the actual enemies are dead/distant â€”
+            // get stuck on Combat after the actual enemies are dead/distant —
             // and per-ability triggers like UseElementalInfusion / UseWarcry
             // historically only checked cooldowns, not proximity. The result
             // was companions standing in the player's base spamming buff FX
             // because some sibling companion 100m away was still chasing a
-            // hog. Require a live enemy within ABILITY_USE_RANGE of THIS
+            // hog. Require a live enemy within AbilityUseRange of THIS
             // companion before any ability can tick. Cheap, central, and
             // matches the spirit of every per-ability HasEnemyInRange check.
-            if (!HasEnemyInRange(ABILITY_USE_RANGE)) return;
+            if (!HasEnemyInRange(AbilityUseRange)) return;
 
             // Check and use abilities based on archetype
             UpdateAbilities();
@@ -140,7 +215,7 @@ namespace FiresCore.Npc.Archetypes
         // enemy to justify burning an ability cooldown?". 25 m is roughly the
         // longest engagement distance any ability uses (Ranger's Eagle Eye is
         // 20 m, Perfect Shot is 30 m but is also gated separately).
-        private const float ABILITY_USE_RANGE = 25f;
+        private const float AbilityUseRange = 25f;
         
         /// <summary>
         /// Main ability update - checks conditions and triggers appropriate abilities.
@@ -184,12 +259,12 @@ namespace FiresCore.Npc.Archetypes
         {
             var archetype = ArchetypeClass.Tank;
             int level = CompanionLevel;
-            float hp = _character.GetHealthPercentage();
+            float healthPercent = _character.GetHealthPercentage();
             
             // ULTIMATE (L100): Immortal Stance - when critically low and surrounded
             if (AbilityUnlockSystem.IsAbilityUnlocked("tank_immortal_stance", archetype, level))
             {
-                if (CanUseUltimateAbility() && hp < 0.15f && CountEnemiesInRange(10f) >= 3)
+                if (CanUseUltimateAbility() && healthPercent < ImmortalStanceHealthThreshold && CountEnemiesInRange(ImmortalStanceRange) >= EnemyCrowdSize)
                 {
                     UseImmortalStance();
                     return;
@@ -218,7 +293,7 @@ namespace FiresCore.Npc.Archetypes
             // Self buff: Fortify when taking heavy damage (unlocks at level 10)
             if (AbilityUnlockSystem.IsAbilityUnlocked("tank_fortify", archetype, level))
             {
-                if (CanUseSelfBuff() && hp < lowHealthThreshold)
+                if (CanUseSelfBuff() && healthPercent < lowHealthThreshold)
                 {
                     UseFortify();
                 }
@@ -232,7 +307,7 @@ namespace FiresCore.Npc.Archetypes
             _lastSelfBuffTime = Time.time;
             
             // Use RPC manager for multiplayer sync
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_FORTIFY, 10f);
+            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_FORTIFY, FortifyDuration);
             
             // Grant skill XP
             _skillSystem?.OnAbilityUsed("fortify");
@@ -250,11 +325,11 @@ namespace FiresCore.Npc.Archetypes
         {
             _lastUltimateAbilityTime = Time.time;
             
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_IMMORTAL_STANCE, 5f);
-            
+            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_IMMORTAL_STANCE, ImmortalStanceDuration);
+
             // Grant skill XP + bonus for nearby enemies
             _skillSystem?.OnAbilityUsed("immortalstance");
-            int nearbyEnemies = CountEnemiesInRange(10f);
+            int nearbyEnemies = CountEnemiesInRange(ImmortalStanceRange);
             for (int i = 0; i < nearbyEnemies; i++)
             {
                 _skillSystem?.OnAbilityHitEnemy("immortalstance", null, false);
@@ -296,10 +371,10 @@ namespace FiresCore.Npc.Archetypes
         {
             var archetype = ArchetypeClass.Paladin;
             int level = CompanionLevel;
-            float hp = _character.GetHealthPercentage();
+            float healthPercent = _character.GetHealthPercentage();
             
             // SMART CHECK: Evaluate if abilities are worth using
-            int activeEnemies = CountEnemiesInRange(20f);
+            int activeEnemies = CountEnemiesInRange(CombatAssessmentRange);
             bool combatEffectivelyOver = activeEnemies == 0;
             var currentTarget = GetCurrentTarget();
             var threatLevel = currentTarget != null ? EvaluateThreatLevel(currentTarget) : ThreatLevel.Trivial;
@@ -319,7 +394,7 @@ namespace FiresCore.Npc.Archetypes
             {
                 if (CanUseMasterAbility())
                 {
-                    var criticalAlly = FindCriticalAlly(0.15f);
+                    var criticalAlly = FindCriticalAlly(LayOnHandsHealthThreshold);
                     if (criticalAlly != null)
                     {
                         UseLayOnHands(criticalAlly);
@@ -331,7 +406,7 @@ namespace FiresCore.Npc.Archetypes
             // EXPERT (L50): Divine Shield - emergency immunity when critically low
             if (AbilityUnlockSystem.IsAbilityUnlocked("paladin_divine_shield", archetype, level))
             {
-                if (CanUseExpertAbility() && hp < 0.2f)
+                if (CanUseExpertAbility() && healthPercent < DivineShieldHealthThreshold)
                 {
                     UseDivineShield();
                     return;
@@ -341,9 +416,9 @@ namespace FiresCore.Npc.Archetypes
             // EXPERT (L35): Consecration - ground AoE when surrounded by SIGNIFICANT enemies
             if (AbilityUnlockSystem.IsAbilityUnlocked("paladin_consecration", archetype, level))
             {
-                int nearbyEnemies = CountEnemiesInRange(5f);
+                int nearbyEnemies = CountEnemiesInRange(ConsecrationRange);
                 // Only use consecration if there are multiple enemies OR a significant threat
-                if (CanUseExpertAbility() && (nearbyEnemies >= 3 || (nearbyEnemies >= 2 && threatLevel >= ThreatLevel.Medium)))
+                if (CanUseExpertAbility() && (nearbyEnemies >= EnemyCrowdSize || (nearbyEnemies >= 2 && threatLevel >= ThreatLevel.Medium)))
                 {
                     UseConsecration();
                     return;
@@ -354,8 +429,8 @@ namespace FiresCore.Npc.Archetypes
             if (AbilityUnlockSystem.IsAbilityUnlocked("paladin_smite", archetype, level))
             {
                 // Only use Holy Smite if: multiple enemies OR medium+ threat OR we're hurt
-                bool worthUsingSmite = activeEnemies >= 3 || threatLevel >= ThreatLevel.Medium || hp < 0.6f;
-                if (CanUseSelfBuff() && HasEnemyInRange(5f) && !combatEffectivelyOver && worthUsingSmite)
+                bool worthUsingSmite = activeEnemies >= EnemyCrowdSize || threatLevel >= ThreatLevel.Medium || healthPercent < HolySmiteHealthThreshold;
+                if (CanUseSelfBuff() && HasEnemyInRange(HolySmiteEngageRange) && !combatEffectivelyOver && worthUsingSmite)
                 {
                     UseHolySmite();
                 }
@@ -379,7 +454,7 @@ namespace FiresCore.Npc.Archetypes
             _lastSelfBuffTime = Time.time;
             
             // Use RPC manager for multiplayer sync
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_HOLY_SMITE, 15f);
+            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_HOLY_SMITE, HolySmiteDuration);
             
             // Grant skill XP
             _skillSystem?.OnAbilityUsed("holysmite");
@@ -398,7 +473,7 @@ namespace FiresCore.Npc.Archetypes
             _lastGroupAbilityTime = Time.time;
             
             // Use RPC manager for multiplayer sync - applies to all allies in range
-            int count = AbilityRPCManager.ApplyGroupBuff(_character, StatusEffectManager.EFFECT_DIVINE_PROTECTION, 12f, 12f);
+            int count = AbilityRPCManager.ApplyGroupBuff(_character, StatusEffectManager.EFFECT_DIVINE_PROTECTION, DivineProtectionRange, DivineProtectionDuration);
             
             // Grant skill XP + bonus for each ally protected
             _skillSystem?.OnAbilityUsed("divineprotection");
@@ -420,7 +495,7 @@ namespace FiresCore.Npc.Archetypes
         {
             _lastUltimateAbilityTime = Time.time;
             
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_AVATAR_OF_LIGHT, 30f);
+            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_AVATAR_OF_LIGHT, AvatarOfLightDuration);
             
             // Grant skill XP
             _skillSystem?.OnAbilityUsed("avataroflight");
@@ -451,7 +526,7 @@ namespace FiresCore.Npc.Archetypes
         {
             _lastExpertAbilityTime = Time.time;
             
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_DIVINE_SHIELD, 3f);
+            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_DIVINE_SHIELD, DivineShieldDuration);
             
             // Grant skill XP
             _skillSystem?.OnAbilityUsed("divineshield");
@@ -466,7 +541,7 @@ namespace FiresCore.Npc.Archetypes
         {
             _lastExpertAbilityTime = Time.time;
             
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_CONSECRATION, 10f);
+            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_CONSECRATION, ConsecrationDuration);
             
             // Grant skill XP
             _skillSystem?.OnAbilityUsed("consecration");
@@ -485,12 +560,12 @@ namespace FiresCore.Npc.Archetypes
         {
             var archetype = ArchetypeClass.Berserker;
             int level = CompanionLevel;
-            float hp = _character.GetHealthPercentage();
+            float healthPercent = _character.GetHealthPercentage();
             
             // ULTIMATE (L100): Avatar of War - when low health and in heavy combat
             if (AbilityUnlockSystem.IsAbilityUnlocked("berserker_avatar_war", archetype, level))
             {
-                if (CanUseUltimateAbility() && hp < 0.3f && CountEnemiesInRange(10f) >= 2)
+                if (CanUseUltimateAbility() && healthPercent < 0.3f && CountEnemiesInRange(10f) >= 2)
                 {
                     UseAvatarOfWar();
                     return;
@@ -500,7 +575,7 @@ namespace FiresCore.Npc.Archetypes
             // MASTER (L75): Death Wish - passive that activates when below 10% HP
             if (AbilityUnlockSystem.IsAbilityUnlocked("berserker_deathwish", archetype, level))
             {
-                if (hp < 0.10f && !StatusEffectManager.HasEffect(_character, StatusEffectManager.EFFECT_DEATH_WISH))
+                if (healthPercent < 0.10f && !StatusEffectManager.HasEffect(_character, StatusEffectManager.EFFECT_DEATH_WISH))
                 {
                     UseDeathWish();
                 }
@@ -527,7 +602,7 @@ namespace FiresCore.Npc.Archetypes
             // Self buff: Berserk Rage when low health (unlocks at level 10)
             if (AbilityUnlockSystem.IsAbilityUnlocked("berserker_rage", archetype, level))
             {
-                if (CanUseSelfBuff() && hp < 0.35f)
+                if (CanUseSelfBuff() && healthPercent < 0.35f)
                 {
                     UseBerserkRage();
                 }
@@ -641,7 +716,7 @@ namespace FiresCore.Npc.Archetypes
         {
             var archetype = ArchetypeClass.Rogue;
             int level = CompanionLevel;
-            float hp = _character.GetHealthPercentage();
+            float healthPercent = _character.GetHealthPercentage();
             
             // SMART CHECK: Don't use stealth if combat is ending (few/no enemies left)
             int activeEnemies = CountEnemiesInRange(20f);
@@ -650,7 +725,7 @@ namespace FiresCore.Npc.Archetypes
             // ULTIMATE (L100): Shadow Dance - when outnumbered or low health
             if (AbilityUnlockSystem.IsAbilityUnlocked("rogue_shadow_dance", archetype, level))
             {
-                if (CanUseUltimateAbility() && !combatEffectivelyOver && (hp < 0.25f || CountEnemiesInRange(8f) >= 3))
+                if (CanUseUltimateAbility() && !combatEffectivelyOver && (healthPercent < 0.25f || CountEnemiesInRange(8f) >= 3))
                 {
                     UseShadowDance();
                     return;
@@ -678,7 +753,7 @@ namespace FiresCore.Npc.Archetypes
             // EXPERT (L50): Evasion - when taking damage and being targeted
             if (AbilityUnlockSystem.IsAbilityUnlocked("rogue_evasion", archetype, level))
             {
-                if (CanUseExpertAbility() && !combatEffectivelyOver && IsBeingTargeted() && hp < 0.5f)
+                if (CanUseExpertAbility() && !combatEffectivelyOver && IsBeingTargeted() && healthPercent < 0.5f)
                 {
                     UseEvasion();
                     return;
@@ -801,7 +876,7 @@ namespace FiresCore.Npc.Archetypes
         {
             var archetype = ArchetypeClass.Monk;
             int level = CompanionLevel;
-            float hp = _character.GetHealthPercentage();
+            float healthPercent = _character.GetHealthPercentage();
             
             // ULTIMATE (L100): Way of Perfection - when surrounded by enemies
             if (AbilityUnlockSystem.IsAbilityUnlocked("monk_perfection", archetype, level))
@@ -826,7 +901,7 @@ namespace FiresCore.Npc.Archetypes
             // EXPERT (L50): Iron Body - when taking heavy damage
             if (AbilityUnlockSystem.IsAbilityUnlocked("monk_iron_body", archetype, level))
             {
-                if (CanUseExpertAbility() && hp < 0.4f && IsBeingTargeted())
+                if (CanUseExpertAbility() && healthPercent < 0.4f && IsBeingTargeted())
                 {
                     UseIronBody();
                     return;
@@ -1124,7 +1199,7 @@ namespace FiresCore.Npc.Archetypes
         {
             var archetype = ArchetypeClass.Mage;
             int level = CompanionLevel;
-            float hp = _character.GetHealthPercentage();
+            float healthPercent = _character.GetHealthPercentage();
             
             // ULTIMATE (L100): Arcane Form - when in heavy combat
             if (AbilityUnlockSystem.IsAbilityUnlocked("mage_arcane_form", archetype, level))
@@ -1177,7 +1252,7 @@ namespace FiresCore.Npc.Archetypes
             // Defensive: Arcane Shield when taking damage (unlocks at level 10)
             if (AbilityUnlockSystem.IsAbilityUnlocked("mage_shield", archetype, level))
             {
-                if (CanUseGroupAbility() && hp < 0.6f)
+                if (CanUseGroupAbility() && healthPercent < 0.6f)
                 {
                     UseArcaneShield();
                 }
@@ -1288,12 +1363,12 @@ namespace FiresCore.Npc.Archetypes
         
         // Emergency heal cooldown tracking
         private float _lastEmergencyHealTime = -100f;
-        private const float EMERGENCY_HEAL_COOLDOWN = 5f;
-        private const float EMERGENCY_HEALTH_THRESHOLD = 0.20f; // 20% health = emergency
+        private const float EmergencyHealCooldown = 5f;
+        private const float EmergencyHealthThreshold = 0.20f; // 20% health = emergency
         
         // Resurrection cooldown (very long - 5 minutes)
         private float _lastResurrectionTime = -1000f;
-        private const float RESURRECTION_COOLDOWN = 300f;
+        private const float ResurrectionCooldown = 300f;
         
         private void UpdateHealerAbilities()
         {
@@ -1331,7 +1406,7 @@ namespace FiresCore.Npc.Archetypes
             // EXPERT (L50): Resurrection - when a companion is defeated
             if (AbilityUnlockSystem.IsAbilityUnlocked("healer_resurrection", archetype, level))
             {
-                if (Time.time - _lastResurrectionTime >= RESURRECTION_COOLDOWN)
+                if (Time.time - _lastResurrectionTime >= ResurrectionCooldown)
                 {
                     var defeatedCompanion = FindDefeatedCompanion();
                     if (defeatedCompanion != null)
@@ -1345,7 +1420,7 @@ namespace FiresCore.Npc.Archetypes
             // PRIORITY 1: Emergency heal - anyone below 20% health gets immediate attention (unlocks at level 35)
             if (AbilityUnlockSystem.IsAbilityUnlocked("healer_emergency", archetype, level))
             {
-                if (Time.time - _lastEmergencyHealTime >= EMERGENCY_HEAL_COOLDOWN)
+                if (Time.time - _lastEmergencyHealTime >= EmergencyHealCooldown)
                 {
                     var emergencyTarget = FindEmergencyHealTarget();
                     if (emergencyTarget != null)
@@ -1440,19 +1515,19 @@ namespace FiresCore.Npc.Archetypes
         {
             if (_companion == null) return null;
             
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != _companion.ownerPlayerId) continue;
+                if (companion == null || companion.isDefeated) continue;
+                if (companion.ownerPlayerId != _companion.ownerPlayerId) continue;
                 
-                var archController = comp.GetArchetypeController();
+                var archController = companion.GetArchetypeController();
                 if (archController != null && archController.IsTank)
                 {
                     // Check if tank is in combat
-                    var tankAI = comp.GetCompanionAI();
+                    var tankAI = companion.GetCompanionAI();
                     if (tankAI != null && tankAI.IsInCombat)
                     {
-                        return comp;
+                        return companion;
                     }
                 }
             }
@@ -1479,13 +1554,13 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Check other companions
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != _companion.ownerPlayerId) continue;
-                if (comp == _companion) continue;
+                if (companion == null || companion.isDefeated) continue;
+                if (companion.ownerPlayerId != _companion.ownerPlayerId) continue;
+                if (companion == _companion) continue;
                 
-                var compChar = comp.GetCharacter();
+                var compChar = companion.GetCharacter();
                 if (compChar != null && !compChar.IsDead())
                 {
                     float dist = Vector3.Distance(transform.position, compChar.transform.position);
@@ -1508,7 +1583,7 @@ namespace FiresCore.Npc.Archetypes
             if (_companion == null) return null;
             
             Character emergencyTarget = null;
-            float lowestHealth = EMERGENCY_HEALTH_THRESHOLD;
+            float lowestHealth = EmergencyHealthThreshold;
             
             // Check self first
             if (_character.GetHealthPercentage() < lowestHealth)
@@ -1522,7 +1597,7 @@ namespace FiresCore.Npc.Archetypes
             if (tank != null)
             {
                 var tankChar = tank.GetCharacter();
-                if (tankChar != null && tankChar.GetHealthPercentage() < EMERGENCY_HEALTH_THRESHOLD)
+                if (tankChar != null && tankChar.GetHealthPercentage() < EmergencyHealthThreshold)
                 {
                     // Tank in emergency - they get priority!
                     return tankChar;
@@ -1530,20 +1605,20 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Check other companions
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != _companion.ownerPlayerId) continue;
-                if (comp == _companion) continue;
+                if (companion == null || companion.isDefeated) continue;
+                if (companion.ownerPlayerId != _companion.ownerPlayerId) continue;
+                if (companion == _companion) continue;
                 
-                var compChar = comp.GetCharacter();
+                var compChar = companion.GetCharacter();
                 if (compChar != null && !compChar.IsDead())
                 {
-                    float hp = compChar.GetHealthPercentage();
-                    if (hp < lowestHealth)
+                    float healthPercent = compChar.GetHealthPercentage();
+                    if (healthPercent < lowestHealth)
                     {
                         emergencyTarget = compChar;
-                        lowestHealth = hp;
+                        lowestHealth = healthPercent;
                     }
                 }
             }
@@ -1566,22 +1641,22 @@ namespace FiresCore.Npc.Archetypes
         {
             if (_companion == null) return null;
             
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != _companion.ownerPlayerId) continue;
+                if (companion == null || companion.isDefeated) continue;
+                if (companion.ownerPlayerId != _companion.ownerPlayerId) continue;
                 
-                var archController = comp.GetArchetypeController();
+                var archController = companion.GetArchetypeController();
                 if (archController != null && archController.IsTank)
                 {
                     // Check if tank has the "Taunting" status effect active
-                    var tankChar = comp.GetCharacter();
+                    var tankChar = companion.GetCharacter();
                     if (tankChar != null)
                     {
                         var seman = tankChar.GetSEMan();
                         if (seman != null && seman.HaveStatusEffect("CompanionTaunting".GetStableHashCode()))
                         {
-                            return comp;
+                            return companion;
                         }
                     }
                 }
@@ -1597,15 +1672,15 @@ namespace FiresCore.Npc.Archetypes
         {
             if (_companion == null) return null;
             
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null) continue;
-                if (comp.ownerPlayerId != _companion.ownerPlayerId) continue;
-                if (comp == _companion) continue;
+                if (companion == null) continue;
+                if (companion.ownerPlayerId != _companion.ownerPlayerId) continue;
+                if (companion == _companion) continue;
                 
-                if (comp.isDefeated)
+                if (companion.isDefeated)
                 {
-                    return comp;
+                    return companion;
                 }
             }
             
@@ -1825,13 +1900,13 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Check other companions
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != _companion.ownerPlayerId) continue;
-                if (comp == _companion) continue;
+                if (companion == null || companion.isDefeated) continue;
+                if (companion.ownerPlayerId != _companion.ownerPlayerId) continue;
+                if (companion == _companion) continue;
                 
-                var compChar = comp.GetCharacter();
+                var compChar = companion.GetCharacter();
                 if (compChar != null && !compChar.IsDead())
                 {
                     float dist = Vector3.Distance(transform.position, compChar.transform.position);
@@ -1869,13 +1944,13 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Check other companions
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != _companion.ownerPlayerId) continue;
-                if (comp == _companion) continue;
+                if (companion == null || companion.isDefeated) continue;
+                if (companion.ownerPlayerId != _companion.ownerPlayerId) continue;
+                if (companion == _companion) continue;
                 
-                var compChar = comp.GetCharacter();
+                var compChar = companion.GetCharacter();
                 if (compChar != null && !compChar.IsDead())
                 {
                     float dist = Vector3.Distance(transform.position, compChar.transform.position);
@@ -1920,13 +1995,13 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Check other companions
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != _companion.ownerPlayerId) continue;
-                if (comp == _companion) continue;
+                if (companion == null || companion.isDefeated) continue;
+                if (companion.ownerPlayerId != _companion.ownerPlayerId) continue;
+                if (companion == _companion) continue;
                 
-                var compChar = comp.GetCharacter();
+                var compChar = companion.GetCharacter();
                 if (compChar != null && !compChar.IsDead())
                 {
                     float dist = Vector3.Distance(transform.position, compChar.transform.position);
@@ -1989,9 +2064,9 @@ namespace FiresCore.Npc.Archetypes
         {
             // Only count allies fighting nearby. Without the distance gate,
             // a companion 200 m away chasing a hog made every Berserker in
-            // the player's base fire Warcry repeatedly â€” there's no point
+            // the player's base fire Warcry repeatedly — there's no point
             // buffing for a fight you're not part of.
-            const float ALLY_COMBAT_RANGE_SQ = 25f * 25f;
+            const float AllyCombatRangeSq = 25f * 25f;
             Vector3 myPos = transform.position;
 
             var allCompanions = UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None);
@@ -2003,7 +2078,7 @@ namespace FiresCore.Npc.Archetypes
                 var ai = companion.GetComponent<AI.CompanionAI>();
                 if (ai == null || !ai.IsInCombat) continue;
 
-                if ((companion.transform.position - myPos).sqrMagnitude <= ALLY_COMBAT_RANGE_SQ)
+                if ((companion.transform.position - myPos).sqrMagnitude <= AllyCombatRangeSq)
                     return true;
             }
             return false;

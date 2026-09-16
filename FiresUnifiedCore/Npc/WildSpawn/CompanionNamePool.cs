@@ -16,9 +16,9 @@ namespace FiresCore.Npc.WildSpawn
             return pool[rng.Next(pool.Length)];
         }
 
-        private static string[] GetPool(CompanionFaction f)
+        private static string[] GetPool(CompanionFaction faction)
         {
-            switch (f)
+            switch (faction)
             {
                 case CompanionFaction.Neutral: return _neutral;
                 case CompanionFaction.Bandit:  return _bandit;

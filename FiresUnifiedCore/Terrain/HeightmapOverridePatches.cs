@@ -5,26 +5,14 @@ using HarmonyLib;
 namespace FiresCore.Terrain
 {
     /// <summary>
-    /// Harmony transpiler patches that replace the ±8 hard-coded height clamps
-    /// inside <see cref="TerrainComp"/> with configurable values from
-    /// <see cref="HeightmapOverrideConfig"/>.
-    ///
-    /// Mirrors the logic of the original HeightmapUnlimited mod but with no
-    /// Jotunn dependency.
-    ///
-    /// Patched methods:
-    ///   - TerrainComp.LevelTerrain       — replaces -8f ? Min(),  +8f ? Max()
-    ///   - TerrainComp.RaiseTerrain       — replaces -8f ? Min(),  +8f ? Max()
-    ///   - TerrainComp.ApplyToHeightmap   — replaces -8f ? Min(),
-    ///                                               first +8f ? MinAbs(),
-    ///                                               subsequent +8f ? Max()
-    ///
-    /// All patches are no-ops when <see cref="HeightmapOverrideConfig.Enabled"/> is false.
+    /// Replaces the hard-coded 8 m height clamps in TerrainComp.LevelTerrain, RaiseTerrain and ApplyToHeightmap with
+    /// the limits from <see cref="HeightmapOverrideConfig"/>, like HeightmapUnlimited but without Jotunn. Inactive
+    /// while <see cref="HeightmapOverrideConfig.Enabled"/> is false.
     /// </summary>
     [HarmonyPatch(typeof(TerrainComp))]
     public static class HeightmapOverridePatches
     {
-        // ?????? LevelTerrain ??????
+        // LevelTerrain
 
         [HarmonyTranspiler]
         [HarmonyPatch("LevelTerrain")]
@@ -50,7 +38,7 @@ namespace FiresCore.Terrain
             }
         }
 
-        // ?????? RaiseTerrain ??????
+        // RaiseTerrain
 
         [HarmonyTranspiler]
         [HarmonyPatch("RaiseTerrain")]
@@ -76,7 +64,7 @@ namespace FiresCore.Terrain
             }
         }
 
-        // ?????? ApplyToHeightmap ??????
+        // ApplyToHeightmap
 
         [HarmonyTranspiler]
         [HarmonyPatch("ApplyToHeightmap")]

@@ -3,35 +3,15 @@ using System.Collections.Generic;
 using UnityEngine;
 using FiresCore.Npc.NpcMode;
 
-// CompanionPatches lives in FiresCore.Npc (parent namespace) â€” referenced as a fully-qualified name below.
+// CompanionPatches lives in FiresCore.Npc (parent namespace) — referenced as a fully-qualified name below.
 
 namespace FiresCore.Npc.Vault
 {
     /// <summary>
-    /// Centralized companion vault facade.
-    ///
-    /// PHASE 6 STATUS ï¿½ read-only debug mirror.
-    /// ----------------------------------------
-    /// As of the Phase 6 save-refactor cut, the vault JSON is no longer the
-    /// authority for any companion data. The authoritative sources are:
-    ///   ï¿½ the live ZDO of an in-world companion (name, scale, equipment,
-    ///     progression, kills, etc.), and
-    ///   ï¿½ the per-player roster on <c>Player.m_customData</c> for follow
-    ///     state, dismissed/recall flag, pending-respawn deadlines, and
-    ///     death snapshots (see <see cref="PlayerCompanionStorage"/>).
-    ///
-    /// The vault JSON is now refreshed exclusively by the periodic flush
-    /// in <see cref="FlushDebugMirror"/> (driven from <see cref="Tick"/>)
-    /// and by the explicit <see cref="FlushPlayerToVault"/> call on logout.
-    /// Callers no longer write per-event ï¿½ the next flush picks up the
-    /// change automatically.
-    ///
-    /// All <c>Save*</c>, <c>Get*</c>, and <c>Remove*</c> public APIs below
-    /// remain compiling but are <c>[Obsolete]</c>; production code paths
-    /// have been migrated to the resolver / writer / roster facades. The
-    /// pure <see cref="BuildSaveData"/> and <see cref="RestoreCompanion"/>
-    /// helpers stay first-class ï¿½ they are reused by
-    /// <see cref="CompanionZdoSnapshot"/> and the periodic flush.
+    /// The legacy companion vault, now a read-only JSON mirror for debugging. The live ZDO and the player's
+    /// roster in Player.m_customData are authoritative; the JSON is refreshed by <see cref="FlushDebugMirror"/>
+    /// on a timer and by <see cref="FlushPlayerToVault"/> at logout. The Save, Get and Remove APIs are obsolete,
+    /// while <see cref="BuildSaveData"/> and <see cref="RestoreCompanion"/> remain the shared field copy.
     /// </summary>
     public static class CompanionVault
     {
@@ -51,8 +31,8 @@ namespace FiresCore.Npc.Vault
 
         /// <summary>
         /// How often the periodic vault flush runs (seconds). The vault
-        /// is a debug mirror as of Phase 6 ï¿½ nothing reads it on hot
-        /// paths ï¿½ so a 30 s lag is acceptable.
+        /// is a debug mirror as of Phase 6 - nothing reads it on hot
+        /// paths - so a 30 s lag is acceptable.
         /// </summary>
         public const float DIRTY_FLUSH_INTERVAL = 30f;
 
@@ -64,7 +44,7 @@ namespace FiresCore.Npc.Vault
         /// Periodic tick driver. Mirrors the authoritative state
         /// (live ZDOs + per-player roster) into the vault JSON every
         /// <see cref="DIRTY_FLUSH_INTERVAL"/> seconds. The vault is
-        /// strictly a debug mirror as of Phase 6 ï¿½ nothing reads it
+        /// strictly a debug mirror as of Phase 6 - nothing reads it
         /// for restore decisions.
         /// </summary>
         public static void Tick()
@@ -78,7 +58,7 @@ namespace FiresCore.Npc.Vault
 
             // Don't even arm the timer during the local player's respawn / loading
             // window. FlushDebugMirror writes to VaultOfKnowledge AND to the local
-            // player's m_customData (via the roster mirror) â€” both paths can
+            // player's m_customData (via the roster mirror) — both paths can
             // deadlock the zone stream if they fire mid-teleport. Leaving
             // _lastDirtyFlushTime un-advanced means the next Tick after the gate
             // opens flushes immediately.
@@ -92,19 +72,9 @@ namespace FiresCore.Npc.Vault
         }
 
         /// <summary>
-        /// Walks every authoritative source and writes a fresh vault
-        /// snapshot for each owned companion:
-        ///
-        ///   1. Every live <see cref="CompanionController"/> in the world
-        ///      becomes a vault entry built from its ZDO/components ï¿½ the
-        ///      live state is freshest.
-        ///   2. Every roster entry on the local player that is NOT covered
-        ///      by a live companion (Dismissed, IsPendingRespawn, or simply
-        ///      out of range) becomes a vault entry built from the stored
-        ///      <see cref="PlayerCompanionRosterEntry.Snapshot"/>.
-        ///
-        /// Failures on any individual companion are logged and skipped;
-        /// the flush never throws.
+        /// Rewrites the vault mirror from the authoritative sources: every live companion from its own state, then
+        /// every roster entry without a live companion (dismissed, pending respawn, out of range) from its snapshot.
+        /// Failures on one companion are logged and skipped.
         /// </summary>
         public static void FlushDebugMirror()
         {
@@ -117,24 +87,24 @@ namespace FiresCore.Npc.Vault
             try
             {
                 // 1) Mirror live companions (authoritative ZDO state)
-                foreach (var c in CompanionController.AllCompanions)
+                foreach (var companion in CompanionController.AllCompanions)
                 {
-                    if (c == null) continue;
-                    if (string.IsNullOrEmpty(c.companionId)) continue;
-                    if (c.ownerPlayerId == 0) continue;
+                    if (companion == null) continue;
+                    if (string.IsNullOrEmpty(companion.companionId)) continue;
+                    if (companion.ownerPlayerId == 0) continue;
 
                     try
                     {
-                        var sd = BuildSaveData(c);
-                        if (sd == null || !ValidateSaveData(sd)) continue;
+                        var saveData = BuildSaveData(companion);
+                        if (saveData == null || !ValidateSaveData(saveData)) continue;
 
-                        FiresCore.Bridge.CompanionVaultBridge.Save(c.ownerPlayerId, sd);
-                        seenIds.Add(c.companionId);
+                        FiresCore.Bridge.CompanionVaultBridge.Save(companion.ownerPlayerId, saveData);
+                        seenIds.Add(companion.companionId);
                         liveMirrored++;
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogWarning($"[CompanionVault] FlushDebugMirror live failed for {c.companionName}: {ex.Message}");
+                        Debug.LogWarning($"[CompanionVault] FlushDebugMirror live failed for {companion.companionName}: {ex.Message}");
                     }
                 }
 
@@ -173,22 +143,22 @@ namespace FiresCore.Npc.Vault
             var seenIds = new HashSet<string>();
             try
             {
-                foreach (var c in CompanionController.AllCompanions)
+                foreach (var companion in CompanionController.AllCompanions)
                 {
-                    if (c == null) continue;
-                    if (c.ownerPlayerId != playerId) continue;
-                    if (string.IsNullOrEmpty(c.companionId)) continue;
+                    if (companion == null) continue;
+                    if (companion.ownerPlayerId != playerId) continue;
+                    if (string.IsNullOrEmpty(companion.companionId)) continue;
 
                     try
                     {
-                        var sd = BuildSaveData(c);
-                        if (sd == null || !ValidateSaveData(sd)) continue;
-                        FiresCore.Bridge.CompanionVaultBridge.Save(playerId, sd);
-                        seenIds.Add(c.companionId);
+                        var saveData = BuildSaveData(companion);
+                        if (saveData == null || !ValidateSaveData(saveData)) continue;
+                        FiresCore.Bridge.CompanionVaultBridge.Save(playerId, saveData);
+                        seenIds.Add(companion.companionId);
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogWarning($"[CompanionVault] FlushPlayerToVault live failed for {c.companionName}: {ex.Message}");
+                        Debug.LogWarning($"[CompanionVault] FlushPlayerToVault live failed for {companion.companionName}: {ex.Message}");
                     }
                 }
 
@@ -217,27 +187,27 @@ namespace FiresCore.Npc.Vault
                 if (excludeIds != null && excludeIds.Contains(entry.CompanionId)) continue;
                 if (entry.Snapshot == null) continue;
 
-                var sd = entry.Snapshot;
+                var snapshot = entry.Snapshot;
 
                 // Project the wall-clock pending deadline into the snapshot's
                 // seconds-remaining field so the vault dump reflects current
                 // timer state rather than the at-death recorded duration.
                 if (entry.IsPendingRespawn && entry.RespawnDeadlineUtcTicks > 0)
                 {
-                    sd.IsPendingRespawn = true;
-                    sd.RespawnTimeRemaining = (float)CompanionZdoSnapshot.ComputeRemainingRespawnSeconds(entry.RespawnDeadlineUtcTicks);
+                    snapshot.IsPendingRespawn = true;
+                    snapshot.RespawnTimeRemaining = (float)CompanionZdoSnapshot.ComputeRemainingRespawnSeconds(entry.RespawnDeadlineUtcTicks);
                 }
                 else
                 {
-                    sd.IsPendingRespawn = false;
-                    sd.RespawnTimeRemaining = 0f;
+                    snapshot.IsPendingRespawn = false;
+                    snapshot.RespawnTimeRemaining = 0f;
                 }
 
-                if (!ValidateSaveData(sd)) continue;
+                if (!ValidateSaveData(snapshot)) continue;
 
                 try
                 {
-                    FiresCore.Bridge.CompanionVaultBridge.Save(playerId, sd);
+                    FiresCore.Bridge.CompanionVaultBridge.Save(playerId, snapshot);
                     written++;
                 }
                 catch (Exception ex)
@@ -330,7 +300,7 @@ namespace FiresCore.Npc.Vault
                 DisplayNameOverride = companion.displayNameOverride,
                 PrefabName = GetPrefabName(companion),
                 OwnerPlayerId = companion.ownerPlayerId,
-                // Persistent owner intent ï¿½ NOT the runtime AI flag.  The runtime
+                // Persistent owner intent - NOT the runtime AI flag.  The runtime
                 // flag flips off transiently for many reasons (owner not loaded,
                 // glitch recovery, mid-teleport) and writing those values to vault
                 // caused companions to forget they were following across logout.

@@ -8,17 +8,9 @@ using FiresCore.Npc.Core;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Handles movement for companion NPCs during combat and following.
-    /// Coordinates with handlers: FleeMovementHandler, CommandMovementHandler, 
-    /// PlayerIdleHandler, StuckDetectionHandler, CombatMovementHandler.
-    /// 
-    /// PARTIAL CLASS STRUCTURE:
-    /// - CompanionCombatMovement.cs - Core fields, settings, initialization, Unity lifecycle
-    /// - CompanionCombatMovement.Combat.cs - Combat state, commitment system, emergency actions
-    /// - CompanionCombatMovement.Following.cs - Follow state, player idle handling, non-combat intent
-    /// - CompanionCombatMovement.Movement.cs - Movement mode application, velocity clamping
-    /// - CompanionCombatMovement.Jump.cs - Jump logic, stuck detection, grounded state
-    /// - CompanionCombatMovement.Commands.cs - Command handling, priority targets, movement lock
+    /// Companion movement in combat and while following, coordinating the flee, command, player-idle, stuck-detection
+    /// and combat movement handlers. Split across partial files: combat, following, movement modes, jumping and
+    /// commands.
     /// </summary>
     public partial class CompanionCombatMovement : MonoBehaviour
     {
@@ -174,7 +166,7 @@ namespace FiresCore.Npc
         // RANGED WEAPON MOVEMENT REQUEST
         private bool _hasRangedMovementRequest = false;
         private float _rangedRequestTime = 0f;
-        private const float RANGED_REQUEST_TIMEOUT = 0.5f;
+        private const float RangedRequestTimeout = 0.5f;
 
         // Strafe state
         private int _strafeDirection;
@@ -183,7 +175,6 @@ namespace FiresCore.Npc
 
         // COMBAT END DETECTION
         private float _lastEnemyKillTime = -100f;
-        private float _lastCombatEndCheck;
         private bool _isInCombatCooldown = false;
         
         // PLAYER IDLE DETECTION
@@ -207,8 +198,7 @@ namespace FiresCore.Npc
 
         // MOVE DIRECTION TRACKING - Avoid spamming SetMoveDir every frame
         private Vector3 _lastSetMoveDir = Vector3.zero;
-        private bool _moveDirSet = false;
-        private const float MOVE_DIR_CHANGE_THRESHOLD = 0.05f;
+        private const float MoveDirChangeThreshold = 0.05f;
 
         public static bool VerboseLogging = false;
         
@@ -591,7 +581,7 @@ namespace FiresCore.Npc
             
             UpdatePlayerIdleState();
             
-            if (_hasRangedMovementRequest && Time.time - _rangedRequestTime > RANGED_REQUEST_TIMEOUT)
+            if (_hasRangedMovementRequest && Time.time - _rangedRequestTime > RangedRequestTimeout)
                 _hasRangedMovementRequest = false;
             
             if (animationLocked)
@@ -683,7 +673,6 @@ namespace FiresCore.Npc
             _hasActiveCommitment = false;
             _isInCombatCooldown = false;
             _lastEnemyKillTime = Time.time;
-            _moveDirSet = false;
             _hasRangedMovementRequest = false;
         }
 

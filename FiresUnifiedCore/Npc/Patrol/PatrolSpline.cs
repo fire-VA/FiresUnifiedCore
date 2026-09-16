@@ -18,18 +18,18 @@ namespace FiresCore.Npc.Patrol
         /// </summary>
         public static Vector3 Point(IList<Vector3> pts, bool loop, int i, float f, float smoothing)
         {
-            int n = pts.Count;
-            if (n == 0) return Vector3.zero;
-            if (n == 1) return pts[0];
+            int count = pts.Count;
+            if (count == 0) return Vector3.zero;
+            if (count == 1) return pts[0];
 
-            i = Mathf.Clamp(i, 0, n - 1);
-            int i1 = loop ? Wrap(i + 1, n) : Mathf.Min(i + 1, n - 1);
+            i = Mathf.Clamp(i, 0, count - 1);
+            int i1 = loop ? Wrap(i + 1, count) : Mathf.Min(i + 1, count - 1);
             Vector3 p1 = pts[i], p2 = pts[i1];
             Vector3 straight = Vector3.LerpUnclamped(p1, p2, f);
             if (smoothing <= 0.0001f) return straight;
 
-            int i0 = loop ? Wrap(i - 1, n) : Mathf.Max(i - 1, 0);
-            int i2 = loop ? Wrap(i + 2, n) : Mathf.Min(i + 2, n - 1);
+            int i0 = loop ? Wrap(i - 1, count) : Mathf.Max(i - 1, 0);
+            int i2 = loop ? Wrap(i + 2, count) : Mathf.Min(i + 2, count - 1);
             Vector3 p0 = pts[i0], p3 = pts[i2];
 
             Vector3 curve = CatmullRom(p0, p1, p2, p3, f);
@@ -44,18 +44,18 @@ namespace FiresCore.Npc.Patrol
         public static List<Vector3> Densify(IList<Vector3> pts, bool loop, float smoothing, int perSegment)
         {
             var outPts = new List<Vector3>();
-            int n = pts.Count;
-            if (n == 0) return outPts;
-            if (n == 1) { outPts.Add(pts[0]); return outPts; }
+            int count = pts.Count;
+            if (count == 0) return outPts;
+            if (count == 1) { outPts.Add(pts[0]); return outPts; }
 
             int steps = smoothing <= 0.0001f ? 1 : Mathf.Max(1, perSegment);
-            int segs = loop ? n : n - 1;
-            for (int s = 0; s < segs; s++)
+            int segs = loop ? count : count - 1;
+            for (int segment = 0; segment < segs; segment++)
             {
                 for (int k = 0; k < steps; k++)
-                    outPts.Add(Point(pts, loop, s, k / (float)steps, smoothing));
+                    outPts.Add(Point(pts, loop, segment, k / (float)steps, smoothing));
             }
-            outPts.Add(loop ? pts[0] : pts[n - 1]);   // close the final vertex exactly on the node
+            outPts.Add(loop ? pts[0] : pts[count - 1]);   // close the final vertex exactly on the node
             return outPts;
         }
 

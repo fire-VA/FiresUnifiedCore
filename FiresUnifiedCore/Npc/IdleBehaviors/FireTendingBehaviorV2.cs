@@ -40,10 +40,10 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float FIRE_DETECTION_RANGE = 10f;
-        private const float INTERACTION_DISTANCE = 2f;
-        private const float COOK_CHECK_INTERVAL = 2f;
-        private const float MAX_TEND_TIME = 120f;
+        private const float FireDetectionRange = 10f;
+        private const float InteractionDistance = 2f;
+        private const float CookCheckInterval = 2f;
+        private const float MaxTendTime = 120f;
         
         #endregion
         
@@ -112,7 +112,7 @@ namespace FiresCore.Npc.IdleBehaviors
         public override void Initialize(CompanionController companion, CompanionIdleBehavior idleBehavior)
         {
             base.Initialize(companion, idleBehavior);
-            MaxDuration = MAX_TEND_TIME;
+            MaxDuration = MaxTendTime;
         }
         
         public void SetCommandedTarget(GameObject target)
@@ -193,7 +193,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // EARLY RESERVATION: Claim the fire/station immediately so other companions
             // evaluating CanStart this frame won't all converge on it.
             GameObject targetObj = _targetFireplace?.gameObject ?? _targetCookingStation?.gameObject;
-            if (targetObj != null && !InteractableOccupancyManager.TryOccupy(targetObj, Character, MAX_TEND_TIME))
+            if (targetObj != null && !InteractableOccupancyManager.TryOccupy(targetObj, Character, MaxTendTime))
             {
                 LogVerbose("Could not reserve fire/station at Start - already taken");
                 _targetFireplace = null;
@@ -287,7 +287,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 SetPhase(TendPhase.MovingToChest);
                 
                 Vector3 chestInteractionPoint = InteractionPointHelper.GetContainerInteractionPoint(
-                    _fuelChest, Transform.position, INTERACTION_DISTANCE);
+                    _fuelChest, Transform.position, InteractionDistance);
                 MoveToPosition(chestInteractionPoint);
                 return false;
             }
@@ -384,7 +384,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 // Register occupancy
                 GameObject targetObj = _targetFireplace?.gameObject ?? _targetCookingStation?.gameObject;
-                if (targetObj != null && !InteractableOccupancyManager.TryOccupy(targetObj, Character, MAX_TEND_TIME))
+                if (targetObj != null && !InteractableOccupancyManager.TryOccupy(targetObj, Character, MaxTendTime))
                 {
                     LogVerbose("Fire occupied by another companion");
                     SetPhase(TendPhase.Complete);
@@ -448,7 +448,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     {
                         SetPhase(TendPhase.MovingToChest);
                         Vector3 chestInteractionPoint = InteractionPointHelper.GetContainerInteractionPoint(
-                            _fuelChest, Transform.position, INTERACTION_DISTANCE);
+                            _fuelChest, Transform.position, InteractionDistance);
                         MoveToPosition(chestInteractionPoint);
                     }
                     else
@@ -478,7 +478,7 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
             FaceTarget(_targetCookingStation.transform.position);
             
-            if (Time.time - _lastCookCheck >= COOK_CHECK_INTERVAL)
+            if (Time.time - _lastCookCheck >= CookCheckInterval)
             {
                 _lastCookCheck = Time.time;
                 
@@ -714,11 +714,11 @@ namespace FiresCore.Npc.IdleBehaviors
             Fireplace nearest = null;
             float nearestDist = float.MaxValue;
 
-            var colliders = Physics.OverlapSphere(SearchCenter, GetEffectiveSearchRadius(FIRE_DETECTION_RANGE));
-            foreach (var col in colliders)
+            var colliders = Physics.OverlapSphere(SearchCenter, GetEffectiveSearchRadius(FireDetectionRange));
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
-                var fireplace = col.GetComponent<Fireplace>() ?? col.GetComponentInParent<Fireplace>();
+                if (collider == null) continue;
+                var fireplace = collider.GetComponent<Fireplace>() ?? collider.GetComponentInParent<Fireplace>();
                 if (fireplace == null) continue;
                 if (!InteractableOccupancyManager.CanUseInteractable(fireplace.gameObject, Character)) continue;
 
@@ -738,11 +738,11 @@ namespace FiresCore.Npc.IdleBehaviors
             CookingStation nearest = null;
             float nearestDist = float.MaxValue;
 
-            var colliders = Physics.OverlapSphere(SearchCenter, GetEffectiveSearchRadius(FIRE_DETECTION_RANGE));
-            foreach (var col in colliders)
+            var colliders = Physics.OverlapSphere(SearchCenter, GetEffectiveSearchRadius(FireDetectionRange));
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
-                var station = col.GetComponent<CookingStation>() ?? col.GetComponentInParent<CookingStation>();
+                if (collider == null) continue;
+                var station = collider.GetComponent<CookingStation>() ?? collider.GetComponentInParent<CookingStation>();
                 if (station == null) continue;
                 if (!InteractableOccupancyManager.CanUseInteractable(station.gameObject, Character)) continue;
 
@@ -790,8 +790,8 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (item == null || _targetCookingStation == null) return false;
             string prefab = item.m_dropPrefab?.name ?? "";
-            foreach (var conv in _targetCookingStation.m_conversion)
-                if (conv.m_from != null && conv.m_from.gameObject.name == prefab)
+            foreach (var conversion in _targetCookingStation.m_conversion)
+                if (conversion.m_from != null && conversion.m_from.gameObject.name == prefab)
                     return true;
             return false;
         }

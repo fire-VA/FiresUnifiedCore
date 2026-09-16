@@ -10,19 +10,9 @@ using FiresCore.Logging;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Generates random equipment loadouts for wild companions.
-    /// 
-    /// FEATURES:
-    /// - Randomizes armor pieces (helmet, chest, legs, cape, shoulders)
-    /// - Randomizes weapons (always at least one, can fill back slots)
-    /// - Randomizes food items in companion storage
-    /// - Works with both vanilla and modded items
-    /// - Scales equipment quality based on companion level/biome
-    /// 
-    /// SPAWN BEHAVIOR:
-    /// - Wild companions get random loadout on spawn
-    /// - Hammer-placed companions spawn as wild and also get random loadout
-    /// - Once tamed, loadout is preserved and can be changed by player
+    /// Random gear for wild companions, including hammer-placed ones: armor pieces, at least one weapon (possibly back
+    /// slots too) and food, from vanilla or modded items, scaled to level and biome. A tamed companion keeps its gear
+    /// until the player changes it.
     /// </summary>
     public class CompanionRandomLoadout : MonoBehaviour
     {
@@ -181,7 +171,7 @@ namespace FiresCore.Npc
 
                     // Defensive name repair: if a wild companion was loaded with
                     // a placeholder name (e.g. its previous viking-name ZDO write
-                    // was lost across save â€” known to happen when the rename
+                    // was lost across save — known to happen when the rename
                     // races with the world save or when ZDO ownership of a
                     // SpawnSystem-owned creature gets reassigned), re-roll a
                     // viking name. Without this, the load path's RestoreModel
@@ -325,7 +315,7 @@ namespace FiresCore.Npc
             // system existed). Generate appearance now so they aren't permanently bald.
             if (string.IsNullOrEmpty(savedHair) && _npcVisEquipment != null)
             {
-                Debug.Log($"[CompanionRandomLoadout] No hair data in ZDO for {_companion?.companionName} ï¿½ generating fresh appearance");
+                Debug.Log($"[CompanionRandomLoadout] No hair data in ZDO for {_companion?.companionName} - generating fresh appearance");
 
                 // Derive gender from name if not already known
                 if (!_isFemale && _companion != null && !string.IsNullOrEmpty(_companion.companionName))
@@ -340,7 +330,7 @@ namespace FiresCore.Npc
                     }
                 }
 
-                // Schedule hair generation ï¿½ NpcVisEquipment is already initialised
+                // Schedule hair generation - NpcVisEquipment is already initialised
                 // (we're in RestoreModelStateFromZDO which runs at T+0.5s, well after the
                 // component's 2 s DelayedInitialize for static/tamed companions).
                 Invoke(nameof(ApplyRandomHairAndBeard), 0.3f);
@@ -389,11 +379,11 @@ namespace FiresCore.Npc
 
             // Zero out any velocity on the rigidbody - only if NOT kinematic
             // Unity 6 doesn't allow setting velocity on kinematic rigidbodies
-            var rb = GetComponent<Rigidbody>();
-            if (rb != null && !rb.isKinematic)
+            var body = GetComponent<Rigidbody>();
+            if (body != null && !body.isKinematic)
             {
-                rb.linearVelocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
             }
         }
         
@@ -431,7 +421,7 @@ namespace FiresCore.Npc
                 }
             }
 
-            // Always schedule hair/beard generation here ï¿½ this is the single authoritative
+            // Always schedule hair/beard generation here - this is the single authoritative
             // trigger regardless of how the name was assigned. The delay must be long enough
             // for NpcVisEquipment.DelayedInitialize (T+2s) to have completed.
             {
@@ -724,7 +714,7 @@ namespace FiresCore.Npc
         /// with a placeholder name (the rename was either never applied or its
         /// ZDO write was lost), re-roll a viking name now and persist it.
         ///
-        /// Runs only on the ZDO owner so we don't fight the network â€” non-owner
+        /// Runs only on the ZDO owner so we don't fight the network — non-owner
         /// peers will pick up the repaired name through the next ZDO sync.
         /// </summary>
         private void RepairPlaceholderNameIfStuck()
@@ -733,7 +723,7 @@ namespace FiresCore.Npc
             if (_companion.isTamed) return;
 
             // Only the ZDO owner is allowed to write authoritatively. If we're
-            // not the owner, skip â€” the owner will run this same path locally.
+            // not the owner, skip — the owner will run this same path locally.
             var nview = GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid() || !nview.IsOwner()) return;
 
@@ -748,14 +738,14 @@ namespace FiresCore.Npc
             if (!isPlaceholder) return;
 
             // AssignRandomVikingName already gates on the same placeholder list,
-            // so calling it directly does the right thing â€” picks a faction-
+            // so calling it directly does the right thing — picks a faction-
             // aware name when the dresser has stamped a faction, falls back to
             // the generic viking pool otherwise, and persists to ZDO.
             AssignRandomVikingName();
 
             if (FiresLogger.VerboseEnabled)
                 Debug.Log($"[CompanionRandomLoadout] Repaired placeholder name " +
-                          $"on load: '{current}' â†’ '{_companion.companionName}'");
+                          $"on load: '{current}' → '{_companion.companionName}'");
         }
 
         /// <summary>
@@ -829,7 +819,7 @@ namespace FiresCore.Npc
         /// Reads the faction stamped on the ZDO by <see cref="WildSpawn.WildCompanionDresser"/>
         /// (key <c>companion_wild_faction</c>) and rolls a name from the matching
         /// <see cref="WildSpawn.CompanionNamePool"/>. Returns null when no faction
-        /// has been recorded yet ï¿½ caller falls back to the generic Viking pool.
+        /// has been recorded yet - caller falls back to the generic Viking pool.
         /// RNG is seeded from the ZDO UID so a given wild companion keeps the same
         /// name across zone reloads, matching the dresser's deterministic contract.
         /// </summary>
@@ -1229,7 +1219,7 @@ namespace FiresCore.Npc
                     }
                 }
                 
-                // Switch model (male/female) via NpcVisEquipment ï¿½ this part still uses VisEquipment
+                // Switch model (male/female) via NpcVisEquipment - this part still uses VisEquipment
                 int modelIndex = _isFemale ? 1 : 0;
                 _npcVisEquipment.SetModel(modelIndex);
 
@@ -1347,21 +1337,8 @@ namespace FiresCore.Npc
             return eyeColors[UnityEngine.Random.Range(0, eyeColors.Length)];
         }
         
-        // Player customization prefab names — the SAME pool the vanilla character-creation
-        // menu shows. Mirrored by DefaultHairItems / DefaultBeardItems in
-        // DressingRoomScreenController.Fashion.cs (RPGMaker frontend); keep the two in sync.
-        //
-        // Validated 2026-06-13 against the Unity project at
-        // <c>NewProject2026/Fires2026Project/Assets/GameElements/Items/customizations/{hairs,beards}/</c>:
-        //   - 37 hair prefabs exist (Hair1.prefab .. Hair37.prefab) + HairNone
-        //   - 26 beard prefabs exist (Beard1.prefab .. Beard26.prefab) + BeardNone
-        // Older list was Hair3..Hair34 only — dropped Hair1/2 (legacy) and never picked up
-        // Hair35/36/37 (Mistlands+). Restoring full coverage so wild companions can roll any
-        // vanilla-shipped hair, matching the DressingRoom dropdown.
-        //
-        // NOT included: variant prefabs (Hair3_2, Hair3_3) and raw FBX clip prefabs
-        // (hair_11, hair_12, beard_hair/*) — those are internal-rig assets the engine swaps
-        // by model gender / LOD, not user-selectable styles.
+        // The hair styles vanilla character creation offers. Keep in sync with DefaultHairItems and DefaultBeardItems
+        // in the RPGMaker DressingRoomScreenController. Variant prefabs and raw FBX clips are not selectable styles.
         public static readonly string[] KnownHairStyles = {
             "HairNone",
             "Hair1","Hair2","Hair3","Hair4","Hair5","Hair6","Hair7","Hair8","Hair9","Hair10",
@@ -1387,10 +1364,10 @@ namespace FiresCore.Npc
             // hairstyles are included automatically and stale/invalid names can never be rolled. (Case-
             // sensitive prefix excludes rig prefabs like "hair_11".) Fall back to the known vanilla list
             // only if ObjectDB isn't loaded yet.
-            var db = ObjectDB.instance;
-            if (db != null)
+            var objectDb = ObjectDB.instance;
+            if (objectDb != null)
             {
-                var names = db.GetAllItems(ItemDrop.ItemData.ItemType.Customization, "Hair")
+                var names = objectDb.GetAllItems(ItemDrop.ItemData.ItemType.Customization, "Hair")
                               .Select(d => d.gameObject != null ? d.gameObject.name : null)
                               .Where(n => !string.IsNullOrEmpty(n))
                               .Distinct()
@@ -1405,10 +1382,10 @@ namespace FiresCore.Npc
         /// </summary>
         private List<string> GetAvailableBeardStyles()
         {
-            var db = ObjectDB.instance;
-            if (db != null)
+            var objectDb = ObjectDB.instance;
+            if (objectDb != null)
             {
-                var names = db.GetAllItems(ItemDrop.ItemData.ItemType.Customization, "Beard")
+                var names = objectDb.GetAllItems(ItemDrop.ItemData.ItemType.Customization, "Beard")
                               .Select(d => d.gameObject != null ? d.gameObject.name : null)
                               .Where(n => !string.IsNullOrEmpty(n))
                               .Distinct()
@@ -1886,12 +1863,12 @@ namespace FiresCore.Npc
                 // ObjectDB.Awake fires once for the start-scene's stub item list
                 // (only a handful of menu items) and then again with the real
                 // item set once the world scene loads. Refuse to cache against
-                // the stub ï¿½ otherwise _itemListsCached latches as empty and
+                // the stub - otherwise _itemListsCached latches as empty and
                 // every wild companion spawns naked forever.
                 if (objectDB.m_items == null || objectDB.m_items.Count < 50)
                 {
                     Debug.Log($"[CompanionRandomLoadout] ObjectDB only has " +
-                        $"{objectDB.m_items?.Count ?? 0} items ï¿½ too few to cache, " +
+                        $"{objectDB.m_items?.Count ?? 0} items - too few to cache, " +
                         $"will retry on next call (likely start-scene stub).");
                     return;
                 }
@@ -1987,7 +1964,7 @@ namespace FiresCore.Npc
 
                 // Only latch the cache if we actually produced something. If
                 // everything got filtered out the ObjectDB was almost certainly
-                // not fully populated yet ï¿½ leave the flag false so the next
+                // not fully populated yet - leave the flag false so the next
                 // caller (e.g. wild companion spawn) re-runs the scan once a
                 // real item set is available.
                 if (totalCached > 0)
@@ -2005,7 +1982,7 @@ namespace FiresCore.Npc
                     $"{_allArrows.Count} arrow types, " +
                     $"{_allFood.Count} food " +
                     $"(skipped {skippedFiltered} filtered, {skippedInvalid} invalid)" +
-                    (totalCached > 0 ? "" : " [NOT LATCHED ï¿½ will retry]"));
+                    (totalCached > 0 ? "" : " [NOT LATCHED - will retry]"));
             }
             catch (Exception ex)
             {

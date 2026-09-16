@@ -233,11 +233,11 @@ namespace FiresCore.Npc.IdleBehaviors
             var colliders = Physics.OverlapSphere(position, range);
             var processed = new HashSet<GameObject>();
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var obj = col.gameObject;
+                var obj = collider.gameObject;
                 
                 // Avoid processing same object multiple times (may have multiple colliders)
                 var root = GetResourceRoot(obj);
@@ -597,9 +597,9 @@ namespace FiresCore.Npc.IdleBehaviors
         // Damage multiplier for companion resource gathering
         // This prevents high-tier axes from one-shotting trees
         // Makes gathering feel more natural and balanced
-        private const float TREE_DAMAGE_MULTIPLIER = 0.35f;      // Trees take ~3 hits
-        private const float LOG_DAMAGE_MULTIPLIER = 0.5f;        // Logs take ~2 hits
-        private const float ROCK_DAMAGE_MULTIPLIER = 0.4f;       // Rocks take multiple hits
+        private const float TreeDamageMultiplier = 0.35f;      // Trees take ~3 hits
+        private const float LogDamageMultiplier = 0.5f;        // Logs take ~2 hits
+        private const float RockDamageMultiplier = 0.4f;       // Rocks take multiple hits
         
         /// <summary>
         /// Creates a HitData for attacking a resource.
@@ -634,13 +634,13 @@ namespace FiresCore.Npc.IdleBehaviors
                 switch (resource.Type)
                 {
                     case ResourceType.Tree:
-                        damageMultiplier = TREE_DAMAGE_MULTIPLIER;
+                        damageMultiplier = TreeDamageMultiplier;
                         break;
                     case ResourceType.Log:
-                        damageMultiplier = LOG_DAMAGE_MULTIPLIER;
+                        damageMultiplier = LogDamageMultiplier;
                         break;
                     case ResourceType.Rock:
-                        damageMultiplier = ROCK_DAMAGE_MULTIPLIER;
+                        damageMultiplier = RockDamageMultiplier;
                         break;
                 }
                 

@@ -31,19 +31,11 @@ namespace FiresCore.SkillSystem
     }
 
     /// <summary>
-    /// Shared custom-skill system for the Fires mod family — the core logic from VAExtraSkills, adapted to the
-    /// current Valheim build so every Fires mod registers a real Valheim skill the same, proven way. A mod calls
-    /// <see cref="Register"/> (once, at Setup/WorldStart, on both peers); after that vanilla treats the skill as
-    /// first-class with only three seams:
-    ///   • <see cref="FiresSkillPatches.Skills_GetSkillDef"/> supplies the SkillDef (icon + description + increase step)
-    ///     on demand — vanilla's <c>Skills.GetSkill</c> then creates/levels/persists the skill through its own code;
-    ///   • <see cref="FiresSkillPatches.Skills_IsSkillValid"/> accepts the type so vanilla's own ZPackage save/load
-    ///     (<c>Player.Save</c>→<c>Skills.Save</c>/<c>Load</c>) persists it natively — no side ZDO store needed;
-    ///   • a Localization word under the "$skill_&lt;type&gt;" key vanilla already uses lets vanilla render the name,
-    ///     the "$msg_skillup" level-up message (Center on first level, TopLeft after), and the skills-dialog entry.
-    /// The console <c>raiseskill</c>/<c>resetskill</c> cheats get a friendly-name seam so admins can type the skill's
-    /// name instead of its hash. Nothing here is version-specific to the old ObjectDB.m_skills list (this build has no
-    /// such field); the def is delivered purely through GetSkillDef.
+    /// Shared custom skills for the Fires family, adapted from VAExtraSkills. After <see cref="Register"/> (once, on
+    /// both peers) vanilla treats the skill as its own: <see cref="FiresSkillPatches.Skills_GetSkillDef"/> supplies
+    /// the definition, <see cref="FiresSkillPatches.Skills_IsSkillValid"/> lets vanilla save and load it, and a
+    /// "$skill_&lt;type&gt;" localization entry gives it a name, level-up message and skills-dialog row. The raiseskill
+    /// and resetskill cheats also accept the skill's name.
     /// </summary>
     public static class FiresSkillRegistry
     {
@@ -82,17 +74,17 @@ namespace FiresCore.SkillSystem
         /// <summary>Skill level as a 0..1 factor (level/100) — the standard vanilla "skill factor" effectiveness scales on.</summary>
         public static float GetFiresSkillFactor(this Player player, Skills.SkillType type) => player != null ? Mathf.Clamp01(player.GetSkills().GetSkillLevel(type) / 100f) : 0f;
 
-        internal static Skills.SkillDef MakeDef(FiresSkill s) =>
-            new Skills.SkillDef { m_skill = s.SkillType, m_icon = s.Icon, m_description = s.Description, m_increseStep = 1f };
+        internal static Skills.SkillDef MakeDef(FiresSkill skill) =>
+            new Skills.SkillDef { m_skill = skill.SkillType, m_icon = skill.Icon, m_description = skill.Description, m_increseStep = 1f };
 
         // Push this skill's display name into the active Localization under the key vanilla derives from the type,
         // so vanilla's own name/message/dialog code resolves it. Called on register (covers the live session) and
         // re-applied by the LoadCSV postfix (covers a later language switch, which rebuilds m_translations).
-        internal static void RegisterWord(FiresSkill s)
+        internal static void RegisterWord(FiresSkill skill)
         {
             var loc = Localization.instance;
-            if (loc == null || s == null || string.IsNullOrEmpty(s.Name)) return;
-            loc.AddWord(s.LocalizationKey, s.Name);
+            if (loc == null || skill == null || string.IsNullOrEmpty(skill.Name)) return;
+            loc.AddWord(skill.LocalizationKey, skill.Name);
         }
     }
 
@@ -107,7 +99,7 @@ namespace FiresCore.SkillSystem
             private static void Postfix(Skills.SkillType type, ref Skills.SkillDef __result)
             {
                 if (__result != null) return;
-                if (FiresSkillRegistry.TryGet(type, out var s)) __result = FiresSkillRegistry.MakeDef(s);
+                if (FiresSkillRegistry.TryGet(type, out var skill)) __result = FiresSkillRegistry.MakeDef(skill);
             }
         }
 
@@ -131,9 +123,9 @@ namespace FiresCore.SkillSystem
             private static void Postfix(Localization __instance)
             {
                 if (__instance == null) return;
-                foreach (var s in FiresSkillRegistry.All)
-                    if (!string.IsNullOrEmpty(s.Name))
-                        __instance.AddWord(s.LocalizationKey, s.Name);
+                foreach (var skill in FiresSkillRegistry.All)
+                    if (!string.IsNullOrEmpty(skill.Name))
+                        __instance.AddWord(skill.LocalizationKey, skill.Name);
             }
         }
 
@@ -145,12 +137,12 @@ namespace FiresCore.SkillSystem
             private static bool Prefix(Skills __instance, string name, float value)
             {
                 if (!FiresSkillRegistry.TryGetByInternalName(name.ToLowerInvariant(), out var type)) return true;
-                FiresSkillRegistry.TryGet(type, out var s);
+                FiresSkillRegistry.TryGet(type, out var firesSkill);
                 var skill = __instance.GetSkill(type);   // creates via our GetSkillDef seam if absent
                 skill.m_level = Mathf.Clamp(skill.m_level + value, 0f, 100f);
                 skill.m_accumulator = 0f;
-                __instance.m_player?.Message(MessageHud.MessageType.TopLeft, $"Skill increased {s.Name}: {(int)skill.m_level}", 0, skill.m_info.m_icon);
-                Console.instance?.Print($"Skill {s.Name} = {skill.m_level}");
+                __instance.m_player?.Message(MessageHud.MessageType.TopLeft, $"Skill increased {firesSkill.Name}: {(int)skill.m_level}", 0, skill.m_info.m_icon);
+                Console.instance?.Print($"Skill {firesSkill.Name} = {skill.m_level}");
                 return false;
             }
         }
@@ -161,9 +153,9 @@ namespace FiresCore.SkillSystem
             private static bool Prefix(Skills __instance, string name)
             {
                 if (!FiresSkillRegistry.TryGetByInternalName(name.ToLowerInvariant(), out var type)) return true;
-                FiresSkillRegistry.TryGet(type, out var s);
+                FiresSkillRegistry.TryGet(type, out var skill);
                 __instance.ResetSkill(type);
-                Console.instance?.Print($"Skill {s.Name} reset");
+                Console.instance?.Print($"Skill {skill.Name} reset");
                 return false;
             }
         }

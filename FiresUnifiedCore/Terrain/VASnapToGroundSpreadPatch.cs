@@ -7,69 +7,11 @@ using UnityEngine;
 
 namespace FiresCore.Terrain
 {
-    // VASnapToGroundSpreadPatch — time-slices Heightmap.ForceGenerateAll
-    // across multiple frames when a large batch of SnapToGround objects
-    // needs ground-snapping at once, AND silences the per-tile
-    // "Force generating hmap ..." log line.
-    //
-    // Lives in FiresRPGmaker (not FiresAdminPrefabs) because this is a
-    // terrain-system fix — it has nothing to do with the hammer/build-
-    // piece pipeline FAP owns. RPGmaker already owns the
-    // HeightmapOverride module and other terrain-aware code, so this is
-    // its natural home.
-    //
-    // Why this exists
-    // ---------------
-    // Vanilla flow on a zone-stream / location-spawn / dungeon-spawn:
-    //
-    //   SnapToGround.SnappAll()
-    //     → Heightmap.ForceGenerateAll()  // iterates EVERY queued heightmap,
-    //         foreach hmap with HaveQueuedRebuild():    // synchronously runs
-    //           ZLog.Log("Force generating hmap ...")   // its Regenerate
-    //           hmap.Regenerate()                       // (5-30 ms per tile)
-    //     → foreach snapper in m_allSnappers:
-    //         snapper.Snap()  // cheap; transform.position += groundHeight
-    //
-    // On heavy modded servers, a single zone-stream batch can have 20-40
-    // SnapToGround objects across 6-10 heightmap tiles, all flushed in
-    // one frame → 50-300 ms hitch + log spam.
-    //
-    // Fix
-    // ---
-    //   * Fast-path: <= 4 snappers waiting → run vanilla unchanged. The
-    //     bulk of frames hit this; we don't add overhead.
-    //   * Spread-path: > 4 snappers → start a coroutine that:
-    //       1. Snapshots the snapper list and clears m_allSnappers (so
-    //          subsequent vanilla SnappAll calls don't double-process).
-    //       2. Walks the heightmap list and regenerates queued tiles in
-    //          batches of N per frame, with a hard cap of MaxSpreadFrames
-    //          (8) so even big bursts finish within ~half a second.
-    //       3. After all regens, snaps the captured snappers (cheap, ~1ms
-    //          for the whole batch).
-    //   * DungeonGenerator carve-out: Generate() and Spawn() both call
-    //     SnappAll at known synchronization points where deferring would
-    //     race with subsequent vanilla code that assumes positions are
-    //     final. A Harmony prefix on each sets _inDungeonGenerateScope;
-    //     our SnappAll prefix sees the flag and yields to vanilla.
-    //   * Log silence: Heightmap.ForceGenerateAll is replaced with a
-    //     functionally-identical silent version (no ZLog.Log per tile).
-    //     Both the spread-path coroutine and the fast-path / vanilla
-    //     callers benefit.
-    //
-    // Visible tradeoffs in spread mode
-    // --------------------------------
-    //   * Brief ~50-100 ms visual flicker: snappers stay at their
-    //     pre-snap y for up to MaxSpreadFrames before settling. Usually
-    //     invisible — most snappers spawn off-camera during zone-stream.
-    //     The fast-path absorbs small batches so visible-area cases
-    //     where the player is staring stay unchanged.
-    //   * ZDO position write delay: Snap() persists to the ZDO at
-    //     the end. During the spread window the ZDO holds the pre-snap
-    //     position. In real gameplay no other peer is reading that ZDO
-    //     yet (still zone-streaming on their end too).
-    //
-    // No correctness risk for DungeonGenerator — the carve-out keeps
-    // its two SnappAll sites synchronous.
+    // Spreads Heightmap.ForceGenerateAll across frames when a large batch of SnapToGround objects arrives at
+    // once (zone streams, location spawns) and drops its per-tile "Force generating hmap" log line. Small
+    // batches still run vanilla in-frame. The spread path snapshots and clears the snapper list, regenerates
+    // queued tiles a few per frame under a frame cap, then snaps. DungeonGenerator.Generate and Spawn stay
+    // synchronous because the code after them assumes final positions.
     [HarmonyPatch]
     internal static class VASnapToGroundSpreadPatch
     {
@@ -136,8 +78,8 @@ namespace FiresCore.Terrain
             if (all == null) return false;
             for (int i = 0; i < all.Count; i++)
             {
-                var h = all[i];
-                if (h != null && h.HaveQueuedRebuild()) h.Regenerate();
+                var heightmap = all[i];
+                if (heightmap != null && heightmap.HaveQueuedRebuild()) heightmap.Regenerate();
             }
             return false;   // skip vanilla (we did its work without the log)
         }
@@ -171,10 +113,10 @@ namespace FiresCore.Terrain
             var snapshot = new List<SnapToGround>(snappers.Count);
             for (int i = 0; i < snappers.Count; i++)
             {
-                var s = snappers[i];
-                if (s == null) continue;
-                snapshot.Add(s);
-                try { InListField?.SetValue(s, false); }
+                var snapper = snappers[i];
+                if (snapper == null) continue;
+                snapshot.Add(snapper);
+                try { InListField?.SetValue(snapper, false); }
                 catch { /* benign — worst case OnDestroy no-ops */ }
             }
             snappers.Clear();
@@ -212,8 +154,8 @@ namespace FiresCore.Terrain
                 {
                     for (int i = 0; i < all.Count; i++)
                     {
-                        var h = all[i];
-                        if (h != null && h.HaveQueuedRebuild()) queued.Add(h);
+                        var heightmap = all[i];
+                        if (heightmap != null && heightmap.HaveQueuedRebuild()) queued.Add(heightmap);
                     }
                 }
 
@@ -232,12 +174,12 @@ namespace FiresCore.Terrain
                     int end = Math.Min(idx + perFrame, queued.Count);
                     for (int i = idx; i < end; i++)
                     {
-                        var h = queued[i];
-                        if (h == null) continue;
+                        var heightmap = queued[i];
+                        if (heightmap == null) continue;
                         // Re-check HaveQueuedRebuild in case another
                         // ForceGenerateAll caller flushed this tile while
                         // we were yielding — avoids a redundant regen.
-                        if (h.HaveQueuedRebuild()) h.Regenerate();
+                        if (heightmap.HaveQueuedRebuild()) heightmap.Regenerate();
                     }
                     idx = end;
                     if (idx < queued.Count) yield return null;
@@ -248,16 +190,16 @@ namespace FiresCore.Terrain
                 // one go at the end of the spread.
                 for (int i = 0; i < snappers.Count; i++)
                 {
-                    var s = snappers[i];
-                    if (s == null) continue;
-                    try { s.Snap(); }
+                    var snapper = snappers[i];
+                    if (snapper == null) continue;
+                    try { snapper.Snap(); }
                     catch (Exception ex)
                     {
                         // A snapper that got destroyed mid-spread or had
                         // its ZNetView torn down may throw; swallow per-
                         // snapper so one bad apple doesn't abort the
                         // batch.
-                        Debug.LogWarning($"[VASnapSpread] Snap failed on '{s?.name ?? "<null>"}': {ex.Message}");
+                        Debug.LogWarning($"[VASnapSpread] Snap failed on '{snapper?.name ?? "<null>"}': {ex.Message}");
                     }
                 }
             }
@@ -271,19 +213,9 @@ namespace FiresCore.Terrain
         //  DungeonGenerator carve-outs
         // ──────────────────────────────────────────────────────────────
 
-        // Generate() calls SnappAll just before m_placedRooms.Clear().
-        // Spreading would race with the immediately-following Clear in ghost
-        // mode (DestroyImmediate-then-list-clear). Mark the scope so our
-        // SnappAll prefix yields to vanilla.
-        //
-        // DungeonGenerator has TWO Generate overloads:
-        //   Generate(ZoneSystem.SpawnMode)          — wrapper at line 95
-        //   Generate(int seed, ZoneSystem.SpawnMode) — real impl at line 117,
-        //                                              contains the SnappAll
-        // Without an explicit parameter list, HarmonyPatch hits an
-        // AmbiguousMatchException. We target the inner overload directly —
-        // the wrapper just delegates to it, so patching only the inner one
-        // covers every call path.
+        // Generate calls SnappAll just before clearing m_placedRooms, so spreading would race that clear; the scope flag makes
+        // our prefix defer to vanilla. The (int, SpawnMode) overload holds the real body and the other delegates to it, so
+        // only that one is patched.
         [HarmonyPatch(typeof(DungeonGenerator), "Generate", new[] { typeof(int), typeof(ZoneSystem.SpawnMode) })]
         [HarmonyPrefix]
         private static void DungeonGenerator_Generate_Prefix() => _inDungeonGenerateScope = true;

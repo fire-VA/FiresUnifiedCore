@@ -6,22 +6,8 @@ using FiresCore.Items;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// Service for reliable inventory transfers between containers and companion inventories.
-    /// 
-    /// KEY FEATURES:
-    /// - Handles partial transfers (if chest only has 5 coal but we need 10, pulls 5)
-    /// - Respects stack limits and weight limits
-    /// - Saves ZDO after transfers
-    /// - Provides detailed results
-    /// 
-    /// INSPIRED BY: SmartContainers careful item handling
-    /// 
-    /// USAGE:
-    /// var result = InventoryTransferService.PullItem(chest, destInventory, "Coal", 10);
-    /// if (result.Success)
-    ///     Debug.Log($"Pulled {result.AmountTransferred} coal");
-    /// else if (result.IsPartial)
-    ///     Debug.Log($"Only got {result.AmountTransferred}/{result.AmountRequested}");
+    /// Item transfers between containers and companion inventories that respect stack and weight limits, take
+    /// what is available when there isn't enough (reported as a partial result), and save the ZDO afterwards.
     /// </summary>
     public static class InventoryTransferService
     {

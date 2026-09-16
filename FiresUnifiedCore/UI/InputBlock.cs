@@ -3,19 +3,11 @@ using UnityEngine;
 
 namespace FiresCore.UI
 {
-    // Single shared input-block for any Fires modal UI. Lifted from FiresNPCs' GUIManager.BlockInput +
-    // PlayerInputPatches so there is ONE implementation (Shared -> Core). Consumers call Block(true) on
-    // open and Block(false) on close; FiresNPCs' GUIManager.BlockInput now delegates here.
-    //
-    // - Player.TakeInput -> false: stops movement / attack / use / hotbar.
-    // - GameCamera.LateUpdate is PINNED, not skipped. A prefix that skips GameCamera.UpdateCamera stops
-    //   vanilla repositioning, but a camera mod applying a RELATIVE offset in GameCamera.LateUpdate
-    //   (FiresValcast) then accumulates it every frame and flies the camera away. Instead we let the
-    //   camera update and force its transform back, in a lowest-priority postfix that runs last.
-    //   The cursor is held free by MouseCaptureGate (UpdateMouseCapture prefix), NOT here — a second per-frame
-    //   cursor writer strobed the pointer (see CompanionRadialMenu / FiresLeaderboardInputPatches).
-    // - Minimap / InventoryGui Update gates live in InputBlockClientGates (client-only types; that class
-    //   is listed in FiresUnifiedCore.DedicatedServerSkipPatchTypes so PatchAll skips it headless).
+    // The shared input block for Fires modal UIs (FiresNPCs' GUIManager.BlockInput delegates here): Block(true) on open,
+    // Block(false) on close. Player.TakeInput returns false, and the camera is pinned by a last-running LateUpdate
+    // postfix rather than skipped, because skipping let a relative camera offset (FiresValcast) accumulate every frame.
+    // The cursor belongs to MouseCaptureGate, and the minimap and inventory gates live in the client-only
+    // InputBlockClientGates.
     public static class InputBlock
     {
         private static bool _blocked;
@@ -70,9 +62,9 @@ namespace FiresCore.UI
                 if (MiniGameCamera.Active) { _pinned = false; return; }
                 if (!_blocked) { _pinned = false; return; }
 
-                var t = __instance.transform;
-                if (_pinned) { t.position = _pos; t.rotation = _rot; }
-                else { _pos = t.position; _rot = t.rotation; _pinned = true; }
+                var cameraTransform = __instance.transform;
+                if (_pinned) { cameraTransform.position = _pos; cameraTransform.rotation = _rot; }
+                else { _pos = cameraTransform.position; _rot = cameraTransform.rotation; _pinned = true; }
 
                 // Cursor is held free SOLELY by MouseCaptureGate (the UpdateMouseCapture prefix). Re-asserting it
                 // here too made a second per-frame cursor writer that STROBED the pointer for the world-context

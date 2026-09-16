@@ -4,18 +4,7 @@ using UnityEngine;
 namespace FiresCore.Npc.Events
 {
     /// <summary>
-    /// Centralized event system for companion behaviors.
-    /// Use events for cross-cutting concerns instead of direct method calls.
-    /// 
-    /// This allows loose coupling between components and makes it easy to add
-    /// new functionality that responds to companion actions.
-    /// 
-    /// USAGE:
-    /// - Subscribe: CompanionEvents.OnBehaviorStarted += MyHandler;
-    /// - Unsubscribe: CompanionEvents.OnBehaviorStarted -= MyHandler;
-    /// - Fire: CompanionEvents.FireBehaviorStarted(companion, behavior);
-    /// 
-    /// IMPORTANT: Always unsubscribe in OnDestroy to prevent memory leaks!
+    /// Companion lifecycle events for loosely coupled systems. Subscribers must unsubscribe in OnDestroy.
     /// </summary>
     public static class CompanionEvents
     {

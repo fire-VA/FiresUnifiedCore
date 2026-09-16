@@ -6,7 +6,7 @@ namespace FiresCore.ClientLogRelay.Interactions
 {
     /// <summary>
     /// Tracks which players an admin has requested "send log on disconnect" for via the
-    /// ?? reaction. When a tracked player disconnects, the server reads the latest cached
+    /// reaction. When a tracked player disconnects, the server reads the latest cached
     /// log from disk and posts it to the webhook.
     ///
     /// Entries are keyed by platform ID and include enough context to build the webhook

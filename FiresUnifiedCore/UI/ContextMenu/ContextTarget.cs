@@ -30,11 +30,11 @@ namespace FiresCore.UI.ContextMenu
         {
             get
             {
-                var nv = NView;
-                if (nv != null && nv.GetZDO() != null && ZNetScene.instance != null)
+                var netView = NView;
+                if (netView != null && netView.GetZDO() != null && ZNetScene.instance != null)
                 {
-                    var p = ZNetScene.instance.GetPrefab(nv.GetZDO().GetPrefab());
-                    if (p != null) return p.name;
+                    var prefab = ZNetScene.instance.GetPrefab(netView.GetZDO().GetPrefab());
+                    if (prefab != null) return prefab.name;
                 }
                 return GameObject != null ? GameObject.name : null;
             }

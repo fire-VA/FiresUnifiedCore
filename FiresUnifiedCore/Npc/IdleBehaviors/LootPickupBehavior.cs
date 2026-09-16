@@ -8,20 +8,8 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Handles companion looting of enemy drops and treasure.
-    /// Companions have a chance to pick up items from defeated enemies.
-    /// 
-    /// FEATURES:
-    /// - Chance-based pickup (not all items, configurable)
-    /// - Prioritizes valuable/useful items
-    /// - Stores items in companion's storage inventory
-    /// - Can be triggered by combat completion or idle wandering
-    /// 
-    /// LOOT PRIORITY:
-    /// 1. Trophies (always pickup)
-    /// 2. Crafting materials (high chance)
-    /// 3. Consumables (medium chance)
-    /// 4. Other items (low chance)
+    /// Picks up enemy drops and treasure after a fight or while wandering, by chance and by value: trophies always,
+    /// crafting materials usually, consumables sometimes, anything else rarely. Items go to the companion's storage.
     /// </summary>
     public class LootPickupBehavior : IdleSubBehavior
     {
@@ -34,20 +22,20 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float LOOT_DETECTION_RANGE = 8f;
-        private const float STAY_MODE_LOOT_RANGE = 25f;  // Larger range when staying
-        private const float PICKUP_RANGE = 1.5f;
-        private const float MAX_LOOT_TIME = 30f;
+        private const float LootDetectionRange = 8f;
+        private const float StayModeLootRange = 25f;  // Larger range when staying
+        private const float PickupRange = 1.5f;
+        private const float MaxLootTime = 30f;
         
         // Pickup chances by item type
-        private const float TROPHY_PICKUP_CHANCE = 1.0f;        // Always pick up trophies
-        private const float MATERIAL_PICKUP_CHANCE = 0.7f;       // 70% for materials
-        private const float CONSUMABLE_PICKUP_CHANCE = 0.5f;     // 50% for food/potions
-        private const float EQUIPMENT_PICKUP_CHANCE = 0.3f;      // 30% for weapons/armor
-        private const float OTHER_PICKUP_CHANCE = 0.2f;          // 20% for misc
+        private const float TrophyPickupChance = 1.0f;        // Always pick up trophies
+        private const float MaterialPickupChance = 0.7f;       // 70% for materials
+        private const float ConsumablePickupChance = 0.5f;     // 50% for food/potions
+        private const float EquipmentPickupChance = 0.3f;      // 30% for weapons/armor
+        private const float OtherPickupChance = 0.2f;          // 20% for misc
         
         // Maximum items to pick up per session
-        private const int MAX_ITEMS_PER_SESSION = 10;
+        private const int MaxItemsPerSession = 10;
         
         #endregion
         
@@ -92,7 +80,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _combatMovement = companion.GetComponent<CompanionCombatMovement>();
             _rigidbody = companion.GetComponent<Rigidbody>();
             
-            MaxDuration = MAX_LOOT_TIME + 10f;
+            MaxDuration = MaxLootTime + 10f;
         }
         
         public override bool CanStart()
@@ -101,7 +89,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Use larger range when in Stay mode
             bool isStaying = IdleBehavior != null && IdleBehavior.HasHomePosition && !Companion.ShouldBeFollowing;
-            float searchRange = isStaying ? STAY_MODE_LOOT_RANGE : LOOT_DETECTION_RANGE;
+            float searchRange = isStaying ? StayModeLootRange : LootDetectionRange;
             
             // Check if there are items nearby to loot
             var items = ScanForLoot(searchRange);
@@ -137,7 +125,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (!IsActive) return true;
             
-            if (IsTimedOut() || _itemsPickedUp >= MAX_ITEMS_PER_SESSION)
+            if (IsTimedOut() || _itemsPickedUp >= MaxItemsPerSession)
             {
                 Complete();
                 return true;
@@ -195,7 +183,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             // Use larger range when in Stay mode
             bool isStaying = IdleBehavior != null && IdleBehavior.HasHomePosition && !Companion.ShouldBeFollowing;
-            float searchRange = isStaying ? STAY_MODE_LOOT_RANGE : LOOT_DETECTION_RANGE;
+            float searchRange = isStaying ? StayModeLootRange : LootDetectionRange;
             
             _itemsToLoot = ScanForLoot(searchRange);
             
@@ -231,7 +219,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float dist = Vector3.Distance(Transform.position, _targetItem.transform.position);
             
-            if (dist < PICKUP_RANGE)
+            if (dist < PickupRange)
             {
                 StopMovement();
                 SetPhase(LootPhase.PickingUp);
@@ -323,7 +311,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Loot Logic
         
-        private List<ItemDrop> ScanForLoot(float range = LOOT_DETECTION_RANGE)
+        private List<ItemDrop> ScanForLoot(float range = LootDetectionRange)
         {
             var result = new List<ItemDrop>();
             
@@ -332,11 +320,11 @@ namespace FiresCore.Npc.IdleBehaviors
             float searchRadius = GetEffectiveSearchRadius(range);
             var colliders = Physics.OverlapSphere(center, searchRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var itemDrop = col.GetComponent<ItemDrop>();
+                var itemDrop = collider.GetComponent<ItemDrop>();
                 if (itemDrop == null || !itemDrop.CanPickup()) continue;
                 
                 var itemData = itemDrop.m_itemData;
@@ -380,19 +368,19 @@ namespace FiresCore.Npc.IdleBehaviors
             // Trophies - always pick up
             if (itemType == ItemDrop.ItemData.ItemType.Trophy || name.Contains("trophy"))
             {
-                return TROPHY_PICKUP_CHANCE;
+                return TrophyPickupChance;
             }
             
             // Materials - high priority
             if (itemType == ItemDrop.ItemData.ItemType.Material)
             {
-                return MATERIAL_PICKUP_CHANCE;
+                return MaterialPickupChance;
             }
             
             // Consumables
             if (itemType == ItemDrop.ItemData.ItemType.Consumable)
             {
-                return CONSUMABLE_PICKUP_CHANCE;
+                return ConsumablePickupChance;
             }
             
             // Equipment
@@ -405,10 +393,10 @@ namespace FiresCore.Npc.IdleBehaviors
                 itemType == ItemDrop.ItemData.ItemType.Legs ||
                 itemType == ItemDrop.ItemData.ItemType.Shoulder)
             {
-                return EQUIPMENT_PICKUP_CHANCE;
+                return EquipmentPickupChance;
             }
             
-            return OTHER_PICKUP_CHANCE;
+            return OtherPickupChance;
         }
         
         private float GetItemPriority(ItemDrop.ItemData item)

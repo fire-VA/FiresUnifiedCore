@@ -5,24 +5,10 @@ using UnityEngine;
 namespace FiresCore.Bridge
 {
     /// <summary>
-    /// The one place the family asks "how many zones out does the game simulate?".
-    ///
-    /// Valheim 1.0 deleted <c>ZoneSystem.m_activeArea</c> and <c>ZoneSystem.m_activeDistantArea</c>
-    /// (two plain ints, always readable) and replaced them with a <see cref="SimulationDistance"/>
-    /// struct that ZoneSystem keeps <b>private</b> and fills from
-    /// <c>ZNet.instance.GetSyncedSimulationDistance()</c> - the value is now negotiated with the
-    /// server rather than being a client constant.
-    ///
-    /// Two things make that awkward for callers:
-    ///   * <c>ZNet.instance</c> is null before connect and after disconnect, while the old fields
-    ///     were readable from the moment ZoneSystem existed. Four Fires mods read the active area
-    ///     during startup and teardown, so each one would need its own null dance.
-    ///   * ZoneSystem's own copy is private, so there is no way to ask the object that actually
-    ///     uses the value.
-    ///
-    /// Hence one accessor with one documented fallback: <see cref="SimulationDistance.OriginalDistance"/>
-    /// (2 near / 2 far), which is what vanilla itself uses as the baseline and what m_activeArea
-    /// defaulted to.
+    /// How many zones out the game simulates. Valheim 1.0 replaced ZoneSystem.m_activeArea and
+    /// m_activeDistantArea with a private, server-negotiated SimulationDistance, and ZNet.instance is null before
+    /// connecting and after leaving, when several Fires mods still read it. This is the single accessor, falling
+    /// back to <see cref="SimulationDistance.OriginalDistance"/>, vanilla's own baseline.
     /// </summary>
     public static class SimulationDistanceAccess
     {
@@ -94,9 +80,9 @@ namespace FiresCore.Bridge
         public static bool TryGetZoneLoading(out SimulationDistance value)
         {
             var field = ZoneField();
-            var zs = ZoneSystem.instance;
-            if (field == null || zs == null) { value = Current; return false; }
-            value = field(zs);
+            var zoneSystem = ZoneSystem.instance;
+            if (field == null || zoneSystem == null) { value = Current; return false; }
+            value = field(zoneSystem);
             return true;
         }
 
@@ -104,9 +90,9 @@ namespace FiresCore.Bridge
         public static bool TrySetZoneLoading(SimulationDistance value)
         {
             var field = ZoneField();
-            var zs = ZoneSystem.instance;
-            if (field == null || zs == null) return false;
-            field(zs) = value;
+            var zoneSystem = ZoneSystem.instance;
+            if (field == null || zoneSystem == null) return false;
+            field(zoneSystem) = value;
             return true;
         }
 
@@ -117,7 +103,7 @@ namespace FiresCore.Bridge
         /// </summary>
         public static int ZoneLoadingNear
         {
-            get { SimulationDistance d; return TryGetZoneLoading(out d) ? d.NearSimulationDistance : Near; }
+            get { SimulationDistance zoneLoading; return TryGetZoneLoading(out zoneLoading) ? zoneLoading.NearSimulationDistance : Near; }
         }
 
         /// <summary>Copy of <paramref name="d"/> with a different near range; far and classic are kept.</summary>

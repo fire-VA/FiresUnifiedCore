@@ -6,26 +6,9 @@ using FiresCore.Npc;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Manages independent skill leveling (1-100) for each archetype's abilities.
-    /// Skills level up from use, separate from companion level.
-    /// 
-    /// DESIGN PHILOSOPHY:
-    /// - Each archetype has its own set of skills (Taunt, Fortify, etc.)
-    /// - Skills level from 1-100 through use
-    /// - Higher skill level = more effective ability
-    /// - Switching archetypes preserves skill progress - you can come back later
-    /// - Creates meaningful progression within each archetype
-    /// 
-    /// SKILL XP FORMULA:
-    /// - Base XP per use: 1-5 depending on ability tier
-    /// - XP to level: 100 * currentLevel (so level 2 = 200 XP, level 50 = 5000 XP)
-    /// - Max level: 100
-    /// 
-    /// SKILL EFFECTIVENESS:
-    /// - Level 1: Base effectiveness (1.0x multiplier)
-    /// - Level 50: 1.25x multiplier
-    /// - Level 100: 1.5x multiplier
-    /// - Linear scaling between levels
+    /// Per-archetype ability skills that level 1-100 through use, independent of companion level and kept when
+    /// the archetype changes. Each use grants XP by ability tier, each level costs more XP than the last, and
+    /// effectiveness scales linearly with skill level.
     /// </summary>
     public class ArchetypeSkillSystem : MonoBehaviour
     {
@@ -126,7 +109,7 @@ namespace FiresCore.Npc.Archetypes
             {
                 // XP required = 100 * level
                 // Level 2 = 200 XP, Level 50 = 5000 XP, Level 100 = 10000 XP
-                return 100f * level;
+                return XpRequiredPerLevel * level;
             }
         }
         
@@ -139,18 +122,26 @@ namespace FiresCore.Npc.Archetypes
         public const float MAX_EFFECTIVENESS = 1.5f;
         
         // Base XP per ability tier (granted on ability USE)
-        private const float XP_BASIC = 1f;      // Basic abilities
-        private const float XP_ADVANCED = 2f;   // Advanced abilities
-        private const float XP_EXPERT = 3f;     // Expert abilities (L35-50)
-        private const float XP_MASTER = 4f;     // Master abilities (L75)
-        private const float XP_ULTIMATE = 5f;   // Ultimate abilities (L100)
+        private const float XpBasic = 1f;      // Basic abilities
+        private const float XpAdvanced = 2f;   // Advanced abilities
+        private const float XpExpert = 3f;     // Expert abilities (L35-50)
+        private const float XpMaster = 4f;     // Master abilities (L75)
+        private const float XpUltimate = 5f;   // Ultimate abilities (L100)
         
         // Bonus XP modifiers (multiplied by base XP)
-        private const float XP_PER_ENEMY_HIT = 0.5f;      // +0.5x per enemy hit by offensive ability
-        private const float XP_PER_ALLY_BUFFED = 0.3f;    // +0.3x per ally buffed/healed
-        private const float XP_PER_ENEMY_KILLED = 2.0f;   // +2.0x per enemy killed by ability
-        private const float XP_BOSS_KILL_BONUS = 5.0f;    // +5.0x for killing a boss/mini-boss
-        private const float XP_ELITE_HIT_BONUS = 0.25f;   // +0.25x bonus for hitting elite enemies
+        private const float XpPerEnemyHit = 0.5f;      // +0.5x per enemy hit by offensive ability
+        private const float XpPerAllyBuffed = 0.3f;    // +0.3x per ally buffed/healed
+        private const float XpPerEnemyKilled = 2.0f;   // +2.0x per enemy killed by ability
+        private const float XpBossKillBonus = 5.0f;    // +5.0x for killing a boss/mini-boss
+        private const float XpEliteHitBonus = 0.25f;   // +0.25x bonus for hitting elite enemies
+
+        private const float XpRequiredPerLevel = 100f;
+        private const float MinLuckEffectivenessModifier = 0.75f;
+        private const float MinLuckXpModifier = 0.9f;
+        private const float LuckXpModifierRange = 0.3f;
+        private const int FirstMasteryMilestone = 25;
+        private const int SecondMasteryMilestone = 50;
+        private const int ThirdMasteryMilestone = 75;
         
         public static bool VerboseLogging = false;
         
@@ -221,27 +212,16 @@ namespace FiresCore.Npc.Archetypes
         }
         
         /// <summary>
-        /// Gets the effectiveness multiplier for a skill based on its level AND luck.
-        /// Level 1 = 1.0x, Level 50 = 1.25x, Level 100 = 1.5x
-        /// Luck further scales this by 0.75x to 1.25x (at 0 to 100 luck)
-        /// 
-        /// COMBINED FORMULA:
-        /// - Skill Level Bonus: 1.0 to 1.5x (based on skill level 1-100)
-        /// - Luck Modifier: 0.75x to 1.25x (based on companion luck 0-100)
-        /// - Final: SkillBonus * LuckModifier
-        /// 
-        /// Example at Level 50, Luck 75:
-        /// - Skill Bonus = 1.25x
-        /// - Luck Modifier = 1.0 + (75/100 * 0.5 - 0.25) = 1.125x
-        /// - Final = 1.25 * 1.125 = 1.406x
+        /// Effectiveness multiplier for a skill: its level bonus (1.0 at level 1 to 1.5 at level 100) times the
+        /// companion's luck modifier (0.75 at no luck to 1.25 at full luck).
         /// </summary>
         public float GetSkillEffectiveness(ArchetypeSkill skill)
         {
             int level = GetSkillLevel(skill);
             
             // Base skill effectiveness from level (1.0 to 1.5)
-            float t = (level - 1f) / (MAX_LEVEL - 1f);
-            float skillBonus = Mathf.Lerp(MIN_EFFECTIVENESS, MAX_EFFECTIVENESS, t);
+            float levelProgress = (level - 1f) / (MAX_LEVEL - 1f);
+            float skillBonus = Mathf.Lerp(MIN_EFFECTIVENESS, MAX_EFFECTIVENESS, levelProgress);
             
             // Apply luck modifier (0.75x to 1.25x based on luck 0-100)
             float luckModifier = GetLuckModifier();
@@ -264,7 +244,7 @@ namespace FiresCore.Npc.Archetypes
             
             // Luck ranges 0-100, we map to 0.75-1.25
             float luckFactor = _luck.BaseLuck / 100f;
-            return 0.75f + (luckFactor * 0.5f);
+            return MinLuckEffectivenessModifier + (luckFactor * 0.5f);
         }
         
         /// <summary>
@@ -283,7 +263,7 @@ namespace FiresCore.Npc.Archetypes
             
             // Luck ranges 0-100, we map to 0.9-1.2 for XP
             float luckFactor = _luck.BaseLuck / 100f;
-            return 0.9f + (luckFactor * 0.3f);
+            return MinLuckXpModifier + (luckFactor * LuckXpModifierRange);
         }
         
         /// <summary>
@@ -388,10 +368,10 @@ namespace FiresCore.Npc.Archetypes
             if (!_pendingXP.TryGetValue(skill.Value, out var pending))
             {
                 // No tracking started - grant XP immediately
-                float bonusXP = GetXPForTier(tier) * XP_PER_ENEMY_HIT;
-                if (wasKilled) bonusXP += GetXPForTier(tier) * XP_PER_ENEMY_KILLED;
-                if (IsEliteEnemy(enemy)) bonusXP += GetXPForTier(tier) * XP_ELITE_HIT_BONUS;
-                if (IsBossEnemy(enemy) && wasKilled) bonusXP += GetXPForTier(tier) * XP_BOSS_KILL_BONUS;
+                float bonusXP = GetXPForTier(tier) * XpPerEnemyHit;
+                if (wasKilled) bonusXP += GetXPForTier(tier) * XpPerEnemyKilled;
+                if (IsEliteEnemy(enemy)) bonusXP += GetXPForTier(tier) * XpEliteHitBonus;
+                if (IsBossEnemy(enemy) && wasKilled) bonusXP += GetXPForTier(tier) * XpBossKillBonus;
                 
                 GrantBonusXP(skill.Value, bonusXP, "hit/kill");
                 return;
@@ -425,7 +405,7 @@ namespace FiresCore.Npc.Archetypes
             if (!_pendingXP.TryGetValue(skill.Value, out var pending))
             {
                 // No tracking started - grant XP immediately
-                float bonusXP = GetXPForTier(tier) * XP_PER_ALLY_BUFFED;
+                float bonusXP = GetXPForTier(tier) * XpPerAllyBuffed;
                 GrantBonusXP(skill.Value, bonusXP, "buff/heal");
                 return;
             }
@@ -453,11 +433,11 @@ namespace FiresCore.Npc.Archetypes
             
             // Calculate total bonus XP
             float bonusXP = 0f;
-            bonusXP += pending.EnemiesHit * pending.BaseXP * XP_PER_ENEMY_HIT;
-            bonusXP += pending.AlliesAffected * pending.BaseXP * XP_PER_ALLY_BUFFED;
-            bonusXP += pending.EnemiesKilled * pending.BaseXP * XP_PER_ENEMY_KILLED;
-            bonusXP += pending.BossesKilled * pending.BaseXP * XP_BOSS_KILL_BONUS;
-            bonusXP += pending.ElitesHit * pending.BaseXP * XP_ELITE_HIT_BONUS;
+            bonusXP += pending.EnemiesHit * pending.BaseXP * XpPerEnemyHit;
+            bonusXP += pending.AlliesAffected * pending.BaseXP * XpPerAllyBuffed;
+            bonusXP += pending.EnemiesKilled * pending.BaseXP * XpPerEnemyKilled;
+            bonusXP += pending.BossesKilled * pending.BaseXP * XpBossKillBonus;
+            bonusXP += pending.ElitesHit * pending.BaseXP * XpEliteHitBonus;
             
             if (bonusXP > 0)
             {
@@ -608,9 +588,9 @@ namespace FiresCore.Npc.Archetypes
             if (!primarySkill.HasValue) return;
             
             // Calculate bonus XP
-            float bonusXP = XP_PER_ENEMY_KILLED * XP_BASIC;
-            if (wasElite) bonusXP += XP_ELITE_HIT_BONUS * XP_BASIC;
-            if (isBoss) bonusXP += XP_BOSS_KILL_BONUS * XP_BASIC;
+            float bonusXP = XpPerEnemyKilled * XpBasic;
+            if (wasElite) bonusXP += XpEliteHitBonus * XpBasic;
+            if (isBoss) bonusXP += XpBossKillBonus * XpBasic;
             
             // Grant the bonus XP to the primary offensive skill
             GrantBonusXP(primarySkill.Value, bonusXP, isBoss ? "boss kill" : wasElite ? "elite kill" : "kill");
@@ -657,12 +637,12 @@ namespace FiresCore.Npc.Archetypes
         {
             switch (tier)
             {
-                case AbilityTier.Basic: return XP_BASIC;
-                case AbilityTier.Advanced: return XP_ADVANCED;
-                case AbilityTier.Expert: return XP_EXPERT;
-                case AbilityTier.Master: return XP_MASTER;
-                case AbilityTier.Ultimate: return XP_ULTIMATE;
-                default: return XP_BASIC;
+                case AbilityTier.Basic: return XpBasic;
+                case AbilityTier.Advanced: return XpAdvanced;
+                case AbilityTier.Expert: return XpExpert;
+                case AbilityTier.Master: return XpMaster;
+                case AbilityTier.Ultimate: return XpUltimate;
+                default: return XpBasic;
             }
         }
         
@@ -764,7 +744,7 @@ namespace FiresCore.Npc.Archetypes
                 Player.m_localPlayer.Message(MessageHud.MessageType.TopLeft, message);
                 
                 // Special messages for milestones
-                if (newLevel == 25 || newLevel == 50 || newLevel == 75 || newLevel == 100)
+                if (newLevel == FirstMasteryMilestone || newLevel == SecondMasteryMilestone || newLevel == ThirdMasteryMilestone || newLevel == MAX_LEVEL)
                 {
                     float effectiveness = GetSkillEffectiveness(skill);
                     Player.m_localPlayer.Message(MessageHud.MessageType.Center, 
@@ -804,13 +784,13 @@ namespace FiresCore.Npc.Archetypes
         
         #region Persistence
         
-        private const string ZDO_KEY_SKILLS = "va_archetype_skills";
+        private const string ZdoKeySkills = "va_archetype_skills";
         
         private void LoadFromZDO()
         {
             if (_nview == null || !_nview.IsValid()) return;
             
-            string serialized = _nview.GetZDO()?.GetString(ZDO_KEY_SKILLS, "");
+            string serialized = _nview.GetZDO()?.GetString(ZdoKeySkills, "");
             if (string.IsNullOrEmpty(serialized)) return;
             
             try
@@ -866,13 +846,13 @@ namespace FiresCore.Npc.Archetypes
                 }
                 
                 // Skip the ZDO write during the local player's respawn / loading-screen
-                // window â€” writing here has been observed to deadlock the zone stream.
+                // window — writing here has been observed to deadlock the zone stream.
                 // _isDirty stays true so the next periodic Update tick retries after the
                 // gate opens.
                 if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
 
                 string serialized = string.Join(",", parts);
-                _nview.GetZDO()?.Set(ZDO_KEY_SKILLS, serialized);
+                _nview.GetZDO()?.Set(ZdoKeySkills, serialized);
 
                 _isDirty = false;
                 
@@ -923,14 +903,14 @@ namespace FiresCore.Npc.Archetypes
                         && Enum.TryParse<ArchetypeSkill>(values[0], out var skill)
                         && int.TryParse(values[1], out int level)
                         && float.TryParse(values[2], out float xp)
-                        && _skills.TryGetValue(skill, out var sd))
+                        && _skills.TryGetValue(skill, out var skillData))
                     {
-                        sd.Level = Mathf.Clamp(level, 1, MAX_LEVEL);
-                        sd.CurrentXP = Mathf.Max(0f, xp);
+                        skillData.Level = Mathf.Clamp(level, 1, MAX_LEVEL);
+                        skillData.CurrentXP = Mathf.Max(0f, xp);
                     }
                 }
                 if (_nview != null && _nview.IsValid())
-                    _nview.GetZDO()?.Set(ZDO_KEY_SKILLS, data);
+                    _nview.GetZDO()?.Set(ZdoKeySkills, data);
                 _isDirty = false;
             }
             catch (Exception ex)
@@ -947,12 +927,12 @@ namespace FiresCore.Npc.Archetypes
         
         // Periodic save
         private float _lastSaveTime;
-        private const float SAVE_INTERVAL = 60f;
+        private const float SaveInterval = 60f;
         
         private void Update()
         {
             // Save periodically
-            if (_isDirty && Time.time - _lastSaveTime > SAVE_INTERVAL)
+            if (_isDirty && Time.time - _lastSaveTime > SaveInterval)
             {
                 _lastSaveTime = Time.time;
                 SaveToZDO();

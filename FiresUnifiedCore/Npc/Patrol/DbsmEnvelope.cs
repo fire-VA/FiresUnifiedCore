@@ -14,6 +14,8 @@ namespace FiresCore.Npc.Patrol
     /// </summary>
     public static class DbsmEnvelope
     {
+        private const float MinShapeK = 0.05f;
+
         /// <summary>Speed multiplier at local progress u∈[0,1] along a section's span.</summary>
         public static float SampleSection(Section s, float u)
         {
@@ -23,15 +25,15 @@ namespace FiresCore.Npc.Patrol
             if (s.Shape == SpeedShape.Custom && s.CustomCurve != null && s.CustomCurve.Count > 0)
                 return SampleCustom(s.CustomCurve, u);
 
-            float c = EvaluateShape(s.Shape, u, s.ShapeK); // 0..1 envelope weight
-            return Mathf.LerpUnclamped(s.Floor, s.Peak, c);
+            float weight = EvaluateShape(s.Shape, u, s.ShapeK); // 0..1 envelope weight
+            return Mathf.LerpUnclamped(s.Floor, s.Peak, weight);
         }
 
         /// <summary>Envelope weight C(u)∈[0,1] for the parametric shapes (Custom is handled separately).</summary>
         public static float EvaluateShape(SpeedShape shape, float u, float k)
         {
             u = Mathf.Clamp01(u);
-            k = Mathf.Max(0.05f, k);
+            k = Mathf.Max(MinShapeK, k);
             switch (shape)
             {
                 case SpeedShape.Flat:
@@ -51,9 +53,9 @@ namespace FiresCore.Npc.Patrol
                 {
                     // Smoothstep hump: Floor at both ends, Peak in the middle, eased at ends. k widens
                     // (k<1) or narrows (k>1) the peak plateau.
-                    float t = Mathf.Clamp01(1f - Mathf.Abs(2f * u - 1f));
-                    t = Mathf.Pow(t, k);
-                    return t * t * (3f - 2f * t);
+                    float hump = Mathf.Clamp01(1f - Mathf.Abs(2f * u - 1f));
+                    hump = Mathf.Pow(hump, k);
+                    return hump * hump * (3f - 2f * hump);
                 }
             }
         }
@@ -70,10 +72,10 @@ namespace FiresCore.Npc.Patrol
             {
                 if (u <= pts[i].x)
                 {
-                    Vector2 a = pts[i - 1], b = pts[i];
-                    float span = b.x - a.x;
-                    float t = span > 1e-5f ? (u - a.x) / span : 0f;
-                    return Mathf.Lerp(a.y, b.y, t);
+                    Vector2 start = pts[i - 1], end = pts[i];
+                    float span = end.x - start.x;
+                    float blend = span > 1e-5f ? (u - start.x) / span : 0f;
+                    return Mathf.Lerp(start.y, end.y, blend);
                 }
             }
             return pts[last].y;

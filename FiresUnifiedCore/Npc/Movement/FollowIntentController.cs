@@ -25,8 +25,8 @@ namespace FiresCore.Npc.Movement
         public float SprintDistance { get; set; } = 12f;
         
         // Timing
-        private const float INTENT_MIN_DURATION = 2.0f;
-        private const float IDLE_REFOLLOW_DISTANCE = 10f;
+        private const float IntentMinDuration = 2.0f;
+        private const float IdleRefollowDistance = 10f;
         
         // State
         private FollowIntent _currentMode = FollowIntent.Idle;
@@ -64,7 +64,7 @@ namespace FiresCore.Npc.Movement
         /// </summary>
         public bool IsInIdleWanderZone(float distToOwner, bool ownerMoving)
         {
-            return !ownerMoving && distToOwner < IDLE_REFOLLOW_DISTANCE;
+            return !ownerMoving && distToOwner < IdleRefollowDistance;
         }
         
         /// <summary>
@@ -160,7 +160,7 @@ namespace FiresCore.Npc.Movement
             
             // Require minimum commitment time for slowing down
             float timeSinceChange = Time.time - _intentChangeTime;
-            if (timeSinceChange < INTENT_MIN_DURATION)
+            if (timeSinceChange < IntentMinDuration)
                 return false;
             
             // Apply hysteresis for transitions

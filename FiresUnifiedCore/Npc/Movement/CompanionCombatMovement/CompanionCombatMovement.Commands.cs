@@ -45,7 +45,6 @@ namespace FiresCore.Npc
             _currentMoveDirection = Vector3.zero;
             _committedMoveDirection = Vector3.zero;
             _lastSetMoveDir = Vector3.zero;
-            _moveDirSet = false;
             
             if (VerboseLogging)
                 Debug.Log($"[CompanionCombatMovement] {_companion?.companionName} movement LOCKED via StateController: {reason} for {duration}s");
@@ -70,7 +69,6 @@ namespace FiresCore.Npc
             // Unfreeze via UnifiedMovementAuthority
             _movementAuthority?.UnfreezeMovement();
             
-            _moveDirSet = false;
             
             if (VerboseLogging)
                 Debug.Log($"[CompanionCombatMovement] {_companion?.companionName} movement UNLOCKED via StateController");
@@ -269,7 +267,6 @@ namespace FiresCore.Npc
                 _hasRangedMovementRequest = false;
             }
             
-            _moveDirSet = false;
             
             if (VerboseLogging)
             {
@@ -289,8 +286,8 @@ namespace FiresCore.Npc
             // Clear movement through authority
             if (_movementAuthority != null)
             {
-                _movementAuthority.ClearDestination(AUTHORITY_OWNER);
-                _movementAuthority.ReleaseAuthority(AUTHORITY_OWNER);
+                _movementAuthority.ClearDestination(AuthorityOwner);
+                _movementAuthority.ReleaseAuthority(AuthorityOwner);
             }
             // No direct SetMoveDir fallback - authority system is required
             

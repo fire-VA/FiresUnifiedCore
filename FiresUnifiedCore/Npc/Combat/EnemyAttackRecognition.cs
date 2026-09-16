@@ -6,23 +6,8 @@ using FiresCore.Npc.AI;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Tracks enemy attack patterns and provides dodge/block timing recommendations.
-    /// Learns enemy "tells" - the animations that precede dangerous attacks.
-    /// 
-    /// DESIGN PRINCIPLE:
-    /// Real players watch enemy animations to know when to dodge/block.
-    /// This system observes enemy animators and detects wind-up animations.
-    /// 
-    /// KNOWN ENEMY PATTERNS:
-    /// - Troll: "swing_longsword" wind-up before slam
-    /// - Fuling: "attack" with spear thrust tell
-    /// - Deathsquito: Direct charge (very short tell)
-    /// - Greydwarf Brute: "attack" with club overhead
-    /// 
-    /// OUTPUT:
-    /// - ThreatLevel: How dangerous is the current moment?
-    /// - RecommendedAction: Dodge, Block, Parry, or Attack
-    /// - TimeToImpact: Estimated time until attack lands
+    /// Watches enemy animators for the wind-ups that precede dangerous attacks and reports the current threat
+    /// level, the recommended response (dodge, block, parry or attack) and the estimated time to impact.
     /// </summary>
     public class EnemyAttackRecognition : MonoBehaviour
     {

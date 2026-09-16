@@ -9,22 +9,9 @@ using FiresCore.Npc.Events;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// Central coordination hub for companion behaviors.
-    /// Provides a single source of truth for behavior state and coordinates between:
-    /// - CompanionIdleBehavior (sub-behaviors like smelting, gathering)
-    /// - CompanionCombatMovement (combat state, movement)
-    /// - CompanionStateController (animation/freeze state)
-    /// 
-    /// RESPONSIBILITIES:
-    /// 1. Track current behavior state across all systems
-    /// 2. Coordinate behavior transitions (idle -> combat -> idle)
-    /// 3. Fire events for behavior lifecycle
-    /// 4. Provide unified API for querying companion state
-    /// 
-    /// USAGE:
-    /// - Get via CompanionController.GetBehaviorCoordinator()
-    /// - Subscribe to events for cross-cutting concerns
-    /// - Query CurrentState for behavior decisions
+    /// One view of a companion's behavior state across CompanionIdleBehavior, CompanionCombatMovement and
+    /// CompanionStateController: it tracks the current state, coordinates idle-combat-idle transitions and raises
+    /// lifecycle events. Reached through CompanionController.GetBehaviorCoordinator.
     /// </summary>
     public class BehaviorCoordinator : MonoBehaviour
     {

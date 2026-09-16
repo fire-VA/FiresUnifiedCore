@@ -4,30 +4,11 @@ using UnityEngine;
 
 namespace FiresCore.Services
 {
-    // Cross-mod resolver for the "bundle prefab references a custom
-    // shader / _copy material that lost its backing on export" problem.
-    // Walks ZNetScene at first warm() to harvest every vanilla shader
-    // and named material into a lookup; then any prefab can ApplyToPrefab
-    // to swap orphaned shaders for their vanilla counterparts and bundle
-    // `_copy` materials for the matching vanilla original.
-    //
-    // Consolidates the ShaderReplacement + MaterialSwapper duplication
-    // that lived in FAP, FiresNPCs, FiresValcast, FiresSteamyDumps,
-    // Dragostone, VApieces, TechPriest — same algorithm, six+ copies.
-    //
-    // Shader replacement priority cascade:
-    //   1. Cached vanilla shader (exact name match)
-    //   2. Shader.Find (engine-loaded shader by name)
-    //   3. Mapped-name lookup (Custom/Foo → Foo via the optional NameMap)
-    //   4. Standard shader fallback (pink-prevention)
-    //
-    // Material `_copy` resolution: strip the suffix + optional " (Instance)"
-    // tail, lookup in vanilla material cache, swap if found.
-    //
-    // Both passes save & restore the common Material property set across
-    // the shader swap — _MainTex, _Color, _BumpMap, _Cutoff, _Glossiness,
-    // _Metallic, _EmissionColor, _SkinColor, renderQueue. Extend via
-    // RegisterPreservedProperty for additional shader-specific properties.
+    // Repairs bundle prefabs whose custom shaders or "_copy" materials lost their backing on export, replacing
+    // the per-mod ShaderReplacement and MaterialSwapper copies. Vanilla shaders and named materials are
+    // harvested from ZNetScene on first use. A shader resolves by exact cached name, then Shader.Find, then the
+    // optional name map, then Standard; a "_copy" material resolves to its vanilla original. Common material
+    // properties are carried across the swap, extendable with RegisterPreservedProperty.
     public static class VanillaAssetResolver
     {
         private const string CopyMaterialSuffix = "_copy";
@@ -391,12 +372,12 @@ namespace FiresCore.Services
             var savedTextures = new Dictionary<string, Texture>();
             var savedFloats = new Dictionary<string, float>();
 
-            foreach (var p in PreservedColorProps)
-                if (material.HasProperty(p)) savedColors[p] = material.GetColor(p);
-            foreach (var p in PreservedTextureProps)
-                if (material.HasProperty(p)) savedTextures[p] = material.GetTexture(p);
-            foreach (var p in PreservedFloatProps)
-                if (material.HasProperty(p)) savedFloats[p] = material.GetFloat(p);
+            foreach (var propertyName in PreservedColorProps)
+                if (material.HasProperty(propertyName)) savedColors[propertyName] = material.GetColor(propertyName);
+            foreach (var propertyName in PreservedTextureProps)
+                if (material.HasProperty(propertyName)) savedTextures[propertyName] = material.GetTexture(propertyName);
+            foreach (var propertyName in PreservedFloatProps)
+                if (material.HasProperty(propertyName)) savedFloats[propertyName] = material.GetFloat(propertyName);
             int savedRenderQueue = material.renderQueue;
 
             material.shader = replacement;

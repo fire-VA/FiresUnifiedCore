@@ -5,18 +5,9 @@ using FiresCore.Npc.Core;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Farming behavior â€” autonomous farm work loop:
-    ///   1. Harvest beehives with honey (no tool needed, highest value)
-    ///   2. Harvest mature crops (no tool needed)
-    ///   3. Plant seeds on cultivated ground:
-    ///      a. Look for Cultivator in inventory
-    ///      b. If missing, search nearby chests
-    ///      c. If not in chests, craft one at a Forge (5 RoundLog + 5 Bronze)
-    ///      d. Plant seeds on any open cultivated soil
-    ///   4. Deposit harvest items to nearby chests when over half-full
-    ///
-    /// Requires Stay mode with a home position.
-    /// Player can disable gathering/farming from the radial menu.
+    /// Autonomous farm work for a staying companion with a home position: collect honey, harvest ripe crops, plant
+    /// seeds on cultivated soil (fetching a cultivator from inventory or a chest, or crafting one at a forge), and
+    /// deposit the harvest once half full. Players can turn it off from the radial menu.
     /// </summary>
     public partial class FarmingBehavior : IdleSubBehavior
     {
@@ -25,33 +16,34 @@ namespace FiresCore.Npc.IdleBehaviors
         public override bool AvailableForIdleRotation => true;
         public override int InventoryPriority => IsInventoryCompletelyFull() ? -10 : 0;
 
-        // â”€â”€ Detection ranges â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Detection ranges ──────────────────────────────────────────────────
 
-        private const float BEEHIVE_DETECTION_RANGE   = 30f;
-        private const float CROP_DETECTION_RANGE      = 30f;
-        private const float PLANTING_DETECTION_RANGE  = 20f;
-        private const float INTERACTION_DISTANCE      = 2.5f;
-        private const float ARRIVAL_DISTANCE          = 2.5f;
-        private const float MOVEMENT_TIMEOUT          = 30f;
-        private const float MAX_FARM_TIME             = 300f;
-        private const float PLANT_SPACING             = 1f;
-        private const float CRAFTING_STATION_RADIUS   = 30f;
+        private const float BeehiveDetectionRange   = 30f;
+        private const float CropDetectionRange      = 30f;
+        private const float PlantingDetectionRange  = 20f;
+        private const float InteractionDistance      = 2.5f;
+        private const float ArrivalDistance          = 2.5f;
+        private const float MovementTimeout          = 30f;
+        private const float MaxFarmTime             = 300f;
+        private const float PlantSpacing             = 1f;
+        private const float CraftingStationRadius   = 30f;
+        private const float FacingLeaseDuration      = 0.4f;
 
-        // â”€â”€ Cultivator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Cultivator ────────────────────────────────────────────────────────
 
         // Valheim prefab name for the Cultivator item.
-        private const string CULTIVATOR_PREFAB = "Cultivator";
+        private const string CultivatorPrefab = "Cultivator";
 
         // Forge recipe: 5 Core Wood (RoundLog) + 5 Bronze.
         // Requires a Forge nearby.
-        private const string RECIPE_COREWOOD       = "RoundLog";
-        private const string RECIPE_BRONZE         = "Bronze";
-        private const int    RECIPE_COREWOOD_COUNT = 5;
-        private const int    RECIPE_BRONZE_COUNT   = 5;
+        private const string RecipeCorewood       = "RoundLog";
+        private const string RecipeBronze         = "Bronze";
+        private const int    RecipeCorewoodCount = 5;
+        private const int    RecipeBronzeCount   = 5;
 
         private float ChestSearchRadius => CompanionSettings.ChestSearchRadius;
 
-        // â”€â”€ Phase enum â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Phase enum ────────────────────────────────────────────────────────
 
         private enum FarmPhase
         {
@@ -89,7 +81,7 @@ namespace FiresCore.Npc.IdleBehaviors
             Complete
         }
 
-        // â”€â”€ State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── State ─────────────────────────────────────────────────────────────
 
         private FarmPhase _currentPhase;
         private float     _phaseStartTime;
@@ -138,7 +130,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private List<Container> _nearbyChests = new List<Container>();
 
-        // â”€â”€ Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Lifecycle ─────────────────────────────────────────────────────────
 
         public override void Initialize(CompanionController companion, CompanionIdleBehavior idleBehavior)
         {
@@ -149,7 +141,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _combatMovement = companion.GetComponent<CompanionCombatMovement>();
             _autoPickup     = companion.GetComponent<CompanionAutoPickup>();
             _zanim          = companion.GetComponent<ZSyncAnimation>();
-            MaxDuration     = MAX_FARM_TIME + 60f;
+            MaxDuration     = MaxFarmTime + 60f;
         }
 
         /// <summary>
@@ -167,7 +159,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Companion == null) return false;
 
             // Commanded path: skip the toggle + Stay-mode gates. Validity is
-            // checked when Start() resolves the target â€” a fresh CanStart with
+            // checked when Start() resolves the target — a fresh CanStart with
             // a wonky target falls through to the autonomous logic.
             if (_commandedTarget != null && IsValidFarmingTarget(_commandedTarget))
             {
@@ -181,16 +173,16 @@ namespace FiresCore.Npc.IdleBehaviors
             Vector3 home = IdleBehavior.HomePosition;
 
             // Harvesting never requires a cultivator.
-            if (FarmingDataHelper.FindNearbyHarvestableBeehives(home, BEEHIVE_DETECTION_RANGE).Count > 0)
+            if (FarmingDataHelper.FindNearbyHarvestableBeehives(home, BeehiveDetectionRange).Count > 0)
                 return true;
-            if (FarmingDataHelper.FindNearbyHarvestableCrops(home, CROP_DETECTION_RANGE).Count > 0)
+            if (FarmingDataHelper.FindNearbyHarvestableCrops(home, CropDetectionRange).Count > 0)
                 return true;
 
             // Planting: need seeds (inventory or nearby chests) + cultivated ground + cultivator source.
             RefreshNearbyChests();
             if (!HasSeedsToPlant() && !ChestHasSeeds()) return false;
 
-            var plantSpots = FarmingDataHelper.FindPlantablePositions(home, PLANTING_DETECTION_RANGE, PLANT_SPACING);
+            var plantSpots = FarmingDataHelper.FindPlantablePositions(home, PlantingDetectionRange, PlantSpacing);
             if (plantSpots.Count == 0) return false;
 
             return HasCultivator() || ChestHasCultivator() || CanCraftCultivator();
@@ -225,12 +217,12 @@ namespace FiresCore.Npc.IdleBehaviors
             _combatMovement?.ClearCommandPriority();
 
             if (_honeyHarvested > 0 || _cropsHarvested > 0 || _seedsPlanted > 0)
-                Debug.Log($"[Farming] {Companion.companionName} done â€” honey:{_honeyHarvested} crops:{_cropsHarvested} planted:{_seedsPlanted}");
+                Debug.Log($"[Farming] {Companion.companionName} done — honey:{_honeyHarvested} crops:{_cropsHarvested} planted:{_seedsPlanted}");
 
             base.Cancel();
         }
 
-        // â”€â”€ Update dispatch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Update dispatch ───────────────────────────────────────────────────
 
         public override bool Update()
         {
@@ -263,7 +255,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
 
-        // â”€â”€ Status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Status ────────────────────────────────────────────────────────────
 
         public override string GetStatusDescription() => _currentPhase switch
         {
@@ -285,7 +277,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _                                 => "Farming"
         };
 
-        // â”€â”€ Task finding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Task finding ──────────────────────────────────────────────────────
 
         private bool UpdateIdle()
         {
@@ -293,7 +285,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (ShouldDeposit()) { StartDeposit(); return false; }
 
-            return true; // nothing left â€” signal complete
+            return true; // nothing left — signal complete
         }
 
         /// <summary>
@@ -310,9 +302,9 @@ namespace FiresCore.Npc.IdleBehaviors
             if (obj == null) return false;
             if (obj.GetComponent<Beehive>() != null || obj.GetComponentInParent<Beehive>() != null) return true;
             if (obj.GetComponent<Pickable>() != null || obj.GetComponentInParent<Pickable>() != null) return true;
-            // Cultivated soil â€” recognised by name on the underlying piece/terrain.
-            string n = obj.name?.ToLowerInvariant() ?? "";
-            if (n.Contains("cultivated") || n.Contains("plant") || n.Contains("seed")) return true;
+            // Cultivated soil — recognised by name on the underlying piece/terrain.
+            string objectName = obj.name?.ToLowerInvariant() ?? "";
+            if (objectName.Contains("cultivated") || objectName.Contains("plant") || objectName.Contains("seed")) return true;
             return false;
         }
 
@@ -333,7 +325,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (hive != null && FarmingDataHelper.HasPrivateAreaAccess(hive.transform.position))
                 {
                     _targetBeehive  = hive;
-                    _targetPosition = InteractionPointHelper.GetInteractionPoint(hive.gameObject, Transform.position, INTERACTION_DISTANCE);
+                    _targetPosition = InteractionPointHelper.GetInteractionPoint(hive.gameObject, Transform.position, InteractionDistance);
                     SetPhase(FarmPhase.MovingToBeehive);
                     TryMoveToPosition(_targetPosition);
                     return true;
@@ -344,13 +336,13 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (crop != null && FarmingDataHelper.HasPrivateAreaAccess(crop.transform.position))
                 {
                     _targetCrop     = crop;
-                    _targetPosition = InteractionPointHelper.GetInteractionPoint(crop.gameObject, Transform.position, INTERACTION_DISTANCE);
+                    _targetPosition = InteractionPointHelper.GetInteractionPoint(crop.gameObject, Transform.position, InteractionDistance);
                     SetPhase(FarmPhase.MovingToCrop);
                     TryMoveToPosition(_targetPosition);
                     return true;
                 }
 
-                // Cultivated soil â†’ fall through to the planting branch of the
+                // Cultivated soil → fall through to the planting branch of the
                 // normal task loop, which will pick a plant spot near the target.
                 return false;
             }
@@ -368,28 +360,28 @@ namespace FiresCore.Npc.IdleBehaviors
             Vector3 home = IdleBehavior?.HomePosition ?? Transform.position;
 
             // Priority 1: beehives (no tool required)
-            var beehives = FarmingDataHelper.FindNearbyHarvestableBeehives(home, BEEHIVE_DETECTION_RANGE);
+            var beehives = FarmingDataHelper.FindNearbyHarvestableBeehives(home, BeehiveDetectionRange);
             foreach (var hive in beehives)
             {
                 if (!FarmingDataHelper.HasPrivateAreaAccess(hive.transform.position)) continue;
                 if (!IsReachable(hive.transform.position)) continue;
 
                 _targetBeehive  = hive;
-                _targetPosition = InteractionPointHelper.GetInteractionPoint(hive.gameObject, Transform.position, INTERACTION_DISTANCE);
+                _targetPosition = InteractionPointHelper.GetInteractionPoint(hive.gameObject, Transform.position, InteractionDistance);
                 SetPhase(FarmPhase.MovingToBeehive);
                 TryMoveToPosition(_targetPosition);
                 return true;
             }
 
             // Priority 2: harvestable crops (no tool required)
-            var crops = FarmingDataHelper.FindNearbyHarvestableCrops(home, CROP_DETECTION_RANGE);
+            var crops = FarmingDataHelper.FindNearbyHarvestableCrops(home, CropDetectionRange);
             foreach (var crop in crops)
             {
                 if (!FarmingDataHelper.HasPrivateAreaAccess(crop.transform.position)) continue;
                 if (!IsReachable(crop.transform.position)) continue;
 
                 _targetCrop     = crop;
-                _targetPosition = InteractionPointHelper.GetInteractionPoint(crop.gameObject, Transform.position, INTERACTION_DISTANCE);
+                _targetPosition = InteractionPointHelper.GetInteractionPoint(crop.gameObject, Transform.position, InteractionDistance);
                 SetPhase(FarmPhase.MovingToCrop);
                 TryMoveToPosition(_targetPosition);
                 return true;
@@ -400,7 +392,7 @@ namespace FiresCore.Npc.IdleBehaviors
             bool hasSeedsInChests    = !hasSeedsInInventory && ChestHasSeeds();
             if (!hasSeedsInInventory && !hasSeedsInChests) return false;
 
-            var plantSpots = FarmingDataHelper.FindPlantablePositions(home, PLANTING_DETECTION_RANGE, PLANT_SPACING);
+            var plantSpots = FarmingDataHelper.FindPlantablePositions(home, PlantingDetectionRange, PlantSpacing);
             if (plantSpots.Count == 0) return false;
 
             // Retrieve seeds from a chest if we don't have any in inventory.
@@ -410,7 +402,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return true;
             }
 
-            // Ensure we have a cultivator â€” trigger acquisition if not.
+            // Ensure we have a cultivator — trigger acquisition if not.
             if (!_cultivatorReadyThisSession && !HasCultivator())
             {
                 SetPhase(FarmPhase.GettingCultivator);
@@ -433,7 +425,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 foreach (var pos in plantSpots)
                 {
-                    if (!FarmingDataHelper.IsValidPlantingPosition(pos, seedPrefab, PLANT_SPACING)) continue;
+                    if (!FarmingDataHelper.IsValidPlantingPosition(pos, seedPrefab, PlantSpacing)) continue;
 
                     _seedToPlant    = seedPrefab;
                     _plantPosition  = pos;
@@ -446,7 +438,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
 
-        // â”€â”€ Cultivator helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Cultivator helpers ────────────────────────────────────────────────
 
         private bool HasCultivator()
         {
@@ -514,44 +506,44 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var storage = _inventory?.GetStorageInventory();
             if (storage == null) return false;
-            return CountItems(storage, RECIPE_COREWOOD) >= RECIPE_COREWOOD_COUNT
-                && CountItems(storage, RECIPE_BRONZE)   >= RECIPE_BRONZE_COUNT;
+            return CountItems(storage, RecipeCorewood) >= RecipeCorewoodCount
+                && CountItems(storage, RecipeBronze)   >= RecipeBronzeCount;
         }
 
         private CraftingStation FindNearestForge()
         {
-            var cols = Physics.OverlapSphere(Transform.position, CRAFTING_STATION_RADIUS);
+            var cols = Physics.OverlapSphere(Transform.position, CraftingStationRadius);
             CraftingStation best    = null;
             float           bestDist = float.MaxValue;
             var             seen    = new HashSet<CraftingStation>();
 
-            foreach (var col in cols)
+            foreach (var collider in cols)
             {
-                if (col == null) continue;
-                var st = col.GetComponent<CraftingStation>() ?? col.GetComponentInParent<CraftingStation>();
-                if (st == null || seen.Contains(st)) continue;
-                seen.Add(st);
+                if (collider == null) continue;
+                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
+                if (station == null || seen.Contains(station)) continue;
+                seen.Add(station);
 
-                string stName = (st.m_name ?? st.gameObject.name ?? "").ToLowerInvariant();
+                string stName = (station.m_name ?? station.gameObject.name ?? "").ToLowerInvariant();
                 if (!stName.Contains("forge")) continue;
 
-                float d = Vector3.Distance(Transform.position, st.transform.position);
-                if (d < bestDist) { bestDist = d; best = st; }
+                float stationDistance = Vector3.Distance(Transform.position, station.transform.position);
+                if (stationDistance < bestDist) { bestDist = stationDistance; best = station; }
             }
             return best;
         }
 
-        // â”€â”€ General helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── General helpers ───────────────────────────────────────────────────
 
         private void SetPhase(FarmPhase phase)
         {
             _currentPhase   = phase;
             _phaseStartTime = Time.time;
             if (CompanionIdleBehavior.VerboseLogging)
-                Debug.Log($"[Farming] {Companion?.companionName} â†’ {phase}");
+                Debug.Log($"[Farming] {Companion?.companionName} → {phase}");
         }
 
-        private bool MovementTimedOut() => Time.time - _phaseStartTime > MOVEMENT_TIMEOUT;
+        private bool MovementTimedOut() => Time.time - _phaseStartTime > MovementTimeout;
 
         private void RefreshNearbyChests()
         {
@@ -589,22 +581,22 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (!IsReachable(chest.transform.position)) continue;
 
                 _targetChest    = chest;
-                _targetPosition = InteractionPointHelper.GetContainerInteractionPoint(chest, Transform.position, INTERACTION_DISTANCE);
+                _targetPosition = InteractionPointHelper.GetContainerInteractionPoint(chest, Transform.position, InteractionDistance);
                 SetPhase(FarmPhase.MovingToChest);
                 TryMoveToPosition(_targetPosition);
                 return;
             }
 
-            // No reachable chest with space â€” end session.
+            // No reachable chest with space — end session.
             SetPhase(FarmPhase.Complete);
         }
 
         private int CountItems(Inventory inv, string prefabName)
         {
-            int n = 0;
+            int count = 0;
             foreach (var item in inv.GetAllItems())
-                if (item?.m_dropPrefab?.name == prefabName) n += item.m_stack;
-            return n;
+                if (item?.m_dropPrefab?.name == prefabName) count += item.m_stack;
+            return count;
         }
 
         private void RemoveItems(Inventory inv, string prefabName, int amount)
@@ -632,7 +624,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var facing = Companion != null ? Companion.GetFacingAuthority() : null;
             if (facing != null)
             {
-                if (facing.TryAcquireFacing(FiresCore.Npc.Core.UnifiedMovementAuthority.MovementSource.SubBehavior, BehaviorName, 0.4f))
+                if (facing.TryAcquireFacing(FiresCore.Npc.Core.UnifiedMovementAuthority.MovementSource.SubBehavior, BehaviorName, FacingLeaseDuration))
                     facing.SetLookDirection(BehaviorName, dir);
                 return;
             }

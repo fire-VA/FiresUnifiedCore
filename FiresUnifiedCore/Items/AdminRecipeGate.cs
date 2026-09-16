@@ -76,9 +76,9 @@ namespace FiresCore.Items
                 // Fallback by name — covers a rebuilt ObjectDB handing out a
                 // fresh ItemDrop instance that the cache hasn't caught up to.
                 string name = req.m_resItem.gameObject.name;
-                for (int c = 0; c < CheatSwordCandidates.Length; c++)
+                for (int candidateIndex = 0; candidateIndex < CheatSwordCandidates.Length; candidateIndex++)
                 {
-                    if (string.Equals(name, CheatSwordCandidates[c], StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(name, CheatSwordCandidates[candidateIndex], StringComparison.OrdinalIgnoreCase))
                         return true;
                 }
             }

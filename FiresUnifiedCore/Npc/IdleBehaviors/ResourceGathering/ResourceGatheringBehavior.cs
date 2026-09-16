@@ -51,17 +51,17 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float RESOURCE_DETECTION_RANGE = 15f;
-        private const float ATTACK_RANGE = 2.5f;
-        private const float PICKABLE_RANGE = 2f;
-        private const float ATTACK_INTERVAL = 1.8f;
-        private const float DAMAGE_DELAY = 0.6f;
-        private const float MAX_GATHER_TIME = 120f;
-        private const float POST_DESTROY_WAIT = 2f;
-        private const float LOG_CHECK_WAIT = 5f;
-        private const float LOG_SEARCH_RADIUS = 10f;
-        private const float CONTINUE_GATHERING_CHANCE = 0.5f;
-        private const float INVENTORY_FULL_THRESHOLD = 0.8f;
+        private const float ResourceDetectionRange = 15f;
+        private const float AttackRange = 2.5f;
+        private const float PickableRange = 2f;
+        private const float AttackInterval = 1.8f;
+        private const float DamageDelay = 0.6f;
+        private const float MaxGatherTime = 120f;
+        private const float PostDestroyWait = 2f;
+        private const float LogCheckWait = 5f;
+        private const float LogSearchRadius = 10f;
+        private const float ContinueGatheringChance = 0.5f;
+        private const float InventoryFullThreshold = 0.8f;
         private float CHEST_SEARCH_RADIUS => CompanionSettings.ChestSearchRadius;
         
         #endregion
@@ -95,7 +95,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         // MineRock repositioning
         private int _consecutiveNoColliderHits = 0;
-        private const int MAX_NO_COLLIDER_BEFORE_REPOSITION = 3;
+        private const int MaxNoColliderBeforeReposition = 3;
         
         // Tree->log transitions
         private bool _wasTargetingTree = false;
@@ -161,7 +161,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _resources.VerboseLogging = VerboseLogging || CompanionIdleBehavior.VerboseLogging;
             _resources.BehaviorName = "ResourceGathering";
             
-            MaxDuration = MAX_GATHER_TIME + 30f;
+            MaxDuration = MaxGatherTime + 30f;
         }
         
         public void SetCommandedTarget(GameObject target)
@@ -485,11 +485,11 @@ namespace FiresCore.Npc.IdleBehaviors
             
             var colliders = Physics.OverlapSphere(position, searchRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var smelter = col.GetComponent<Smelter>() ?? col.GetComponentInParent<Smelter>();
+                var smelter = collider.GetComponent<Smelter>() ?? collider.GetComponentInParent<Smelter>();
                 if (smelter == null) continue;
                 
                 string stationType = PieceDataHelper.GetSmelterType(smelter);
@@ -533,11 +533,11 @@ namespace FiresCore.Npc.IdleBehaviors
             
             var colliders = Physics.OverlapSphere(position, searchRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var smelter = col.GetComponent<Smelter>() ?? col.GetComponentInParent<Smelter>();
+                var smelter = collider.GetComponent<Smelter>() ?? collider.GetComponentInParent<Smelter>();
                 if (smelter == null) continue;
                 
                 string stationType = PieceDataHelper.GetSmelterType(smelter);
@@ -571,11 +571,11 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var fireplace = col.GetComponent<Fireplace>() ?? col.GetComponentInParent<Fireplace>();
+                var fireplace = collider.GetComponent<Fireplace>() ?? collider.GetComponentInParent<Fireplace>();
                 if (fireplace == null) continue;
                 if (!fireplace.m_canRefill || fireplace.m_infiniteFuel) continue;
                 
@@ -616,11 +616,11 @@ namespace FiresCore.Npc.IdleBehaviors
             float closestDist = float.MaxValue;
             GameObject closest = null;
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var pickable = col.GetComponent<Pickable>() ?? col.GetComponentInParent<Pickable>();
+                var pickable = collider.GetComponent<Pickable>() ?? collider.GetComponentInParent<Pickable>();
                 if (pickable == null) continue;
                 if (!pickable.CanBePicked()) continue;
                 
@@ -658,7 +658,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             return ResourceDataHelper.FindNearestResource(
                 Transform.position, 
-                RESOURCE_DETECTION_RANGE,
+                ResourceDetectionRange,
                 resource => 
                 {
                     if (resource.RequiresCombat)

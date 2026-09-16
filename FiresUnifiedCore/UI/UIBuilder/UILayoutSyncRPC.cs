@@ -12,20 +12,9 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Server?Client sync for UI layout JSON files.
-    /// 
-    /// Uses chunked transfer with GZip compression to handle large layouts
-    /// that exceed Steam's 524KB max message size. Captured vanilla UIs with
-    /// 200+ nodes can produce 6MB+ JSON files.
-    /// 
-    /// Admin push path (client?server):
-    ///   - Small layouts (&lt;400KB compressed): single RPC via FiresRPGmaker_UILayout_Push
-    ///   - Large layouts: chunked via FiresRPGmaker_UILayout_PushChunk
-    ///   - Server saves to disk, FileWatcher detects change ? broadcasts to clients
-    /// 
-    /// Server broadcast path (server?client):
-    ///   - Small layouts: single RPC via FiresRPGmaker_UILayout_Update
-    ///   - Large layouts: chunked via FiresRPGmaker_UILayout_UpdateChunk
+    /// Syncs UI layout JSON between server and clients, GZip-compressed and chunked when it exceeds Steam's message
+    /// limit (captured vanilla UIs can reach several megabytes). Admin pushes go to the server, which saves them;
+    /// its file watcher then broadcasts the change to every client.
     /// </summary>
     public static class UILayoutSyncRPC
     {
@@ -63,7 +52,7 @@ namespace FiresCore.UI
             new Dictionary<string, PendingChunkedData>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
-        /// Outbound send queue � chunks are enqueued here and drained at a rate
+        /// Outbound send queue - chunks are enqueued here and drained at a rate
         /// of MaxChunksPerFrame per Update tick to avoid flooding Steam's send buffer.
         /// </summary>
         private static readonly Queue<System.Action> _sendQueue = new Queue<System.Action>();
@@ -85,7 +74,7 @@ namespace FiresCore.UI
         }
 
         /// <summary>
-        /// Server-side cache of each peer's UILayout file manifest (relativePath ? SHA256).
+        /// Server-side cache of each peer's UILayout file manifest (relativePath -> SHA256).
         /// Populated when a client replies to <see cref="RpcRequestManifest"/>. Consulted by
         /// <c>ServerConfigFileWatcher.SendAllConfigsToClientCoroutine</c> so we skip layouts
         /// whose server-side hash already matches what the client has on disk.
@@ -94,12 +83,10 @@ namespace FiresCore.UI
             new Dictionary<long, Dictionary<string, string>>();
         private static readonly object _manifestLock = new object();
 
-        // ?????????????????????????????????????????????????????????
         //  Debounced codex reload
-        // ?????????????????????????????????????????????????????????
         //  ApplyLayoutLocally used to call UILayoutCodex.Reload() on every received
         //  file. During a login burst that can be 10+ files, and each reload walks
-        //  the entire UILayouts directory through a hand-written JSON parser ? O(N�)
+        //  the entire UILayouts directory through a hand-written JSON parser, O(N^2)
         //  on the main thread. Instead, flag the codex as dirty and let
         //  DrainSendQueue (called every Update) trigger one reload after the batch
         //  goes quiet.
@@ -139,7 +126,7 @@ namespace FiresCore.UI
             // throws "An item with the same key has already been added. Key: ..."
             // on Dictionary<int, Delegate>). That silent abort left the manifest
             // RPCs unregistered and every login thereafter fell back to "no manifest
-            // reply ? send everything", defeating the entire diff-sync system. Per-
+            // reply - send everything", defeating the entire diff-sync system. Per-
             // call isolation means one bad name still breaks itself but doesn't take
             // the others down with it.
             TryRegister(RpcPush, RPC_OnPush);
@@ -218,9 +205,7 @@ namespace FiresCore.UI
             _codexDirtySinceUtc = DateTime.UtcNow;
         }
 
-        // ???????????????????????????????????????
-        //  Admin Push (Client ? Server)
-        // ???????????????????????????????????????
+        //  Admin Push (Client -> Server)
 
         /// <summary>
         /// Admin client pushes a UI layout JSON file to the server.
@@ -280,7 +265,7 @@ namespace FiresCore.UI
                 }
                 else
                 {
-                    // Enqueue chunks for throttled sending � avoids flooding Steam's buffer
+                    // Enqueue chunks for throttled sending - avoids flooding Steam's buffer
                     for (int i = 0; i < totalChunks; i++)
                     {
                         int chunkIndex = i;
@@ -289,18 +274,14 @@ namespace FiresCore.UI
                         byte[] chunk = new byte[chunkLen];
                         Array.Copy(dataToSend, offset, chunk, 0, chunkLen);
 
-                        bool ic = isCompressed;
-                        int ts = totalSize;
-                        int tc = totalChunks;
-                        string rp = relativePath;
                         _sendQueue.Enqueue(() =>
                         {
                             if (ZRoutedRpc.instance == null) return;
                             var pkg = new ZPackage();
-                            pkg.Write(rp);
-                            pkg.Write(ic);
-                            pkg.Write(ts);
-                            pkg.Write(tc);
+                            pkg.Write(relativePath);
+                            pkg.Write(isCompressed);
+                            pkg.Write(totalSize);
+                            pkg.Write(totalChunks);
                             pkg.Write(chunkIndex);
                             pkg.Write(chunkLen);
                             pkg.Write(chunk);
@@ -320,9 +301,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
-        //  Server Broadcast (Server ? Client)
-        // ???????????????????????????????????????
+        //  Server Broadcast (Server -> Client)
 
         /// <summary>
         /// Server sends a layout file to a specific client peer, using chunking if needed.
@@ -339,7 +318,7 @@ namespace FiresCore.UI
             {
                 if (string.IsNullOrEmpty(content))
                 {
-                    // Delete notification � always fits in one message
+                    // Delete notification - always fits in one message
                     var pkg = new ZPackage();
                     pkg.Write(relativePath);
                     pkg.Write(false);
@@ -383,23 +362,18 @@ namespace FiresCore.UI
                         byte[] chunk = new byte[chunkLen];
                         Array.Copy(dataToSend, offset, chunk, 0, chunkLen);
 
-                        long peerCopy = peerUid;
-                        bool ic = isCompressed;
-                        int ts = totalSize;
-                        int tc = totalChunks;
-                        string rp = relativePath;
                         _sendQueue.Enqueue(() =>
                         {
                             if (ZRoutedRpc.instance == null) return;
                             var pkg = new ZPackage();
-                            pkg.Write(rp);
-                            pkg.Write(ic);
-                            pkg.Write(ts);
-                            pkg.Write(tc);
+                            pkg.Write(relativePath);
+                            pkg.Write(isCompressed);
+                            pkg.Write(totalSize);
+                            pkg.Write(totalChunks);
                             pkg.Write(chunkIndex);
                             pkg.Write(chunkLen);
                             pkg.Write(chunk);
-                            SafeRoutedRpc.InvokeSafe(peerCopy, RpcUpdateChunk, pkg);
+                            SafeRoutedRpc.InvokeSafe(peerUid, RpcUpdateChunk, pkg);
                         });
                     }
 
@@ -413,9 +387,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
-        //  RPC Handlers � Server receives push
-        // ???????????????????????????????????????
+        //  RPC Handlers - Server receives push
 
         private static void RPC_OnPush(long sender, ZPackage pkg)
         {
@@ -494,9 +466,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
-        //  RPC Handlers � Client receives update
-        // ???????????????????????????????????????
+        //  RPC Handlers - Client receives update
 
         private static void RPC_OnUpdate(long sender, ZPackage pkg)
         {
@@ -563,16 +533,14 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Shared helpers
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Applies a layout file locally (save to disk + reload codex).
         /// Used by both the pushing admin client and receiving clients.
         ///
         /// Fast path: if the target file already exists and its SHA256 matches the
-        /// incoming JSON we skip both the disk write and the codex reload ? which is the
+        /// incoming JSON we skip both the disk write and the codex reload - which is the
         /// common case once the manifest-exchange pipeline is warm (see
         /// <see cref="RequestManifestFromPeer"/>).
         /// Otherwise we write the file and mark the codex dirty so
@@ -617,7 +585,7 @@ namespace FiresCore.UI
                     }
                     catch
                     {
-                        // Fall through to write ? a corrupt/unreadable file is better replaced.
+                        // Fall through to write - a corrupt/unreadable file is better replaced.
                     }
                 }
 
@@ -705,15 +673,13 @@ namespace FiresCore.UI
             ApplyLayoutLocally(relativePath, content);
         }
 
-        // ?????????????????????????????????????????????????????????
-        //  Manifest exchange ? avoid re-sending unchanged layouts
-        // ?????????????????????????????????????????????????????????
+        //  Manifest exchange - avoid re-sending unchanged layouts
 
         /// <summary>
         /// Server-side: ask <paramref name="peerUid"/> to enumerate its local UILayouts/
-        /// directory and reply with a {relativePath ? sha256} manifest. The reply is stored
+        /// directory and reply with a {relativePath - sha256} manifest. The reply is stored
         /// in <see cref="_peerManifests"/> and consumed by
-        /// <see cref="TryGetPeerManifest"/>. Safe to call multiple times ? the latest reply
+        /// <see cref="TryGetPeerManifest"/>. Safe to call multiple times - the latest reply
         /// wins.
         /// </summary>
         public static void RequestManifestFromPeer(long peerUid)
@@ -734,7 +700,7 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Returns true if we already received a manifest from <paramref name="peerUid"/>.
-        /// The dictionary (relative path ? sha256 hex) is returned by reference ? do not
+        /// The dictionary (relative path - sha256 hex) is returned by reference - do not
         /// mutate it.
         /// </summary>
         public static bool TryGetPeerManifest(long peerUid, out Dictionary<string, string> manifest)
@@ -772,7 +738,7 @@ namespace FiresCore.UI
             }
         }
 
-        // Server ? client
+        // Server - client
         private static void RPC_OnRequestManifest(long sender, ZPackage pkg)
         {
             // Only clients respond; a server receiving this (e.g. loopback) can ignore it.
@@ -801,7 +767,7 @@ namespace FiresCore.UI
             }
         }
 
-        // Client ? server
+        // Client - server
         private static void RPC_OnClientManifest(long sender, ZPackage pkg)
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
@@ -826,7 +792,7 @@ namespace FiresCore.UI
         }
 
         /// <summary>
-        /// Walks <see cref="UILayoutsDir"/> and returns {relativePath ? sha256} for every
+        /// Walks <see cref="UILayoutsDir"/> and returns {relativePath - sha256} for every
         /// <c>*.json</c> file present locally. Used by clients to build their reply to
         /// <see cref="RpcRequestManifest"/>.
         /// </summary>

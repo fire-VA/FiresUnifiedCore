@@ -73,9 +73,9 @@ namespace FiresCore.Help
         public void CodeBlock(string text)
         {
             var box = NewChild("Code", Target);
-            var bg = box.AddComponent<Image>();
-            bg.color = HelpTheme.CodeBg;
-            bg.raycastTarget = false;
+            var image = box.AddComponent<Image>();
+            image.color = HelpTheme.CodeBg;
+            image.raycastTarget = false;
             var layout = box.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(10, 10, 6, 6);
             layout.childControlWidth = true;
@@ -109,7 +109,7 @@ namespace FiresCore.Help
             _group = null;   // consecutive headers never nest
 
             string stateId = _stateKey + "|" + text;
-            bool collapsed = s_collapsed.TryGetValue(stateId, out var c) && c;
+            bool collapsed = s_collapsed.TryGetValue(stateId, out var wasCollapsed) && wasCollapsed;
 
             // Header row — always visible at the section root, click to toggle.
             var row = NewChild(name, _content);
@@ -119,13 +119,13 @@ namespace FiresCore.Help
             if (adminStyle)
             {
                 // Preserve the AdminHeader look: an inset tinted backplate behind the text.
-                var bgGo = NewChild("AdminBg", row.transform);
-                var bgRect = bgGo.AddComponent<RectTransform>();
+                var backgroundGo = NewChild("AdminBg", row.transform);
+                var bgRect = backgroundGo.AddComponent<RectTransform>();
                 bgRect.anchorMin = Vector2.zero;
                 bgRect.anchorMax = Vector2.one;
                 bgRect.offsetMin = new Vector2(-4, -2);
                 bgRect.offsetMax = new Vector2(4, 2);
-                target = bgGo.AddComponent<Image>();
+                target = backgroundGo.AddComponent<Image>();
                 target.color = HelpTheme.AdminBg;
             }
             else
@@ -137,11 +137,11 @@ namespace FiresCore.Help
             target.raycastTarget = true;
 
             var textGo = NewChild("Text", row.transform);
-            var tr = textGo.AddComponent<RectTransform>();
-            tr.anchorMin = Vector2.zero;
-            tr.anchorMax = Vector2.one;
-            tr.offsetMin = Vector2.zero;
-            tr.offsetMax = Vector2.zero;
+            var rect = textGo.AddComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
             var tmp = textGo.AddComponent<TextMeshProUGUI>();
             tmp.text = (collapsed ? CollapsedPrefix : ExpandedPrefix) + text;
             tmp.fontSize = fontSize;
@@ -153,12 +153,12 @@ namespace FiresCore.Help
 
             // Group container — everything until the next header parents here; SetActive drives collapse.
             var groupGo = NewChild(name + "Group", _content);
-            var vlg = groupGo.AddComponent<VerticalLayoutGroup>();
-            vlg.spacing = 6;
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
+            var verticalLayout = groupGo.AddComponent<VerticalLayoutGroup>();
+            verticalLayout.spacing = 6;
+            verticalLayout.childControlWidth = true;
+            verticalLayout.childControlHeight = true;
+            verticalLayout.childForceExpandWidth = true;
+            verticalLayout.childForceExpandHeight = false;
             groupGo.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             groupGo.SetActive(!collapsed);
             _group = groupGo.transform;
@@ -227,9 +227,9 @@ namespace FiresCore.Help
         private void Bar(string name, float height, Color color)
         {
             var go = NewChild(name, Target);
-            var le = go.AddComponent<LayoutElement>();
-            le.minHeight = height;
-            le.preferredHeight = height;
+            var layoutElement = go.AddComponent<LayoutElement>();
+            layoutElement.minHeight = height;
+            layoutElement.preferredHeight = height;
             var img = go.AddComponent<Image>();
             img.color = color;
             img.raycastTarget = false;

@@ -2,23 +2,10 @@ using UnityEngine;
 
 namespace FiresCore.Input
 {
-    // ONE gate every Fires world-editing tool asks before it acts.
-    //
-    // The bug it exists to kill: vanilla places pieces off ZInput's EDGE
-    // ("button went down this frame"), so the click that picks a piece out of
-    // the hammer menu can never also place it. Our brush/drag tools instead
-    // read Input.GetMouseButton(0) — a LEVEL read, true for as long as the
-    // button is held — so the very click that selected the tool and closed the
-    // menu was still held on the next frame and immediately fired the tool.
-    // Selecting Vfill placed a fill on the spot.
-    //
-    // The rule: after ANY selection UI is open (or has just closed), the mouse
-    // must be RELEASED before a tool may act again. A tool selection is never
-    // also a tool use.
-    //
-    // Tools call ReadyToAct() each frame and do nothing while it is false.
-    // Anything that changes what the tool would do (a new tool, a new piece,
-    // a mode switch) should also call RequireFreshPress().
+    // The gate every Fires world-editing tool checks before acting. Vanilla places on a button-down edge, but the
+    // brush and drag tools read the held button, so the click that chose a tool from the menu fired it on the next
+    // frame. After any selection UI opens or closes the mouse must be released first. Tools call ReadyToAct each
+    // frame, and anything that changes what a tool would do calls RequireFreshPress.
     public static class FiresPlaceGate
     {
         private static bool s_needRelease;
@@ -68,8 +55,8 @@ namespace FiresCore.Input
                 if (InventoryGui.IsVisible()) return true;
                 if (Menu.IsVisible()) return true;
                 if (TextInput.IsVisible()) return true;
-                var es = UnityEngine.EventSystems.EventSystem.current;
-                if (es != null && es.IsPointerOverGameObject()) return true;
+                var eventSystem = UnityEngine.EventSystems.EventSystem.current;
+                if (eventSystem != null && eventSystem.IsPointerOverGameObject()) return true;
             }
             catch
             {

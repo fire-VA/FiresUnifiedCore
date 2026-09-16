@@ -6,34 +6,11 @@ using UnityEngine;
 namespace FiresCore.Npc.WildSpawn
 {
     /// <summary>
-    /// Makes our single <c>CompanionNpc_Wild</c> prefab spawn in the world via
-    /// two additive paths, never by replacing anyone else's spawn list:
-    ///
-    ///   (1) No ExpandWorldSpawns installed: append one <c>SpawnData</c>
-    ///       ("wild companions", all biomes) to the persistent <c>_ZoneCtrl</c>
-    ///       prefab's <c>_SpawnList_base.m_spawners</c> during <c>ZNetScene.Awake</c>,
-    ///       the same way BalrondExtendedAnimals adds its monsters. Vanilla
-    ///       <c>SpawnSystem</c> then spawns it.
-    ///
-    ///   (2) ExpandWorldSpawns installed: EWS hard-OVERWRITES every per-zone
-    ///       <c>SpawnSystem.m_spawners</c> from <c>expand_spawns*.yaml</c> on
-    ///       <c>SpawnSystem.Awake</c> (HandleSpawnData.Set is a full replace, not
-    ///       a merge), so the prefab append in (1) is wiped before any zone
-    ///       spawns. The fix is to be IN the yaml EWS loads: EWS merges ALL files
-    ///       matching <c>expand_spawns*.yaml</c>, so we write a SIDECAR
-    ///       <c>expand_spawns_firescompanions.yaml</c> with our single entry. It
-    ///       ADDS our prefab without touching the user's <c>expand_spawns.yaml</c>.
-    ///
-    /// We deliberately never regenerate the user's <c>expand_spawns.yaml</c>: an
-    /// older version shipped a full exporter that emitted a partial list (vanilla
-    /// Deer/Boar/etc. stripped), which made BalrondExtendedAnimals' setupMonster
-    /// NRE on <c>FindSpawnData(list, "Deer").Clone()</c> - cascade Balrond NRE to
-    /// ItemManager to EWD to ZDOMan.FilterZDO to world-load failure to respawn
-    /// loop. The sidecar is purely additive and written only when absent, so user
-    /// edits and the vanilla list are never clobbered. Delete the sidecar to stop
-    /// EWS-driven wild spawns; per-spawn faction/gear/stars/recruit-price are
-    /// rolled at spawn time by biome (WildCompanionDresser + CompanionRandomLoadout),
-    /// independent of the spawn-table tuning here.
+    /// Adds the CompanionNpc_Wild prefab to world spawns without replacing anyone else's list. Without
+    /// ExpandWorldSpawns it appends one all-biome SpawnData to _ZoneCtrl's base spawn list at ZNetScene.Awake.
+    /// With EWS, which overwrites every zone's spawners from expand_spawns*.yaml, it writes a sidecar
+    /// expand_spawns_firescompanions.yaml once if absent. The user's expand_spawns.yaml is never regenerated:
+    /// an old exporter that did so dropped vanilla entries and broke BalrondExtendedAnimals at world load.
     /// </summary>
     [HarmonyPatch]
     public static class WildCompanionSpawnInjector
@@ -43,7 +20,7 @@ namespace FiresCore.Npc.WildSpawn
         private static bool _sidecarWriteAttempted;
 
         /// <summary>
-        /// Postfix on ZNetScene.Awake â€” runs AFTER Balrond's Prefix, so
+        /// Postfix on ZNetScene.Awake — runs AFTER Balrond's Prefix, so
         /// the spawn list it reads from already contains every vanilla
         /// SpawnData Balrond's setupMonster needs to clone from. We just
         /// append one entry alongside theirs.
@@ -57,9 +34,9 @@ namespace FiresCore.Npc.WildSpawn
             {
                 EnsureSidecarYamlOnce();
 
-                var zs = ZoneSystem.instance;
-                if (zs == null) return;
-                var zoneCtrlPrefab = zs.m_zoneCtrlPrefab;
+                var zoneSystem = ZoneSystem.instance;
+                if (zoneSystem == null) return;
+                var zoneCtrlPrefab = zoneSystem.m_zoneCtrlPrefab;
                 if (zoneCtrlPrefab == null) return;
 
                 var spawnSystem = zoneCtrlPrefab.GetComponent<SpawnSystem>()
@@ -150,10 +127,10 @@ namespace FiresCore.Npc.WildSpawn
             _sidecarWriteAttempted = true;
             try
             {
-                string ewDir = Path.Combine(BepInEx.Paths.ConfigPath, "expand_world");
-                if (!Directory.Exists(ewDir)) return; // EWS not installed - prefab injection below covers spawning.
+                string expandWorldDir = Path.Combine(BepInEx.Paths.ConfigPath, "expand_world");
+                if (!Directory.Exists(expandWorldDir)) return; // EWS not installed - prefab injection below covers spawning.
 
-                string path = Path.Combine(ewDir, SidecarYamlFileName);
+                string path = Path.Combine(expandWorldDir, SidecarYamlFileName);
                 if (File.Exists(path)) return;        // already present - respect user edits, never clobber.
 
                 File.WriteAllText(path, BuildSidecarYaml());

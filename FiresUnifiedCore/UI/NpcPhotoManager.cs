@@ -7,17 +7,11 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// FAITHFUL port of kg.Marketplace's PhotoManager.ScreenshotStuff — the production-proven
-    /// Valheim NPC portrait pipeline. Kept structurally identical on purpose (this exact recipe
-    /// demonstrably renders dressed characters where hand-rolled offscreen renderers photograph
-    /// blank frames): persistent camera + directional light parked at (10000,10000,10000) culling
-    /// ONLY layer 31; the subject is instantiated under an INACTIVE holder (no Awake storm),
-    /// stripped to visuals via a RequireComponent-aware topological component removal (Animators
-    /// are DISABLED, never destroyed), moved so its render bounds center on the spawn point, posed
-    /// (Animator.Play("Movement") + Update(0)), then shot with a tiny-FOV manual Render + ReadPixels.
-    ///
-    /// Additions over kg: headless guard, a fog-off wrap around the shot (Valheim distance fog has
-    /// whited out far-camera icons before), and an opaque-pixel diagnostic log per shot.
+    /// NPC portraits, a deliberately faithful port of kg.Marketplace's PhotoManager because hand-rolled offscreen
+    /// renderers photographed blank frames. A persistent camera and light far from the world cull only their own layer;
+    /// the subject is instantiated under an inactive holder, stripped to visuals (animators disabled, not destroyed),
+    /// centered, posed and shot with a narrow-FOV render. Adds a headless guard, fog disabled during the shot, and a
+    /// per-shot opaque-pixel log.
     /// </summary>
     public static class NpcPhotoManager
     {
@@ -236,14 +230,14 @@ namespace FiresCore.UI
         private static Sprite RenderSprite(GameObject spawn, Vector3 size, int width, int height, float fieldOfView)
         {
             RenderTexture previous = RenderTexture.active;
-            RenderTexture rt = RenderTexture.GetTemporary(width, height, 32);
+            RenderTexture renderTexture = RenderTexture.GetTemporary(width, height, 32);
             bool previousFog = RenderSettings.fog;
             try
             {
                 RenderSettings.fog = false;   // distance fog has whited out far-camera icons before
-                _camera.targetTexture = rt;
+                _camera.targetTexture = renderTexture;
                 _camera.fieldOfView = fieldOfView;
-                RenderTexture.active = rt;
+                RenderTexture.active = renderTexture;
 
                 float z = Mathf.Max(size.x, size.y) / Mathf.Tan(fieldOfView * Mathf.Deg2Rad);
                 _camera.transform.position = SpawnPoint + new Vector3(0f, 0f, z);
@@ -275,7 +269,7 @@ namespace FiresCore.UI
                 RenderSettings.fog = previousFog;
                 RenderTexture.active = previous;
                 _camera.targetTexture = null;
-                RenderTexture.ReleaseTemporary(rt);
+                RenderTexture.ReleaseTemporary(renderTexture);
             }
         }
     }

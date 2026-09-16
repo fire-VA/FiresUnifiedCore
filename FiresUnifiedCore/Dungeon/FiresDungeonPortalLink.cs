@@ -3,17 +3,10 @@ using UnityEngine;
 namespace FiresCore.Dungeon
 {
     /// <summary>
-    /// Generic safety-net teleport linker, attached to a dungeon's Portal at ZNetScene registration time (every
-    /// peer, server + client). Teleport.m_targetPoint is a plain MonoBehaviour field, NOT ZDO-synced, so it must
-    /// be valid LOCALLY on every peer or Teleport.Interact returns false ("nothing happens / blocked").
-    ///
-    /// The bake already cross-links gateway&lt;-&gt;exit within the single Portal subtree, so this is belt-and-
-    /// suspenders: on Start it re-pairs any Teleport whose m_targetPoint went null. It first pairs the two
-    /// teleports inside its OWN Portal (the common case); if one is somehow missing it falls back to a
-    /// deterministic world search (the interior exit sits ~ (0, InteriorYOffset, 0) above the surface gateway).
-    ///
-    /// Lifted from FiresMausoleum.Dungeon.FiresMausoleumPortalLink. The gateway/exit name prefixes and the interior
-    /// Y offset come from the owning mod via <see cref="Configure"/> (serialized so they survive the prefab clone).
+    /// Safety net that re-pairs a dungeon portal's teleports on every peer. Teleport.m_targetPoint isn't synced, so a
+    /// null target makes Interact fail; on Start any unpaired teleport is linked within its own portal, or by a
+    /// deterministic search along the interior offset. Names and offset come from <see cref="Configure"/>. Lifted from
+    /// FiresMausoleum.
     /// </summary>
     public sealed class FiresDungeonPortalLink : MonoBehaviour
     {
@@ -41,12 +34,12 @@ namespace FiresCore.Dungeon
         {
             var teleports = GetComponentsInChildren<Teleport>(true);
             Teleport gateway = null, exit = null;
-            foreach (var t in teleports)
+            foreach (var teleport in teleports)
             {
-                if (t == null) continue;
-                string n = t.gameObject.name;
-                if (n.StartsWith(_gatewayNamePrefix)) gateway = t;
-                else if (n.StartsWith(_exitNamePrefix)) exit = t;
+                if (teleport == null) continue;
+                string objectName = teleport.gameObject.name;
+                if (objectName.StartsWith(_gatewayNamePrefix)) gateway = teleport;
+                else if (objectName.StartsWith(_exitNamePrefix)) exit = teleport;
             }
 
             if (gateway != null && exit != null)
@@ -68,20 +61,20 @@ namespace FiresCore.Dungeon
 
         private Teleport FindPartnerByPosition(Teleport mine, bool mineIsGateway)
         {
-            Vector3 mp = mine.transform.position;
+            Vector3 ownPosition = mine.transform.position;
             // a gateway's partner is +offset in Y; an exit's partner is -offset in Y.
-            Vector3 want = mp + new Vector3(0f, mineIsGateway ? _interiorYOffset : -_interiorYOffset, 0f);
+            Vector3 want = ownPosition + new Vector3(0f, mineIsGateway ? _interiorYOffset : -_interiorYOffset, 0f);
 
             Teleport best = null;
             float bestSqr = float.MaxValue;
-            foreach (var t in Object.FindObjectsByType<Teleport>(FindObjectsSortMode.None))
+            foreach (var candidate in Object.FindObjectsByType<Teleport>(FindObjectsSortMode.None))
             {
-                if (t == null || t == mine) continue;
-                Vector3 d = t.transform.position - want;
-                if (Mathf.Abs(d.x) > MatchXZTolerance || Mathf.Abs(d.z) > MatchXZTolerance || Mathf.Abs(d.y) > MatchYTolerance)
+                if (candidate == null || candidate == mine) continue;
+                Vector3 offset = candidate.transform.position - want;
+                if (Mathf.Abs(offset.x) > MatchXZTolerance || Mathf.Abs(offset.z) > MatchXZTolerance || Mathf.Abs(offset.y) > MatchYTolerance)
                     continue;
-                float sqr = d.sqrMagnitude;
-                if (sqr < bestSqr) { bestSqr = sqr; best = t; }
+                float sqr = offset.sqrMagnitude;
+                if (sqr < bestSqr) { bestSqr = sqr; best = candidate; }
             }
             return best;
         }

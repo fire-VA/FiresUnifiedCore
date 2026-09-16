@@ -7,7 +7,7 @@ namespace FiresCore.Npc.IdleBehaviors
     /// Companion idle behavior: find a water spot near home, walk to shore,
     /// cast a fishing rod, wait for a bite, reel in, and add the catch to inventory.
     ///
-    /// Uses data-driven baitâ†’fish mapping built from ZNetScene Fish prefabs.
+    /// Uses data-driven bait→fish mapping built from ZNetScene Fish prefabs.
     /// </summary>
     public class FishingBehavior : WorkBehaviorBase<FishingBehavior.FishPhase>
     {
@@ -28,13 +28,13 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #region Constants
 
-        private const float SCAN_RADIUS = 30f;
-        private const float MIN_WATER_DEPTH = 0.5f;
-        private const float SHORE_BACK_DIST = 3f;
-        private const float CAST_WAIT_MIN = 12f;
-        private const float CAST_WAIT_MAX = 28f;
-        private const float REEL_DURATION = 2f;
-        private const string FISHING_ROD_PREFAB = "FishingRod";
+        private const float ScanRadius = 30f;
+        private const float MinWaterDepth = 0.5f;
+        private const float ShoreBackDist = 3f;
+        private const float CastWaitMin = 12f;
+        private const float CastWaitMax = 28f;
+        private const float ReelDuration = 2f;
+        private const string FishingRodPrefab = "FishingRod";
 
         #endregion
 
@@ -131,7 +131,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// Set by the command system when the player Shift+MMBs a water
         /// surface. Forces this companion to fish at that location, bypassing
         /// the Stay-mode requirement. Still requires a fishing rod to be
-        /// available â€” fishing without one is impossible.
+        /// available — fishing without one is impossible.
         /// </summary>
         public void SetCommandedSpot(Vector3 waterPoint)
         {
@@ -143,15 +143,15 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Companion == null) return false;
 
             // Commanded path: skip the toggle + Stay-mode gates. The rod
-            // requirement still applies â€” no rod, no fishing.
+            // requirement still applies — no rod, no fishing.
             if (_commandedSpot.HasValue)
             {
                 if (!HasFishingRodAvailable())
                 {
-                    LogVerbose("CanStart: FALSE â€” commanded but no fishing rod available");
+                    LogVerbose("CanStart: FALSE — commanded but no fishing rod available");
                     return false;
                 }
-                LogVerbose("CanStart: TRUE â€” commanded fishing spot");
+                LogVerbose("CanStart: TRUE — commanded fishing spot");
                 return true;
             }
 
@@ -184,12 +184,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     _fishingSpot = commandedSpot.Value.shore;
                     _castTarget = commandedSpot.Value.water;
-                    _waitDuration = Random.Range(CAST_WAIT_MIN, CAST_WAIT_MAX);
+                    _waitDuration = Random.Range(CastWaitMin, CastWaitMax);
                     SetPhase(FishPhase.MovingToShore);
                     MoveToPosition(_fishingSpot);
                     return false;
                 }
-                LogVerbose("Commanded fishing spot has no reachable shore â€” falling back to autonomous scan");
+                LogVerbose("Commanded fishing spot has no reachable shore — falling back to autonomous scan");
             }
 
             var spot = FindWaterSpot();
@@ -197,7 +197,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 _fishingSpot = spot.Value.shore;
                 _castTarget = spot.Value.water;
-                _waitDuration = Random.Range(CAST_WAIT_MIN, CAST_WAIT_MAX);
+                _waitDuration = Random.Range(CastWaitMin, CastWaitMax);
                 SetPhase(FishPhase.MovingToShore);
                 MoveToPosition(_fishingSpot);
             }
@@ -247,7 +247,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (TimeInCurrentPhase >= _waitDuration)
             {
-                // Fish on the line â€” reel in
+                // Fish on the line — reel in
                 Humanoid?.StartAttack(null, false);
                 SetPhase(FishPhase.Reeling);
             }
@@ -259,7 +259,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             FaceTarget(_castTarget);
 
-            if (TimeInCurrentPhase >= REEL_DURATION)
+            if (TimeInCurrentPhase >= ReelDuration)
             {
                 SetPhase(FishPhase.Collecting);
             }
@@ -292,7 +292,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             Vector3 origin = IdleBehavior?.HomePosition ?? Transform.position;
 
-            for (float radius = 8f; radius <= SCAN_RADIUS; radius += 5f)
+            for (float radius = 8f; radius <= ScanRadius; radius += 5f)
             {
                 for (float angle = 0f; angle < 360f; angle += 30f)
                 {
@@ -304,7 +304,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
                     // Step back toward origin to find shoreline
                     Vector3 toOrigin = (origin - waterCandidate).normalized;
-                    Vector3 shoreCandidate = waterCandidate + toOrigin * SHORE_BACK_DIST;
+                    Vector3 shoreCandidate = waterCandidate + toOrigin * ShoreBackDist;
 
                     if (ZoneSystem.instance != null &&
                         ZoneSystem.instance.GetGroundHeight(shoreCandidate, out float groundY))
@@ -327,7 +327,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (ZoneSystem.instance == null) return false;
             ZoneSystem.instance.GetSolidHeight(pos, out float groundY);
             // Sea level in Valheim is y=30; water exists where terrain is submerged
-            return (30f - groundY) >= MIN_WATER_DEPTH;
+            return (30f - groundY) >= MinWaterDepth;
         }
 
         /// <summary>
@@ -343,7 +343,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             // Sweep candidate shore points outward from the water point in
             // every direction; pick the first that is solid ground.
-            for (float radius = SHORE_BACK_DIST; radius <= 12f; radius += 1.5f)
+            for (float radius = ShoreBackDist; radius <= 12f; radius += 1.5f)
             {
                 for (float angle = 0f; angle < 360f; angle += 30f)
                 {
@@ -380,7 +380,7 @@ namespace FiresCore.Npc.IdleBehaviors
             ItemDrop.ItemData rod = null;
             foreach (var item in storage.GetAllItems())
             {
-                if (item?.m_dropPrefab?.name == FISHING_ROD_PREFAB) { rod = item; break; }
+                if (item?.m_dropPrefab?.name == FishingRodPrefab) { rod = item; break; }
             }
             if (rod == null) return;
 
@@ -401,9 +401,9 @@ namespace FiresCore.Npc.IdleBehaviors
             foreach (var item in storage.GetAllItems())
             {
                 if (item?.m_dropPrefab == null) continue;
-                string pname = item.m_dropPrefab.name;
-                if (!s_baitFishMap.ContainsKey(pname)) continue;
-                _activeBaitName = pname;
+                string prefabName = item.m_dropPrefab.name;
+                if (!s_baitFishMap.ContainsKey(prefabName)) continue;
+                _activeBaitName = prefabName;
                 item.m_stack--;
                 if (item.m_stack <= 0) storage.RemoveItem(item);
                 Inventory.SaveToZDO();
@@ -413,7 +413,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_activeBaitName != null)
                 LogVerbose($"Equipped rod with {_activeBaitName} bait");
             else
-                LogVerbose("Equipped rod (no bait â€” low catch chance)");
+                LogVerbose("Equipped rod (no bait — low catch chance)");
         }
 
         private void UnequipFishingRod()
@@ -461,14 +461,14 @@ namespace FiresCore.Npc.IdleBehaviors
             if (pool.Count == 0) return "Fish1";
 
             float total = 0f;
-            foreach (var c in pool) total += c.weight;
+            foreach (var candidate in pool) total += candidate.weight;
 
             float roll = Random.Range(0f, total);
             float cumulative = 0f;
-            foreach (var c in pool)
+            foreach (var candidate in pool)
             {
-                cumulative += c.weight;
-                if (roll <= cumulative) return c.prefab;
+                cumulative += candidate.weight;
+                if (roll <= cumulative) return candidate.prefab;
             }
 
             return pool[pool.Count - 1].prefab;
@@ -528,12 +528,12 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 foreach (var item in storage.GetAllItems())
                 {
-                    if (item?.m_dropPrefab?.name == FISHING_ROD_PREFAB) return true;
+                    if (item?.m_dropPrefab?.name == FishingRodPrefab) return true;
                 }
             }
 
-            var rh = Inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
-            return rh?.m_dropPrefab?.name == FISHING_ROD_PREFAB;
+            var rightHandItem = Inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
+            return rightHandItem?.m_dropPrefab?.name == FishingRodPrefab;
         }
 
         private void NotifyOwner()

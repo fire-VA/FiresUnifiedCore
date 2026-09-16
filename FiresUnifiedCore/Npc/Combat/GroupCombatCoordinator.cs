@@ -5,25 +5,9 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Central combat brain that coordinates all companions in a player's group during combat.
-    /// Runs as a coroutine with configurable tick rate for performance.
-    /// 
-    /// ACTIVATION:
-    /// - Activates when any companion in a group enters combat
-    /// - Deactivates when no companions have been in combat for 5 seconds
-    /// 
-    /// TICK LOOP (Coroutine):
-    /// 1. Update SharedThreatTable (single OverlapSphere scan)
-    /// 2. Update GroupHealthMonitor (health snapshots)
-    /// 3. Run CombatRoleDirector (issue directives)
-    /// 4. yield return WaitForSeconds(TICK_RATE)
-    /// 
-    /// PERFORMANCE:
-    /// - Coroutine-based (NOT Update)
-    /// - Single physics scan per group per tick
-    /// - Cached companion lists (event-driven refresh)
-    /// - Early exit for groups with only 1 companion
-    /// - Amortized cost: ~0.5ms per tick for 8 companions + 10 enemies
+    /// Coordinates a player's companions in combat from a coroutine that starts when any of them engages and stops
+    /// once none has fought for a few seconds. Each tick does one threat scan for the group, snapshots group
+    /// health, then lets CombatRoleDirector hand out directives; groups of one exit early.
     /// </summary>
     public class GroupCombatCoordinator : MonoBehaviour
     {
@@ -50,8 +34,8 @@ namespace FiresCore.Npc.Combat
 
         // Cleanup tracking
         private float _lastCleanupTime;
-        private const float CLEANUP_INTERVAL = 5f;
-        private const float COMBAT_END_GRACE_PERIOD = 5f;
+        private const float CleanupInterval = 5f;
+        private const float CombatEndGracePeriod = 5f;
 
         public static bool VerboseLogging = false;
 
@@ -102,7 +86,7 @@ namespace FiresCore.Npc.Combat
         private void Update()
         {
             // Periodic cleanup of stale sessions
-            if (Time.time - _lastCleanupTime > CLEANUP_INTERVAL)
+            if (Time.time - _lastCleanupTime > CleanupInterval)
             {
                 _lastCleanupTime = Time.time;
                 CleanupSessions();
@@ -158,9 +142,9 @@ namespace FiresCore.Npc.Combat
             {
                 // Check if any companions are still in combat
                 bool anyInCombat = false;
-                foreach (var comp in session.Companions)
+                foreach (var member in session.Companions)
                 {
-                    if (comp != null && comp.IsInCombat)
+                    if (member != null && member.IsInCombat)
                     {
                         anyInCombat = true;
                         break;
@@ -226,12 +210,12 @@ namespace FiresCore.Npc.Combat
             while (session.IsActive)
             {
                 // Check if combat has ended (grace period expired)
-                if (Time.time - session.LastCombatTime > COMBAT_END_GRACE_PERIOD)
+                if (Time.time - session.LastCombatTime > CombatEndGracePeriod)
                 {
                     bool anyInCombat = false;
-                    foreach (var comp in session.Companions)
+                    foreach (var companion in session.Companions)
                     {
-                        if (comp != null && comp.IsInCombat)
+                        if (companion != null && companion.IsInCombat)
                         {
                             anyInCombat = true;
                             session.LastCombatTime = Time.time;
@@ -264,11 +248,11 @@ namespace FiresCore.Npc.Combat
 
                 // Find the player
                 Player player = null;
-                foreach (var comp in session.Companions)
+                foreach (var companion in session.Companions)
                 {
-                    if (comp != null)
+                    if (companion != null)
                     {
-                        player = comp.GetOwner();
+                        player = companion.GetOwner();
                         if (player != null) break;
                     }
                 }
@@ -313,13 +297,13 @@ namespace FiresCore.Npc.Combat
         {
             session.Companions.Clear();
 
-            foreach (var comp in CompanionController.AllCompanions)
+            foreach (var companion in CompanionController.AllCompanions)
             {
-                if (comp == null || comp.isDefeated) continue;
-                if (comp.ownerPlayerId != session.PlayerId) continue;
-                if (!comp.isTamed) continue;
+                if (companion == null || companion.isDefeated) continue;
+                if (companion.ownerPlayerId != session.PlayerId) continue;
+                if (!companion.isTamed) continue;
 
-                session.Companions.Add(comp);
+                session.Companions.Add(companion);
             }
         }
 

@@ -7,24 +7,9 @@ using FiresCore.Npc.IdleBehaviors;
 namespace FiresCore.Npc.Interactions
 {
     /// <summary>
-    /// Handles companion interactions with world objects like chairs, benches, stools, and ship attach points.
-    /// 
-    /// FEATURES:
-    /// - Sits on chairs/benches/stools when idle (with random 30-90 second duration)
-    /// - Sits when owner sits (finds nearby empty seat)
-    /// - Attaches to ship masts/seats when owner is on a ship
-    /// - Supports variable sit durations
-    /// 
-    /// ATTACH ANIMATIONS:
-    /// - attach_chair: Standard chair sit
-    /// - attach_stool: Stool/bench sit
-    /// - attach_bed: Lying down
-    /// - attach_mast: Holding onto ship mast
-    /// 
-    /// DESIGN:
-    /// - Works alongside CompanionIdleBehavior (integrates with it)
-    /// - Monitors owner state for reactive behaviors
-    /// - Handles all attach/detach logic cleanly
+    /// Seats companions on chairs, benches, stools and beds when idle or when the owner sits nearby, and holds
+    /// them to a mast or seat while the owner is aboard a ship, with the matching attach animations. Works
+    /// alongside CompanionIdleBehavior.
     /// </summary>
     public class CompanionInteractionBehavior : MonoBehaviour
     {
@@ -92,7 +77,7 @@ namespace FiresCore.Npc.Interactions
         // Whether this attachment was commanded by the player (should not auto-detach when owner moves)
         private bool _isCommandedAttachment;
 
-        // Kinematic state before attachment â€” restored on Detach so normal movement resumes
+        // Kinematic state before attachment — restored on Detach so normal movement resumes
         private RigidbodyConstraints _preAttachConstraints;
 
         // Cooldowns and timing
@@ -205,7 +190,7 @@ namespace FiresCore.Npc.Interactions
             transform.rotation = _currentAttachPoint.rotation;
 
             // Continuously zero residual physics so the per-frame position assignment
-            // doesn't fight a moving rigidbody. Skip if kinematic â€” Unity logs a
+            // doesn't fight a moving rigidbody. Skip if kinematic — Unity logs a
             // warning if you write velocity on a kinematic body.
             if (_rigidbody != null && !_rigidbody.isKinematic)
             {
@@ -297,9 +282,9 @@ namespace FiresCore.Npc.Interactions
             {
                 // Find the ship we're on
                 var colliders = Physics.OverlapSphere(transform.position, 3f);
-                foreach (var col in colliders)
+                foreach (var collider in colliders)
                 {
-                    var ship = col.GetComponentInParent<Ship>();
+                    var ship = collider.GetComponentInParent<Ship>();
                     if (ship != null) return ship;
                 }
             }
@@ -612,12 +597,12 @@ namespace FiresCore.Npc.Interactions
 
             var colliders = Physics.OverlapSphere(searchCenter, radius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
 
                 // Check for Chair component (standard chairs)
-                var chair = col.GetComponent<Chair>() ?? col.GetComponentInParent<Chair>();
+                var chair = collider.GetComponent<Chair>() ?? collider.GetComponentInParent<Chair>();
                 if (chair != null && chair.m_attachPoint != null)
                 {
                     if (excludeOwnerSeat != null && IsPlayerAttachedTo(excludeOwnerSeat, chair.m_attachPoint))
@@ -635,23 +620,11 @@ namespace FiresCore.Npc.Interactions
                     }
                 }
 
-                // Non-Chair attach targets: ONLY real Beds.
-                //
-                // This branch previously accepted ANY Interactable that happened to expose a
-                // child transform named "attach"/"seat" (via FindAttachPointInObject). That
-                // heuristic false-matched prop interactables whose item-attach points look like
-                // seat anchors — most visibly the boss-trophy ItemStand hooks at the starting
-                // temple, which a companion would "sit" on as if it were a stool. CookingStation,
-                // CraftingStation and Fireplace are all Interactables with attach-like children
-                // too and were equally vulnerable.
-                //
-                // Vanilla has exactly two things a Character physically attaches to: Chair (sit,
-                // handled above) and Bed (lie down). Gating this branch on an explicit Bed
-                // component preserves the lie-on-bed behaviour while excluding every prop
-                // interactable — ItemStand included — by construction.
-                if (chair == null && col.GetComponentInParent<Bed>() != null)
+                // Beds are the only non-chair attach target. Accepting any interactable with an "attach" or "seat" child
+                // sat companions on item stands, cooking and crafting stations, and fireplaces.
+                if (chair == null && collider.GetComponentInParent<Bed>() != null)
                 {
-                    var attachPoint = FindAttachPointInObject(col.gameObject);
+                    var attachPoint = FindAttachPointInObject(collider.gameObject);
                     if (attachPoint != null && !IsAttachPointOccupied(attachPoint))
                     {
                         if (excludeOwnerSeat != null && IsPlayerNearPoint(excludeOwnerSeat, attachPoint.position, 0.5f))
@@ -661,7 +634,7 @@ namespace FiresCore.Npc.Interactions
                         if (dist < nearestDist)
                         {
                             nearestDist = dist;
-                            nearest = (attachPoint, "attach_bed", Vector3.zero, AttachType.Bed, col.gameObject);
+                            nearest = (attachPoint, "attach_bed", Vector3.zero, AttachType.Bed, collider.gameObject);
                         }
                     }
                 }
@@ -786,19 +759,9 @@ namespace FiresCore.Npc.Interactions
         private System.Collections.IEnumerator AttachToCoroutine(Transform attachPoint, string animation, Vector3 detachOffset,
             AttachType attachType, GameObject sourceObject, float duration, bool isCommanded)
         {
-            // Mirror what Chair.Interact() does for players:
-            //   character.AttachStart(m_attachPoint, gameObject, false, false, m_inShip,
-            //                         m_attachAnimation, m_detachOffset, null)
-            // AttachStart() itself:
-            //   - sets m_attached = true
-            //   - sets m_body.useGravity = false
-            //   - zeroes m_body.velocity / angularVelocity
-            //   - calls m_zanim.SetBool(animation, true)
-            //   - records m_attachPoint for FixedUpdate to track
-            // Character.FixedUpdate() while attached:
-            //   - locks transform.position = m_attachPoint.TransformPoint(m_attachOffset)
-            //   - zeroes velocity every tick (non-kinematic, no warning)
-            // We do NOT disable the collider or touch isKinematic ï¿½ vanilla never does either.
+            // Mirrors Chair.Interact for players: AttachStart turns off gravity, zeroes velocity and starts the animation,
+            // and Character.FixedUpdate then pins the body to the attach point. Colliders and isKinematic stay untouched,
+            // as in vanilla.
 
             // 1. Stop all movement first (before any physics change)
             if (_character != null)
@@ -824,7 +787,7 @@ namespace FiresCore.Npc.Interactions
                 yield break;
             }
 
-            // 3. Snap to the attach point (same as vanilla ï¿½ player is warped to seat)
+            // 3. Snap to the attach point (same as vanilla - player is warped to seat)
             transform.position = attachPoint.position;
             transform.rotation = attachPoint.rotation;
 
@@ -846,7 +809,7 @@ namespace FiresCore.Npc.Interactions
             //    class. Player overrides it to do the real work (SetBool on the
             //    animator, useGravity=false, position lock, ignore-collision, etc.).
             //    Companions inherit from Humanoid which does NOT override, so calling
-            //    AttachStart on a companion is a no-op â€” the companion stands at the
+            //    AttachStart on a companion is a no-op — the companion stands at the
             //    chair instead of sitting. We replicate the visual parts of
             //    Player.AttachStart immediately below; the per-frame position lock
             //    lives in FixedUpdate (mirrors Player.UpdateAttach).
@@ -856,30 +819,16 @@ namespace FiresCore.Npc.Interactions
             // 5a. Trigger the sit/lay animation.
             //     Chair.m_attachAnimation is the bool param the chair uses
             //     (e.g. "attach_chair", "attach_stool", "attach_bed", or chair-emote
-            //     names like "emote_sit"). SetBool is idempotent â€” safe even if the
+            //     names like "emote_sit"). SetBool is idempotent — safe even if the
             //     animator doesn't have the parameter; it's silently ignored.
             if (_zanim != null && !string.IsNullOrEmpty(animation))
             {
                 _zanim.SetBool(animation, true);
             }
 
-            // 5b. Freeze physics completely during attachment.
-            //     useGravity=false alone is NOT enough â€” Valheim's Character.FixedUpdate
-            //     still calls AddForce() for movement direction every tick, which fights
-            //     our per-frame position lock and causes the companion to bounce up/down.
-            //
-            //     We previously set isKinematic=true here, but Unity 6 logs a warning every
-            //     physics tick for any velocity write to a kinematic body â€” and Valheim's
-            //     Character.UpdateMotion writes m_body.linearVelocity every FixedUpdate
-            //     unconditionally. That's where the "Setting linear/angular velocity of a
-            //     kinematic body is not supported" spam came from.
-            //
-            //     RigidbodyConstraints.FreezeAll achieves the same anchor â€” gravity,
-            //     AddForce, and direct velocity writes can all happen without translating
-            //     the body â€” and vanilla's velocity writes are no longer illegal so the
-            //     warnings stop. Position is locked at whatever it was when we set the
-            //     constraint, so we still write transform.position to the sit point in
-            //     FixedUpdate to nail the exact pose.
+            // Freeze the body with RigidbodyConstraints.FreezeAll while seated: useGravity alone let
+            // Character.FixedUpdate's forces bounce the companion, and isKinematic made every velocity write from
+            // Character.UpdateMotion log a warning. The seat position is still written each FixedUpdate.
             if (_rigidbody != null)
             {
                 _preAttachConstraints      = _rigidbody.constraints;
@@ -1033,11 +982,11 @@ namespace FiresCore.Npc.Interactions
                 _stateController.ForceStopEmote();
             else if (_character != null)
             {
-                var m = _character.GetType().GetMethod("StopEmote",
+                var method = _character.GetType().GetMethod("StopEmote",
                     System.Reflection.BindingFlags.Instance |
                     System.Reflection.BindingFlags.Public |
                     System.Reflection.BindingFlags.NonPublic);
-                m?.Invoke(_character, null);
+                method?.Invoke(_character, null);
             }
 
             // Vanilla StopEmote only knows about the tracked emote; the chair-attach
@@ -1056,9 +1005,9 @@ namespace FiresCore.Npc.Interactions
 
             if (_animator != null)
             {
-                foreach (var b in new[]{"attach_chair","attach_stool","attach_bed","attach_mast",
+                foreach (var attachBool in new[]{"attach_chair","attach_stool","attach_bed","attach_mast",
                                         "sitting","resting","sleeping"})
-                    if (HasAnimatorParameter(b)) _animator.SetBool(b, false);
+                    if (HasAnimatorParameter(attachBool)) _animator.SetBool(attachBool, false);
             }
         }
         
@@ -1119,15 +1068,15 @@ namespace FiresCore.Npc.Interactions
                 _stateController.ForceStopEmote();
             else if (_character != null)
             {
-                var m = _character.GetType().GetMethod("StopEmote",
+                var method = _character.GetType().GetMethod("StopEmote",
                     System.Reflection.BindingFlags.Instance |
                     System.Reflection.BindingFlags.Public |
                     System.Reflection.BindingFlags.NonPublic);
-                m?.Invoke(_character, null);
+                method?.Invoke(_character, null);
             }
 
             // Attach-system bools are separate from the emote system and must be
-            // cleared manually ï¿½ vanilla StopEmote does not touch them.
+            // cleared manually - vanilla StopEmote does not touch them.
             string[] attachBools = {
                 "attach_chair", "attach_stool", "attach_bed", "attach_mast",
                 "sitting", "resting", "sleeping"
@@ -1135,7 +1084,7 @@ namespace FiresCore.Npc.Interactions
 
             if (_zanim != null)
             {
-                foreach (var b in attachBools) _zanim.SetBool(b, false);
+                foreach (var attachBool in attachBools) _zanim.SetBool(attachBool, false);
                 _zanim.SetFloat("statef", 0f);
                 _zanim.SetFloat("statei", 0f);
                 _zanim.SetTrigger("idle");
@@ -1147,8 +1096,8 @@ namespace FiresCore.Npc.Interactions
 
             if (_animator != null)
             {
-                foreach (var b in attachBools)
-                    if (HasAnimatorParameter(b)) _animator.SetBool(b, false);
+                foreach (var attachBool in attachBools)
+                    if (HasAnimatorParameter(attachBool)) _animator.SetBool(attachBool, false);
                 if (HasAnimatorParameter("forward_speed"))  _animator.SetFloat("forward_speed",  0f);
                 if (HasAnimatorParameter("sideways_speed")) _animator.SetFloat("sideways_speed", 0f);
                 if (HasAnimatorParameter("turn_speed"))     _animator.SetFloat("turn_speed",     0f);
@@ -1254,7 +1203,7 @@ namespace FiresCore.Npc.Interactions
                     {
                         if (VerboseLogging)
                         {
-                            Debug.Log($"[CompanionInteractionBehavior] {_companion?.companionName} detaching â€” ZDO position has diverged from chair (likely server reconcile teleport)");
+                            Debug.Log($"[CompanionInteractionBehavior] {_companion?.companionName} detaching — ZDO position has diverged from chair (likely server reconcile teleport)");
                         }
                         Detach();
                         return;
@@ -1272,24 +1221,8 @@ namespace FiresCore.Npc.Interactions
                 }
             }
 
-            // Sitting takes precedence over follow distance: a sitting
-            // companion ignores the owner walking away. Follow movement
-            // requests are no-ops while attached because EnforceAttachmentState
-            // keeps CompanionCombatMovement locked. The only valid reasons to
-            // get the companion up are already handled above:
-            //   - Absolute-priority player command (Move/Attack)
-            //   - Combat
-            //   - Natural sit-duration timeout
-            //   - The chair reference went null. This happens when
-            //     Valheim's own zone-streaming system unloads the zone
-            //     containing the chair (e.g. the owner long-jumped far
-            //     enough that the chair's zone is no longer in the
-            //     player's streaming radius). We never destroy chairs
-            //     ourselves â€” Detach only stands the companion up and
-            //     releases its occupancy slot; the chair GameObject is
-            //     untouched and any character can sit in it again.
-            // Stay-mode companions (companion_wasfollowing=false) are
-            // unaffected â€” they sit by design and continue to.
+            // A seated companion ignores follow distance; it only stands for a player command, combat, its sit
+            // timeout, or its chair unloading with the zone. Stay-mode companions are meant to keep sitting.
         }
 
         #endregion
@@ -1311,15 +1244,15 @@ namespace FiresCore.Npc.Interactions
                 return true;
 
             var nearby = Physics.OverlapSphere(attachPoint.position, 0.5f);
-            foreach (var col in nearby)
+            foreach (var collider in nearby)
             {
                 // Check for any Character (NPC, companion, monster)
-                var character = col.GetComponent<Character>();
+                var character = collider.GetComponent<Character>();
                 if (character != null && character != _character)
                     return true;
                     
                 // Also explicitly check for Player component in case Character check missed it
-                var player = col.GetComponent<Player>();
+                var player = collider.GetComponent<Player>();
                 if (player != null)
                     return true;
             }

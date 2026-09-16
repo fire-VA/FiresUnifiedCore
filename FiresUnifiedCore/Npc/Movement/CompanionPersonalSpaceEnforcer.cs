@@ -4,27 +4,19 @@ using FiresCore.Npc.Formation;
 namespace FiresCore.Npc.Movement
 {
     /// <summary>
-    /// Runtime physics component that keeps a tamed companion out of personal-space bubbles around
-    /// the local player and sibling companions, so the player can move through their squad without
-    /// the companions hard-blocking them.
-    ///
-    /// Implemented as a soft acceleration field in FixedUpdate using <see cref="ForceMode.Acceleration"/>,
-    /// which is mass-independent — the companion is pushed away from the player regardless of how heavy
-    /// it is. We deliberately do NOT mutate the rigidbody mass: previous revisions forced it to 0.5 kg
-    /// to make the player "win" collisions, but the side effect was that any monster hit
-    /// (<c>HitData.m_pushForce</c>) launched the companion across the map. Keeping mass at the prefab
-    /// baseline (~50 kg, set by <c>CompanionPrefabManager</c> / scale-multiplied at spawn) lets enemy
-    /// knockback and stagger feel right; this field is what handles the player-yields-aside behaviour.
-    ///
+    /// Keeps a tamed companion out of the personal space of players and sibling companions with a mass-independent
+    /// acceleration field in FixedUpdate, so the player can walk through the squad. Mass is left at the prefab baseline:
+    /// lowering it to let players win collisions made every monster hit launch the companion.
+    /// </summary>
     [RequireComponent(typeof(Rigidbody))]
     public class CompanionPersonalSpaceEnforcer : MonoBehaviour
     {
         // Tunables
-        private const float PLAYER_RADIUS        = 1.6f;   // companion will not enter within this distance of any player
-        private const float PLAYER_PUSH_STRENGTH = 28f;    // accel m/s^2 at zero distance, scales linearly down to PLAYER_RADIUS
-        private const float COMPANION_RADIUS     = 1.4f;   // personal space between sibling companions
-        private const float COMPANION_PUSH_STRENGTH = 18f;
-        private const float MAX_ACCEL            = 40f;    // safety clamp so we never launch a companion
+        private const float PlayerRadius        = 1.6f;   // companion will not enter within this distance of any player
+        private const float PlayerPushStrength = 28f;    // accel m/s^2 at zero distance, scales linearly down to PlayerRadius
+        private const float CompanionRadius     = 1.4f;   // personal space between sibling companions
+        private const float CompanionPushStrength = 18f;
+        private const float MaxAccel            = 40f;    // safety clamp so we never launch a companion
 
         private CompanionController _companion;
         private Rigidbody _rigidbody;
@@ -46,33 +38,33 @@ namespace FiresCore.Npc.Movement
             Vector3 myPos = transform.position;
             Vector3 push = Vector3.zero;
 
-            // Squared radii ï¿½ lets us skip sqrt for everyone outside the bubble,
+            // Squared radii - lets us skip sqrt for everyone outside the bubble,
             // which is the common case once a few companions are loaded.
-            const float playerRadiusSq    = PLAYER_RADIUS * PLAYER_RADIUS;
-            const float companionRadiusSq = COMPANION_RADIUS * COMPANION_RADIUS;
+            const float playerRadiusSq    = PlayerRadius * PlayerRadius;
+            const float companionRadiusSq = CompanionRadius * CompanionRadius;
 
-            // ?? Players ????????????????????????????????????????????????????
+            // Players
             var players = Player.GetAllPlayers();
             if (players != null)
             {
                 int pcount = players.Count;
                 for (int i = 0; i < pcount; i++)
                 {
-                    var p = players[i];
-                    if (p == null || p.IsDead()) continue;
+                    var player = players[i];
+                    if (player == null || player.IsDead()) continue;
 
-                    Vector3 d = myPos - p.transform.position;
-                    d.y = 0f;
-                    float sq = d.sqrMagnitude;
-                    if (sq < 0.0001f || sq >= playerRadiusSq) continue;
+                    Vector3 offset = myPos - player.transform.position;
+                    offset.y = 0f;
+                    float sqrDistance = offset.sqrMagnitude;
+                    if (sqrDistance < 0.0001f || sqrDistance >= playerRadiusSq) continue;
 
-                    float dist = Mathf.Sqrt(sq);
-                    float t = 1f - (dist / PLAYER_RADIUS);
-                    push += (d / dist) * (t * PLAYER_PUSH_STRENGTH);
+                    float dist = Mathf.Sqrt(sqrDistance);
+                    float overlap = 1f - (dist / PlayerRadius);
+                    push += (offset / dist) * (overlap * PlayerPushStrength);
                 }
             }
 
-            // ?? Sibling companions ????????????????????????????????????????
+            // Sibling companions
             var all = CompanionController.AllCompanions;
             int ccount = all.Count;
             for (int i = 0; i < ccount; i++)
@@ -81,20 +73,20 @@ namespace FiresCore.Npc.Movement
                 if (other == null || other == _companion) continue;
                 if (!other.isTamed) continue;
 
-                Vector3 d = myPos - other.transform.position;
-                d.y = 0f;
-                float sq = d.sqrMagnitude;
-                if (sq < 0.0001f || sq >= companionRadiusSq) continue;
+                Vector3 offset = myPos - other.transform.position;
+                offset.y = 0f;
+                float sqrDistance = offset.sqrMagnitude;
+                if (sqrDistance < 0.0001f || sqrDistance >= companionRadiusSq) continue;
 
-                float dist = Mathf.Sqrt(sq);
-                float t = 1f - (dist / COMPANION_RADIUS);
-                push += (d / dist) * (t * COMPANION_PUSH_STRENGTH);
+                float dist = Mathf.Sqrt(sqrDistance);
+                float overlap = 1f - (dist / CompanionRadius);
+                push += (offset / dist) * (overlap * CompanionPushStrength);
             }
 
             if (push.sqrMagnitude > 0.0001f)
             {
-                if (push.sqrMagnitude > MAX_ACCEL * MAX_ACCEL)
-                    push = push.normalized * MAX_ACCEL;
+                if (push.sqrMagnitude > MaxAccel * MaxAccel)
+                    push = push.normalized * MaxAccel;
                 _rigidbody.AddForce(push, ForceMode.Acceleration);
             }
         }

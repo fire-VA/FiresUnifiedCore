@@ -28,12 +28,12 @@ namespace FiresCore.Npc.Core
         /// <summary>
         /// How often to re-scan for chests (prevents spam).
         /// </summary>
-        private const float CHEST_SCAN_COOLDOWN = 5f;
+        private const float ChestScanCooldown = 5f;
         
         /// <summary>
         /// Distance threshold before forcing a chest rescan.
         /// </summary>
-        private const float POSITION_CHANGE_THRESHOLD = 5f;
+        private const float PositionChangeThreshold = 5f;
         
         #endregion
         
@@ -114,7 +114,7 @@ namespace FiresCore.Npc.Core
             float distanceMoved = Vector3.Distance(currentPos, _lastChestScanPosition);
             
             // Skip if recently scanned and haven't moved much
-            if (!force && timeSinceLastScan < CHEST_SCAN_COOLDOWN && distanceMoved < POSITION_CHANGE_THRESHOLD)
+            if (!force && timeSinceLastScan < ChestScanCooldown && distanceMoved < PositionChangeThreshold)
             {
                 return _nearbyChests.Count;
             }
@@ -145,7 +145,7 @@ namespace FiresCore.Npc.Core
             float distanceMoved = Vector3.Distance(searchPosition, _lastChestScanPosition);
             
             // Skip if recently scanned and search position hasn't changed much
-            if (!force && timeSinceLastScan < CHEST_SCAN_COOLDOWN && distanceMoved < POSITION_CHANGE_THRESHOLD)
+            if (!force && timeSinceLastScan < ChestScanCooldown && distanceMoved < PositionChangeThreshold)
             {
                 return _nearbyChests.Count;
             }

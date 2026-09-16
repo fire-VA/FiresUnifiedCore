@@ -398,6 +398,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Ranger
     /// </summary>
     public class ZenArcherEffect : HybridAbilityEffect
     {
+        private const float StaminaRestoredPerRangedHit = 5f;
+
         public float DamageBonus { get; set; } = 1.25f;
         public float StaminaRegenBonus { get; set; } = 2f;
         public float PerfectShotMultiplier { get; set; } = 2.0f;
@@ -445,7 +447,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Ranger
                 }
                 
                 // Restore stamina on ranged hits
-                m_character?.AddStamina(5f);
+                m_character?.AddStamina(StaminaRestoredPerRangedHit);
             }
         }
         

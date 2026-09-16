@@ -107,10 +107,10 @@ namespace FiresCore.Queue
             int readyCount = 0;
             if (roster.Count == 0) GUILayout.Label("<i>No one queued yet.</i>", FiresRoundedSkin.Desc);
             else
-                foreach (var m in roster)
+                foreach (var member in roster)
                 {
-                    if (m.Ready) readyCount++;
-                    GUILayout.Label((m.Ready ? "<color=#9CC24A>●</color> " : "<color=#7A6F58>○</color> ") + m.Name, FiresRoundedSkin.Label);
+                    if (member.Ready) readyCount++;
+                    GUILayout.Label((member.Ready ? "<color=#9CC24A>●</color> " : "<color=#7A6F58>○</color> ") + member.Name, FiresRoundedSkin.Label);
                 }
 
             GUILayout.Space(6f);

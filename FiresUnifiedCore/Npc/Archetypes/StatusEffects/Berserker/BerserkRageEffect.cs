@@ -12,6 +12,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Berserker
     /// </summary>
     public class BerserkRageEffect : CompanionStatusEffectBase
     {
+        private const float MinMovingSpeed = 0.1f;
+
         /// <summary>Damage multiplier (1.5 = 50% more damage).</summary>
         public float DamageMultiplier { get; set; } = 1.5f;
         
@@ -112,7 +114,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Berserker
                 float horizontalMag = new Vector3(velocity.x, 0, velocity.z).magnitude;
                 
                 // Only boost if actually moving
-                if (horizontalMag > 0.1f)
+                if (horizontalMag > MinMovingSpeed)
                 {
                     Vector3 horizontalDir = new Vector3(velocity.x, 0, velocity.z).normalized;
                     float boostedSpeed = horizontalMag * MoveSpeedMultiplier;

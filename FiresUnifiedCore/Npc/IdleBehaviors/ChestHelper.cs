@@ -27,7 +27,7 @@ namespace FiresCore.Npc.IdleBehaviors
         public static float DEFAULT_SEARCH_RADIUS => CompanionSettings.ChestSearchRadius;
         
         /// <summary>
-        /// Search radius for deposit operations â€” reads from config via CompanionSettings.
+        /// Search radius for deposit operations — reads from config via CompanionSettings.
         /// </summary>
         public static float DEPOSIT_SEARCH_RADIUS => CompanionSettings.ChestSearchRadius;
         
@@ -494,11 +494,11 @@ namespace FiresCore.Npc.IdleBehaviors
             
             var colliders = Physics.OverlapSphere(position, radius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var container = col.GetComponent<Container>() ?? col.GetComponentInParent<Container>();
+                var container = collider.GetComponent<Container>() ?? collider.GetComponentInParent<Container>();
                 if (container == null) continue;
                 
                 // Only use accessible containers
@@ -1037,12 +1037,12 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <summary>
         /// Vertical offset when spawning a new chest above an existing one.
         /// </summary>
-        private const float CHEST_STACK_HEIGHT = 1.5f;
+        private const float ChestStackHeight = 1.5f;
         
         /// <summary>
         /// Maximum number of chests that can be stacked vertically.
         /// </summary>
-        private const int MAX_CHEST_STACK_HEIGHT = 5;
+        private const int MaxChestStackHeight = 5;
         
         /// <summary>
         /// Finds or spawns a chest near the reference chest that has room for items.
@@ -1099,9 +1099,9 @@ namespace FiresCore.Npc.IdleBehaviors
             Container topmostChest = baseChest;
             Vector3 topmostPos = basePos;
             
-            for (int i = 1; i <= MAX_CHEST_STACK_HEIGHT; i++)
+            for (int i = 1; i <= MaxChestStackHeight; i++)
             {
-                Vector3 checkPos = basePos + Vector3.up * (CHEST_STACK_HEIGHT * i);
+                Vector3 checkPos = basePos + Vector3.up * (ChestStackHeight * i);
                 Container chestAtPos = FindChestAtPosition(checkPos, 0.5f);
                 
                 if (chestAtPos != null)
@@ -1116,11 +1116,11 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Calculate spawn position above topmost chest
-            Vector3 spawnPos = topmostPos + Vector3.up * CHEST_STACK_HEIGHT;
+            Vector3 spawnPos = topmostPos + Vector3.up * ChestStackHeight;
             
             // Check if we're at max stack height
             float heightAboveBase = spawnPos.y - basePos.y;
-            if (heightAboveBase > CHEST_STACK_HEIGHT * MAX_CHEST_STACK_HEIGHT)
+            if (heightAboveBase > ChestStackHeight * MaxChestStackHeight)
             {
                 if (CompanionIdleBehavior.VerboseLogging)
                     Debug.Log($"[ChestHelper] Max chest stack height reached at {basePos}");
@@ -1209,10 +1209,10 @@ namespace FiresCore.Npc.IdleBehaviors
         private static Container FindChestAtPosition(Vector3 position, float tolerance)
         {
             var colliders = Physics.OverlapSphere(position, tolerance);
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
-                var container = col.GetComponent<Container>() ?? col.GetComponentInParent<Container>();
+                if (collider == null) continue;
+                var container = collider.GetComponent<Container>() ?? collider.GetComponentInParent<Container>();
                 if (container != null)
                 {
                     return container;

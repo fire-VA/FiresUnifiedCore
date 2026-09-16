@@ -6,38 +6,20 @@ using FiresCore.Npc.Archetypes.StatusEffects;
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Handles multiplayer RPC synchronization for companion status effects and abilities.
-    /// All ability applications should go through this manager to ensure proper replication
-    /// across all clients on a dedicated server.
-    /// 
-    /// RPC FLOW:
-    /// 1. Owner companion triggers ability
-    /// 2. AbilityRPCManager.ApplyAbility() is called
-    /// 3. RPC is sent to all clients via ZRoutedRpc
-    /// 4. Each client applies the status effect locally
-    /// 5. Visual FX is spawned on each client
-    /// 
-    /// TARGET VALIDATION:
-    /// - Group buffs: Only allies (same owner companions + owner player)
-    /// - AoE damage: Only enemies (monsters + enemy players in PvP)
-    /// - Single effects: Validated based on effect type
-    /// 
-    /// SUPPORTED ABILITIES:
-    /// - Group buffs (Warcry, Divine Protection, Sanctuary, etc.)
-    /// - Single-target effects (Hunter's Mark, Poison, etc.)
-    /// - Self-buffs (Fortify, Berserk Rage, etc.)
-    /// - AoE effects (Purifying Circle, Taunt, etc.)
+    /// The multiplayer path for every companion ability and status effect: the owner triggers ApplyAbility, a
+    /// routed RPC reaches all clients, and each applies the effect and spawns the FX locally. Targets are
+    /// validated per effect: group buffs reach only the owner and their companions, AoE damage only enemies.
     /// </summary>
     public static class AbilityRPCManager
     {
         public static bool VerboseLogging = false;
         
         // RPC names for different ability types
-        private const string RPC_APPLY_GROUP_BUFF = "RPC_CompanionGroupBuff";
-        private const string RPC_APPLY_SINGLE_EFFECT = "RPC_CompanionSingleEffect";
-        private const string RPC_APPLY_SELF_BUFF = "RPC_CompanionSelfBuff";
-        private const string RPC_APPLY_AOE_EFFECT = "RPC_CompanionAoEEffect";
-        private const string RPC_SPAWN_FX = "RPC_CompanionSpawnFX";
+        private const string RpcApplyGroupBuff = "RPC_CompanionGroupBuff";
+        private const string RpcApplySingleEffect = "RPC_CompanionSingleEffect";
+        private const string RpcApplySelfBuff = "RPC_CompanionSelfBuff";
+        private const string RpcApplyAoeEffect = "RPC_CompanionAoEEffect";
+        private const string RpcSpawnFX = "RPC_CompanionSpawnFX";
         
         private static bool _initialized = false;
         
@@ -50,11 +32,11 @@ namespace FiresCore.Npc.Archetypes
             if (ZRoutedRpc.instance == null) return;
             
             // Register RPC handlers
-            ZRoutedRpc.instance.Register<ZDOID, string, float, float>(RPC_APPLY_GROUP_BUFF, RPC_HandleGroupBuff);
-            ZRoutedRpc.instance.Register<ZDOID, ZDOID, string, float>(RPC_APPLY_SINGLE_EFFECT, RPC_HandleSingleEffect);
-            ZRoutedRpc.instance.Register<ZDOID, string, float>(RPC_APPLY_SELF_BUFF, RPC_HandleSelfBuff);
-            ZRoutedRpc.instance.Register<ZDOID, string, float, float>(RPC_APPLY_AOE_EFFECT, RPC_HandleAoEEffect);
-            ZRoutedRpc.instance.Register<Vector3, string, float>(RPC_SPAWN_FX, RPC_HandleSpawnFX);
+            ZRoutedRpc.instance.Register<ZDOID, string, float, float>(RpcApplyGroupBuff, RPC_HandleGroupBuff);
+            ZRoutedRpc.instance.Register<ZDOID, ZDOID, string, float>(RpcApplySingleEffect, RPC_HandleSingleEffect);
+            ZRoutedRpc.instance.Register<ZDOID, string, float>(RpcApplySelfBuff, RPC_HandleSelfBuff);
+            ZRoutedRpc.instance.Register<ZDOID, string, float, float>(RpcApplyAoeEffect, RPC_HandleAoEEffect);
+            ZRoutedRpc.instance.Register<Vector3, string, float>(RpcSpawnFX, RPC_HandleSpawnFX);
             
             _initialized = true;
             
@@ -78,7 +60,7 @@ namespace FiresCore.Npc.Archetypes
         {
             if (source == null) return 0;
             // Skip ability broadcasts during the local player's respawn / loading-screen
-            // window â€” RPCs broadcast while IsTeleporting=true deadlock the zone stream
+            // window — RPCs broadcast while IsTeleporting=true deadlock the zone stream
             // (documented in CompanionPatches.cs). Suppressed buffs simply re-trigger
             // from the next Update tick once the player can move again.
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return 0;
@@ -89,7 +71,7 @@ namespace FiresCore.Npc.Archetypes
             ZDOID sourceId = nview.GetZDO().m_uid;
 
             // Send RPC to all clients
-            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RPC_APPLY_GROUP_BUFF,
+            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RpcApplyGroupBuff,
                 sourceId, effectName, range, duration);
             
             if (VerboseLogging)
@@ -123,7 +105,7 @@ namespace FiresCore.Npc.Archetypes
             ZDOID targetId = targetNview.GetZDO().m_uid;
             
             // Send RPC to all clients
-            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RPC_APPLY_SINGLE_EFFECT,
+            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RpcApplySingleEffect,
                 sourceId, targetId, effectName, duration);
             
             if (VerboseLogging)
@@ -153,7 +135,7 @@ namespace FiresCore.Npc.Archetypes
             ZDOID targetId = nview.GetZDO().m_uid;
             
             // Send RPC to all clients
-            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RPC_APPLY_SELF_BUFF,
+            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RpcApplySelfBuff,
                 targetId, effectName, duration);
             
             if (VerboseLogging)
@@ -184,7 +166,7 @@ namespace FiresCore.Npc.Archetypes
             ZDOID sourceId = nview.GetZDO().m_uid;
 
             // Send RPC to all clients
-            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RPC_APPLY_AOE_EFFECT,
+            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RpcApplyAoeEffect,
                 sourceId, effectName, range, duration);
             
             if (VerboseLogging)
@@ -206,7 +188,7 @@ namespace FiresCore.Npc.Archetypes
         {
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
             // Send RPC to all clients
-            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RPC_SPAWN_FX,
+            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RpcSpawnFX,
                 position, effectName, scale);
 
             // Spawn locally

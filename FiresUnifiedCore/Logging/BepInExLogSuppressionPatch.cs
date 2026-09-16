@@ -6,34 +6,9 @@ using UnityEngine;
 
 namespace FiresCore.Logging
 {
-    // Patches BepInEx's central log fan-out
-    // (BepInEx.Logging.Logger.InternalLogEvent) to drop log messages
-    // matching known-noise patterns BEFORE they reach any listener
-    // (console / disk).
-    //
-    // Why this site and not UnityLogSuppressionPatch:
-    //   UnityLogSuppressionPatch handles messages originating from Unity
-    //   (Application.logMessageReceived → UnityLogSource). Messages
-    //   coming from BepInEx-internal log sources - HarmonyX, ManualLogSources,
-    //   ConfigSync, the chainloader itself - don't pass through Unity at
-    //   all. They get sent straight to Logger.InternalLogEvent from their
-    //   LogSource. Filtering here catches every path.
-    //
-    // Reference source: valheimRip2/BepInExREF/Logging/Logger.cs L41
-    //   internal static void InternalLogEvent(object sender, LogEventArgs eventArgs)
-    //   {
-    //     Logger._Listeners.SendLogEvent(sender, eventArgs);
-    //   }
-    //
-    // Suppressed at this layer (non-verbose only):
-    //   - HarmonyX "AccessTools.Method: Could not find method" - fires
-    //     when mods probe for next-PTB method signatures that don't
-    //     exist on the current build. Expected noise once mods are wired
-    //     for an upcoming Valheim build.
-    //   - HarmonyX "AccessTools.TypeByName: Could not find type" - same
-    //     shape, type-level probe.
-    //
-    // Anything else passes through unchanged.
+    // Drops known-noise messages at BepInEx's Logger.InternalLogEvent, the fan-out every BepInEx-internal source
+    // (HarmonyX, ManualLogSources, ConfigSync, the chainloader) goes through without passing Unity. Currently
+    // the HarmonyX AccessTools "Could not find method/type" probe misses. Verbose mode lets everything through.
     [HarmonyPatch]
     internal static class BepInExLogSuppressionPatch
     {

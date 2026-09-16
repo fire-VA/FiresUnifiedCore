@@ -17,6 +17,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// </summary>
     public class UnyieldingEffect : CompanionStatusEffectBase
     {
+        private const float CooldownSeconds = 300f;
+
         private bool _hasTriggered = false;
         private float _triggerTime = 0f;
         
@@ -93,7 +95,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
         {
             if (!_hasTriggered) return 0f;
             float elapsed = Time.time - _triggerTime;
-            return Mathf.Max(0f, 300f - elapsed); // 5 minute cooldown
+            return Mathf.Max(0f, CooldownSeconds - elapsed); // 5 minute cooldown
         }
         
         /// <summary>
@@ -198,15 +200,15 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// </summary>
     public class DeathWishEffect : CompanionStatusEffectBase
     {
-        private const float HEALTH_THRESHOLD = 0.10f; // 10% HP
-        private const float DAMAGE_BONUS = 2.0f; // +100% damage
+        private const float HealthThreshold = 0.10f; // 10% HP
+        private const float DamageBonus = 2.0f; // +100% damage
         
         private bool _isActive = false;
         
         public override string Description => 
             _isActive 
                 ? "<color=red>DEATH WISH ACTIVE!</color>\n+100% damage, cannot heal"
-                : $"Activates below {HEALTH_THRESHOLD * 100:F0}% HP";
+                : $"Activates below {HealthThreshold * 100:F0}% HP";
         
         public DeathWishEffect()
         {
@@ -222,7 +224,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             if (m_character == null) return;
             
             float healthPercent = m_character.GetHealthPercentage();
-            bool shouldBeActive = healthPercent <= HEALTH_THRESHOLD;
+            bool shouldBeActive = healthPercent <= HealthThreshold;
             
             if (shouldBeActive && !_isActive)
             {
@@ -248,7 +250,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
         {
             if (_isActive)
             {
-                hitData.m_damage.Modify(DAMAGE_BONUS);
+                hitData.m_damage.Modify(DamageBonus);
                 
                 if (VerboseLogging)
                 {
@@ -360,6 +362,10 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// </summary>
     public class RainOfArrowsEffect : CompanionStatusEffectBase
     {
+        private const float DefaultTargetDistance = 8f;
+        private const float InitialVfxHeight = 10f;
+        private const int ArrowImpactVfxPerTick = 3;
+
         public Vector3 TargetPosition { get; set; }
         public float Radius { get; set; } = 6f;
         public float DamagePerTick { get; set; } = 15f;
@@ -386,11 +392,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             // Use caster position if no target specified
             if (TargetPosition == Vector3.zero && m_character != null)
             {
-                TargetPosition = m_character.transform.position + m_character.transform.forward * 8f;
+                TargetPosition = m_character.transform.position + m_character.transform.forward * DefaultTargetDistance;
             }
             
             // Initial VFX
-            SpawnVFX("fx_Lightning", TargetPosition + Vector3.up * 10f);
+            SpawnVFX("fx_Lightning", TargetPosition + Vector3.up * InitialVfxHeight);
             
             if (VerboseLogging)
             {
@@ -451,7 +457,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
         private void SpawnArrowVFX()
         {
             // Spawn multiple arrow impact effects in the area
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < ArrowImpactVfxPerTick; i++)
             {
                 Vector3 randomOffset = new Vector3(
                     Random.Range(-Radius, Radius),
@@ -503,6 +509,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// </summary>
     public class MeteorEffect : CompanionStatusEffectBase
     {
+        private const float DefaultTargetDistance = 10f;
+        private const float BluntDamageFraction = 0.3f;
+
         public Vector3 TargetPosition { get; set; }
         public float Radius { get; set; } = 8f;
         public float Damage { get; set; } = 200f;
@@ -529,7 +538,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             // Use forward position if no target
             if (TargetPosition == Vector3.zero && m_character != null)
             {
-                TargetPosition = m_character.transform.position + m_character.transform.forward * 10f;
+                TargetPosition = m_character.transform.position + m_character.transform.forward * DefaultTargetDistance;
             }
             
             // Warning VFX at target location
@@ -586,7 +595,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                     hitData.m_dir = (character.transform.position - TargetPosition).normalized;
                     hitData.m_attacker = m_character?.GetZDOID() ?? ZDOID.None;
                     hitData.m_damage.m_fire = actualDamage;
-                    hitData.m_damage.m_blunt = actualDamage * 0.3f; // Some impact damage
+                    hitData.m_damage.m_blunt = actualDamage * BluntDamageFraction; // Some impact damage
                     
                     // Check if this will kill the target
                     bool willKill = character.GetHealth() <= hitData.GetTotalDamage();
@@ -782,6 +791,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// </summary>
     public class ChiExplosionEffect : CompanionStatusEffectBase
     {
+        private const float MaxDistanceFalloff = 0.3f;
+
         public float Damage { get; set; } = 150f;
         public float Radius { get; set; } = 6f;
         
@@ -823,7 +834,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 if (dist <= Radius)
                 {
                     // Damage falls off slightly with distance
-                    float falloff = 1f - (dist / Radius) * 0.3f;
+                    float falloff = 1f - (dist / Radius) * MaxDistanceFalloff;
                     float actualDamage = Damage * falloff;
                     
                     var hitData = new HitData();

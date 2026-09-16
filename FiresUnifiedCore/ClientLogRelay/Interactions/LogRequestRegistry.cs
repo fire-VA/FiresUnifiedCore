@@ -89,7 +89,7 @@ namespace FiresCore.ClientLogRelay.Interactions
 
         /// <summary>
         /// Non-expired snapshot of every currently-registered context. The returned array
-        /// is a copy ? callers can iterate freely without holding the lock. Used by host
+        /// is a copy - callers can iterate freely without holding the lock. Used by host
         /// bot listeners to decide which message ids to poll for reactions.
         /// </summary>
         public static LogRequestContext[] Snapshot()

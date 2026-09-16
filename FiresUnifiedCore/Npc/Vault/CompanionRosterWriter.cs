@@ -4,47 +4,11 @@ using UnityEngine;
 namespace FiresCore.Npc.Vault
 {
     /// <summary>
-    /// High-level writer API for the per-player companion roster. Every
-    /// lifecycle event (tame, stay, follow, station, dismiss, recall,
-    /// death, respawn, periodic refresh, logout) routes through one of the
-    /// named methods on this class.
-    /// 
-    /// WHY A WRITER FACADE
-    /// -------------------
-    /// Without it, the policy of "always carry a fresh snapshot on roster
-    /// upsert", "refuse to lose Snapshot data", "stamp ServerWorldUid on
-    /// first ownership", etc. would have to be re-implemented at every
-    /// call site — exactly the kind of distributed-state-machine sprawl
-    /// that produced the original wrong-name / wrong-scale bug. With a
-    /// facade:
-    /// 
-    ///   • Each call site reads as a one-line statement of intent
-    ///     ("CompanionRosterWriter.OnDismissed(owner, companion)").
-    ///   • Phase 6 can rewrite the underlying storage without touching
-    ///     callers.
-    ///   • The Dismiss/Remove distinction (preserve vs destroy roster
-    ///     entry) is enforced HERE, not at the UI layer where it could
-    ///     drift.
-    /// 
-    /// PHASE 3 USAGE PLAN
-    /// ------------------
-    /// Each method is a single-call entry point that does:
-    ///   1. Capture a fresh <see cref="CompanionSaveData"/> from the live
-    ///      companion (where applicable).
-    ///   2. Look up or create the roster entry.
-    ///   3. Set the appropriate flags / state.
-    ///   4. Persist back to <see cref="Player.m_customData"/> via
-    ///      <see cref="PlayerCompanionStorage"/>.
-    /// 
-    /// Side-by-side with the existing JSON vault: callers of these methods
-    /// are EXPECTED to ALSO be calling <c>CompanionVault.SaveCompanion</c>
-    /// in the same code path during Phase 3. Phase 4 flips reads over;
-    /// Phase 6 retires the dual-write.
-    /// 
-    /// THREADING
-    /// ---------
-    /// All methods run on the Unity main thread. No locking; the storage
-    /// layer is single-threaded.
+    /// The one write path for the per-player companion roster. Each lifecycle event (tame, stay, follow,
+    /// station, dismiss, recall, death, respawn, periodic refresh, logout) has a named method that captures a
+    /// fresh snapshot, updates the entry and persists it through <see cref="PlayerCompanionStorage"/>, so rules
+    /// like never dropping snapshot data, stamping the world UID on first ownership, and dismiss versus remove
+    /// live in one place. Main thread only.
     /// </summary>
     public static class CompanionRosterWriter
     {
@@ -58,7 +22,7 @@ namespace FiresCore.Npc.Vault
         /// </summary>
         public static bool VerboseLogging = false;
 
-        // ?????????????????????????????? HOOK POINTS ???????????????????????
+        // HOOK POINTS
 
         /// <summary>
         /// Called the first time a companion enters this player's
@@ -118,18 +82,9 @@ namespace FiresCore.Npc.Vault
         }
 
         /// <summary>
-        /// Player recalled a previously-dismissed companion from the roster
-        /// screen. Caller has already spawned a new live companion; this
-        /// method captures the post-spawn snapshot and stamps the entry
-        /// back to Following.
-        /// 
-        /// Note: callers do NOT need to call this if the recall went
-        /// through <see cref="CompanionRespawnManager.RequestImmediateRespawn"/>
-        /// — the post-respawn <see cref="OnRespawned"/> auto-promotes
-        /// Dismissed ? Following automatically. This method exists for
-        /// the edge case where a recall happens with a live-existing
-        /// CompanionController in hand (e.g. teleporting an alive Stay-mode
-        /// companion that wasn't actually Dismissed).
+        /// A dismissed companion was recalled and a live companion already exists: captures its snapshot and marks the
+        /// entry Following. Recalls that go through CompanionRespawnManager.RequestImmediateRespawn don't need this,
+        /// because <see cref="OnRespawned"/> already promotes Dismissed to Following.
         /// </summary>
         public static bool OnRecalled(Player owner, CompanionController companion)
         {
@@ -138,17 +93,8 @@ namespace FiresCore.Npc.Vault
         }
 
         /// <summary>
-        /// Companion died. Captures the death snapshot, marks
-        /// <see cref="PlayerCompanionRosterEntry.IsPendingRespawn"/>=true,
-        /// and stamps an absolute wall-clock deadline (so a crash mid-timer
-        /// resumes correctly on next login).
-        /// 
-        /// <paramref name="respawnDelaySeconds"/> is the configured respawn
-        /// delay; the deadline is computed as <c>UtcNow + delay</c>.
-        /// 
-        /// FollowState is preserved from any existing entry — a Staying
-        /// companion that died is still Staying-and-pending-respawn, not
-        /// reset to Following.
+        /// A companion died: captures the death snapshot, marks it pending respawn with a wall-clock deadline of now plus
+        /// <paramref name="respawnDelaySeconds"/> so a crash resumes the timer, and keeps its follow state.
         /// </summary>
         public static bool OnDeath(Player owner, CompanionController companion, float respawnDelaySeconds)
         {
@@ -202,22 +148,9 @@ namespace FiresCore.Npc.Vault
         }
 
         /// <summary>
-        /// Companion respawn fired and a fresh ZDO/companion exists.
-        /// Clears <see cref="PlayerCompanionRosterEntry.IsPendingRespawn"/>
-        /// and re-captures the snapshot from the new live companion (so
-        /// any post-respawn state — restored equipment, etc. — is current).
-        /// 
-        /// FollowState is preserved from the prior entry, with ONE
-        /// exception: a prior <see cref="CompanionFollowState.Dismissed"/>
-        /// is auto-promoted to <see cref="CompanionFollowState.Following"/>.
-        /// Dismissed means "out of world" by definition; if a respawn fired
-        /// for a Dismissed entry, the player is recalling them, and they
-        /// should land as Following. This makes the recall flow a single
-        /// action (just call <c>RequestImmediateRespawn</c>) rather than
-        /// requiring callers to flip state separately before spawning.
-        /// 
-        /// All other states preserve: Following ? Following, Staying ?
-        /// Staying, Stationed ? Stationed.
+        /// A respawn produced a fresh companion: clears the pending-respawn flag and re-captures the snapshot.
+        /// Follow state is kept, except that Dismissed becomes Following, since respawning a dismissed companion
+        /// is a recall.
         /// </summary>
         public static bool OnRespawned(Player owner, CompanionController companion)
         {
@@ -229,7 +162,7 @@ namespace FiresCore.Npc.Vault
             var existing = PlayerCompanionStorage.GetEntry(owner, snapshot.CompanionId);
             var followState = existing?.FollowState ?? CompanionFollowState.Following;
 
-            // Auto-promote Dismissed ? Following. Dismissed entries can
+            // Auto-promote Dismissed -> Following. Dismissed entries can
             // only re-enter the world via recall, and recalled companions
             // belong with the player by default.
             if (followState == CompanionFollowState.Dismissed)
@@ -288,7 +221,7 @@ namespace FiresCore.Npc.Vault
             return ok;
         }
 
-        // ?????????????????????????????? INTERNALS ?????????????????????????
+        // INTERNALS
 
         /// <summary>
         /// Shared upsert path. Captures a fresh snapshot from

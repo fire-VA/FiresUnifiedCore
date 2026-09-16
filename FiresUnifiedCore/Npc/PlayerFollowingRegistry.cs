@@ -4,29 +4,16 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Authoritative registry of which companions are currently set to follow,
-    /// stored on the OWNER PLAYER'S ZDO (not the companion's ZDO).
-    ///
-    /// Why on the player's ZDO and not the companion's:
-    ///   The companion's ZDO can be unloaded, destroyed, or temporarily
-    ///   inaccessible (combat respawn, zone unload, glitch recovery), and any
-    ///   transient runtime state can mutate fields on it.  The player's ZDO is
-    ///   always loaded whenever the owner is in game and is bundled into the
-    ///   character save (.fch), so it survives logout / login intact.
-    ///
-    /// Mutation rule:
-    ///   The set is ONLY modified by explicit owner commands ï¿½
-    ///   CommandFollow / CommandStay / ForceDismiss / SetFollowMode / radial-menu
-    ///   Follow / Stay / Dismiss.  No AI state, death handler, vault save,
-    ///   inventory change, glitch recovery, mid-teleport hook, or any other
-    ///   transient path is allowed to call SetFollowing.  Period.
+    /// Which companions are set to follow, stored on the owner's player ZDO, which is always loaded while they
+    /// play and saved with the character, rather than on companion ZDOs that unload or get recreated. Only
+    /// explicit owner commands (follow, stay, dismiss, follow mode, the radial menu) may change it.
     /// </summary>
     public static class PlayerFollowingRegistry
     {
         // Stored as a comma-separated list of companion IDs on the player's ZDO.
         // We use a string list rather than per-id booleans so the entry survives
         // ZDO key compaction and can be migrated wholesale.
-        private const string ZDO_KEY = "va_following_companions";
+        private const string ZdoKey = "va_following_companions";
 
         /// <summary>
         /// Is this companion (by ID) currently flagged as following the given
@@ -50,7 +37,7 @@ namespace FiresCore.Npc
             if (player == null || string.IsNullOrEmpty(companionId)) return;
             // Refuse to write the player's ZDO during their respawn / loading-screen
             // window. Player-ZDO writes during IsTeleporting=true deadlock the zone
-            // stream â€” the canonical mechanism for the respawn freeze. Owner commands
+            // stream — the canonical mechanism for the respawn freeze. Owner commands
             // shouldn't fire during a loading screen anyway, but gate defensively.
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
 
@@ -67,7 +54,7 @@ namespace FiresCore.Npc
             bool changed = follow ? ids.Add(companionId) : ids.Remove(companionId);
             if (!changed) return;
 
-            zdo.Set(ZDO_KEY, string.Join(",", ids));
+            zdo.Set(ZdoKey, string.Join(",", ids));
             Debug.Log($"[PlayerFollowingRegistry] {player.GetPlayerName()}: companion '{companionId}' follow={follow} (registry size={ids.Count})");
         }
 
@@ -109,7 +96,7 @@ namespace FiresCore.Npc
             }
             if (added > 0)
             {
-                zdo.Set(ZDO_KEY, string.Join(",", ids));
+                zdo.Set(ZdoKey, string.Join(",", ids));
                 Debug.Log($"[PlayerFollowingRegistry] Migrated {added} companion(s) into registry for {player.GetPlayerName()}");
             }
         }
@@ -123,7 +110,7 @@ namespace FiresCore.Npc
             var zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
             if (zdo == null) return set;
 
-            var raw = zdo.GetString(ZDO_KEY, "");
+            var raw = zdo.GetString(ZdoKey, "");
             if (string.IsNullOrEmpty(raw)) return set;
 
             foreach (var id in raw.Split(','))

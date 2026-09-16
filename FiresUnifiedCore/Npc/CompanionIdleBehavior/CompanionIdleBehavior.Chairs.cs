@@ -63,13 +63,13 @@ namespace FiresCore.Npc
 
             // Check physics overlap
             Collider[] nearby = Physics.OverlapSphere(attachPoint.position, 0.5f);
-            foreach (var col in nearby)
+            foreach (var collider in nearby)
             {
-                var character = col.GetComponent<Character>();
+                var character = collider.GetComponent<Character>();
                 if (character != null && character != _character)
                     return true;
                     
-                var player = col.GetComponent<Player>();
+                var player = collider.GetComponent<Player>();
                 if (player != null)
                     return true;
             }

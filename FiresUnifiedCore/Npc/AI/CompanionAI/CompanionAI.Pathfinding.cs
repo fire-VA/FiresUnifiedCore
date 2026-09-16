@@ -14,7 +14,7 @@ namespace FiresCore.Npc.AI
     {
         #region Movement Authority
         
-        private const string AI_AUTHORITY_OWNER = "CompanionAI";
+        private const string AIAuthorityOwner = "CompanionAI";
         
         /// <summary>
         /// Gets the movement authority from the companion controller.
@@ -61,9 +61,9 @@ namespace FiresCore.Npc.AI
             if (authority != null)
             {
                 var source = GetAIMovementSource();
-                if (authority.TryAcquireAuthority(source, AI_AUTHORITY_OWNER, 2f))
+                if (authority.TryAcquireAuthority(source, AIAuthorityOwner, 2f))
                 {
-                    authority.SetMoveDirection(AI_AUTHORITY_OWNER, direction, walk: !run, run: run);
+                    authority.SetMoveDirection(AIAuthorityOwner, direction, walk: !run, run: run);
                 }
                 return;
             }
@@ -92,7 +92,7 @@ namespace FiresCore.Npc.AI
             if (authority != null)
             {
                 var source = GetAIMovementSource();
-                if (!authority.TryAcquireAuthority(source, AI_AUTHORITY_OWNER, 2f))
+                if (!authority.TryAcquireAuthority(source, AIAuthorityOwner, 2f))
                 {
                     // Can't acquire authority - another system has priority
                     return false;
@@ -198,7 +198,7 @@ namespace FiresCore.Npc.AI
             }
             
             // Check if we've reached the target
-            if (distToTarget < POSITION_REACHED_THRESHOLD)
+            if (distToTarget < PositionReachedThreshold)
             {
                 _consecutiveStuckFrames = 0;
                 _pathfindingAttempts = 0;
@@ -215,21 +215,21 @@ namespace FiresCore.Npc.AI
             }
             
             // Stuck detection
-            if (Time.time - _lastPathfindingTime >= STUCK_CHECK_INTERVAL)
+            if (Time.time - _lastPathfindingTime >= StuckCheckInterval)
             {
                 float movementSinceLastCheck = Vector3.Distance(transform.position, _lastPathfindingPos);
                 
-                if (movementSinceLastCheck < STUCK_MOVEMENT_THRESHOLD && distToTarget > POSITION_REACHED_THRESHOLD)
+                if (movementSinceLastCheck < StuckMovementThreshold && distToTarget > PositionReachedThreshold)
                 {
                     _consecutiveStuckFrames++;
                     
                     if (VerboseLogging)
                     {
-                        Debug.Log($"[CompanionAI] {m_character?.m_name} stuck check {_consecutiveStuckFrames}/{STUCK_FRAMES_BEFORE_RECALC} " +
+                        Debug.Log($"[CompanionAI] {m_character?.m_name} stuck check {_consecutiveStuckFrames}/{StuckFramesBeforeRecalc} " +
                             $"(moved {movementSinceLastCheck:F2}m, dist to target: {distToTarget:F1}m)");
                     }
                     
-                    if (_consecutiveStuckFrames >= STUCK_FRAMES_BEFORE_RECALC)
+                    if (_consecutiveStuckFrames >= StuckFramesBeforeRecalc)
                     {
                         HandleStuckCondition(target, run);
                     }
@@ -243,11 +243,11 @@ namespace FiresCore.Npc.AI
                 _lastPathfindingTime = Time.time;
             }
             
-            if (Time.time - _lastProgressTime > PROGRESS_TIMEOUT && distToTarget > POSITION_REACHED_THRESHOLD)
+            if (Time.time - _lastProgressTime > ProgressTimeout && distToTarget > PositionReachedThreshold)
             {
                 if (VerboseLogging)
                 {
-                    Debug.Log($"[CompanionAI] {m_character?.m_name} no progress for {PROGRESS_TIMEOUT}s, trying alternative route");
+                    Debug.Log($"[CompanionAI] {m_character?.m_name} no progress for {ProgressTimeout}s, trying alternative route");
                 }
                 
                 TryAlternativeRoute(target, run);
@@ -256,7 +256,7 @@ namespace FiresCore.Npc.AI
             
             // CRITICAL: Use MoveToThroughAuthority which uses vanilla pathfinding
             // This properly calculates paths around obstacles
-            MoveToThroughAuthority(target, run, POSITION_REACHED_THRESHOLD);
+            MoveToThroughAuthority(target, run, PositionReachedThreshold);
         }
         
         private void HandleStuckCondition(Vector3 target, bool run)
@@ -266,7 +266,7 @@ namespace FiresCore.Npc.AI
             
             if (VerboseLogging)
             {
-                Debug.Log($"[CompanionAI] {m_character?.m_name} stuck! Attempt {_pathfindingAttempts}/{MAX_PATHFINDING_ATTEMPTS}");
+                Debug.Log($"[CompanionAI] {m_character?.m_name} stuck! Attempt {_pathfindingAttempts}/{MaxPathfindingAttempts}");
             }
             
             if (_pathfindingAttempts == 1)
@@ -296,7 +296,7 @@ namespace FiresCore.Npc.AI
                 return;
             }
             
-            if (_pathfindingAttempts >= MAX_PATHFINDING_ATTEMPTS)
+            if (_pathfindingAttempts >= MaxPathfindingAttempts)
             {
                 if (VerboseLogging)
                 {
@@ -310,7 +310,7 @@ namespace FiresCore.Npc.AI
         
         private void ForcePathRecalculation()
         {
-            if (Time.time - _lastPathRecalcTime < PATH_RECALC_INTERVAL)
+            if (Time.time - _lastPathRecalcTime < PathRecalcInterval)
                 return;
                 
             _lastPathRecalcTime = Time.time;
@@ -378,10 +378,10 @@ namespace FiresCore.Npc.AI
             
             Vector3[] offsets = new Vector3[]
             {
-                Vector3.Cross(Vector3.up, toTarget) * WAYPOINT_SEARCH_RADIUS,
-                -Vector3.Cross(Vector3.up, toTarget) * WAYPOINT_SEARCH_RADIUS,
-                toTarget * WAYPOINT_SEARCH_RADIUS + Vector3.Cross(Vector3.up, toTarget) * WAYPOINT_SEARCH_RADIUS * 0.5f,
-                toTarget * WAYPOINT_SEARCH_RADIUS - Vector3.Cross(Vector3.up, toTarget) * WAYPOINT_SEARCH_RADIUS * 0.5f
+                Vector3.Cross(Vector3.up, toTarget) * WaypointSearchRadius,
+                -Vector3.Cross(Vector3.up, toTarget) * WaypointSearchRadius,
+                toTarget * WaypointSearchRadius + Vector3.Cross(Vector3.up, toTarget) * WaypointSearchRadius * 0.5f,
+                toTarget * WaypointSearchRadius - Vector3.Cross(Vector3.up, toTarget) * WaypointSearchRadius * 0.5f
             };
             
             foreach (var offset in offsets)
@@ -547,10 +547,10 @@ namespace FiresCore.Npc.AI
             }
             
             Collider[] colliders = Physics.OverlapSphere(pos, 1.5f);
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
-                string objName = col.gameObject.name.ToLower();
+                if (collider == null) continue;
+                string objName = collider.gameObject.name.ToLower();
                 
                 if (objName.Contains("lava") || objName.Contains("magma"))
                     return Combat.TerrainAwareness.HazardType.Lava;

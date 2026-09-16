@@ -11,6 +11,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Rogue
     /// </summary>
     public class DuelistEffect : HybridAbilityEffect
     {
+        private const float ParryWindowDuration = 1.5f;
+
         public float CritMultiplier { get; set; } = 2.5f;
         public float DamageReduction { get; set; } = 0.9f;
         public int RiposteCharges { get; set; } = 3;
@@ -48,7 +50,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Rogue
             if (m_character != null && m_character.IsBlocking() && _remainingCharges > 0)
             {
                 _parryWindow = true;
-                _parryWindowEnd = Time.time + 1.5f;
+                _parryWindowEnd = Time.time + ParryWindowDuration;
                 AbilityFXManager.SpawnEffect("vfx_perfectblock", m_character.transform.position, null, 1f);
             }
         }

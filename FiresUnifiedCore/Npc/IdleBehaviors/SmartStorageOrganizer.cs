@@ -5,29 +5,9 @@ using System.Linq;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Intelligent storage organization system for companions.
-    /// Analyzes item types and nearby crafting stations to determine optimal chest placement.
-    /// 
-    /// PHILOSOPHY:
-    /// Items should be stored near the stations where they'll be used:
-    /// - Wood/fuel near kilns, smelters, fireplaces
-    /// - Ores near smelters
-    /// - Metal bars/ingots near forges
-    /// - Food ingredients near cooking stations and cauldrons
-    /// - Building materials near workbenches
-    /// - Trophies together in trophy chests
-    /// - Valuables/coins together
-    /// 
-    /// STATION TYPES CONSIDERED:
-    /// - Smelter (CopperOre, TinOre, IronScrap, SilverOre, BlackMetalScrap, FlametalOre ? Bars)
-    /// - Blast Furnace (FlametalOre, BlackMetal)
-    /// - Kiln (Wood ? Coal)
-    /// - Forge (Metal bars, leather, chains ? weapons/armor)
-    /// - Workbench (Wood, stone, building materials)
-    /// - Cooking Station / Cauldron (Raw food ? cooked food/meads)
-    /// - Fermenter (Mead bases ? finished meads)
-    /// - Artisan Table (Dragon tears, various high-tier crafting)
-    /// - Stonecutter (Stone ? cut stone blocks)
+    /// Picks which chest an item belongs in by what it is and which crafting stations are nearby, so fuel lands
+    /// by kilns and fireplaces, ore by smelters, bars by forges, food by cooking stations and cauldrons, building
+    /// materials by workbenches, and trophies and valuables together.
     /// </summary>
     public static class SmartStorageOrganizer
     {
@@ -78,7 +58,7 @@ namespace FiresCore.Npc.IdleBehaviors
             Arrows,             // All arrow types
 
             // Equipment stored in chests
-            Weapon,             // Melee weapons, bows (items in chests â€” companions never deposit equipped weapons)
+            Weapon,             // Melee weapons, bows (items in chests — companions never deposit equipped weapons)
             Armor,              // Helmets, chest, legs, shoulder, shields, utility
 
             // Special
@@ -369,7 +349,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (lowerName.Contains("meat") || lowerName.Contains("tail"))
                 return ItemCategory.RawMeat;
 
-            // Weapon/armor detection by ItemType â€” catches all modded content too
+            // Weapon/armor detection by ItemType — catches all modded content too
             if (item.m_shared != null)
             {
                 switch (item.m_shared.m_itemType)
@@ -430,11 +410,11 @@ namespace FiresCore.Npc.IdleBehaviors
             var colliders = Physics.OverlapSphere(position, radius);
             var processed = new HashSet<GameObject>();
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                GameObject obj = col.gameObject;
+                GameObject obj = collider.gameObject;
                 if (processed.Contains(obj)) continue;
                 
                 // Check for various station types
@@ -993,7 +973,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         if (sourceChest == targetChest) continue;
 
                         int canAdd = maxStack - targetItem.m_stack;
-                        if (canAdd <= 0) break; // target is full ï¿½ move to next target
+                        if (canAdd <= 0) break; // target is full - move to next target
 
                         int toMove = Mathf.Min(canAdd, sourceItem.m_stack);
                         if (toMove <= 0) continue;

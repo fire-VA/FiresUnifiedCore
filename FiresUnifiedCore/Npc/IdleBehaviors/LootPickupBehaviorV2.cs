@@ -46,18 +46,18 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float LOOT_DETECTION_RANGE = 8f;
-        private const float STAY_MODE_LOOT_RANGE = 25f;
-        private const float PICKUP_RANGE = 1.5f;
-        private const float MAX_LOOT_TIME = 30f;
+        private const float LootDetectionRange = 8f;
+        private const float StayModeLootRange = 25f;
+        private const float PickupRange = 1.5f;
+        private const float MaxLootTime = 30f;
         
-        private const float TROPHY_PICKUP_CHANCE = 1.0f;
-        private const float MATERIAL_PICKUP_CHANCE = 0.7f;
-        private const float CONSUMABLE_PICKUP_CHANCE = 0.5f;
-        private const float EQUIPMENT_PICKUP_CHANCE = 0.3f;
-        private const float OTHER_PICKUP_CHANCE = 0.2f;
+        private const float TrophyPickupChance = 1.0f;
+        private const float MaterialPickupChance = 0.7f;
+        private const float ConsumablePickupChance = 0.5f;
+        private const float EquipmentPickupChance = 0.3f;
+        private const float OtherPickupChance = 0.2f;
         
-        private const int MAX_ITEMS_PER_SESSION = 10;
+        private const int MaxItemsPerSession = 10;
         
         #endregion
         
@@ -119,7 +119,7 @@ namespace FiresCore.Npc.IdleBehaviors
         public override void Initialize(CompanionController companion, CompanionIdleBehavior idleBehavior)
         {
             base.Initialize(companion, idleBehavior);
-            MaxDuration = MAX_LOOT_TIME + 10f;
+            MaxDuration = MaxLootTime + 10f;
         }
         
         public override bool CanStart()
@@ -151,7 +151,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         protected override bool UpdatePhase(LootPhase phase)
         {
-            if (_itemsPickedUp >= MAX_ITEMS_PER_SESSION)
+            if (_itemsPickedUp >= MaxItemsPerSession)
             {
                 SetPhase(LootPhase.Complete);
             }
@@ -296,7 +296,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private float GetSearchRange()
         {
             bool isStaying = IdleBehavior != null && IdleBehavior.HasHomePosition && !Companion.ShouldBeFollowing;
-            return isStaying ? STAY_MODE_LOOT_RANGE : LOOT_DETECTION_RANGE;
+            return isStaying ? StayModeLootRange : LootDetectionRange;
         }
         
         private bool ShouldDeposit()
@@ -320,11 +320,11 @@ namespace FiresCore.Npc.IdleBehaviors
             float searchRadius = GetEffectiveSearchRadius(range);
             var colliders = Physics.OverlapSphere(center, searchRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var itemDrop = col.GetComponent<ItemDrop>();
+                var itemDrop = collider.GetComponent<ItemDrop>();
                 if (itemDrop == null || !itemDrop.CanPickup()) continue;
                 
                 var itemData = itemDrop.m_itemData;
@@ -363,13 +363,13 @@ namespace FiresCore.Npc.IdleBehaviors
             string name = item.m_shared.m_name?.ToLowerInvariant() ?? "";
             
             if (itemType == ItemDrop.ItemData.ItemType.Trophy || name.Contains("trophy"))
-                return TROPHY_PICKUP_CHANCE;
+                return TrophyPickupChance;
             
             if (itemType == ItemDrop.ItemData.ItemType.Material)
-                return MATERIAL_PICKUP_CHANCE;
+                return MaterialPickupChance;
             
             if (itemType == ItemDrop.ItemData.ItemType.Consumable)
-                return CONSUMABLE_PICKUP_CHANCE;
+                return ConsumablePickupChance;
             
             if (itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
                 itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
@@ -380,10 +380,10 @@ namespace FiresCore.Npc.IdleBehaviors
                 itemType == ItemDrop.ItemData.ItemType.Legs ||
                 itemType == ItemDrop.ItemData.ItemType.Shoulder)
             {
-                return EQUIPMENT_PICKUP_CHANCE;
+                return EquipmentPickupChance;
             }
             
-            return OTHER_PICKUP_CHANCE;
+            return OtherPickupChance;
         }
         
         private float GetItemPriority(ItemDrop.ItemData item)

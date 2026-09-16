@@ -21,9 +21,7 @@ namespace FiresCore.UI
             get { return Path.Combine(FiresCore.Storage.FiresConfigPaths.UiLayouts); }
         }
 
-        // ???????????????????????????????????????
         //  Public API
-        // ???????????????????????????????????????
 
         public static string Serialize(UILayoutDefinition layout)
         {
@@ -78,9 +76,9 @@ namespace FiresCore.UI
             string key = NormPath(fullPath);
             lock (_selfWriteLock)
             {
-                if (_selfWrites.TryGetValue(key, out var t))
+                if (_selfWrites.TryGetValue(key, out var writtenAt))
                 {
-                    if ((DateTime.UtcNow - t).TotalSeconds < SelfWriteExpirySeconds) return true;
+                    if ((DateTime.UtcNow - writtenAt).TotalSeconds < SelfWriteExpirySeconds) return true;
                     _selfWrites.Remove(key);
                 }
                 return false;
@@ -196,35 +194,33 @@ namespace FiresCore.UI
             return deleted;
         }
 
-        // ???????????????????????????????????????
         //  JSON Writer
-        // ???????????????????????????????????????
 
-        private static void WriteLayout(StringBuilder sb, UILayoutDefinition d, int indent)
+        private static void WriteLayout(StringBuilder sb, UILayoutDefinition layout, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteString(sb, i, "UID", d.UID); sb.AppendLine(",");
-            WriteString(sb, i, "DisplayName", d.DisplayName); sb.AppendLine(",");
-            WriteString(sb, i, "Category", d.Category); sb.AppendLine(",");
-            WriteString(sb, i, "Author", d.Author); sb.AppendLine(",");
-            WriteLong(sb, i, "CreatedTimestamp", d.CreatedTimestamp); sb.AppendLine(",");
-            WriteLong(sb, i, "ModifiedTimestamp", d.ModifiedTimestamp); sb.AppendLine(",");
-            WriteInt(sb, i, "Version", d.Version); sb.AppendLine(",");
-            WriteVec2(sb, i, "CanvasSize", d.CanvasSize); sb.AppendLine(",");
+            WriteString(sb, i, "UID", layout.UID); sb.AppendLine(",");
+            WriteString(sb, i, "DisplayName", layout.DisplayName); sb.AppendLine(",");
+            WriteString(sb, i, "Category", layout.Category); sb.AppendLine(",");
+            WriteString(sb, i, "Author", layout.Author); sb.AppendLine(",");
+            WriteLong(sb, i, "CreatedTimestamp", layout.CreatedTimestamp); sb.AppendLine(",");
+            WriteLong(sb, i, "ModifiedTimestamp", layout.ModifiedTimestamp); sb.AppendLine(",");
+            WriteInt(sb, i, "Version", layout.Version); sb.AppendLine(",");
+            WriteVec2(sb, i, "CanvasSize", layout.CanvasSize); sb.AppendLine(",");
 
             // Metadata
             Indent(sb, i); sb.Append("\"Metadata\": [");
-            if (d.Metadata != null && d.Metadata.Count > 0)
+            if (layout.Metadata != null && layout.Metadata.Count > 0)
             {
                 sb.AppendLine();
-                for (int m = 0; m < d.Metadata.Count; m++)
+                for (int metaIndex = 0; metaIndex < layout.Metadata.Count; metaIndex++)
                 {
                     Indent(sb, i + 1);
                     sb.Append("{");
-                    sb.Append($"\"Key\":{Esc(d.Metadata[m].Key)},\"Value\":{Esc(d.Metadata[m].Value)}");
+                    sb.Append($"\"Key\":{Esc(layout.Metadata[metaIndex].Key)},\"Value\":{Esc(layout.Metadata[metaIndex].Value)}");
                     sb.Append("}");
-                    if (m < d.Metadata.Count - 1) sb.Append(",");
+                    if (metaIndex < layout.Metadata.Count - 1) sb.Append(",");
                     sb.AppendLine();
                 }
                 Indent(sb, i);
@@ -232,29 +228,29 @@ namespace FiresCore.UI
             sb.AppendLine("],");
 
             // Canvas scaler
-            WriteOptional(sb, i, "CanvasScaler", d.CanvasScaler, WriteCanvasScaler); sb.AppendLine(",");
+            WriteOptional(sb, i, "CanvasScaler", layout.CanvasScaler, WriteCanvasScaler); sb.AppendLine(",");
 
             // Screen position and scale (preview layout mode)
-            if (!float.IsNaN(d.ScreenPositionX) && !float.IsNaN(d.ScreenPositionY))
+            if (!float.IsNaN(layout.ScreenPositionX) && !float.IsNaN(layout.ScreenPositionY))
             {
-                WriteFloat(sb, i, "ScreenPositionX", d.ScreenPositionX); sb.AppendLine(",");
-                WriteFloat(sb, i, "ScreenPositionY", d.ScreenPositionY); sb.AppendLine(",");
+                WriteFloat(sb, i, "ScreenPositionX", layout.ScreenPositionX); sb.AppendLine(",");
+                WriteFloat(sb, i, "ScreenPositionY", layout.ScreenPositionY); sb.AppendLine(",");
             }
-            if (!Mathf.Approximately(d.ScreenScale, 1f))
+            if (!Mathf.Approximately(layout.ScreenScale, 1f))
             {
-                WriteFloat(sb, i, "ScreenScale", d.ScreenScale); sb.AppendLine(",");
+                WriteFloat(sb, i, "ScreenScale", layout.ScreenScale); sb.AppendLine(",");
             }
 
             // RuntimeRootTransform (preserved original root before editor normalization)
-            if (d.RuntimeRootTransform != null)
+            if (layout.RuntimeRootTransform != null)
             {
-                WriteOptional(sb, i, "RuntimeRootTransform", d.RuntimeRootTransform, WriteRuntimeRootTransform); sb.AppendLine(",");
+                WriteOptional(sb, i, "RuntimeRootTransform", layout.RuntimeRootTransform, WriteRuntimeRootTransform); sb.AppendLine(",");
             }
 
             // Root element
             Indent(sb, i); sb.AppendLine("\"RootElement\":");
-            if (d.RootElement != null)
-                WriteNode(sb, d.RootElement, i);
+            if (layout.RootElement != null)
+                WriteNode(sb, layout.RootElement, i);
             else
             { Indent(sb, i); sb.Append("null"); }
 
@@ -262,46 +258,46 @@ namespace FiresCore.UI
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteNode(StringBuilder sb, UIElementNode n, int indent)
+        private static void WriteNode(StringBuilder sb, UIElementNode node, int indent)
         {
             Indent(sb, indent); sb.AppendLine("{");
             int i = indent + 1;
 
             // Identity
-            WriteString(sb, i, "Id", n.Id); sb.AppendLine(",");
-            WriteString(sb, i, "Name", n.Name); sb.AppendLine(",");
-            if (!string.IsNullOrEmpty(n.Tag)) { WriteString(sb, i, "Tag", n.Tag); sb.AppendLine(","); }
-            WriteString(sb, i, "Type", n.Type.ToString()); sb.AppendLine(",");
+            WriteString(sb, i, "Id", node.Id); sb.AppendLine(",");
+            WriteString(sb, i, "Name", node.Name); sb.AppendLine(",");
+            if (!string.IsNullOrEmpty(node.Tag)) { WriteString(sb, i, "Tag", node.Tag); sb.AppendLine(","); }
+            WriteString(sb, i, "Type", node.Type.ToString()); sb.AppendLine(",");
 
             // Transform
-            WriteVec2(sb, i, "AnchorMin", n.AnchorMin); sb.AppendLine(",");
-            WriteVec2(sb, i, "AnchorMax", n.AnchorMax); sb.AppendLine(",");
-            WriteVec2(sb, i, "Pivot", n.Pivot); sb.AppendLine(",");
-            WriteVec2(sb, i, "AnchoredPosition", n.AnchoredPosition); sb.AppendLine(",");
-            WriteVec2(sb, i, "SizeDelta", n.SizeDelta); sb.AppendLine(",");
-            WriteVec2(sb, i, "OffsetMin", n.OffsetMin); sb.AppendLine(",");
-            WriteVec2(sb, i, "OffsetMax", n.OffsetMax); sb.AppendLine(",");
-            if (n.Rotation != 0) { WriteFloat(sb, i, "Rotation", n.Rotation); sb.AppendLine(","); }
+            WriteVec2(sb, i, "AnchorMin", node.AnchorMin); sb.AppendLine(",");
+            WriteVec2(sb, i, "AnchorMax", node.AnchorMax); sb.AppendLine(",");
+            WriteVec2(sb, i, "Pivot", node.Pivot); sb.AppendLine(",");
+            WriteVec2(sb, i, "AnchoredPosition", node.AnchoredPosition); sb.AppendLine(",");
+            WriteVec2(sb, i, "SizeDelta", node.SizeDelta); sb.AppendLine(",");
+            WriteVec2(sb, i, "OffsetMin", node.OffsetMin); sb.AppendLine(",");
+            WriteVec2(sb, i, "OffsetMax", node.OffsetMax); sb.AppendLine(",");
+            if (node.Rotation != 0) { WriteFloat(sb, i, "Rotation", node.Rotation); sb.AppendLine(","); }
 
-            // State � only write non-defaults
-            if (!n.Active) { WriteBool(sb, i, "Active", n.Active); sb.AppendLine(","); }
-            if (!n.Interactable) { WriteBool(sb, i, "Interactable", n.Interactable); sb.AppendLine(","); }
-            if (n.HasMask) { WriteBool(sb, i, "HasMask", n.HasMask); sb.AppendLine(","); }
-            if (n.HasRectMask2D) { WriteBool(sb, i, "HasRectMask2D", n.HasRectMask2D); sb.AppendLine(","); }
-            if (n.TransformLocked) { WriteBool(sb, i, "TransformLocked", n.TransformLocked); sb.AppendLine(","); }
+            // State - only write non-defaults
+            if (!node.Active) { WriteBool(sb, i, "Active", node.Active); sb.AppendLine(","); }
+            if (!node.Interactable) { WriteBool(sb, i, "Interactable", node.Interactable); sb.AppendLine(","); }
+            if (node.HasMask) { WriteBool(sb, i, "HasMask", node.HasMask); sb.AppendLine(","); }
+            if (node.HasRectMask2D) { WriteBool(sb, i, "HasRectMask2D", node.HasRectMask2D); sb.AppendLine(","); }
+            if (node.TransformLocked) { WriteBool(sb, i, "TransformLocked", node.TransformLocked); sb.AppendLine(","); }
 
-            // Per-element metadata � only if non-empty
-            if (n.Metadata != null && n.Metadata.Count > 0)
+            // Per-element metadata - only if non-empty
+            if (node.Metadata != null && node.Metadata.Count > 0)
             {
                 Indent(sb, i); sb.Append("\"Metadata\": [");
                 sb.AppendLine();
-                for (int m = 0; m < n.Metadata.Count; m++)
+                for (int metaIndex = 0; metaIndex < node.Metadata.Count; metaIndex++)
                 {
                     Indent(sb, i + 1);
                     sb.Append("{");
-                    sb.Append($"\"Key\":{Esc(n.Metadata[m].Key)},\"Value\":{Esc(n.Metadata[m].Value)}");
+                    sb.Append($"\"Key\":{Esc(node.Metadata[metaIndex].Key)},\"Value\":{Esc(node.Metadata[metaIndex].Value)}");
                     sb.Append("}");
-                    if (m < n.Metadata.Count - 1) sb.Append(",");
+                    if (metaIndex < node.Metadata.Count - 1) sb.Append(",");
                     sb.AppendLine();
                 }
                 Indent(sb, i);
@@ -309,38 +305,38 @@ namespace FiresCore.UI
             }
 
             // Style
-            if (n.Style != null)
+            if (node.Style != null)
             {
                 Indent(sb, i); sb.Append("\"Style\": ");
-                WriteStyle(sb, n.Style, i); sb.AppendLine(",");
+                WriteStyle(sb, node.Style, i); sb.AppendLine(",");
             }
 
-            // Optional components � SKIP null entries entirely.
+            // Optional components - SKIP null entries entirely.
             // The deserializer already handles missing keys via ContainsKey checks.
-            if (n.LayoutGroup != null) { WriteOptional(sb, i, "LayoutGroup", n.LayoutGroup, WriteLayoutGroup); sb.AppendLine(","); }
-            if (n.GridLayoutGroup != null) { WriteOptional(sb, i, "GridLayoutGroup", n.GridLayoutGroup, WriteGridLayoutGroup); sb.AppendLine(","); }
-            if (n.LayoutElement != null) { WriteOptional(sb, i, "LayoutElement", n.LayoutElement, WriteLayoutElement); sb.AppendLine(","); }
-            if (n.ContentFitter != null) { WriteOptional(sb, i, "ContentFitter", n.ContentFitter, WriteContentFitter); sb.AppendLine(","); }
-            if (n.AspectRatioFitter != null) { WriteOptional(sb, i, "AspectRatioFitter", n.AspectRatioFitter, WriteAspectRatioFitter); sb.AppendLine(","); }
-            if (n.TextData != null) { WriteOptional(sb, i, "TextData", n.TextData, WriteText); sb.AppendLine(","); }
-            if (n.ImageData != null) { WriteOptional(sb, i, "ImageData", n.ImageData, WriteImage); sb.AppendLine(","); }
-            if (n.InputFieldData != null) { WriteOptional(sb, i, "InputFieldData", n.InputFieldData, WriteInputField); sb.AppendLine(","); }
-            if (n.ScrollViewData != null) { WriteOptional(sb, i, "ScrollViewData", n.ScrollViewData, WriteScrollView); sb.AppendLine(","); }
-            if (n.DropdownData != null) { WriteOptional(sb, i, "DropdownData", n.DropdownData, WriteDropdown); sb.AppendLine(","); }
-            if (n.ButtonData != null) { WriteOptional(sb, i, "ButtonData", n.ButtonData, WriteButton); sb.AppendLine(","); }
-            if (n.ToggleData != null) { WriteOptional(sb, i, "ToggleData", n.ToggleData, WriteToggle); sb.AppendLine(","); }
-            if (n.SliderData != null) { WriteOptional(sb, i, "SliderData", n.SliderData, WriteSlider); sb.AppendLine(","); }
-            if (n.RenderCameraData != null) { WriteOptional(sb, i, "RenderCameraData", n.RenderCameraData, WriteRenderCamera); sb.AppendLine(","); }
+            if (node.LayoutGroup != null) { WriteOptional(sb, i, "LayoutGroup", node.LayoutGroup, WriteLayoutGroup); sb.AppendLine(","); }
+            if (node.GridLayoutGroup != null) { WriteOptional(sb, i, "GridLayoutGroup", node.GridLayoutGroup, WriteGridLayoutGroup); sb.AppendLine(","); }
+            if (node.LayoutElement != null) { WriteOptional(sb, i, "LayoutElement", node.LayoutElement, WriteLayoutElement); sb.AppendLine(","); }
+            if (node.ContentFitter != null) { WriteOptional(sb, i, "ContentFitter", node.ContentFitter, WriteContentFitter); sb.AppendLine(","); }
+            if (node.AspectRatioFitter != null) { WriteOptional(sb, i, "AspectRatioFitter", node.AspectRatioFitter, WriteAspectRatioFitter); sb.AppendLine(","); }
+            if (node.TextData != null) { WriteOptional(sb, i, "TextData", node.TextData, WriteText); sb.AppendLine(","); }
+            if (node.ImageData != null) { WriteOptional(sb, i, "ImageData", node.ImageData, WriteImage); sb.AppendLine(","); }
+            if (node.InputFieldData != null) { WriteOptional(sb, i, "InputFieldData", node.InputFieldData, WriteInputField); sb.AppendLine(","); }
+            if (node.ScrollViewData != null) { WriteOptional(sb, i, "ScrollViewData", node.ScrollViewData, WriteScrollView); sb.AppendLine(","); }
+            if (node.DropdownData != null) { WriteOptional(sb, i, "DropdownData", node.DropdownData, WriteDropdown); sb.AppendLine(","); }
+            if (node.ButtonData != null) { WriteOptional(sb, i, "ButtonData", node.ButtonData, WriteButton); sb.AppendLine(","); }
+            if (node.ToggleData != null) { WriteOptional(sb, i, "ToggleData", node.ToggleData, WriteToggle); sb.AppendLine(","); }
+            if (node.SliderData != null) { WriteOptional(sb, i, "SliderData", node.SliderData, WriteSlider); sb.AppendLine(","); }
+            if (node.RenderCameraData != null) { WriteOptional(sb, i, "RenderCameraData", node.RenderCameraData, WriteRenderCamera); sb.AppendLine(","); }
 
-            // Children � always last (no trailing comma issue)
+            // Children - always last (no trailing comma issue)
             Indent(sb, i); sb.Append("\"Children\": ");
-            if (n.Children != null && n.Children.Count > 0)
+            if (node.Children != null && node.Children.Count > 0)
             {
                 sb.AppendLine("[");
-                for (int c = 0; c < n.Children.Count; c++)
+                for (int childIndex = 0; childIndex < node.Children.Count; childIndex++)
                 {
-                    WriteNode(sb, n.Children[c], i + 1);
-                    if (c < n.Children.Count - 1) sb.AppendLine(",");
+                    WriteNode(sb, node.Children[childIndex], i + 1);
+                    if (childIndex < node.Children.Count - 1) sb.AppendLine(",");
                     else sb.AppendLine();
                 }
                 Indent(sb, i); sb.Append("]");
@@ -354,224 +350,224 @@ namespace FiresCore.UI
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteStyle(StringBuilder sb, UIElementStyle s, int indent)
+        private static void WriteStyle(StringBuilder sb, UIElementStyle style, int indent)
         {
-            if (s == null) { sb.Append("null"); return; }
+            if (style == null) { sb.Append("null"); return; }
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteColor(sb, i, "BackgroundColor", s.BackgroundColor); sb.AppendLine(",");
-            WriteColor(sb, i, "BorderColor", s.BorderColor); sb.AppendLine(",");
-            WriteFloat(sb, i, "BorderWidth", s.BorderWidth); sb.AppendLine(",");
-            WriteFloat(sb, i, "CornerRadius", s.CornerRadius); sb.AppendLine(",");
-            WriteFloat(sb, i, "Opacity", s.Opacity); sb.AppendLine(",");
-            WriteBool(sb, i, "RaycastTarget", s.RaycastTarget); sb.AppendLine(",");
-            WriteString(sb, i, "Shape", s.Shape.ToString()); sb.AppendLine(",");
-            WriteString(sb, i, "BackgroundSprite", s.BackgroundSprite); sb.AppendLine(",");
-            WriteInt(sb, i, "ImageType", s.ImageType); sb.AppendLine();
+            WriteColor(sb, i, "BackgroundColor", style.BackgroundColor); sb.AppendLine(",");
+            WriteColor(sb, i, "BorderColor", style.BorderColor); sb.AppendLine(",");
+            WriteFloat(sb, i, "BorderWidth", style.BorderWidth); sb.AppendLine(",");
+            WriteFloat(sb, i, "CornerRadius", style.CornerRadius); sb.AppendLine(",");
+            WriteFloat(sb, i, "Opacity", style.Opacity); sb.AppendLine(",");
+            WriteBool(sb, i, "RaycastTarget", style.RaycastTarget); sb.AppendLine(",");
+            WriteString(sb, i, "Shape", style.Shape.ToString()); sb.AppendLine(",");
+            WriteString(sb, i, "BackgroundSprite", style.BackgroundSprite); sb.AppendLine(",");
+            WriteInt(sb, i, "ImageType", style.ImageType); sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteText(StringBuilder sb, UITextDef t, int indent)
+        private static void WriteText(StringBuilder sb, UITextDef text, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteString(sb, i, "Text", t.Text); sb.AppendLine(",");
-            WriteFloat(sb, i, "FontSize", t.FontSize); sb.AppendLine(",");
-            WriteString(sb, i, "FontCategory", t.FontCategory); sb.AppendLine(",");
-            WriteInt(sb, i, "FontStyle", t.FontStyle); sb.AppendLine(",");
-            WriteColor(sb, i, "Color", t.Color); sb.AppendLine(",");
-            WriteInt(sb, i, "Alignment", t.Alignment); sb.AppendLine(",");
-            WriteBool(sb, i, "WordWrap", t.WordWrap); sb.AppendLine(",");
-            WriteInt(sb, i, "OverflowMode", t.OverflowMode); sb.AppendLine(",");
-            WriteFloat(sb, i, "LineSpacing", t.LineSpacing); sb.AppendLine(",");
-            WriteRectOffset(sb, i, "TextPadding", t.TextPadding);
-            if (!t.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", t.ComponentEnabled); }
+            WriteString(sb, i, "Text", text.Text); sb.AppendLine(",");
+            WriteFloat(sb, i, "FontSize", text.FontSize); sb.AppendLine(",");
+            WriteString(sb, i, "FontCategory", text.FontCategory); sb.AppendLine(",");
+            WriteInt(sb, i, "FontStyle", text.FontStyle); sb.AppendLine(",");
+            WriteColor(sb, i, "Color", text.Color); sb.AppendLine(",");
+            WriteInt(sb, i, "Alignment", text.Alignment); sb.AppendLine(",");
+            WriteBool(sb, i, "WordWrap", text.WordWrap); sb.AppendLine(",");
+            WriteInt(sb, i, "OverflowMode", text.OverflowMode); sb.AppendLine(",");
+            WriteFloat(sb, i, "LineSpacing", text.LineSpacing); sb.AppendLine(",");
+            WriteRectOffset(sb, i, "TextPadding", text.TextPadding);
+            if (!text.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", text.ComponentEnabled); }
             sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteImage(StringBuilder sb, UIImageDef d, int indent)
+        private static void WriteImage(StringBuilder sb, UIImageDef image, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteString(sb, i, "SpriteName", d.SpriteName); sb.AppendLine(",");
-            WriteInt(sb, i, "ImageType", d.ImageType); sb.AppendLine(",");
-            WriteBool(sb, i, "PreserveAspect", d.PreserveAspect); sb.AppendLine(",");
-            WriteColor(sb, i, "Color", d.Color); sb.AppendLine(",");
-            WriteBool(sb, i, "FillCenter", d.FillCenter); sb.AppendLine(",");
-            WriteFloat(sb, i, "PixelsPerUnit", d.PixelsPerUnit);
-            if (!d.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", d.ComponentEnabled); }
+            WriteString(sb, i, "SpriteName", image.SpriteName); sb.AppendLine(",");
+            WriteInt(sb, i, "ImageType", image.ImageType); sb.AppendLine(",");
+            WriteBool(sb, i, "PreserveAspect", image.PreserveAspect); sb.AppendLine(",");
+            WriteColor(sb, i, "Color", image.Color); sb.AppendLine(",");
+            WriteBool(sb, i, "FillCenter", image.FillCenter); sb.AppendLine(",");
+            WriteFloat(sb, i, "PixelsPerUnit", image.PixelsPerUnit);
+            if (!image.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", image.ComponentEnabled); }
             sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteInputField(StringBuilder sb, UIInputFieldDef d, int indent)
+        private static void WriteInputField(StringBuilder sb, UIInputFieldDef inputField, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteString(sb, i, "PlaceholderText", d.PlaceholderText); sb.AppendLine(",");
-            WriteFloat(sb, i, "FontSize", d.FontSize); sb.AppendLine(",");
-            WriteBool(sb, i, "Multiline", d.Multiline); sb.AppendLine(",");
-            WriteInt(sb, i, "CharacterLimit", d.CharacterLimit); sb.AppendLine(",");
-            WriteColor(sb, i, "TextColor", d.TextColor); sb.AppendLine(",");
-            WriteColor(sb, i, "PlaceholderColor", d.PlaceholderColor); sb.AppendLine(",");
-            WriteColor(sb, i, "BackgroundColor", d.BackgroundColor); sb.AppendLine(",");
-            WriteColor(sb, i, "CaretColor", d.CaretColor); sb.AppendLine(",");
-            WriteColor(sb, i, "SelectionColor", d.SelectionColor); sb.AppendLine(",");
-            WriteString(sb, i, "ContentType", d.ContentType); sb.AppendLine(",");
-            WriteInt(sb, i, "TextAlignment", d.TextAlignment); sb.AppendLine(",");
-            WriteRectOffset(sb, i, "TextPadding", d.TextPadding);
-            if (!d.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", d.ComponentEnabled); }
+            WriteString(sb, i, "PlaceholderText", inputField.PlaceholderText); sb.AppendLine(",");
+            WriteFloat(sb, i, "FontSize", inputField.FontSize); sb.AppendLine(",");
+            WriteBool(sb, i, "Multiline", inputField.Multiline); sb.AppendLine(",");
+            WriteInt(sb, i, "CharacterLimit", inputField.CharacterLimit); sb.AppendLine(",");
+            WriteColor(sb, i, "TextColor", inputField.TextColor); sb.AppendLine(",");
+            WriteColor(sb, i, "PlaceholderColor", inputField.PlaceholderColor); sb.AppendLine(",");
+            WriteColor(sb, i, "BackgroundColor", inputField.BackgroundColor); sb.AppendLine(",");
+            WriteColor(sb, i, "CaretColor", inputField.CaretColor); sb.AppendLine(",");
+            WriteColor(sb, i, "SelectionColor", inputField.SelectionColor); sb.AppendLine(",");
+            WriteString(sb, i, "ContentType", inputField.ContentType); sb.AppendLine(",");
+            WriteInt(sb, i, "TextAlignment", inputField.TextAlignment); sb.AppendLine(",");
+            WriteRectOffset(sb, i, "TextPadding", inputField.TextPadding);
+            if (!inputField.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", inputField.ComponentEnabled); }
             sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteScrollView(StringBuilder sb, UIScrollViewDef d, int indent)
+        private static void WriteScrollView(StringBuilder sb, UIScrollViewDef scrollView, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteBool(sb, i, "Horizontal", d.Horizontal); sb.AppendLine(",");
-            WriteBool(sb, i, "Vertical", d.Vertical); sb.AppendLine(",");
-            WriteInt(sb, i, "MovementType", d.MovementType); sb.AppendLine(",");
-            WriteFloat(sb, i, "ScrollSensitivity", d.ScrollSensitivity); sb.AppendLine(",");
-            WriteFloat(sb, i, "Elasticity", d.Elasticity); sb.AppendLine(",");
-            WriteColor(sb, i, "ViewportColor", d.ViewportColor); sb.AppendLine(",");
-            WriteColor(sb, i, "ContentColor", d.ContentColor);
-            if (!d.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", d.ComponentEnabled); }
+            WriteBool(sb, i, "Horizontal", scrollView.Horizontal); sb.AppendLine(",");
+            WriteBool(sb, i, "Vertical", scrollView.Vertical); sb.AppendLine(",");
+            WriteInt(sb, i, "MovementType", scrollView.MovementType); sb.AppendLine(",");
+            WriteFloat(sb, i, "ScrollSensitivity", scrollView.ScrollSensitivity); sb.AppendLine(",");
+            WriteFloat(sb, i, "Elasticity", scrollView.Elasticity); sb.AppendLine(",");
+            WriteColor(sb, i, "ViewportColor", scrollView.ViewportColor); sb.AppendLine(",");
+            WriteColor(sb, i, "ContentColor", scrollView.ContentColor);
+            if (!scrollView.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", scrollView.ComponentEnabled); }
             sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteDropdown(StringBuilder sb, UIDropdownDef d, int indent)
+        private static void WriteDropdown(StringBuilder sb, UIDropdownDef dropdown, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteInt(sb, i, "DefaultValue", d.DefaultValue); sb.AppendLine(",");
-            WriteFloat(sb, i, "ItemHeight", d.ItemHeight); sb.AppendLine(",");
-            WriteFloat(sb, i, "TemplateHeight", d.TemplateHeight); sb.AppendLine(",");
-            WriteFloat(sb, i, "FontSize", d.FontSize); sb.AppendLine(",");
-            WriteColor(sb, i, "TextColor", d.TextColor); sb.AppendLine(",");
-            WriteColor(sb, i, "BackgroundColor", d.BackgroundColor); sb.AppendLine(",");
-            WriteColor(sb, i, "ItemColor", d.ItemColor); sb.AppendLine(",");
+            WriteInt(sb, i, "DefaultValue", dropdown.DefaultValue); sb.AppendLine(",");
+            WriteFloat(sb, i, "ItemHeight", dropdown.ItemHeight); sb.AppendLine(",");
+            WriteFloat(sb, i, "TemplateHeight", dropdown.TemplateHeight); sb.AppendLine(",");
+            WriteFloat(sb, i, "FontSize", dropdown.FontSize); sb.AppendLine(",");
+            WriteColor(sb, i, "TextColor", dropdown.TextColor); sb.AppendLine(",");
+            WriteColor(sb, i, "BackgroundColor", dropdown.BackgroundColor); sb.AppendLine(",");
+            WriteColor(sb, i, "ItemColor", dropdown.ItemColor); sb.AppendLine(",");
             Indent(sb, i); sb.Append("\"Options\": [");
-            if (d.Options != null && d.Options.Count > 0)
+            if (dropdown.Options != null && dropdown.Options.Count > 0)
             {
-                for (int o = 0; o < d.Options.Count; o++)
+                for (int optionIndex = 0; optionIndex < dropdown.Options.Count; optionIndex++)
                 {
-                    sb.Append(Esc(d.Options[o]));
-                    if (o < d.Options.Count - 1) sb.Append(",");
+                    sb.Append(Esc(dropdown.Options[optionIndex]));
+                    if (optionIndex < dropdown.Options.Count - 1) sb.Append(",");
                 }
             }
             sb.Append("]");
-            if (!d.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", d.ComponentEnabled); }
+            if (!dropdown.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", dropdown.ComponentEnabled); }
             sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteButton(StringBuilder sb, UIButtonDef d, int indent)
+        private static void WriteButton(StringBuilder sb, UIButtonDef button, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteString(sb, i, "Label", d.Label); sb.AppendLine(",");
-            WriteFloat(sb, i, "FontSize", d.FontSize); sb.AppendLine(",");
-            WriteColor(sb, i, "LabelColor", d.LabelColor); sb.AppendLine(",");
-            WriteColor(sb, i, "NormalColor", d.NormalColor); sb.AppendLine(",");
-            WriteColor(sb, i, "HighlightedColor", d.HighlightedColor); sb.AppendLine(",");
-            WriteColor(sb, i, "PressedColor", d.PressedColor); sb.AppendLine(",");
-            WriteColor(sb, i, "SelectedColor", d.SelectedColor); sb.AppendLine(",");
-            WriteColor(sb, i, "DisabledColor", d.DisabledColor); sb.AppendLine(",");
-            WriteFloat(sb, i, "FadeDuration", d.FadeDuration); sb.AppendLine(",");
-            WriteInt(sb, i, "LabelAlignment", d.LabelAlignment); sb.AppendLine(",");
-            WriteRectOffset(sb, i, "LabelPadding", d.LabelPadding); sb.AppendLine(",");
-            WriteString(sb, i, "ClickAction", d.ClickAction); sb.AppendLine(",");
-            WriteString(sb, i, "ClickActionParam", d.ClickActionParam);
-            if (d.ShowLabel) { sb.AppendLine(","); WriteBool(sb, i, "ShowLabel", d.ShowLabel); }
-            if (!d.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", d.ComponentEnabled); }
+            WriteString(sb, i, "Label", button.Label); sb.AppendLine(",");
+            WriteFloat(sb, i, "FontSize", button.FontSize); sb.AppendLine(",");
+            WriteColor(sb, i, "LabelColor", button.LabelColor); sb.AppendLine(",");
+            WriteColor(sb, i, "NormalColor", button.NormalColor); sb.AppendLine(",");
+            WriteColor(sb, i, "HighlightedColor", button.HighlightedColor); sb.AppendLine(",");
+            WriteColor(sb, i, "PressedColor", button.PressedColor); sb.AppendLine(",");
+            WriteColor(sb, i, "SelectedColor", button.SelectedColor); sb.AppendLine(",");
+            WriteColor(sb, i, "DisabledColor", button.DisabledColor); sb.AppendLine(",");
+            WriteFloat(sb, i, "FadeDuration", button.FadeDuration); sb.AppendLine(",");
+            WriteInt(sb, i, "LabelAlignment", button.LabelAlignment); sb.AppendLine(",");
+            WriteRectOffset(sb, i, "LabelPadding", button.LabelPadding); sb.AppendLine(",");
+            WriteString(sb, i, "ClickAction", button.ClickAction); sb.AppendLine(",");
+            WriteString(sb, i, "ClickActionParam", button.ClickActionParam);
+            if (button.ShowLabel) { sb.AppendLine(","); WriteBool(sb, i, "ShowLabel", button.ShowLabel); }
+            if (!button.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", button.ComponentEnabled); }
             sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteToggle(StringBuilder sb, UIToggleDef d, int indent)
+        private static void WriteToggle(StringBuilder sb, UIToggleDef toggle, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteBool(sb, i, "DefaultValue", d.DefaultValue); sb.AppendLine(",");
-            WriteColor(sb, i, "CheckmarkColor", d.CheckmarkColor); sb.AppendLine(",");
-            WriteColor(sb, i, "BackgroundColor", d.BackgroundColor); sb.AppendLine(",");
-            WriteString(sb, i, "Label", d.Label); sb.AppendLine(",");
-            WriteFloat(sb, i, "FontSize", d.FontSize); sb.AppendLine(",");
-            WriteColor(sb, i, "LabelColor", d.LabelColor);
-            if (!d.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", d.ComponentEnabled); }
+            WriteBool(sb, i, "DefaultValue", toggle.DefaultValue); sb.AppendLine(",");
+            WriteColor(sb, i, "CheckmarkColor", toggle.CheckmarkColor); sb.AppendLine(",");
+            WriteColor(sb, i, "BackgroundColor", toggle.BackgroundColor); sb.AppendLine(",");
+            WriteString(sb, i, "Label", toggle.Label); sb.AppendLine(",");
+            WriteFloat(sb, i, "FontSize", toggle.FontSize); sb.AppendLine(",");
+            WriteColor(sb, i, "LabelColor", toggle.LabelColor);
+            if (!toggle.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", toggle.ComponentEnabled); }
             sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteSlider(StringBuilder sb, UISliderDef d, int indent)
+        private static void WriteSlider(StringBuilder sb, UISliderDef slider, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteFloat(sb, i, "MinValue", d.MinValue); sb.AppendLine(",");
-            WriteFloat(sb, i, "MaxValue", d.MaxValue); sb.AppendLine(",");
-            WriteFloat(sb, i, "DefaultValue", d.DefaultValue); sb.AppendLine(",");
-            WriteBool(sb, i, "WholeNumbers", d.WholeNumbers); sb.AppendLine(",");
-            WriteColor(sb, i, "BackgroundColor", d.BackgroundColor); sb.AppendLine(",");
-            WriteColor(sb, i, "FillColor", d.FillColor); sb.AppendLine(",");
-            WriteColor(sb, i, "HandleColor", d.HandleColor);
-            if (!d.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", d.ComponentEnabled); }
+            WriteFloat(sb, i, "MinValue", slider.MinValue); sb.AppendLine(",");
+            WriteFloat(sb, i, "MaxValue", slider.MaxValue); sb.AppendLine(",");
+            WriteFloat(sb, i, "DefaultValue", slider.DefaultValue); sb.AppendLine(",");
+            WriteBool(sb, i, "WholeNumbers", slider.WholeNumbers); sb.AppendLine(",");
+            WriteColor(sb, i, "BackgroundColor", slider.BackgroundColor); sb.AppendLine(",");
+            WriteColor(sb, i, "FillColor", slider.FillColor); sb.AppendLine(",");
+            WriteColor(sb, i, "HandleColor", slider.HandleColor);
+            if (!slider.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", slider.ComponentEnabled); }
             sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteLayoutGroup(StringBuilder sb, UILayoutGroupDef d, int indent)
+        private static void WriteLayoutGroup(StringBuilder sb, UILayoutGroupDef layoutGroup, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteBool(sb, i, "IsVertical", d.IsVertical); sb.AppendLine(",");
-            WriteFloat(sb, i, "Spacing", d.Spacing); sb.AppendLine(",");
-            WriteRectOffset(sb, i, "Padding", d.Padding); sb.AppendLine(",");
-            WriteInt(sb, i, "ChildAlignment", d.ChildAlignment); sb.AppendLine(",");
-            WriteBool(sb, i, "ChildControlWidth", d.ChildControlWidth); sb.AppendLine(",");
-            WriteBool(sb, i, "ChildControlHeight", d.ChildControlHeight); sb.AppendLine(",");
-            WriteBool(sb, i, "ChildForceExpandWidth", d.ChildForceExpandWidth); sb.AppendLine(",");
-            WriteBool(sb, i, "ChildForceExpandHeight", d.ChildForceExpandHeight); sb.AppendLine();
+            WriteBool(sb, i, "IsVertical", layoutGroup.IsVertical); sb.AppendLine(",");
+            WriteFloat(sb, i, "Spacing", layoutGroup.Spacing); sb.AppendLine(",");
+            WriteRectOffset(sb, i, "Padding", layoutGroup.Padding); sb.AppendLine(",");
+            WriteInt(sb, i, "ChildAlignment", layoutGroup.ChildAlignment); sb.AppendLine(",");
+            WriteBool(sb, i, "ChildControlWidth", layoutGroup.ChildControlWidth); sb.AppendLine(",");
+            WriteBool(sb, i, "ChildControlHeight", layoutGroup.ChildControlHeight); sb.AppendLine(",");
+            WriteBool(sb, i, "ChildForceExpandWidth", layoutGroup.ChildForceExpandWidth); sb.AppendLine(",");
+            WriteBool(sb, i, "ChildForceExpandHeight", layoutGroup.ChildForceExpandHeight); sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteLayoutElement(StringBuilder sb, UILayoutElementDef d, int indent)
+        private static void WriteLayoutElement(StringBuilder sb, UILayoutElementDef layoutElement, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteFloat(sb, i, "MinWidth", d.MinWidth); sb.AppendLine(",");
-            WriteFloat(sb, i, "MinHeight", d.MinHeight); sb.AppendLine(",");
-            WriteFloat(sb, i, "PreferredWidth", d.PreferredWidth); sb.AppendLine(",");
-            WriteFloat(sb, i, "PreferredHeight", d.PreferredHeight); sb.AppendLine(",");
-            WriteFloat(sb, i, "FlexibleWidth", d.FlexibleWidth); sb.AppendLine(",");
-            WriteFloat(sb, i, "FlexibleHeight", d.FlexibleHeight); sb.AppendLine(",");
-            WriteBool(sb, i, "IgnoreLayout", d.IgnoreLayout); sb.AppendLine();
+            WriteFloat(sb, i, "MinWidth", layoutElement.MinWidth); sb.AppendLine(",");
+            WriteFloat(sb, i, "MinHeight", layoutElement.MinHeight); sb.AppendLine(",");
+            WriteFloat(sb, i, "PreferredWidth", layoutElement.PreferredWidth); sb.AppendLine(",");
+            WriteFloat(sb, i, "PreferredHeight", layoutElement.PreferredHeight); sb.AppendLine(",");
+            WriteFloat(sb, i, "FlexibleWidth", layoutElement.FlexibleWidth); sb.AppendLine(",");
+            WriteFloat(sb, i, "FlexibleHeight", layoutElement.FlexibleHeight); sb.AppendLine(",");
+            WriteBool(sb, i, "IgnoreLayout", layoutElement.IgnoreLayout); sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteContentFitter(StringBuilder sb, UIContentFitterDef d, int indent)
+        private static void WriteContentFitter(StringBuilder sb, UIContentFitterDef contentFitter, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteInt(sb, i, "HorizontalFit", d.HorizontalFit); sb.AppendLine(",");
-            WriteInt(sb, i, "VerticalFit", d.VerticalFit); sb.AppendLine();
+            WriteInt(sb, i, "HorizontalFit", contentFitter.HorizontalFit); sb.AppendLine(",");
+            WriteInt(sb, i, "VerticalFit", contentFitter.VerticalFit); sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static void WriteGridLayoutGroup(StringBuilder sb, UIGridLayoutGroupDef d, int indent)
+        private static void WriteGridLayoutGroup(StringBuilder sb, UIGridLayoutGroupDef grid, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteVec2(sb, i, "CellSize", d.CellSize); sb.AppendLine(",");
-            WriteVec2(sb, i, "Spacing", d.Spacing); sb.AppendLine(",");
-            WriteInt(sb, i, "StartCorner", d.StartCorner); sb.AppendLine(",");
-            WriteInt(sb, i, "StartAxis", d.StartAxis); sb.AppendLine(",");
-            WriteInt(sb, i, "ChildAlignment", d.ChildAlignment); sb.AppendLine(",");
-            WriteInt(sb, i, "Constraint", d.Constraint); sb.AppendLine(",");
-            WriteInt(sb, i, "ConstraintCount", d.ConstraintCount); sb.AppendLine(",");
-            WriteRectOffset(sb, i, "Padding", d.Padding); sb.AppendLine();
+            WriteVec2(sb, i, "CellSize", grid.CellSize); sb.AppendLine(",");
+            WriteVec2(sb, i, "Spacing", grid.Spacing); sb.AppendLine(",");
+            WriteInt(sb, i, "StartCorner", grid.StartCorner); sb.AppendLine(",");
+            WriteInt(sb, i, "StartAxis", grid.StartAxis); sb.AppendLine(",");
+            WriteInt(sb, i, "ChildAlignment", grid.ChildAlignment); sb.AppendLine(",");
+            WriteInt(sb, i, "Constraint", grid.Constraint); sb.AppendLine(",");
+            WriteInt(sb, i, "ConstraintCount", grid.ConstraintCount); sb.AppendLine(",");
+            WriteRectOffset(sb, i, "Padding", grid.Padding); sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
@@ -585,9 +581,7 @@ namespace FiresCore.UI
             writer(sb, data, indent);
         }
 
-        // ???????????????????????????????????????
         //  Primitive writers
-        // ???????????????????????????????????????
 
         private static void WriteString(StringBuilder sb, int indent, string key, string val)
         {
@@ -619,22 +613,22 @@ namespace FiresCore.UI
             sb.Append($"\"{key}\": {(val ? "true" : "false")}");
         }
 
-        private static void WriteVec2(StringBuilder sb, int indent, string key, Vector2Ser v)
+        private static void WriteVec2(StringBuilder sb, int indent, string key, Vector2Ser vector)
         {
             Indent(sb, indent);
-            sb.Append($"\"{key}\": {{\"X\":{F(v.X)},\"Y\":{F(v.Y)}}}");
+            sb.Append($"\"{key}\": {{\"X\":{F(vector.X)},\"Y\":{F(vector.Y)}}}");
         }
 
-        private static void WriteColor(StringBuilder sb, int indent, string key, ColorSer c)
+        private static void WriteColor(StringBuilder sb, int indent, string key, ColorSer color)
         {
             Indent(sb, indent);
-            sb.Append($"\"{key}\": {{\"R\":{F(c.R)},\"G\":{F(c.G)},\"B\":{F(c.B)},\"A\":{F(c.A)}}}");
+            sb.Append($"\"{key}\": {{\"R\":{F(color.R)},\"G\":{F(color.G)},\"B\":{F(color.B)},\"A\":{F(color.A)}}}");
         }
 
-        private static void WriteRectOffset(StringBuilder sb, int indent, string key, RectOffsetSer o)
+        private static void WriteRectOffset(StringBuilder sb, int indent, string key, RectOffsetSer offset)
         {
             Indent(sb, indent);
-            sb.Append($"\"{key}\": {{\"Left\":{o.Left},\"Right\":{o.Right},\"Top\":{o.Top},\"Bottom\":{o.Bottom}}}");
+            sb.Append($"\"{key}\": {{\"Left\":{offset.Left},\"Right\":{offset.Right},\"Top\":{offset.Top},\"Bottom\":{offset.Bottom}}}");
         }
 
         private static void Indent(StringBuilder sb, int level)
@@ -650,12 +644,12 @@ namespace FiresCore.UI
             return val.ToString("G9", CultureInfo.InvariantCulture);
         }
 
-        private static string Esc(string s)
+        private static string Esc(string text)
         {
-            if (s == null) return "\"\"";
-            var sb = new StringBuilder(s.Length + 2);
+            if (text == null) return "\"\"";
+            var sb = new StringBuilder(text.Length + 2);
             sb.Append('"');
-            foreach (char c in s)
+            foreach (char c in text)
             {
                 switch (c)
                 {
@@ -671,9 +665,7 @@ namespace FiresCore.UI
             return sb.ToString();
         }
 
-        // ???????????????????????????????????????
         //  JSON Parser (minimal, recursive-descent)
-        // ???????????????????????????????????????
 
         private static Dictionary<string, object> ParseObject(string json, ref int pos)
         {
@@ -747,15 +739,15 @@ namespace FiresCore.UI
                 if (c == '"') return sb.ToString();
                 if (c == '\\' && pos < json.Length)
                 {
-                    char n = json[pos++];
-                    switch (n)
+                    char escaped = json[pos++];
+                    switch (escaped)
                     {
                         case '"': sb.Append('"'); break;
                         case '\\': sb.Append('\\'); break;
                         case 'n': sb.Append('\n'); break;
                         case 'r': sb.Append('\r'); break;
                         case 't': sb.Append('\t'); break;
-                        default: sb.Append(n); break;
+                        default: sb.Append(escaped); break;
                     }
                 }
                 else sb.Append(c);
@@ -784,502 +776,498 @@ namespace FiresCore.UI
             throw new FormatException($"Expected '{expected}' at position {pos}, got '{(pos < json.Length ? json[pos] : '?')}'");
         }
 
-        // ???????????????????????????????????????
-        //  Object readers (parsed dict ? typed)
-        // ???????????????????????????????????????
+        //  Object readers (parsed dict - typed)
 
-        private static UILayoutDefinition ReadLayout(Dictionary<string, object> d)
+        private static UILayoutDefinition ReadLayout(Dictionary<string, object> data)
         {
             var layout = new UILayoutDefinition();
-            layout.UID = GetStr(d, "UID");
-            layout.DisplayName = GetStr(d, "DisplayName");
-            layout.Category = GetStr(d, "Category", "Custom");
-            layout.Author = GetStr(d, "Author");
-            layout.CreatedTimestamp = GetLong(d, "CreatedTimestamp");
-            layout.ModifiedTimestamp = GetLong(d, "ModifiedTimestamp");
-            layout.Version = GetInt(d, "Version", 1);
-            layout.CanvasSize = GetVec2(d, "CanvasSize", new Vector2Ser(1920, 1080));
+            layout.UID = GetStr(data, "UID");
+            layout.DisplayName = GetStr(data, "DisplayName");
+            layout.Category = GetStr(data, "Category", "Custom");
+            layout.Author = GetStr(data, "Author");
+            layout.CreatedTimestamp = GetLong(data, "CreatedTimestamp");
+            layout.ModifiedTimestamp = GetLong(data, "ModifiedTimestamp");
+            layout.Version = GetInt(data, "Version", 1);
+            layout.CanvasSize = GetVec2(data, "CanvasSize", new Vector2Ser(1920, 1080));
 
-            if (d.ContainsKey("Metadata") && d["Metadata"] is List<object> metaList)
+            if (data.ContainsKey("Metadata") && data["Metadata"] is List<object> metaList)
             {
                 layout.Metadata = new List<MetadataEntry>();
                 foreach (var item in metaList)
                 {
-                    if (item is Dictionary<string, object> md)
-                        layout.Metadata.Add(new MetadataEntry { Key = GetStr(md, "Key"), Value = GetStr(md, "Value") });
+                    if (item is Dictionary<string, object> metaData)
+                        layout.Metadata.Add(new MetadataEntry { Key = GetStr(metaData, "Key"), Value = GetStr(metaData, "Value") });
                 }
             }
 
             // Canvas scaler
-            if (d.ContainsKey("CanvasScaler") && d["CanvasScaler"] is Dictionary<string, object> csd)
-                layout.CanvasScaler = ReadCanvasScaler(csd);
+            if (data.ContainsKey("CanvasScaler") && data["CanvasScaler"] is Dictionary<string, object> canvasScalerData)
+                layout.CanvasScaler = ReadCanvasScaler(canvasScalerData);
 
             // Screen position and scale (preview layout mode)
-            if (d.ContainsKey("ScreenPositionX") && d.ContainsKey("ScreenPositionY"))
+            if (data.ContainsKey("ScreenPositionX") && data.ContainsKey("ScreenPositionY"))
             {
-                layout.ScreenPositionX = GetFloat(d, "ScreenPositionX", float.NaN);
-                layout.ScreenPositionY = GetFloat(d, "ScreenPositionY", float.NaN);
+                layout.ScreenPositionX = GetFloat(data, "ScreenPositionX", float.NaN);
+                layout.ScreenPositionY = GetFloat(data, "ScreenPositionY", float.NaN);
             }
-            if (d.ContainsKey("ScreenScale"))
+            if (data.ContainsKey("ScreenScale"))
             {
-                layout.ScreenScale = GetFloat(d, "ScreenScale", 1f);
+                layout.ScreenScale = GetFloat(data, "ScreenScale", 1f);
             }
 
             // RuntimeRootTransform (preserved original root before editor normalization)
-            if (d.ContainsKey("RuntimeRootTransform") && d["RuntimeRootTransform"] is Dictionary<string, object> rrtd)
-                layout.RuntimeRootTransform = ReadRuntimeRootTransform(rrtd);
+            if (data.ContainsKey("RuntimeRootTransform") && data["RuntimeRootTransform"] is Dictionary<string, object> rootTransformData)
+                layout.RuntimeRootTransform = ReadRuntimeRootTransform(rootTransformData);
 
-            if (d.ContainsKey("RootElement") && d["RootElement"] is Dictionary<string, object> rootDict)
+            if (data.ContainsKey("RootElement") && data["RootElement"] is Dictionary<string, object> rootDict)
                 layout.RootElement = ReadNode(rootDict);
 
             return layout;
         }
 
-        private static UIElementNode ReadNode(Dictionary<string, object> d)
+        private static UIElementNode ReadNode(Dictionary<string, object> data)
         {
-            var n = new UIElementNode();
-            n.Id = GetStr(d, "Id");
-            n.Name = GetStr(d, "Name");
-            n.Tag = GetStr(d, "Tag");
+            var node = new UIElementNode();
+            node.Id = GetStr(data, "Id");
+            node.Name = GetStr(data, "Name");
+            node.Tag = GetStr(data, "Tag");
 
-            string typeStr = GetStr(d, "Type", "Panel");
-            if (Enum.TryParse(typeStr, true, out UIElementType et)) n.Type = et;
+            string typeStr = GetStr(data, "Type", "Panel");
+            if (Enum.TryParse(typeStr, true, out UIElementType elementType)) node.Type = elementType;
 
-            n.AnchorMin = GetVec2(d, "AnchorMin");
-            n.AnchorMax = GetVec2(d, "AnchorMax", new Vector2Ser(1, 1));
-            n.Pivot = GetVec2(d, "Pivot", new Vector2Ser(0.5f, 0.5f));
-            n.AnchoredPosition = GetVec2(d, "AnchoredPosition");
-            n.SizeDelta = GetVec2(d, "SizeDelta");
-            n.OffsetMin = GetVec2(d, "OffsetMin");
-            n.OffsetMax = GetVec2(d, "OffsetMax");
-            n.Rotation = GetFloat(d, "Rotation");
-            n.Active = GetBool(d, "Active", true);
-            n.Interactable = GetBool(d, "Interactable", true);
-            n.HasMask = GetBool(d, "HasMask");
-            n.HasRectMask2D = GetBool(d, "HasRectMask2D");
-            n.TransformLocked = GetBool(d, "TransformLocked");
+            node.AnchorMin = GetVec2(data, "AnchorMin");
+            node.AnchorMax = GetVec2(data, "AnchorMax", new Vector2Ser(1, 1));
+            node.Pivot = GetVec2(data, "Pivot", new Vector2Ser(0.5f, 0.5f));
+            node.AnchoredPosition = GetVec2(data, "AnchoredPosition");
+            node.SizeDelta = GetVec2(data, "SizeDelta");
+            node.OffsetMin = GetVec2(data, "OffsetMin");
+            node.OffsetMax = GetVec2(data, "OffsetMax");
+            node.Rotation = GetFloat(data, "Rotation");
+            node.Active = GetBool(data, "Active", true);
+            node.Interactable = GetBool(data, "Interactable", true);
+            node.HasMask = GetBool(data, "HasMask");
+            node.HasRectMask2D = GetBool(data, "HasRectMask2D");
+            node.TransformLocked = GetBool(data, "TransformLocked");
 
             // Per-element metadata
-            if (d.ContainsKey("Metadata") && d["Metadata"] is List<object> nodeMetaList)
+            if (data.ContainsKey("Metadata") && data["Metadata"] is List<object> nodeMetaList)
             {
-                n.Metadata = new List<MetadataEntry>();
+                node.Metadata = new List<MetadataEntry>();
                 foreach (var item in nodeMetaList)
                 {
-                    if (item is Dictionary<string, object> md)
-                        n.Metadata.Add(new MetadataEntry { Key = GetStr(md, "Key"), Value = GetStr(md, "Value") });
+                    if (item is Dictionary<string, object> metaData)
+                        node.Metadata.Add(new MetadataEntry { Key = GetStr(metaData, "Key"), Value = GetStr(metaData, "Value") });
                 }
             }
 
-            if (d.ContainsKey("Style") && d["Style"] is Dictionary<string, object> sd)
-                n.Style = ReadStyle(sd);
+            if (data.ContainsKey("Style") && data["Style"] is Dictionary<string, object> styleData)
+                node.Style = ReadStyle(styleData);
 
-            if (d.ContainsKey("LayoutGroup") && d["LayoutGroup"] is Dictionary<string, object> lgd)
-                n.LayoutGroup = ReadLayoutGroup(lgd);
-            if (d.ContainsKey("GridLayoutGroup") && d["GridLayoutGroup"] is Dictionary<string, object> glgd)
-                n.GridLayoutGroup = ReadGridLayoutGroup(glgd);
-            if (d.ContainsKey("LayoutElement") && d["LayoutElement"] is Dictionary<string, object> led)
-                n.LayoutElement = ReadLayoutElement(led);
-            if (d.ContainsKey("ContentFitter") && d["ContentFitter"] is Dictionary<string, object> cfd)
-                n.ContentFitter = ReadContentFitter(cfd);
-            if (d.ContainsKey("AspectRatioFitter") && d["AspectRatioFitter"] is Dictionary<string, object> arfd)
-                n.AspectRatioFitter = ReadAspectRatioFitter(arfd);
+            if (data.ContainsKey("LayoutGroup") && data["LayoutGroup"] is Dictionary<string, object> layoutGroupData)
+                node.LayoutGroup = ReadLayoutGroup(layoutGroupData);
+            if (data.ContainsKey("GridLayoutGroup") && data["GridLayoutGroup"] is Dictionary<string, object> gridLayoutData)
+                node.GridLayoutGroup = ReadGridLayoutGroup(gridLayoutData);
+            if (data.ContainsKey("LayoutElement") && data["LayoutElement"] is Dictionary<string, object> led)
+                node.LayoutElement = ReadLayoutElement(led);
+            if (data.ContainsKey("ContentFitter") && data["ContentFitter"] is Dictionary<string, object> contentFitterData)
+                node.ContentFitter = ReadContentFitter(contentFitterData);
+            if (data.ContainsKey("AspectRatioFitter") && data["AspectRatioFitter"] is Dictionary<string, object> aspectRatioData)
+                node.AspectRatioFitter = ReadAspectRatioFitter(aspectRatioData);
 
-            if (d.ContainsKey("TextData") && d["TextData"] is Dictionary<string, object> td)
-                n.TextData = ReadText(td);
-            if (d.ContainsKey("ImageData") && d["ImageData"] is Dictionary<string, object> id2)
-                n.ImageData = ReadImage(id2);
-            if (d.ContainsKey("InputFieldData") && d["InputFieldData"] is Dictionary<string, object> ifd)
-                n.InputFieldData = ReadInputField(ifd);
-            if (d.ContainsKey("ScrollViewData") && d["ScrollViewData"] is Dictionary<string, object> svd)
-                n.ScrollViewData = ReadScrollView(svd);
-            if (d.ContainsKey("DropdownData") && d["DropdownData"] is Dictionary<string, object> ddd)
-                n.DropdownData = ReadDropdown(ddd);
-            if (d.ContainsKey("ButtonData") && d["ButtonData"] is Dictionary<string, object> bd)
-                n.ButtonData = ReadButton(bd);
-            if (d.ContainsKey("ToggleData") && d["ToggleData"] is Dictionary<string, object> togd)
-                n.ToggleData = ReadToggle(togd);
-            if (d.ContainsKey("SliderData") && d["SliderData"] is Dictionary<string, object> sld)
-                n.SliderData = ReadSlider(sld);
+            if (data.ContainsKey("TextData") && data["TextData"] is Dictionary<string, object> textData)
+                node.TextData = ReadText(textData);
+            if (data.ContainsKey("ImageData") && data["ImageData"] is Dictionary<string, object> imageData)
+                node.ImageData = ReadImage(imageData);
+            if (data.ContainsKey("InputFieldData") && data["InputFieldData"] is Dictionary<string, object> inputFieldData)
+                node.InputFieldData = ReadInputField(inputFieldData);
+            if (data.ContainsKey("ScrollViewData") && data["ScrollViewData"] is Dictionary<string, object> scrollViewData)
+                node.ScrollViewData = ReadScrollView(scrollViewData);
+            if (data.ContainsKey("DropdownData") && data["DropdownData"] is Dictionary<string, object> dropdownData)
+                node.DropdownData = ReadDropdown(dropdownData);
+            if (data.ContainsKey("ButtonData") && data["ButtonData"] is Dictionary<string, object> buttonData)
+                node.ButtonData = ReadButton(buttonData);
+            if (data.ContainsKey("ToggleData") && data["ToggleData"] is Dictionary<string, object> toggleData)
+                node.ToggleData = ReadToggle(toggleData);
+            if (data.ContainsKey("SliderData") && data["SliderData"] is Dictionary<string, object> sliderData)
+                node.SliderData = ReadSlider(sliderData);
 
-            if (d.ContainsKey("RenderCameraData") && d["RenderCameraData"] is Dictionary<string, object> rcd)
-                n.RenderCameraData = ReadRenderCamera(rcd);
+            if (data.ContainsKey("RenderCameraData") && data["RenderCameraData"] is Dictionary<string, object> renderCameraData)
+                node.RenderCameraData = ReadRenderCamera(renderCameraData);
 
-            if (d.ContainsKey("Children") && d["Children"] is List<object> children)
+            if (data.ContainsKey("Children") && data["Children"] is List<object> children)
             {
-                n.Children = new List<UIElementNode>();
+                node.Children = new List<UIElementNode>();
                 foreach (var child in children)
-                    if (child is Dictionary<string, object> cd)
-                        n.Children.Add(ReadNode(cd));
+                    if (child is Dictionary<string, object> childData)
+                        node.Children.Add(ReadNode(childData));
             }
 
-            return n;
+            return node;
         }
 
-        private static UIElementStyle ReadStyle(Dictionary<string, object> d)
+        private static UIElementStyle ReadStyle(Dictionary<string, object> data)
         {
-            var s = new UIElementStyle();
-            s.BackgroundColor = GetColor(d, "BackgroundColor", s.BackgroundColor);
-            s.BorderColor = GetColor(d, "BorderColor", s.BorderColor);
-            s.BorderWidth = GetFloat(d, "BorderWidth");
-            s.CornerRadius = GetFloat(d, "CornerRadius");
-            s.Opacity = GetFloat(d, "Opacity", 1f);
-            s.RaycastTarget = GetBool(d, "RaycastTarget", true);
-            string shapeStr = GetStr(d, "Shape", "Rectangle");
-            if (Enum.TryParse(shapeStr, true, out UIShapeType st)) s.Shape = st;
-            s.BackgroundSprite = GetStr(d, "BackgroundSprite");
-            s.ImageType = GetInt(d, "ImageType");
-            return s;
+            var style = new UIElementStyle();
+            style.BackgroundColor = GetColor(data, "BackgroundColor", style.BackgroundColor);
+            style.BorderColor = GetColor(data, "BorderColor", style.BorderColor);
+            style.BorderWidth = GetFloat(data, "BorderWidth");
+            style.CornerRadius = GetFloat(data, "CornerRadius");
+            style.Opacity = GetFloat(data, "Opacity", 1f);
+            style.RaycastTarget = GetBool(data, "RaycastTarget", true);
+            string shapeStr = GetStr(data, "Shape", "Rectangle");
+            if (Enum.TryParse(shapeStr, true, out UIShapeType shape)) style.Shape = shape;
+            style.BackgroundSprite = GetStr(data, "BackgroundSprite");
+            style.ImageType = GetInt(data, "ImageType");
+            return style;
         }
 
-        private static UITextDef ReadText(Dictionary<string, object> d)
+        private static UITextDef ReadText(Dictionary<string, object> data)
         {
-            var t = new UITextDef();
-            t.Text = GetStr(d, "Text");
-            t.FontSize = GetFloat(d, "FontSize", 16f);
-            t.FontCategory = GetStr(d, "FontCategory", "Body");
-            t.FontStyle = GetInt(d, "FontStyle");
-            t.Color = GetColor(d, "Color", t.Color);
-            t.Alignment = GetInt(d, "Alignment", (int)TMPro.TextAlignmentOptions.MidlineLeft);
-            t.WordWrap = GetBool(d, "WordWrap", true);
-            t.OverflowMode = GetInt(d, "OverflowMode");
-            t.LineSpacing = GetFloat(d, "LineSpacing");
-            t.TextPadding = GetRectOffset(d, "TextPadding");
-            t.ComponentEnabled = GetBool(d, "ComponentEnabled", true);
-            return t;
+            var text = new UITextDef();
+            text.Text = GetStr(data, "Text");
+            text.FontSize = GetFloat(data, "FontSize", 16f);
+            text.FontCategory = GetStr(data, "FontCategory", "Body");
+            text.FontStyle = GetInt(data, "FontStyle");
+            text.Color = GetColor(data, "Color", text.Color);
+            text.Alignment = GetInt(data, "Alignment", (int)TMPro.TextAlignmentOptions.MidlineLeft);
+            text.WordWrap = GetBool(data, "WordWrap", true);
+            text.OverflowMode = GetInt(data, "OverflowMode");
+            text.LineSpacing = GetFloat(data, "LineSpacing");
+            text.TextPadding = GetRectOffset(data, "TextPadding");
+            text.ComponentEnabled = GetBool(data, "ComponentEnabled", true);
+            return text;
         }
 
-        private static UIImageDef ReadImage(Dictionary<string, object> d)
+        private static UIImageDef ReadImage(Dictionary<string, object> data)
         {
             var img = new UIImageDef();
-            img.SpriteName = GetStr(d, "SpriteName");
-            img.ImageType = GetInt(d, "ImageType");
-            img.PreserveAspect = GetBool(d, "PreserveAspect");
-            img.Color = GetColor(d, "Color", ColorSer.White);
-            img.FillCenter = GetBool(d, "FillCenter", true);
-            img.PixelsPerUnit = GetFloat(d, "PixelsPerUnit", 100f);
-            img.ComponentEnabled = GetBool(d, "ComponentEnabled", true);
+            img.SpriteName = GetStr(data, "SpriteName");
+            img.ImageType = GetInt(data, "ImageType");
+            img.PreserveAspect = GetBool(data, "PreserveAspect");
+            img.Color = GetColor(data, "Color", ColorSer.White);
+            img.FillCenter = GetBool(data, "FillCenter", true);
+            img.PixelsPerUnit = GetFloat(data, "PixelsPerUnit", 100f);
+            img.ComponentEnabled = GetBool(data, "ComponentEnabled", true);
             return img;
         }
 
-        private static UIInputFieldDef ReadInputField(Dictionary<string, object> d)
+        private static UIInputFieldDef ReadInputField(Dictionary<string, object> data)
         {
             var inf = new UIInputFieldDef();
-            inf.PlaceholderText = GetStr(d, "PlaceholderText");
-            inf.FontSize = GetFloat(d, "FontSize", 13f);
-            inf.Multiline = GetBool(d, "Multiline");
-            inf.CharacterLimit = GetInt(d, "CharacterLimit");
-            inf.TextColor = GetColor(d, "TextColor", inf.TextColor);
-            inf.PlaceholderColor = GetColor(d, "PlaceholderColor", inf.PlaceholderColor);
-            inf.BackgroundColor = GetColor(d, "BackgroundColor", inf.BackgroundColor);
-            inf.CaretColor = GetColor(d, "CaretColor", inf.CaretColor);
-            inf.SelectionColor = GetColor(d, "SelectionColor", inf.SelectionColor);
-            inf.ContentType = GetStr(d, "ContentType", "Standard");
-            inf.TextAlignment = GetInt(d, "TextAlignment", (int)TMPro.TextAlignmentOptions.MidlineLeft);
-            inf.TextPadding = GetRectOffset(d, "TextPadding");
-            inf.ComponentEnabled = GetBool(d, "ComponentEnabled", true);
+            inf.PlaceholderText = GetStr(data, "PlaceholderText");
+            inf.FontSize = GetFloat(data, "FontSize", 13f);
+            inf.Multiline = GetBool(data, "Multiline");
+            inf.CharacterLimit = GetInt(data, "CharacterLimit");
+            inf.TextColor = GetColor(data, "TextColor", inf.TextColor);
+            inf.PlaceholderColor = GetColor(data, "PlaceholderColor", inf.PlaceholderColor);
+            inf.BackgroundColor = GetColor(data, "BackgroundColor", inf.BackgroundColor);
+            inf.CaretColor = GetColor(data, "CaretColor", inf.CaretColor);
+            inf.SelectionColor = GetColor(data, "SelectionColor", inf.SelectionColor);
+            inf.ContentType = GetStr(data, "ContentType", "Standard");
+            inf.TextAlignment = GetInt(data, "TextAlignment", (int)TMPro.TextAlignmentOptions.MidlineLeft);
+            inf.TextPadding = GetRectOffset(data, "TextPadding");
+            inf.ComponentEnabled = GetBool(data, "ComponentEnabled", true);
             return inf;
         }
 
-        private static UIScrollViewDef ReadScrollView(Dictionary<string, object> d)
+        private static UIScrollViewDef ReadScrollView(Dictionary<string, object> data)
         {
-            var sv = new UIScrollViewDef();
-            sv.Horizontal = GetBool(d, "Horizontal");
-            sv.Vertical = GetBool(d, "Vertical", true);
-            sv.MovementType = GetInt(d, "MovementType", 2);
-            sv.ScrollSensitivity = GetFloat(d, "ScrollSensitivity", 30f);
-            sv.Elasticity = GetFloat(d, "Elasticity", 0.1f);
-            sv.ViewportColor = GetColor(d, "ViewportColor", sv.ViewportColor);
-            sv.ContentColor = GetColor(d, "ContentColor", sv.ContentColor);
-            sv.ComponentEnabled = GetBool(d, "ComponentEnabled", true);
-            return sv;
+            var scrollView = new UIScrollViewDef();
+            scrollView.Horizontal = GetBool(data, "Horizontal");
+            scrollView.Vertical = GetBool(data, "Vertical", true);
+            scrollView.MovementType = GetInt(data, "MovementType", 2);
+            scrollView.ScrollSensitivity = GetFloat(data, "ScrollSensitivity", 30f);
+            scrollView.Elasticity = GetFloat(data, "Elasticity", 0.1f);
+            scrollView.ViewportColor = GetColor(data, "ViewportColor", scrollView.ViewportColor);
+            scrollView.ContentColor = GetColor(data, "ContentColor", scrollView.ContentColor);
+            scrollView.ComponentEnabled = GetBool(data, "ComponentEnabled", true);
+            return scrollView;
         }
 
-        private static UIDropdownDef ReadDropdown(Dictionary<string, object> d)
+        private static UIDropdownDef ReadDropdown(Dictionary<string, object> data)
         {
-            var dd = new UIDropdownDef();
-            dd.DefaultValue = GetInt(d, "DefaultValue");
-            dd.ItemHeight = GetFloat(d, "ItemHeight", 24f);
-            dd.TemplateHeight = GetFloat(d, "TemplateHeight", 160f);
-            dd.FontSize = GetFloat(d, "FontSize", 13f);
-            dd.TextColor = GetColor(d, "TextColor", dd.TextColor);
-            dd.BackgroundColor = GetColor(d, "BackgroundColor", dd.BackgroundColor);
-            dd.ItemColor = GetColor(d, "ItemColor", dd.ItemColor);
-            if (d.ContainsKey("Options") && d["Options"] is List<object> opts)
+            var dropdown = new UIDropdownDef();
+            dropdown.DefaultValue = GetInt(data, "DefaultValue");
+            dropdown.ItemHeight = GetFloat(data, "ItemHeight", 24f);
+            dropdown.TemplateHeight = GetFloat(data, "TemplateHeight", 160f);
+            dropdown.FontSize = GetFloat(data, "FontSize", 13f);
+            dropdown.TextColor = GetColor(data, "TextColor", dropdown.TextColor);
+            dropdown.BackgroundColor = GetColor(data, "BackgroundColor", dropdown.BackgroundColor);
+            dropdown.ItemColor = GetColor(data, "ItemColor", dropdown.ItemColor);
+            if (data.ContainsKey("Options") && data["Options"] is List<object> opts)
             {
-                dd.Options = new List<string>();
-                foreach (var o in opts) dd.Options.Add(o?.ToString() ?? "");
+                dropdown.Options = new List<string>();
+                foreach (var option in opts) dropdown.Options.Add(option?.ToString() ?? "");
             }
-            dd.ComponentEnabled = GetBool(d, "ComponentEnabled", true);
-            return dd;
+            dropdown.ComponentEnabled = GetBool(data, "ComponentEnabled", true);
+            return dropdown;
         }
 
-        private static UIButtonDef ReadButton(Dictionary<string, object> d)
+        private static UIButtonDef ReadButton(Dictionary<string, object> data)
         {
-            var b = new UIButtonDef();
-            b.Label = GetStr(d, "Label", "Button");
-            b.FontSize = GetFloat(d, "FontSize", 13f);
-            b.LabelColor = GetColor(d, "LabelColor", b.LabelColor);
-            b.NormalColor = GetColor(d, "NormalColor", b.NormalColor);
-            b.HighlightedColor = GetColor(d, "HighlightedColor", b.HighlightedColor);
-            b.PressedColor = GetColor(d, "PressedColor", b.PressedColor);
-            b.SelectedColor = GetColor(d, "SelectedColor", b.SelectedColor);
-            b.DisabledColor = GetColor(d, "DisabledColor", b.DisabledColor);
-            b.FadeDuration = GetFloat(d, "FadeDuration", 0.08f);
-            b.LabelAlignment = GetInt(d, "LabelAlignment", (int)TMPro.TextAlignmentOptions.Center);
-            b.LabelPadding = GetRectOffset(d, "LabelPadding");
-            b.ClickAction = GetStr(d, "ClickAction");
-            b.ClickActionParam = GetStr(d, "ClickActionParam");
-            b.ShowLabel = GetBool(d, "ShowLabel");
-            b.ComponentEnabled = GetBool(d, "ComponentEnabled", true);
-            return b;
+            var button = new UIButtonDef();
+            button.Label = GetStr(data, "Label", "Button");
+            button.FontSize = GetFloat(data, "FontSize", 13f);
+            button.LabelColor = GetColor(data, "LabelColor", button.LabelColor);
+            button.NormalColor = GetColor(data, "NormalColor", button.NormalColor);
+            button.HighlightedColor = GetColor(data, "HighlightedColor", button.HighlightedColor);
+            button.PressedColor = GetColor(data, "PressedColor", button.PressedColor);
+            button.SelectedColor = GetColor(data, "SelectedColor", button.SelectedColor);
+            button.DisabledColor = GetColor(data, "DisabledColor", button.DisabledColor);
+            button.FadeDuration = GetFloat(data, "FadeDuration", 0.08f);
+            button.LabelAlignment = GetInt(data, "LabelAlignment", (int)TMPro.TextAlignmentOptions.Center);
+            button.LabelPadding = GetRectOffset(data, "LabelPadding");
+            button.ClickAction = GetStr(data, "ClickAction");
+            button.ClickActionParam = GetStr(data, "ClickActionParam");
+            button.ShowLabel = GetBool(data, "ShowLabel");
+            button.ComponentEnabled = GetBool(data, "ComponentEnabled", true);
+            return button;
         }
 
-        private static UIToggleDef ReadToggle(Dictionary<string, object> d)
+        private static UIToggleDef ReadToggle(Dictionary<string, object> data)
         {
-            var t = new UIToggleDef();
-            t.DefaultValue = GetBool(d, "DefaultValue");
-            t.CheckmarkColor = GetColor(d, "CheckmarkColor", t.CheckmarkColor);
-            t.BackgroundColor = GetColor(d, "BackgroundColor", t.BackgroundColor);
-            t.Label = GetStr(d, "Label");
-            t.FontSize = GetFloat(d, "FontSize", 13f);
-            t.LabelColor = GetColor(d, "LabelColor", t.LabelColor);
-            t.ComponentEnabled = GetBool(d, "ComponentEnabled", true);
-            return t;
+            var toggle = new UIToggleDef();
+            toggle.DefaultValue = GetBool(data, "DefaultValue");
+            toggle.CheckmarkColor = GetColor(data, "CheckmarkColor", toggle.CheckmarkColor);
+            toggle.BackgroundColor = GetColor(data, "BackgroundColor", toggle.BackgroundColor);
+            toggle.Label = GetStr(data, "Label");
+            toggle.FontSize = GetFloat(data, "FontSize", 13f);
+            toggle.LabelColor = GetColor(data, "LabelColor", toggle.LabelColor);
+            toggle.ComponentEnabled = GetBool(data, "ComponentEnabled", true);
+            return toggle;
         }
 
-        private static UISliderDef ReadSlider(Dictionary<string, object> d)
+        private static UISliderDef ReadSlider(Dictionary<string, object> data)
         {
-            var s = new UISliderDef();
-            s.MinValue = GetFloat(d, "MinValue");
-            s.MaxValue = GetFloat(d, "MaxValue", 1f);
-            s.DefaultValue = GetFloat(d, "DefaultValue");
-            s.WholeNumbers = GetBool(d, "WholeNumbers");
-            s.BackgroundColor = GetColor(d, "BackgroundColor", s.BackgroundColor);
-            s.FillColor = GetColor(d, "FillColor", s.FillColor);
-            s.HandleColor = GetColor(d, "HandleColor", s.HandleColor);
-            s.ComponentEnabled = GetBool(d, "ComponentEnabled", true);
-            return s;
+            var slider = new UISliderDef();
+            slider.MinValue = GetFloat(data, "MinValue");
+            slider.MaxValue = GetFloat(data, "MaxValue", 1f);
+            slider.DefaultValue = GetFloat(data, "DefaultValue");
+            slider.WholeNumbers = GetBool(data, "WholeNumbers");
+            slider.BackgroundColor = GetColor(data, "BackgroundColor", slider.BackgroundColor);
+            slider.FillColor = GetColor(data, "FillColor", slider.FillColor);
+            slider.HandleColor = GetColor(data, "HandleColor", slider.HandleColor);
+            slider.ComponentEnabled = GetBool(data, "ComponentEnabled", true);
+            return slider;
         }
 
-        private static void WriteRenderCamera(StringBuilder sb, UIRenderCameraDef d, int indent)
+        private static void WriteRenderCamera(StringBuilder sb, UIRenderCameraDef renderCamera, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteString(sb, i, "Mode", d.Mode); sb.AppendLine(",");
-            WriteString(sb, i, "PrefabName", d.PrefabName); sb.AppendLine(",");
-            WriteFloat(sb, i, "FieldOfView", d.FieldOfView); sb.AppendLine(",");
-            WriteColor(sb, i, "BackgroundColor", d.BackgroundColor); sb.AppendLine(",");
-            WriteInt(sb, i, "TextureWidth", d.TextureWidth); sb.AppendLine(",");
-            WriteInt(sb, i, "TextureHeight", d.TextureHeight); sb.AppendLine(",");
-            WriteVec2(sb, i, "CameraOffset", d.CameraOffset); sb.AppendLine(",");
-            WriteFloat(sb, i, "CameraDistance", d.CameraDistance); sb.AppendLine(",");
-            WriteFloat(sb, i, "CameraRotationY", d.CameraRotationY); sb.AppendLine(",");
-            WriteFloat(sb, i, "CameraRotationX", d.CameraRotationX); sb.AppendLine(",");
-            WriteString(sb, i, "LayerName", d.LayerName);
-            if (!d.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", d.ComponentEnabled); }
+            WriteString(sb, i, "Mode", renderCamera.Mode); sb.AppendLine(",");
+            WriteString(sb, i, "PrefabName", renderCamera.PrefabName); sb.AppendLine(",");
+            WriteFloat(sb, i, "FieldOfView", renderCamera.FieldOfView); sb.AppendLine(",");
+            WriteColor(sb, i, "BackgroundColor", renderCamera.BackgroundColor); sb.AppendLine(",");
+            WriteInt(sb, i, "TextureWidth", renderCamera.TextureWidth); sb.AppendLine(",");
+            WriteInt(sb, i, "TextureHeight", renderCamera.TextureHeight); sb.AppendLine(",");
+            WriteVec2(sb, i, "CameraOffset", renderCamera.CameraOffset); sb.AppendLine(",");
+            WriteFloat(sb, i, "CameraDistance", renderCamera.CameraDistance); sb.AppendLine(",");
+            WriteFloat(sb, i, "CameraRotationY", renderCamera.CameraRotationY); sb.AppendLine(",");
+            WriteFloat(sb, i, "CameraRotationX", renderCamera.CameraRotationX); sb.AppendLine(",");
+            WriteString(sb, i, "LayerName", renderCamera.LayerName);
+            if (!renderCamera.ComponentEnabled) { sb.AppendLine(","); WriteBool(sb, i, "ComponentEnabled", renderCamera.ComponentEnabled); }
             sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static UIRenderCameraDef ReadRenderCamera(Dictionary<string, object> d)
+        private static UIRenderCameraDef ReadRenderCamera(Dictionary<string, object> data)
         {
-            var rc = new UIRenderCameraDef();
-            rc.Mode = GetStr(d, "Mode", "player");
-            rc.PrefabName = GetStr(d, "PrefabName", "");
-            rc.FieldOfView = GetFloat(d, "FieldOfView", 30f);
-            rc.BackgroundColor = GetColor(d, "BackgroundColor", rc.BackgroundColor);
-            rc.TextureWidth = GetInt(d, "TextureWidth", 256);
-            rc.TextureHeight = GetInt(d, "TextureHeight", 256);
-            rc.CameraOffset = GetVec2(d, "CameraOffset");
-            rc.CameraDistance = GetFloat(d, "CameraDistance", 3f);
-            rc.CameraRotationY = GetFloat(d, "CameraRotationY");
-            rc.CameraRotationX = GetFloat(d, "CameraRotationX", 10f);
-            rc.LayerName = GetStr(d, "LayerName", "");
-            rc.ComponentEnabled = GetBool(d, "ComponentEnabled", true);
-            return rc;
+            var renderCamera = new UIRenderCameraDef();
+            renderCamera.Mode = GetStr(data, "Mode", "player");
+            renderCamera.PrefabName = GetStr(data, "PrefabName", "");
+            renderCamera.FieldOfView = GetFloat(data, "FieldOfView", 30f);
+            renderCamera.BackgroundColor = GetColor(data, "BackgroundColor", renderCamera.BackgroundColor);
+            renderCamera.TextureWidth = GetInt(data, "TextureWidth", 256);
+            renderCamera.TextureHeight = GetInt(data, "TextureHeight", 256);
+            renderCamera.CameraOffset = GetVec2(data, "CameraOffset");
+            renderCamera.CameraDistance = GetFloat(data, "CameraDistance", 3f);
+            renderCamera.CameraRotationY = GetFloat(data, "CameraRotationY");
+            renderCamera.CameraRotationX = GetFloat(data, "CameraRotationX", 10f);
+            renderCamera.LayerName = GetStr(data, "LayerName", "");
+            renderCamera.ComponentEnabled = GetBool(data, "ComponentEnabled", true);
+            return renderCamera;
         }
 
-        private static UILayoutGroupDef ReadLayoutGroup(Dictionary<string, object> d)
+        private static UILayoutGroupDef ReadLayoutGroup(Dictionary<string, object> data)
         {
-            var lg = new UILayoutGroupDef();
-            lg.IsVertical = GetBool(d, "IsVertical", true);
-            lg.Spacing = GetFloat(d, "Spacing");
-            lg.Padding = GetRectOffset(d, "Padding");
-            lg.ChildAlignment = GetInt(d, "ChildAlignment");
-            lg.ChildControlWidth = GetBool(d, "ChildControlWidth", true);
-            lg.ChildControlHeight = GetBool(d, "ChildControlHeight");
-            lg.ChildForceExpandWidth = GetBool(d, "ChildForceExpandWidth", true);
-            lg.ChildForceExpandHeight = GetBool(d, "ChildForceExpandHeight");
-            return lg;
+            var layoutGroup = new UILayoutGroupDef();
+            layoutGroup.IsVertical = GetBool(data, "IsVertical", true);
+            layoutGroup.Spacing = GetFloat(data, "Spacing");
+            layoutGroup.Padding = GetRectOffset(data, "Padding");
+            layoutGroup.ChildAlignment = GetInt(data, "ChildAlignment");
+            layoutGroup.ChildControlWidth = GetBool(data, "ChildControlWidth", true);
+            layoutGroup.ChildControlHeight = GetBool(data, "ChildControlHeight");
+            layoutGroup.ChildForceExpandWidth = GetBool(data, "ChildForceExpandWidth", true);
+            layoutGroup.ChildForceExpandHeight = GetBool(data, "ChildForceExpandHeight");
+            return layoutGroup;
         }
 
-        private static UILayoutElementDef ReadLayoutElement(Dictionary<string, object> d)
+        private static UILayoutElementDef ReadLayoutElement(Dictionary<string, object> data)
         {
-            var le = new UILayoutElementDef();
-            le.MinWidth = GetFloat(d, "MinWidth", -1);
-            le.MinHeight = GetFloat(d, "MinHeight", -1);
-            le.PreferredWidth = GetFloat(d, "PreferredWidth", -1);
-            le.PreferredHeight = GetFloat(d, "PreferredHeight", -1);
-            le.FlexibleWidth = GetFloat(d, "FlexibleWidth", -1);
-            le.FlexibleHeight = GetFloat(d, "FlexibleHeight", -1);
-            le.IgnoreLayout = GetBool(d, "IgnoreLayout");
-            return le;
+            var layoutElement = new UILayoutElementDef();
+            layoutElement.MinWidth = GetFloat(data, "MinWidth", -1);
+            layoutElement.MinHeight = GetFloat(data, "MinHeight", -1);
+            layoutElement.PreferredWidth = GetFloat(data, "PreferredWidth", -1);
+            layoutElement.PreferredHeight = GetFloat(data, "PreferredHeight", -1);
+            layoutElement.FlexibleWidth = GetFloat(data, "FlexibleWidth", -1);
+            layoutElement.FlexibleHeight = GetFloat(data, "FlexibleHeight", -1);
+            layoutElement.IgnoreLayout = GetBool(data, "IgnoreLayout");
+            return layoutElement;
         }
 
-        private static UIContentFitterDef ReadContentFitter(Dictionary<string, object> d)
+        private static UIContentFitterDef ReadContentFitter(Dictionary<string, object> data)
         {
-            var cf = new UIContentFitterDef();
-            cf.HorizontalFit = GetInt(d, "HorizontalFit");
-            cf.VerticalFit = GetInt(d, "VerticalFit");
-            return cf;
+            var contentFitter = new UIContentFitterDef();
+            contentFitter.HorizontalFit = GetInt(data, "HorizontalFit");
+            contentFitter.VerticalFit = GetInt(data, "VerticalFit");
+            return contentFitter;
         }
 
-        private static UIGridLayoutGroupDef ReadGridLayoutGroup(Dictionary<string, object> d)
+        private static UIGridLayoutGroupDef ReadGridLayoutGroup(Dictionary<string, object> data)
         {
-            var g = new UIGridLayoutGroupDef();
-            g.CellSize = GetVec2(d, "CellSize", new Vector2Ser(64, 64));
-            g.Spacing = GetVec2(d, "Spacing", new Vector2Ser(0, 0));
-            g.StartCorner = GetInt(d, "StartCorner");
-            g.StartAxis = GetInt(d, "StartAxis");
-            g.ChildAlignment = GetInt(d, "ChildAlignment");
-            g.Constraint = GetInt(d, "Constraint");
-            g.ConstraintCount = GetInt(d, "ConstraintCount", 2);
-            g.Padding = GetRectOffset(d, "Padding");
-            return g;
+            var grid = new UIGridLayoutGroupDef();
+            grid.CellSize = GetVec2(data, "CellSize", new Vector2Ser(64, 64));
+            grid.Spacing = GetVec2(data, "Spacing", new Vector2Ser(0, 0));
+            grid.StartCorner = GetInt(data, "StartCorner");
+            grid.StartAxis = GetInt(data, "StartAxis");
+            grid.ChildAlignment = GetInt(data, "ChildAlignment");
+            grid.Constraint = GetInt(data, "Constraint");
+            grid.ConstraintCount = GetInt(data, "ConstraintCount", 2);
+            grid.Padding = GetRectOffset(data, "Padding");
+            return grid;
         }
 
-        private static void WriteCanvasScaler(StringBuilder sb, UICanvasScalerDef d, int indent)
-        {
-            sb.AppendLine("{");
-            int i = indent + 1;
-            WriteInt(sb, i, "ScaleMode", d.ScaleMode); sb.AppendLine(",");
-            WriteVec2(sb, i, "ReferenceResolution", d.ReferenceResolution); sb.AppendLine(",");
-            WriteFloat(sb, i, "MatchWidthOrHeight", d.MatchWidthOrHeight); sb.AppendLine(",");
-            WriteFloat(sb, i, "ReferencePixelsPerUnit", d.ReferencePixelsPerUnit); sb.AppendLine(",");
-            WriteFloat(sb, i, "ScaleFactor", d.ScaleFactor); sb.AppendLine();
-            Indent(sb, indent); sb.Append("}");
-        }
-
-        private static UICanvasScalerDef ReadCanvasScaler(Dictionary<string, object> d)
-        {
-            var cs = new UICanvasScalerDef();
-            cs.ScaleMode = GetInt(d, "ScaleMode", 1);
-            cs.ReferenceResolution = GetVec2(d, "ReferenceResolution", new Vector2Ser(1920, 1080));
-            cs.MatchWidthOrHeight = GetFloat(d, "MatchWidthOrHeight", 0.5f);
-            cs.ReferencePixelsPerUnit = GetFloat(d, "ReferencePixelsPerUnit", 100f);
-            cs.ScaleFactor = GetFloat(d, "ScaleFactor", 1f);
-            return cs;
-        }
-
-        private static void WriteAspectRatioFitter(StringBuilder sb, UIAspectRatioFitterDef d, int indent)
+        private static void WriteCanvasScaler(StringBuilder sb, UICanvasScalerDef canvasScaler, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteInt(sb, i, "AspectMode", d.AspectMode); sb.AppendLine(",");
-            WriteFloat(sb, i, "AspectRatio", d.AspectRatio); sb.AppendLine();
+            WriteInt(sb, i, "ScaleMode", canvasScaler.ScaleMode); sb.AppendLine(",");
+            WriteVec2(sb, i, "ReferenceResolution", canvasScaler.ReferenceResolution); sb.AppendLine(",");
+            WriteFloat(sb, i, "MatchWidthOrHeight", canvasScaler.MatchWidthOrHeight); sb.AppendLine(",");
+            WriteFloat(sb, i, "ReferencePixelsPerUnit", canvasScaler.ReferencePixelsPerUnit); sb.AppendLine(",");
+            WriteFloat(sb, i, "ScaleFactor", canvasScaler.ScaleFactor); sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static UIAspectRatioFitterDef ReadAspectRatioFitter(Dictionary<string, object> d)
+        private static UICanvasScalerDef ReadCanvasScaler(Dictionary<string, object> data)
         {
-            var ar = new UIAspectRatioFitterDef();
-            ar.AspectMode = GetInt(d, "AspectMode", 1);
-            ar.AspectRatio = GetFloat(d, "AspectRatio", 1f);
-            return ar;
+            var canvasScaler = new UICanvasScalerDef();
+            canvasScaler.ScaleMode = GetInt(data, "ScaleMode", 1);
+            canvasScaler.ReferenceResolution = GetVec2(data, "ReferenceResolution", new Vector2Ser(1920, 1080));
+            canvasScaler.MatchWidthOrHeight = GetFloat(data, "MatchWidthOrHeight", 0.5f);
+            canvasScaler.ReferencePixelsPerUnit = GetFloat(data, "ReferencePixelsPerUnit", 100f);
+            canvasScaler.ScaleFactor = GetFloat(data, "ScaleFactor", 1f);
+            return canvasScaler;
         }
 
-        private static void WriteRuntimeRootTransform(StringBuilder sb, RuntimeRootTransformDef d, int indent)
+        private static void WriteAspectRatioFitter(StringBuilder sb, UIAspectRatioFitterDef fitter, int indent)
         {
             sb.AppendLine("{");
             int i = indent + 1;
-            WriteVec2(sb, i, "AnchorMin", d.AnchorMin); sb.AppendLine(",");
-            WriteVec2(sb, i, "AnchorMax", d.AnchorMax); sb.AppendLine(",");
-            WriteVec2(sb, i, "Pivot", d.Pivot); sb.AppendLine(",");
-            WriteVec2(sb, i, "AnchoredPosition", d.AnchoredPosition); sb.AppendLine(",");
-            WriteVec2(sb, i, "SizeDelta", d.SizeDelta); sb.AppendLine(",");
-            WriteVec2(sb, i, "OffsetMin", d.OffsetMin); sb.AppendLine(",");
-            WriteVec2(sb, i, "OffsetMax", d.OffsetMax); sb.AppendLine();
+            WriteInt(sb, i, "AspectMode", fitter.AspectMode); sb.AppendLine(",");
+            WriteFloat(sb, i, "AspectRatio", fitter.AspectRatio); sb.AppendLine();
             Indent(sb, indent); sb.Append("}");
         }
 
-        private static RuntimeRootTransformDef ReadRuntimeRootTransform(Dictionary<string, object> d)
+        private static UIAspectRatioFitterDef ReadAspectRatioFitter(Dictionary<string, object> data)
         {
-            var rrt = new RuntimeRootTransformDef();
-            rrt.AnchorMin = GetVec2(d, "AnchorMin");
-            rrt.AnchorMax = GetVec2(d, "AnchorMax", new Vector2Ser(1, 1));
-            rrt.Pivot = GetVec2(d, "Pivot", new Vector2Ser(0.5f, 0.5f));
-            rrt.AnchoredPosition = GetVec2(d, "AnchoredPosition");
-            rrt.SizeDelta = GetVec2(d, "SizeDelta");
-            rrt.OffsetMin = GetVec2(d, "OffsetMin");
-            rrt.OffsetMax = GetVec2(d, "OffsetMax");
-            return rrt;
+            var aspectRatioFitter = new UIAspectRatioFitterDef();
+            aspectRatioFitter.AspectMode = GetInt(data, "AspectMode", 1);
+            aspectRatioFitter.AspectRatio = GetFloat(data, "AspectRatio", 1f);
+            return aspectRatioFitter;
         }
 
-        // ???????????????????????????????????????
+        private static void WriteRuntimeRootTransform(StringBuilder sb, RuntimeRootTransformDef rootTransform, int indent)
+        {
+            sb.AppendLine("{");
+            int i = indent + 1;
+            WriteVec2(sb, i, "AnchorMin", rootTransform.AnchorMin); sb.AppendLine(",");
+            WriteVec2(sb, i, "AnchorMax", rootTransform.AnchorMax); sb.AppendLine(",");
+            WriteVec2(sb, i, "Pivot", rootTransform.Pivot); sb.AppendLine(",");
+            WriteVec2(sb, i, "AnchoredPosition", rootTransform.AnchoredPosition); sb.AppendLine(",");
+            WriteVec2(sb, i, "SizeDelta", rootTransform.SizeDelta); sb.AppendLine(",");
+            WriteVec2(sb, i, "OffsetMin", rootTransform.OffsetMin); sb.AppendLine(",");
+            WriteVec2(sb, i, "OffsetMax", rootTransform.OffsetMax); sb.AppendLine();
+            Indent(sb, indent); sb.Append("}");
+        }
+
+        private static RuntimeRootTransformDef ReadRuntimeRootTransform(Dictionary<string, object> data)
+        {
+            var rootTransform = new RuntimeRootTransformDef();
+            rootTransform.AnchorMin = GetVec2(data, "AnchorMin");
+            rootTransform.AnchorMax = GetVec2(data, "AnchorMax", new Vector2Ser(1, 1));
+            rootTransform.Pivot = GetVec2(data, "Pivot", new Vector2Ser(0.5f, 0.5f));
+            rootTransform.AnchoredPosition = GetVec2(data, "AnchoredPosition");
+            rootTransform.SizeDelta = GetVec2(data, "SizeDelta");
+            rootTransform.OffsetMin = GetVec2(data, "OffsetMin");
+            rootTransform.OffsetMax = GetVec2(data, "OffsetMax");
+            return rootTransform;
+        }
+
         //  Typed getters from parsed dict
-        // ???????????????????????????????????????
 
-        private static string GetStr(Dictionary<string, object> d, string key, string def = "")
+        private static string GetStr(Dictionary<string, object> data, string key, string def = "")
         {
-            if (d.TryGetValue(key, out object v) && v is string s) return s;
+            if (data.TryGetValue(key, out object raw) && raw is string text) return text;
             return def;
         }
 
-        private static int GetInt(Dictionary<string, object> d, string key, int def = 0)
+        private static int GetInt(Dictionary<string, object> data, string key, int def = 0)
         {
-            if (d.TryGetValue(key, out object v))
+            if (data.TryGetValue(key, out object raw))
             {
-                if (v is double dv) return (int)dv;
-                if (v is int iv) return iv;
+                if (raw is double number) return (int)number;
+                if (raw is int integer) return integer;
             }
             return def;
         }
 
-        private static long GetLong(Dictionary<string, object> d, string key, long def = 0)
+        private static long GetLong(Dictionary<string, object> data, string key, long def = 0)
         {
-            if (d.TryGetValue(key, out object v))
+            if (data.TryGetValue(key, out object raw))
             {
-                if (v is double dv) return (long)dv;
+                if (raw is double number) return (long)number;
             }
             return def;
         }
 
-        private static float GetFloat(Dictionary<string, object> d, string key, float def = 0)
+        private static float GetFloat(Dictionary<string, object> data, string key, float def = 0)
         {
-            if (d.TryGetValue(key, out object v))
+            if (data.TryGetValue(key, out object raw))
             {
-                if (v is double dv) return (float)dv;
+                if (raw is double number) return (float)number;
             }
             return def;
         }
 
-        private static bool GetBool(Dictionary<string, object> d, string key, bool def = false)
+        private static bool GetBool(Dictionary<string, object> data, string key, bool def = false)
         {
-            if (d.TryGetValue(key, out object v))
+            if (data.TryGetValue(key, out object raw))
             {
-                if (v is bool bv) return bv;
+                if (raw is bool flag) return flag;
             }
             return def;
         }
 
-        private static Vector2Ser GetVec2(Dictionary<string, object> d, string key, Vector2Ser def = default)
+        private static Vector2Ser GetVec2(Dictionary<string, object> data, string key, Vector2Ser def = default)
         {
-            if (d.TryGetValue(key, out object v) && v is Dictionary<string, object> vd)
-                return new Vector2Ser(GetFloat(vd, "X"), GetFloat(vd, "Y"));
+            if (data.TryGetValue(key, out object raw) && raw is Dictionary<string, object> vectorData)
+                return new Vector2Ser(GetFloat(vectorData, "X"), GetFloat(vectorData, "Y"));
             return def;
         }
 
-        private static ColorSer GetColor(Dictionary<string, object> d, string key, ColorSer def = default)
+        private static ColorSer GetColor(Dictionary<string, object> data, string key, ColorSer def = default)
         {
-            if (d.TryGetValue(key, out object v) && v is Dictionary<string, object> cd)
-                return new ColorSer(GetFloat(cd, "R"), GetFloat(cd, "G"), GetFloat(cd, "B"), GetFloat(cd, "A", 1f));
+            if (data.TryGetValue(key, out object raw) && raw is Dictionary<string, object> colorData)
+                return new ColorSer(GetFloat(colorData, "R"), GetFloat(colorData, "G"), GetFloat(colorData, "B"), GetFloat(colorData, "A", 1f));
             return def;
         }
 
-        private static RectOffsetSer GetRectOffset(Dictionary<string, object> d, string key)
+        private static RectOffsetSer GetRectOffset(Dictionary<string, object> data, string key)
         {
-            if (d.TryGetValue(key, out object v) && v is Dictionary<string, object> rd)
-                return new RectOffsetSer(GetInt(rd, "Left"), GetInt(rd, "Right"), GetInt(rd, "Top"), GetInt(rd, "Bottom"));
+            if (data.TryGetValue(key, out object raw) && raw is Dictionary<string, object> offsetData)
+                return new RectOffsetSer(GetInt(offsetData, "Left"), GetInt(offsetData, "Right"), GetInt(offsetData, "Top"), GetInt(offsetData, "Bottom"));
             return new RectOffsetSer();
         }
     }

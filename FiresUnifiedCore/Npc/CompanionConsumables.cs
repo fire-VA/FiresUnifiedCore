@@ -36,7 +36,7 @@ namespace FiresCore.Npc
         
         // Rate-limited logging for GetFoodHealthBonus
         private float _lastFoodBonusLogTime;
-        private const float FOOD_BONUS_LOG_INTERVAL = 5f;
+        private const float FoodBonusLogInterval = 5f;
 
         // Cached stats from food
         private float _foodHealthBonus;
@@ -497,7 +497,7 @@ return true;
         public float GetFoodHealthBonus()
         {
             // Rate-limited logging - only log once when first called, then every 5 seconds
-            if (VerboseLogging && _foodHealthBonus > 0 && Time.time - _lastFoodBonusLogTime >= FOOD_BONUS_LOG_INTERVAL)
+            if (VerboseLogging && _foodHealthBonus > 0 && Time.time - _lastFoodBonusLogTime >= FoodBonusLogInterval)
             {
                 _lastFoodBonusLogTime = Time.time;
                 Debug.Log($"[CompanionConsumables] GetFoodHealthBonus: returning {_foodHealthBonus:F0} (from {_activeFoodEffects.Count} active effects)");
@@ -598,7 +598,7 @@ return true;
 
 public void SaveToZDO()
         {
-        // Skip during local player respawn / loading-screen â€” ZDO writes during
+        // Skip during local player respawn / loading-screen — ZDO writes during
         // IsTeleporting=true deadlock the zone stream.
         if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
 

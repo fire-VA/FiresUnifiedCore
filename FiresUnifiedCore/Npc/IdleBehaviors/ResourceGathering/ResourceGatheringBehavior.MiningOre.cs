@@ -53,12 +53,12 @@ namespace FiresCore.Npc.IdleBehaviors
             GameObject closest = null;
             var processed = new HashSet<GameObject>();
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var mineRock = col.GetComponent<MineRock>() ?? col.GetComponentInParent<MineRock>();
-                var mineRock5 = col.GetComponent<MineRock5>() ?? col.GetComponentInParent<MineRock5>();
+                var mineRock = collider.GetComponent<MineRock>() ?? collider.GetComponentInParent<MineRock>();
+                var mineRock5 = collider.GetComponent<MineRock5>() ?? collider.GetComponentInParent<MineRock5>();
                 
                 GameObject target = null;
                 if (mineRock != null) target = mineRock.gameObject;
@@ -143,7 +143,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (_wasTargetingTree)
                 {
                     if (VerboseLogging)
-                        Debug.Log($"[ResourceGathering] {Companion.companionName} tree destroyed, waiting {LOG_CHECK_WAIT}s before checking for logs");
+                        Debug.Log($"[ResourceGathering] {Companion.companionName} tree destroyed, waiting {LogCheckWait}s before checking for logs");
                     
                     _resourcesGathered++;
                     _aoeDamageAttempts = 0;
@@ -179,7 +179,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (_wasTargetingTree)
                 {
                     if (VerboseLogging)
-                        Debug.Log($"[ResourceGathering] {Companion.companionName} tree destructible gone, waiting {LOG_CHECK_WAIT}s before checking for logs");
+                        Debug.Log($"[ResourceGathering] {Companion.companionName} tree destructible gone, waiting {LogCheckWait}s before checking for logs");
                     
                     _resourcesGathered++;
                     _aoeDamageAttempts = 0;
@@ -195,7 +195,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check if this is an unreachable log (stuck in air on another tree)
             bool useAOEDamage = _targetResource.TreeLog != null && IsLogUnreachable(_targetResource);
             
-            if (_consecutiveNoColliderHits >= MAX_NO_COLLIDER_BEFORE_REPOSITION && !useAOEDamage)
+            if (_consecutiveNoColliderHits >= MaxNoColliderBeforeReposition && !useAOEDamage)
             {
                 if (VerboseLogging)
                     Debug.Log($"[ResourceGathering] {Companion.companionName} repositioning after {_consecutiveNoColliderHits} failed hits");
@@ -215,7 +215,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     // For AOE damage, get as close as possible but don't need to reach the exact spot
                     float dist = Vector3.Distance(Transform.position, _targetResource.InteractionPosition);
-                    if (dist > AOE_DAMAGE_RADIUS * 2f)
+                    if (dist > AoeDamageRadius * 2f)
                     {
                         // Move closer but don't try to reach the exact position
                         Vector3 dirToLog = (_targetResource.InteractionPosition - Transform.position).normalized;
@@ -232,7 +232,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     // Normal movement - try to reach the target
                     float dist = Vector3.Distance(Transform.position, _targetResource.InteractionPosition);
-                    if (dist > ATTACK_RANGE)
+                    if (dist > AttackRange)
                     {
                         MoveToPosition(_targetResource.InteractionPosition);
                     }
@@ -251,14 +251,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 StopMovement();
             }
             
-            if (Time.time - _lastAttackTime >= ATTACK_INTERVAL)
+            if (Time.time - _lastAttackTime >= AttackInterval)
             {
                 if (useAOEDamage)
                 {
                     // Use AOE damage for unreachable logs
                     var weapon = GetEquippedWeaponOrTool();
                     PlayAttackAnimation(weapon);
-                    Companion.StartCoroutine(ApplyAOEDamageDelayed(weapon, DAMAGE_DELAY));
+                    Companion.StartCoroutine(ApplyAOEDamageDelayed(weapon, DamageDelay));
                 }
                 else
                 {
@@ -338,7 +338,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             PlayAttackAnimation(weapon);
             
-            Companion.StartCoroutine(ApplyDamageDelayed(weapon, DAMAGE_DELAY));
+            Companion.StartCoroutine(ApplyDamageDelayed(weapon, DamageDelay));
         }
         
         private IEnumerator ApplyDamageDelayed(ItemDrop.ItemData weapon, float delay)
@@ -388,14 +388,14 @@ namespace FiresCore.Npc.IdleBehaviors
             if (hitCollider == null)
             {
                 Collider[] colliders = Physics.OverlapSphere(_targetResource.InteractionPosition, 0.5f, hitMask);
-                foreach (var col in colliders)
+                foreach (var collider in colliders)
                 {
-                    if (col.transform == _targetResource.GameObject.transform || 
-                        col.transform.IsChildOf(_targetResource.GameObject.transform) ||
-                        _targetResource.GameObject.transform.IsChildOf(col.transform))
+                    if (collider.transform == _targetResource.GameObject.transform || 
+                        collider.transform.IsChildOf(_targetResource.GameObject.transform) ||
+                        _targetResource.GameObject.transform.IsChildOf(collider.transform))
                     {
-                        hitCollider = col;
-                        hitPoint = col.bounds.center;
+                        hitCollider = collider;
+                        hitPoint = collider.bounds.center;
                         break;
                     }
                 }
@@ -513,15 +513,15 @@ namespace FiresCore.Npc.IdleBehaviors
             Collider closestArea = null;
             float closestDist = float.MaxValue;
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null || !col.enabled || !col.gameObject.activeInHierarchy) continue;
+                if (collider == null || !collider.enabled || !collider.gameObject.activeInHierarchy) continue;
                 
-                float dist = Vector3.Distance(Transform.position, col.bounds.center);
+                float dist = Vector3.Distance(Transform.position, collider.bounds.center);
                 if (dist < closestDist)
                 {
                     closestDist = dist;
-                    closestArea = col;
+                    closestArea = collider;
                 }
             }
             
@@ -548,15 +548,15 @@ namespace FiresCore.Npc.IdleBehaviors
             Collider closestCollider = null;
             float closestDist = float.MaxValue;
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null || !col.enabled) continue;
+                if (collider == null || !collider.enabled) continue;
                 
-                float dist = Vector3.Distance(Transform.position, col.bounds.center);
+                float dist = Vector3.Distance(Transform.position, collider.bounds.center);
                 if (dist < closestDist)
                 {
                     closestDist = dist;
-                    closestCollider = col;
+                    closestCollider = collider;
                 }
             }
             

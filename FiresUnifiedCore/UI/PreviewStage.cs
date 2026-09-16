@@ -5,17 +5,10 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Reusable 3D staging rig for UI previews. Parks a supplied GameObject ~2000 m above the local
-    /// player inside an invisible collision container (so it cannot fall), freezes its physics/AI,
-    /// forces LOD0 + all renderers on, and computes framing bounds with outlier rejection.
-    ///
-    /// Lifted from <c>FiresRPGmaker.UI.QuestPreviewRenderer</c>'s proven PrefabPreviewStage pattern, but
-    /// generic: it stages ANY GameObject the caller hands it (already built / dressed), not a
-    /// prefab-by-name. The caller owns the camera; this owns the container, the staged object's
-    /// placement, and the two-frame deferred reframe (mandatory — SkinnedMeshRenderer bounds are
-    /// degenerate until the animator binds bones once).
-    ///
-    /// Headless/dedicated servers must never create the rig: <see cref="Stage"/> early-outs there.
+    /// Reusable 3D stage for UI previews: parks a supplied object far above the player inside an invisible collision
+    /// container, freezes its physics and AI, forces LOD0 with every renderer on, and frames it with outlier rejection
+    /// after the mandatory two-frame delay while skinned bounds settle. The caller owns the camera. Never created on a
+    /// headless server.
     /// </summary>
     public class PreviewStage
     {
@@ -116,8 +109,8 @@ namespace FiresCore.UI
 
             if (_staged == null) yield break;
 
-            foreach (var r in _staged.GetComponentsInChildren<Renderer>(true))
-                if (r != null) r.enabled = true;
+            foreach (var childRenderer in _staged.GetComponentsInChildren<Renderer>(true))
+                if (childRenderer != null) childRenderer.enabled = true;
             foreach (var lod in _staged.GetComponentsInChildren<LODGroup>(true))
                 if (lod != null) lod.ForceLOD(0);
 
@@ -135,8 +128,8 @@ namespace FiresCore.UI
             {
                 if (_ownsStaged)
                 {
-                    var nv = _staged.GetComponent<ZNetView>();
-                    if (nv != null && nv.IsValid() && ZNetScene.instance != null)
+                    var netView = _staged.GetComponent<ZNetView>();
+                    if (netView != null && netView.IsValid() && ZNetScene.instance != null)
                     {
                         try { ZNetScene.instance.Destroy(_staged); }
                         catch { Object.Destroy(_staged); }
@@ -196,19 +189,18 @@ namespace FiresCore.UI
         /// </summary>
         public static void FreezePhysics(GameObject go)
         {
-            foreach (var rb in go.GetComponentsInChildren<Rigidbody>(true))
+            foreach (var body in go.GetComponentsInChildren<Rigidbody>(true))
             {
-                if (rb == null) continue;
-                rb.isKinematic = true;
-                rb.useGravity = false;
-                rb.constraints = RigidbodyConstraints.FreezeAll;
+                if (body == null) continue;
+                body.isKinematic = true;
+                body.useGravity = false;
+                body.constraints = RigidbodyConstraints.FreezeAll;
             }
 
-            foreach (var mb in go.GetComponentsInChildren<MonoBehaviour>(true))
+            foreach (var behaviour in go.GetComponentsInChildren<MonoBehaviour>(true))
             {
-                if (mb == null) continue;
-                if (mb is Renderer) continue;
-                switch (mb.GetType().Name)
+                if (behaviour == null) continue;
+                switch (behaviour.GetType().Name)
                 {
                     case "StaticPhysics":
                     case "Floating":
@@ -230,7 +222,7 @@ namespace FiresCore.UI
                     case "Windmill":
                     case "WaterVolume":
                     case "ZNetView":
-                        mb.enabled = false;
+                        behaviour.enabled = false;
                         break;
                 }
             }
@@ -242,8 +234,8 @@ namespace FiresCore.UI
             foreach (var lod in go.GetComponentsInChildren<LODGroup>(true))
                 if (lod != null) lod.ForceLOD(0);
 
-            foreach (var r in go.GetComponentsInChildren<Renderer>(true))
-                if (r != null) r.enabled = true;
+            foreach (var childRenderer in go.GetComponentsInChildren<Renderer>(true))
+                if (childRenderer != null) childRenderer.enabled = true;
         }
 
         /// <summary>
@@ -264,12 +256,12 @@ namespace FiresCore.UI
                 if (renderers[i] == null) continue;
                 if (renderers[i] is ParticleSystemRenderer) continue;
 
-                Bounds rb = renderers[i].bounds;
-                if (rb.size.x > MaxRendererExtent || rb.size.y > MaxRendererExtent || rb.size.z > MaxRendererExtent) continue;
-                if (Vector3.Distance(rb.center, go.transform.position) > MaxRendererExtent * 2f) continue;
+                Bounds rendererBounds = renderers[i].bounds;
+                if (rendererBounds.size.x > MaxRendererExtent || rendererBounds.size.y > MaxRendererExtent || rendererBounds.size.z > MaxRendererExtent) continue;
+                if (Vector3.Distance(rendererBounds.center, go.transform.position) > MaxRendererExtent * 2f) continue;
 
-                if (result == null) result = rb;
-                else { var b = result.Value; b.Encapsulate(rb); result = b; }
+                if (result == null) result = rendererBounds;
+                else { var merged = result.Value; merged.Encapsulate(rendererBounds); result = merged; }
             }
 
             if (result == null)
@@ -278,12 +270,12 @@ namespace FiresCore.UI
                 for (int i = 0; i < meshFilters.Length; i++)
                 {
                     if (meshFilters[i]?.sharedMesh == null) continue;
-                    var mb = meshFilters[i].sharedMesh.bounds;
-                    Vector3 wc = meshFilters[i].transform.TransformPoint(mb.center);
-                    Vector3 ws = Vector3.Scale(mb.size, meshFilters[i].transform.lossyScale);
-                    var wb = new Bounds(wc, ws);
-                    if (result == null) result = wb;
-                    else { var b = result.Value; b.Encapsulate(wb); result = b; }
+                    var meshBounds = meshFilters[i].sharedMesh.bounds;
+                    Vector3 worldCenter = meshFilters[i].transform.TransformPoint(meshBounds.center);
+                    Vector3 worldSize = Vector3.Scale(meshBounds.size, meshFilters[i].transform.lossyScale);
+                    var worldBounds = new Bounds(worldCenter, worldSize);
+                    if (result == null) result = worldBounds;
+                    else { var merged = result.Value; merged.Encapsulate(worldBounds); result = merged; }
                 }
             }
 

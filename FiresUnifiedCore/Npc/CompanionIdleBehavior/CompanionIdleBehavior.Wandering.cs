@@ -20,7 +20,7 @@ namespace FiresCore.Npc
             Vector3 origin = transform.position;
             float heightDiff = Mathf.Abs(destination.y - origin.y);
 
-            // Reject extreme height changes ï¿½ likely a different floor
+            // Reject extreme height changes - likely a different floor
             if (heightDiff > 4f)
                 return false;
 
@@ -43,7 +43,7 @@ namespace FiresCore.Npc
                 if (Physics.SphereCast(rayOrigin, 0.3f, direction.normalized, out RaycastHit hit, distance,
                     LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "piece_nonsolid")))
                 {
-                    // Hit something ï¿½ check if it's a structure/wall (not terrain or the companion itself)
+                    // Hit something - check if it's a structure/wall (not terrain or the companion itself)
                     if (hit.collider != null && hit.collider.gameObject != gameObject)
                     {
                         var piece = hit.collider.GetComponentInParent<Piece>();
@@ -99,7 +99,7 @@ namespace FiresCore.Npc
                 if (!IsDestinationReachable(candidate))
                     continue;
 
-                // Score this candidate ï¿½ prefer paved/built surfaces
+                // Score this candidate - prefer paved/built surfaces
                 float score = ScorePositionForPath(candidate);
 
                 // Bonus for staying on the same surface type
@@ -118,7 +118,7 @@ namespace FiresCore.Npc
                 }
 
                 // If we found a path position with no crowding, use it immediately.
-                // (Crowding can drag the score below this floor, which is intentional â€”
+                // (Crowding can drag the score below this floor, which is intentional —
                 // we keep searching for a less-crowded option.)
                 if (score >= pavedPathBonus * 0.5f)
                     break;
@@ -134,9 +134,9 @@ namespace FiresCore.Npc
         /// </summary>
         private float ScoreCrowdingPenalty(Vector3 candidate)
         {
-            const float CROWD_RADIUS    = 4f;   // companion's personal space when picking a waypoint
-            const float PER_COMPANION   = 3f;   // penalty per other companion within CROWD_RADIUS
-            float radiusSq = CROWD_RADIUS * CROWD_RADIUS;
+            const float CrowdRadius    = 4f;   // companion's personal space when picking a waypoint
+            const float PerCompanion   = 3f;   // penalty per other companion within CrowdRadius
+            float radiusSq = CrowdRadius * CrowdRadius;
             float penalty = 0f;
 
             if (CompanionController.AllCompanions != null)
@@ -146,7 +146,7 @@ namespace FiresCore.Npc
                     if (other == null) continue;
                     if (other == _companion) continue;
                     if ((other.transform.position - candidate).sqrMagnitude < radiusSq)
-                        penalty += PER_COMPANION;
+                        penalty += PerCompanion;
                 }
             }
             return penalty;
@@ -200,13 +200,13 @@ namespace FiresCore.Npc
             {
                 if (terrainComp == null) return Color.black;
 
-                Heightmap hm = terrainComp.GetComponent<Heightmap>();
-                if (hm == null) return Color.black;
+                Heightmap heightmap = terrainComp.GetComponent<Heightmap>();
+                if (heightmap == null) return Color.black;
 
-                int width = hm.m_width;
-                Vector3 localPos = worldPos - hm.transform.position;
+                int width = heightmap.m_width;
+                Vector3 localPos = worldPos - heightmap.transform.position;
 
-                float scale = hm.m_scale;
+                float scale = heightmap.m_scale;
                 float normalizedX = (localPos.x / scale + width / 2f) / width;
                 float normalizedZ = (localPos.z / scale + width / 2f) / width;
 
@@ -244,18 +244,18 @@ namespace FiresCore.Npc
             };
 
             Collider[] nearby = Physics.OverlapSphere(position, 2f);
-            foreach (var col in nearby)
+            foreach (var collider in nearby)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
 
-                string objName = col.gameObject.name.ToLowerInvariant();
+                string objName = collider.gameObject.name.ToLowerInvariant();
                 foreach (var pathPrefab in pathPrefabs)
                 {
                     if (objName.Contains(pathPrefab))
                         return true;
                 }
 
-                var piece = col.GetComponent<Piece>();
+                var piece = collider.GetComponent<Piece>();
                 if (piece != null)
                 {
                     string pieceName = piece.m_name?.ToLowerInvariant() ?? "";
@@ -273,7 +273,7 @@ namespace FiresCore.Npc
 
         private void StartIdleWander()
         {
-            if (Time.time - _lastWanderCompleteTime < MIN_WANDER_COOLDOWN)
+            if (Time.time - _lastWanderCompleteTime < MinWanderCooldown)
             {
                 if (VerboseLogging)
                     Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} wander cooldown active, skipping");
@@ -297,8 +297,6 @@ namespace FiresCore.Npc
                 _lastWanderDirection = Quaternion.Euler(0, transform.eulerAngles.y + angle, 0) * Vector3.forward;
             }
 
-            _isWandering = true;
-            _isWaitingAtWanderPoint = false;
 
             // Initialize stuck progress tracking
             _lastWanderProgressPosition = transform.position;
@@ -337,7 +335,7 @@ namespace FiresCore.Npc
                 return;
             }
             
-            // Normal wander logic ï¿½ use obstacle-aware destination finding
+            // Normal wander logic - use obstacle-aware destination finding
             Vector3? validDestination = FindValidWanderDestination(5);
 
             if (validDestination.HasValue)
@@ -347,10 +345,9 @@ namespace FiresCore.Npc
             }
             else
             {
-                // All attempts blocked ï¿½ stay put and try again next cycle
+                // All attempts blocked - stay put and try again next cycle
                 if (VerboseLogging)
                     Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} no valid wander destination found, staying put");
-                _isWandering = false;
                 _hasActiveDestination = false;
                 SetIdleState(IdleState.Standing);
             }

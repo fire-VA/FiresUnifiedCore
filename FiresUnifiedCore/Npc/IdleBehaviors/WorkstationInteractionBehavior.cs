@@ -8,24 +8,9 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Handles companion interactions with crafting workstations (workbench, forge, stonecutter, etc.).
-    /// When idle near a workstation, companion will perform crafting animations.
-    /// Can be commanded to a specific workstation via ping system.
-    /// 
-    /// Uses PieceDataHelper for extracting proper interaction data from pieces.
-    /// 
-    /// SUPPORTED WORKSTATIONS:
-    /// - Workbench (piece_workbench)
-    /// - Forge (forge)
-    /// - Stonecutter (piece_stonecutter)
-    /// - Artisan Table (piece_artisanstation)
-    /// - Cauldron (piece_cauldron)
-    /// - Black Forge (blackforge)
-    /// - Galdr Table (piece_magetable)
-    /// 
-    /// ANIMATIONS:
-    /// - Uses "Working" or crafting-specific animations based on station type
-    /// - Companion faces the workstation
+    /// Plays crafting animations at nearby workstations (workbench, forge, stonecutter, artisan table, cauldron,
+    /// black forge, galdr table), facing the station; a ping can send the companion to a specific one. Uses
+    /// PieceDataHelper for interaction points.
     /// </summary>
     public class WorkstationInteractionBehavior : IdleSubBehavior
     {
@@ -43,19 +28,19 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float WORKSTATION_DETECTION_RANGE = 10f;
-        private const float INTERACTION_DISTANCE = 2f;
-        private const float MIN_WORK_DURATION = 10f;   // Reduced from 30s to prevent getting stuck
-        private const float MAX_WORK_DURATION = 20f;   // Reduced from 120s to allow behavior rotation
-        private const float WORK_ANIMATION_INTERVAL = 3f;
+        private const float WorkstationDetectionRange = 10f;
+        private const float InteractionDistance = 2f;
+        private const float MinWorkDuration = 10f;   // Reduced from 30s to prevent getting stuck
+        private const float MaxWorkDuration = 20f;   // Reduced from 120s to allow behavior rotation
+        private const float WorkAnimationInterval = 3f;
         
         // Auto-repair settings
-        private const float REPAIR_CHANCE_PER_ANIMATION = 0.25f;  // 25% chance per work animation to repair an item
-        private const float REPAIR_AMOUNT_PERCENT = 0.15f;        // Repair 15% of max durability per repair tick
+        private const float RepairChancePerAnimation = 0.25f;  // 25% chance per work animation to repair an item
+        private const float RepairAmountPercent = 0.15f;        // Repair 15% of max durability per repair tick
         
         // Upgrade settings - very rare chance to upgrade an item
-        private const float UPGRADE_CHANCE_PER_ANIMATION = 0.02f;  // 2% chance per work animation to fully repair AND upgrade
-        private const float FULL_REPAIR_CHANCE = 0.08f;            // 8% chance to fully repair an item instead of partial
+        private const float UpgradeChancePerAnimation = 0.02f;  // 2% chance per work animation to fully repair AND upgrade
+        private const float FullRepairChance = 0.08f;            // 8% chance to fully repair an item instead of partial
         
         #endregion
         
@@ -109,7 +94,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _inventory = companion.GetComponent<CompanionInventory>();
             _rigidbody = companion.GetComponent<Rigidbody>();
             
-            MaxDuration = MAX_WORK_DURATION + 30f;
+            MaxDuration = MaxWorkDuration + 30f;
         }
         
         /// <summary>
@@ -254,7 +239,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _pieceData = PieceDataHelper.GetPieceData(_targetStation.gameObject);
             
             // Try to re-occupy the workstation
-            if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, _character, MAX_WORK_DURATION))
+            if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, _character, MaxWorkDuration))
             {
                 // Someone else grabbed it while we were fighting
                 if (CompanionIdleBehavior.VerboseLogging)
@@ -271,7 +256,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Resume from where we were, or start moving back to station
             float dist = Vector3.Distance(Transform.position, _workPosition);
-            if (dist > INTERACTION_DISTANCE)
+            if (dist > InteractionDistance)
             {
                 // Need to walk back to the workstation first
                 SetPhase(WorkPhase.MovingToWorkstation);
@@ -352,7 +337,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float dist = Vector3.Distance(Transform.position, _workPosition);
             
-            if (dist < INTERACTION_DISTANCE)
+            if (dist < InteractionDistance)
             {
                 StopMovement();
                 StartWorking();
@@ -441,7 +426,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Play work animation periodically
-            if (Time.time - _lastAnimationTime >= WORK_ANIMATION_INTERVAL)
+            if (Time.time - _lastAnimationTime >= WorkAnimationInterval)
             {
                 PlayWorkAnimation();
                 _lastAnimationTime = Time.time;
@@ -471,7 +456,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private void StartWorking()
         {
             // CRITICAL: Register occupancy before starting work
-            if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, _character, MAX_WORK_DURATION + 30f))
+            if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, _character, MaxWorkDuration + 30f))
             {
                 // Someone else grabbed it first
                 if (CompanionIdleBehavior.VerboseLogging)
@@ -480,7 +465,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
             
-            float workDuration = Random.Range(MIN_WORK_DURATION, MAX_WORK_DURATION);
+            float workDuration = Random.Range(MinWorkDuration, MaxWorkDuration);
             _workEndTime = Time.time + workDuration;
             
             // CRITICAL: Stop movement completely before locking
@@ -546,21 +531,21 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_inventory == null) return;
             
             // First check for upgrade chance (very rare - 2%)
-            if (Random.value <= UPGRADE_CHANCE_PER_ANIMATION)
+            if (Random.value <= UpgradeChancePerAnimation)
             {
                 TryUpgradeItem();
                 return; // Upgrade attempt includes full repair, so don't also do normal repair
             }
             
             // Check for full repair chance (8%)
-            if (Random.value <= FULL_REPAIR_CHANCE)
+            if (Random.value <= FullRepairChance)
             {
                 TryFullRepairItem();
                 return;
             }
             
             // Roll for normal partial repair chance (25%)
-            if (Random.value > REPAIR_CHANCE_PER_ANIMATION) return;
+            if (Random.value > RepairChancePerAnimation) return;
             
             // Find items that need repair
             var damagedItems = GetDamagedItems();
@@ -571,7 +556,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Repair it (partial)
             float maxDurability = itemToRepair.GetMaxDurability();
-            float repairAmount = maxDurability * REPAIR_AMOUNT_PERCENT;
+            float repairAmount = maxDurability * RepairAmountPercent;
             float oldDurability = itemToRepair.m_durability;
             float newDurability = Mathf.Min(itemToRepair.m_durability + repairAmount, maxDurability);
             float actualRepairPercent = (newDurability - oldDurability) / maxDurability;
@@ -857,14 +842,14 @@ namespace FiresCore.Npc.IdleBehaviors
             float bestDistance = float.MaxValue;
             
             // Use SearchCenter for staying companions (searches around home position)
-            float searchRadius = GetEffectiveSearchRadius(WORKSTATION_DETECTION_RANGE);
+            float searchRadius = GetEffectiveSearchRadius(WorkstationDetectionRange);
             var colliders = Physics.OverlapSphere(SearchCenter, searchRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var station = col.GetComponent<CraftingStation>() ?? col.GetComponentInParent<CraftingStation>();
+                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
                 if (station == null) continue;
                 
                 // Check if station is valid (has required extension level for example)

@@ -4,20 +4,11 @@ using UnityEngine;
 namespace FiresCore.Services
 {
     /// <summary>
-    /// Cross-mod water-STATE contract: "what is the water doing at this world position?"
-    /// Height (tide + waves), horizontal flow (currents), and tide phase — the physics-side
-    /// counterpart of <see cref="WaterShaderBridge"/> (which only shares the LOOK).
-    ///
-    /// The query surface is modeled on Crest Water 4's ICollProvider (MIT, (c) 2019 Wave
-    /// Harmonic and contributors — github.com/wave-harmonic/crest): world-point queries for
-    /// surface height / flow velocity, provider-owned so the implementation (CPU tide math
-    /// today, sampled wave fields later) can evolve without consumers changing.
-    ///
-    /// Ownership: the tide/current mod (FiresValheimGalaxies) registers the provider; any mod
-    /// (swimming, ships, NPC AI, FiresAdminTerrain ponds) consumes through the static
-    /// <see cref="WaterState"/> helpers, which never throw and fall back to VANILLA water
-    /// (Floating.GetWaterLevel → ZoneSystem baseline) when no provider is present — so every
-    /// consumer works on a vanilla install without the tide mod.
+    /// Cross-mod water state at a world position (surface height with tide and waves, current flow, tide phase),
+    /// the physics counterpart of <see cref="WaterShaderBridge"/>. The query surface follows Crest Water 4's
+    /// ICollProvider (MIT, (c) 2019 Wave Harmonic and contributors). FiresValheimGalaxies registers the provider;
+    /// consumers use the static <see cref="WaterState"/> helpers, which never throw and fall back to vanilla water
+    /// when no provider exists.
     /// </summary>
     public interface IWaterStateProvider
     {
@@ -67,10 +58,10 @@ namespace FiresCore.Services
         /// Never throws — a broken provider degrades to vanilla for that call.</summary>
         public static float GetWaterSurface(Vector3 worldPos, float waveFactor = 1f)
         {
-            var p = s_provider;
-            if (p != null)
+            var provider = s_provider;
+            if (provider != null)
             {
-                try { return p.GetWaterSurface(worldPos, waveFactor); }
+                try { return provider.GetWaterSurface(worldPos, waveFactor); }
                 catch (Exception ex) { WarnOnce("GetWaterSurface", ex); }
             }
             return VanillaWaterLevel(worldPos);
@@ -79,10 +70,10 @@ namespace FiresCore.Services
         /// <summary>Horizontal current at the position; zero/false without a provider.</summary>
         public static bool TryGetFlow(Vector3 worldPos, out Vector3 flow)
         {
-            var p = s_provider;
-            if (p != null)
+            var provider = s_provider;
+            if (provider != null)
             {
-                try { return p.TryGetFlow(worldPos, out flow); }
+                try { return provider.TryGetFlow(worldPos, out flow); }
                 catch (Exception ex) { WarnOnce("TryGetFlow", ex); }
             }
             flow = Vector3.zero;
@@ -91,10 +82,10 @@ namespace FiresCore.Services
 
         public static float GetTidePhase01()
         {
-            var p = s_provider;
-            if (p != null)
+            var provider = s_provider;
+            if (provider != null)
             {
-                try { return p.GetTidePhase01(); }
+                try { return provider.GetTidePhase01(); }
                 catch (Exception ex) { WarnOnce("GetTidePhase01", ex); }
             }
             return 0.5f;
@@ -102,10 +93,10 @@ namespace FiresCore.Services
 
         public static float GetTideVelocity()
         {
-            var p = s_provider;
-            if (p != null)
+            var provider = s_provider;
+            if (provider != null)
             {
-                try { return p.GetTideVelocity(); }
+                try { return provider.GetTideVelocity(); }
                 catch (Exception ex) { WarnOnce("GetTideVelocity", ex); }
             }
             return 0f;
@@ -121,20 +112,20 @@ namespace FiresCore.Services
         /// sampleRadius is the probe half-width in metres.</summary>
         public static Vector3 GetWaterNormal(Vector3 worldPos, float sampleRadius = 0.5f, float waveFactor = 1f)
         {
-            float r = Mathf.Max(sampleRadius, 0.01f);
-            float hL = GetWaterSurface(worldPos + new Vector3(-r, 0f, 0f), waveFactor);
-            float hR = GetWaterSurface(worldPos + new Vector3(r, 0f, 0f), waveFactor);
-            float hB = GetWaterSurface(worldPos + new Vector3(0f, 0f, -r), waveFactor);
-            float hF = GetWaterSurface(worldPos + new Vector3(0f, 0f, r), waveFactor);
-            return Vector3.Normalize(new Vector3(hL - hR, 2f * r, hB - hF));
+            float radius = Mathf.Max(sampleRadius, 0.01f);
+            float heightLeft = GetWaterSurface(worldPos + new Vector3(-radius, 0f, 0f), waveFactor);
+            float heightRight = GetWaterSurface(worldPos + new Vector3(radius, 0f, 0f), waveFactor);
+            float heightBack = GetWaterSurface(worldPos + new Vector3(0f, 0f, -radius), waveFactor);
+            float heightFront = GetWaterSurface(worldPos + new Vector3(0f, 0f, radius), waveFactor);
+            return Vector3.Normalize(new Vector3(heightLeft - heightRight, 2f * radius, heightBack - heightFront));
         }
 
         /// <summary>Batch height query (Crest ICollProvider-style). Arrays must be equal length.</summary>
         public static void QueryHeights(Vector3[] worldPos, float[] heights, float waveFactor = 1f)
         {
             if (worldPos == null || heights == null) return;
-            int n = Mathf.Min(worldPos.Length, heights.Length);
-            for (int i = 0; i < n; i++) heights[i] = GetWaterSurface(worldPos[i], waveFactor);
+            int count = Mathf.Min(worldPos.Length, heights.Length);
+            for (int i = 0; i < count; i++) heights[i] = GetWaterSurface(worldPos[i], waveFactor);
         }
 
         /// <summary>Vanilla water level: nearest WaterVolume surface (waves included) via

@@ -4,23 +4,9 @@ using FiresCore.Npc.Combat;
 namespace FiresCore.Npc.Movement
 {
     /// <summary>
-    /// Handles flee/kiting movement for companions during emergencies.
-    /// 
-    /// RESPONSIBILITIES:
-    /// - Execute flee movement toward owner
-    /// - Execute flee movement away from enemies
-    /// - Handle terrain-aware escape routes
-    /// - Provide fallback flee behavior
-    /// 
-    /// DESIGN:
-    /// This is a helper class, not a MonoBehaviour. It's instantiated and owned
-    /// by CompanionCombatMovement which calls its methods as needed.
-    /// 
-    /// FLEE PHILOSOPHY:
-    /// - Always run (never walk during flee)
-    /// - Prefer running toward owner for safety
-    /// - Use terrain awareness to avoid obstacles
-    /// - Direct movement control (bypasses pathfinding for reliability)
+    /// Emergency flee movement, owned and driven by CompanionCombatMovement: always running, toward the owner
+    /// when possible or away from enemies, steering around terrain hazards with direct movement rather than
+    /// pathfinding.
     /// </summary>
     public class FleeMovementHandler
     {
@@ -39,7 +25,7 @@ namespace FiresCore.Npc.Movement
         private Vector3 _fleeTargetPosition;
         private float _fleeRequestTime;
         
-        private const float FLEE_REQUEST_TIMEOUT = 0.5f;
+        private const float FleeRequestTimeout = 0.5f;
         
         public static bool VerboseLogging = false;
         
@@ -48,7 +34,7 @@ namespace FiresCore.Npc.Movement
         #region Properties
         
         /// <summary>Returns true if there's an active flee request.</summary>
-        public bool HasFleeRequest => _hasFleeRequest && Time.time - _fleeRequestTime < FLEE_REQUEST_TIMEOUT;
+        public bool HasFleeRequest => _hasFleeRequest && Time.time - _fleeRequestTime < FleeRequestTimeout;
         
         /// <summary>The target position for flee movement.</summary>
         public Vector3 FleeTargetPosition => _fleeTargetPosition;

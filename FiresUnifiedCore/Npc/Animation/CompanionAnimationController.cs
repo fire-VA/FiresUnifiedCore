@@ -5,18 +5,8 @@ using UnityEngine;
 namespace FiresCore.Npc.Animation
 {
     /// <summary>
-    /// Centralized controller for companion animations and emotes.
-    /// Handles animation state tracking, hard timeouts, and cleanup.
-    /// 
-    /// This solves the common problem of companions getting stuck in animation states
-    /// (dancing forever, sitting indefinitely, etc.) by enforcing hard timeouts on all animations.
-    /// 
-    /// FEATURES:
-    /// - Centralized emote playback with automatic cleanup
-    /// - Hard timeout enforcement for ALL animations
-    /// - Animation state tracking (is moving, is attacking, etc.)
-    /// - Safe animation bool management (tracks what we set, cleans up properly)
-    /// - Integration with ZSyncAnimation and Unity Animator
+    /// Companion animations and emotes with a hard timeout on every one, so companions never dance or sit forever.
+    /// Tracks animation state, cleans up the animator bools it set, and works through ZSyncAnimation.
     /// </summary>
     public class CompanionAnimationController : MonoBehaviour
     {
@@ -51,7 +41,6 @@ namespace FiresCore.Npc.Animation
         
         // Tracking
         private float _lastStuckCheck = 0f;
-        private float _lastAnimationStateChangeTime = 0f;
         
         // Components
         private ZSyncAnimation _zanim;
@@ -269,7 +258,7 @@ namespace FiresCore.Npc.Animation
         {
             string emoteToEnd = _currentEmote;
 
-            // Vanilla StopEmote clears m_emoteID and the ZSyncAnimator bool ï¿½
+            // Vanilla StopEmote clears m_emoteID and the ZSyncAnimator bool -
             // without it the Mecanim state machine keeps the looping emote alive
             // regardless of any manual bool-clearing we do below.
             CallVanillaStopEmote();
@@ -323,7 +312,7 @@ namespace FiresCore.Npc.Animation
 
             // Fire the emote_stop trigger so the Mecanim looping-emote state
             // actually exits. Vanilla StopEmote only clears m_emoteID and the
-            // emote bool â€” looping-emote transitions in this Animator are
+            // emote bool — looping-emote transitions in this Animator are
             // gated on the emote_stop trigger, not on the bool going false.
             if (_animator != null)
                 _animator.SetTrigger(EmoteStopTriggerHash);

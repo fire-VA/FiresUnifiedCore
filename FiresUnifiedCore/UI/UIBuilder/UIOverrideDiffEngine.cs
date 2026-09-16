@@ -5,28 +5,10 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Compares layout nodes against their captured baseline to determine which
-    /// nodes have been modified by the user and need override application.
-    ///
-    /// The baseline is a deep-clone of the layout's root element tree taken at
-    /// capture time, stored as serialized JSON in layout metadata under the key
-    /// <see cref="BaselineMetaKey"/>. When an override is applied, the diff
-    /// engine checks each node:
-    ///
-    ///   1. Node has <c>override_modified</c> metadata ? always apply (user marked it)
-    ///   2. Node has no baseline counterpart ? always apply (new/injected element)
-    ///   3. Node differs from baseline ? apply (user edited it)
-    ///   4. Node is identical to baseline ? skip (untouched captured data)
-    ///
-    /// This allows capturing a 500-node vanilla UI, editing 3 nodes, and having
-    /// the override only touch those 3 — leaving the rest of the vanilla hierarchy
-    /// completely untouched.
-    ///
-    /// The per-node <c>override_modified</c> flag can also be set manually via the
-    /// editor's context menu. This covers the "mod removed" scenario: the user
-    /// marks a mod's captured elements as modified so the override injects them
-    /// back even though they match the baseline (the mod's elements would otherwise
-    /// be skipped since they weren't "edited" — but the user wants them preserved).
+    /// Decides which layout nodes an override touches by comparing them with the baseline captured under
+    /// <see cref="BaselineMetaKey"/>: nodes marked override_modified, nodes with no baseline counterpart and
+    /// nodes that differ are applied, identical ones are skipped. Editing a few nodes of a large captured UI
+    /// therefore changes only those; marking a removed mod's captured elements as modified keeps them injected.
     /// </summary>
     public static class UIOverrideDiffEngine
     {
@@ -43,9 +25,7 @@ namespace FiresCore.UI
         /// </summary>
         public const string NodeModifiedKey = "override_modified";
 
-        // ???????????????????????????????????????
         //  Baseline management
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Stores a deep-clone of the layout's current root element tree as the
@@ -116,9 +96,7 @@ namespace FiresCore.UI
             layout.SetMeta(BaselineMetaKey, null);
         }
 
-        // ???????????????????????????????????????
         //  Diff computation
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Builds a set of node IDs that should be overridden (modified nodes).
@@ -152,15 +130,15 @@ namespace FiresCore.UI
         /// Used during the recursive tree walk in ApplyNodeTransforms.
         ///
         /// Returns true if:
-        ///   - modifiedIds is null (no baseline ? full override, legacy behavior)
+        ///   - modifiedIds is null (no baseline - full override, legacy behavior)
         ///   - The node's ID is in modifiedIds
         ///   - The node has the override_modified metadata flag
-        ///   - The node is the root node (path is empty — root is always applied for
+        ///   - The node is the root node (path is empty â€” root is always applied for
         ///     screen position/scale handling)
         /// </summary>
         public static bool ShouldApplyNode(UIElementNode node, HashSet<string> modifiedIds, string path)
         {
-            // No baseline ? apply everything (legacy behavior)
+            // No baseline - apply everything (legacy behavior)
             if (modifiedIds == null) return true;
 
             // Root node is always "applied" (screen position logic needs it)
@@ -178,21 +156,19 @@ namespace FiresCore.UI
 
         /// <summary>
         /// Checks whether a node should have its children walked during override.
-        /// Even if a node itself is not modified, its children might be — so we
+        /// Even if a node itself is not modified, its children might be â€” so we
         /// still need to recurse. Only returns false when we're certain no descendant
         /// is modified (which we can't cheaply determine), so this always returns true.
         /// The actual skip happens at the individual node level via ShouldApplyNode.
         /// </summary>
         public static bool ShouldRecurseIntoChildren(UIElementNode node, HashSet<string> modifiedIds)
         {
-            // Always recurse — a child deep in the tree may be modified even if
+            // Always recurse â€” a child deep in the tree may be modified even if
             // its parent is not. The per-node check in ShouldApplyNode handles skipping.
             return true;
         }
 
-        // ???????????????????????????????????????
         //  Per-node modified flag
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Returns true if the node has been explicitly marked as modified.
@@ -252,9 +228,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Stats
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Returns a summary of modified vs total nodes for status display.
@@ -289,14 +263,12 @@ namespace FiresCore.UI
 
             public override string ToString()
             {
-                if (!HasBaseline) return $"{TotalNodes} nodes (no baseline — full override)";
+                if (!HasBaseline) return $"{TotalNodes} nodes (no baseline â€” full override)";
                 return $"{ModifiedNodes}/{TotalNodes} nodes modified";
             }
         }
 
-        // ???????????????????????????????????????
         //  Internal comparison logic
-        // ???????????????????????????????????????
 
         private static void CollectModifiedNodes(UIElementNode current, 
             Dictionary<string, UIElementNode> baselineLookup, HashSet<string> modifiedIds)
@@ -320,7 +292,7 @@ namespace FiresCore.UI
                 }
                 else
                 {
-                    // No baseline counterpart ? new/injected node ? always modified
+                    // No baseline counterpart - new/injected node - always modified
                     modifiedIds.Add(current.Id);
                 }
             }

@@ -6,23 +6,11 @@ using UnityEngine;
 namespace FiresCore.Services
 {
     /// <summary>
-    /// Routes mod/ripped AudioSources to the LIVE game's mixer groups. Reflection-only — a net48
-    /// Fires mod must never use an AudioModule type at compile time (netstandard 2.1 build break;
-    /// canonical pattern: FiresCore.UI.PencilSfx).
-    ///
-    /// Two failure modes this fixes, shared by every mod that ships ripped or hand-built audio
-    /// (NPC effect tables, minigame UI clicks, mounts, ...):
-    ///  - A bundle AudioSource keeps its serialized reference to the RIPPED duplicate mixer, so it
-    ///    ignores the player's volume sliders and plays through whatever effect chain the rip
-    ///    carried (heard as wrong-volume or oddly processed sfx). Vanilla never sets the group in
-    ///    code — ZSFX relies on the prefab-serialized group — so ripped copies stay mis-routed
-    ///    until rebound here.
-    ///  - A raw 2D UI source defaults bypassReverbZones=false, so inside a dungeon/crypt reverb
-    ///    zone every click gets full cave echo ("sounds far away"). Vanilla's contract: ZSFX sets
-    ///    bypassReverbZones=true for all 2D sounds and GUI audio routes through AudioMan.m_guiMixer.
-    ///
-    /// World sfx keep bypassReverbZones as-is (3D sounds SHOULD take zone reverb, ZSFX manages the
-    /// mix per-frame) — only the mixer group is rebound. UI sfx get the GUI group + reverb bypass.
+    /// Routes mod and ripped AudioSources to the live game's mixer groups, by reflection only because a net48
+    /// Fires mod cannot reference AudioModule types. Bundle sources otherwise keep their serialized reference to
+    /// the ripped duplicate mixer and ignore the volume sliders, and raw 2D UI sources pick up dungeon reverb.
+    /// World sounds only get their mixer group rebound; UI sounds also get the GUI group and bypass reverb
+    /// zones, as ZSFX does for vanilla 2D sounds.
     /// </summary>
     public static class LiveAudioRouting
     {
@@ -60,12 +48,12 @@ namespace FiresCore.Services
                 var prefab = scene.m_prefabs[i];
                 if (prefab == null) continue;
                 var sources = prefab.GetComponentsInChildren(_tAudioSource, true);
-                for (int s = 0; s < sources.Length; s++)
+                for (int sourceIndex = 0; sourceIndex < sources.Length; sourceIndex++)
                 {
-                    var grp = _pOutputGroup.GetValue(sources[s], null);
+                    var grp = _pOutputGroup.GetValue(sources[sourceIndex], null);
                     if (grp == null) continue;
-                    counts.TryGetValue(grp, out int n);
-                    counts[grp] = n + 1;
+                    counts.TryGetValue(grp, out int count);
+                    counts[grp] = count + 1;
                 }
             }
 
@@ -78,8 +66,8 @@ namespace FiresCore.Services
                 bestCount = kv.Value;
             }
             _liveSfxGroup = best;
-            if (best is UnityEngine.Object uo)
-                Debug.Log($"[LiveAudioRouting] live SFX mixer group = '{uo.name}' ({bestCount} vanilla sources)");
+            if (best is UnityEngine.Object unityObject)
+                Debug.Log($"[LiveAudioRouting] live SFX mixer group = '{unityObject.name}' ({bestCount} vanilla sources)");
         }
 
         /// <summary>

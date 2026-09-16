@@ -42,10 +42,10 @@ namespace FiresCore.Dungeon
         /// <summary>The first ENABLED spec whose DG-name prefix matches the given DungeonGenerator name, or null.</summary>
         public static DungeonSpec MatchForDg(string dgGameObjectName)
         {
-            foreach (var s in _specs)
+            foreach (var spec in _specs)
             {
-                if (s == null || !s.IsEnabled()) continue;
-                if (s.MatchesDg(dgGameObjectName)) return s;
+                if (spec == null || !spec.IsEnabled()) continue;
+                if (spec.MatchesDg(dgGameObjectName)) return spec;
             }
             return null;
         }
@@ -54,10 +54,10 @@ namespace FiresCore.Dungeon
         public static DungeonSpec MatchForLocation(string locationPrefabName)
         {
             if (string.IsNullOrEmpty(locationPrefabName)) return null;
-            foreach (var s in _specs)
+            foreach (var spec in _specs)
             {
-                if (s == null || !s.IsEnabled()) continue;
-                if (string.Equals(s.CryptLocationPrefabName, locationPrefabName, StringComparison.Ordinal)) return s;
+                if (spec == null || !spec.IsEnabled()) continue;
+                if (string.Equals(spec.CryptLocationPrefabName, locationPrefabName, StringComparison.Ordinal)) return spec;
             }
             return null;
         }

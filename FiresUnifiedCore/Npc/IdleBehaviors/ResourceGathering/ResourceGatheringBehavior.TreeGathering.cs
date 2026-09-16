@@ -10,14 +10,14 @@ namespace FiresCore.Npc.IdleBehaviors
     public partial class ResourceGatheringBehavior
     {
         // Stump clearing settings
-        private const float STUMP_SEARCH_RADIUS = 15f;  // Increased from 8f - logs can roll far
-        private const float SAPLING_SPAWN_CHANCE = 0.70f; // 70% chance to spawn sapling when stump is destroyed
+        private const float StumpSearchRadius = 15f;  // Increased from 8f - logs can roll far
+        private const float SaplingSpawnChance = 0.70f; // 70% chance to spawn sapling when stump is destroyed
         
         // AOE damage fallback for unreachable logs
-        private const float AOE_DAMAGE_RADIUS = 3f;
-        private const float LOG_UNREACHABLE_DISTANCE = 4f; // If log is this far above/away, use AOE
+        private const float AoeDamageRadius = 3f;
+        private const float LogUnreachableDistance = 4f; // If log is this far above/away, use AOE
         private int _aoeDamageAttempts = 0;
-        private const int MAX_AOE_ATTEMPTS = 10;
+        private const int MaxAoeAttempts = 10;
         
         /// <summary>
         /// Finds a nearby tree to chop.
@@ -30,12 +30,12 @@ namespace FiresCore.Npc.IdleBehaviors
             GameObject closest = null;
             var processed = new HashSet<GameObject>();
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var treeBase = col.GetComponent<TreeBase>() ?? col.GetComponentInParent<TreeBase>();
-                var treeLog = col.GetComponent<TreeLog>() ?? col.GetComponentInParent<TreeLog>();
+                var treeBase = collider.GetComponent<TreeBase>() ?? collider.GetComponentInParent<TreeBase>();
+                var treeLog = collider.GetComponent<TreeLog>() ?? collider.GetComponentInParent<TreeLog>();
                 
                 GameObject target = null;
                 string treeType = null;
@@ -99,12 +99,12 @@ namespace FiresCore.Npc.IdleBehaviors
             GameObject closest = null;
             var processed = new HashSet<GameObject>();
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
                 // Check for Destructible stumps (most common type)
-                var destructible = col.GetComponent<Destructible>() ?? col.GetComponentInParent<Destructible>();
+                var destructible = collider.GetComponent<Destructible>() ?? collider.GetComponentInParent<Destructible>();
                 if (destructible != null && !processed.Contains(destructible.gameObject))
                 {
                     string name = destructible.name.ToLowerInvariant();
@@ -131,7 +131,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 
                 // Also check for ZNetView objects with stub/stump names (some stumps might not have Destructible)
-                var zview = col.GetComponent<ZNetView>() ?? col.GetComponentInParent<ZNetView>();
+                var zview = collider.GetComponent<ZNetView>() ?? collider.GetComponentInParent<ZNetView>();
                 if (zview != null && !processed.Contains(zview.gameObject))
                 {
                     string name = zview.gameObject.name.ToLowerInvariant();
@@ -187,7 +187,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Check vertical distance (log stuck in air on another tree)
             float verticalDiff = logPos.y - companionPos.y;
-            if (verticalDiff > LOG_UNREACHABLE_DISTANCE)
+            if (verticalDiff > LogUnreachableDistance)
             {
                 if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                     Debug.Log($"[ResourceGathering] {Companion?.companionName} log is {verticalDiff:F1}m above - using AOE damage");
@@ -198,7 +198,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Time.time - _phaseStartTime > 10f)
             {
                 float distToLog = Vector3.Distance(companionPos, logPos);
-                if (distToLog > ATTACK_RANGE * 1.5f)
+                if (distToLog > AttackRange * 1.5f)
                 {
                     if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[ResourceGathering] {Companion?.companionName} can't reach log after 10s (dist: {distToLog:F1}m) - using AOE damage");
@@ -230,26 +230,26 @@ namespace FiresCore.Npc.IdleBehaviors
             Vector3 aoeCenter = Transform.position + Transform.forward * 1.5f + Vector3.up * 1f;
             
             // Find all destructibles in AOE radius
-            var colliders = Physics.OverlapSphere(aoeCenter, AOE_DAMAGE_RADIUS);
+            var colliders = Physics.OverlapSphere(aoeCenter, AoeDamageRadius);
             bool hitSomething = false;
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
                 // Check if this is our target log
-                var treeLog = col.GetComponent<TreeLog>() ?? col.GetComponentInParent<TreeLog>();
+                var treeLog = collider.GetComponent<TreeLog>() ?? collider.GetComponentInParent<TreeLog>();
                 if (treeLog != null && treeLog == _targetResource.TreeLog)
                 {
                     // Create hit data
                     var hitData = new HitData
                     {
                         m_damage = { m_chop = damage, m_pickaxe = 0, m_damage = damage * 0.5f },
-                        m_point = col.bounds.center,
-                        m_dir = (col.bounds.center - Transform.position).normalized,
+                        m_point = collider.bounds.center,
+                        m_dir = (collider.bounds.center - Transform.position).normalized,
                         m_attacker = _character.GetZDOID(),
                         m_toolTier = (short)(weapon?.m_shared?.m_toolTier ?? 0),
-                        m_hitCollider = col
+                        m_hitCollider = collider
                     };
                     
                     treeLog.Damage(hitData);
@@ -260,17 +260,17 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 
                 // Also check for generic destructibles that might be tree parts
-                var destructible = col.GetComponent<Destructible>() ?? col.GetComponentInParent<Destructible>();
-                if (destructible != null && destructible == _targetResource.Destructible)
+                var destructible = collider.GetComponent<Destructible>() ?? collider.GetComponentInParent<Destructible>();
+                if (destructible != null && ReferenceEquals(destructible, _targetResource.Destructible))
                 {
                     var hitData = new HitData
                     {
                         m_damage = { m_chop = damage, m_pickaxe = 0, m_damage = damage * 0.5f },
-                        m_point = col.bounds.center,
-                        m_dir = (col.bounds.center - Transform.position).normalized,
+                        m_point = collider.bounds.center,
+                        m_dir = (collider.bounds.center - Transform.position).normalized,
                         m_attacker = _character.GetZDOID(),
                         m_toolTier = (short)(weapon?.m_shared?.m_toolTier ?? 0),
-                        m_hitCollider = col
+                        m_hitCollider = collider
                     };
                     
                     destructible.Damage(hitData);
@@ -289,10 +289,10 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Check if we've exceeded max attempts
-            if (_aoeDamageAttempts >= MAX_AOE_ATTEMPTS)
+            if (_aoeDamageAttempts >= MaxAoeAttempts)
             {
                 if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[ResourceGathering] {Companion?.companionName} exceeded max AOE attempts ({MAX_AOE_ATTEMPTS}), moving on");
+                    Debug.Log($"[ResourceGathering] {Companion?.companionName} exceeded max AOE attempts ({MaxAoeAttempts}), moving on");
                 
                 _aoeDamageAttempts = 0;
                 SetPhase(GatherPhase.WaitingForDrops);
@@ -304,10 +304,10 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private void OnStumpDestroyed(Vector3 stumpPosition, string stumpName)
         {
-            if (Random.value > SAPLING_SPAWN_CHANCE)
+            if (Random.value > SaplingSpawnChance)
             {
                 if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[ResourceGathering] {Companion?.companionName} cleared stump - no sapling (chance: {SAPLING_SPAWN_CHANCE * 100}%)");
+                    Debug.Log($"[ResourceGathering] {Companion?.companionName} cleared stump - no sapling (chance: {SaplingSpawnChance * 100}%)");
                 return;
             }
             
@@ -445,7 +445,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_combatMovement != null && !_combatMovement.IsMovementLocked)
             {
-                _combatMovement.LockMovement("WaitingForLogs", LOG_CHECK_WAIT + 2f);
+                _combatMovement.LockMovement("WaitingForLogs", LogCheckWait + 2f);
             }
             
             StopMovement();
@@ -458,7 +458,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             FaceTarget(_lastTreePosition);
             
-            if (Time.time - _phaseStartTime < LOG_CHECK_WAIT)
+            if (Time.time - _phaseStartTime < LogCheckWait)
             {
                 return false;
             }
@@ -498,7 +498,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Also check for stumps to clear
-            var stump = FindNearbyStump(_lastTreePosition, STUMP_SEARCH_RADIUS);
+            var stump = FindNearbyStump(_lastTreePosition, StumpSearchRadius);
             if (stump != null)
             {
                 var stumpData = ResourceDataHelper.GetResourceData(stump);
@@ -518,7 +518,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             if (VerboseLogging)
-                Debug.Log($"[ResourceGathering] {Companion.companionName} no logs or stumps found within {LOG_SEARCH_RADIUS}m of tree position");
+                Debug.Log($"[ResourceGathering] {Companion.companionName} no logs or stumps found within {LogSearchRadius}m of tree position");
             
             SetPhase(GatherPhase.WaitingForDrops);
             return false;
@@ -555,13 +555,13 @@ namespace FiresCore.Npc.IdleBehaviors
             var results = new List<ResourceDataHelper.ResourceData>();
             var processed = new HashSet<GameObject>();
             
-            Collider[] colliders = Physics.OverlapSphere(position, LOG_SEARCH_RADIUS);
+            Collider[] colliders = Physics.OverlapSphere(position, LogSearchRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var treeLog = col.GetComponent<TreeLog>() ?? col.GetComponentInParent<TreeLog>();
+                var treeLog = collider.GetComponent<TreeLog>() ?? collider.GetComponentInParent<TreeLog>();
                 if (treeLog != null && !processed.Contains(treeLog.gameObject))
                 {
                     processed.Add(treeLog.gameObject);
@@ -573,7 +573,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     continue;
                 }
                 
-                var destructible = col.GetComponent<Destructible>() ?? col.GetComponentInParent<Destructible>();
+                var destructible = collider.GetComponent<Destructible>() ?? collider.GetComponentInParent<Destructible>();
                 if (destructible != null && destructible.name.ToLower().Contains("log") && !processed.Contains(destructible.gameObject))
                 {
                     processed.Add(destructible.gameObject);
@@ -586,7 +586,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             if (VerboseLogging && results.Count > 0)
-                Debug.Log($"[ResourceGathering] Found {results.Count} logs within {LOG_SEARCH_RADIUS}m of {position}");
+                Debug.Log($"[ResourceGathering] Found {results.Count} logs within {LogSearchRadius}m of {position}");
             
             return results;
         }

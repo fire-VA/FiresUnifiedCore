@@ -21,9 +21,16 @@ namespace FiresCore.Npc.IdleBehaviors
         public const float ChatPauseRange = 3.5f;  // stop and let a player interact when this close
         public const float TeleportTimeout = 60f;  // seconds spent trying to reach a waypoint before snapping to it
         public const float MustHitReach = 0.9f;     // a must-hit node must be reached this tightly before the cursor advances past it
+        private const float MinArrivalRadius = 0.4f;
+        private const float MaxArrivalRadius = 12f;
+        private const float MinLookAheadDistance = 0.5f;
+        private const float MaxLookAheadDistance = 30f;
+        private const float BuildPieceProbeHeight = 2f;
+        private const float BuildPieceProbeDistance = 6f;
+        private const float MinSectionSpeedMultiplier = 0.05f;
 
-        private float ArrivalRadius => Mathf.Clamp(_route != null ? _route.ArrivalRadius : PatrolRoute.DefaultArrivalRadius, 0.4f, 12f);
-        private float LookAheadDistance => Mathf.Clamp(_route != null ? _route.LookAhead : PatrolRoute.DefaultLookAhead, 0.5f, 30f);
+        private float ArrivalRadius => Mathf.Clamp(_route != null ? _route.ArrivalRadius : PatrolRoute.DefaultArrivalRadius, MinArrivalRadius, MaxArrivalRadius);
+        private float LookAheadDistance => Mathf.Clamp(_route != null ? _route.LookAhead : PatrolRoute.DefaultLookAhead, MinLookAheadDistance, MaxLookAheadDistance);
         private float Smoothing => _route != null ? Mathf.Clamp01(_route.Smoothing) : 0f;
         // The reach for the CURRENT cursor node: tight if it's flagged must-hit, else the route's arrival radius.
         private float ReachFor(int index) => (_route != null && _route.MustHit.Contains(index)) ? Mathf.Min(ArrivalRadius, MustHitReach) : ArrivalRadius;
@@ -54,6 +61,8 @@ namespace FiresCore.Npc.IdleBehaviors
         // here in seconds instead of waiting out the 60s teleport.
         private const float StuckRecoverDelay = 3.0f;   // seconds of no closing-progress before each escalation step
         private const float StuckMinProgress = 0.5f;    // metres of closing distance that counts as progress
+        private const float MinStuckSpeedScale = 0.1f;
+        private const float MaxStuckSpeedScale = 3f;
         private float _stuckSampleTime;
         private float _stuckBestDist = float.MaxValue;
         private bool _stuckRepathed;
@@ -93,10 +102,10 @@ namespace FiresCore.Npc.IdleBehaviors
 
         public override bool CanStart()
         {
-            var a = Assignment;
-            if (a == null || string.IsNullOrEmpty(a.RouteName)) return false;
-            var r = PatrolRouteManager.GetRoute(a.RouteName);
-            return r != null && r.Points.Count >= 2;
+            var assignment = Assignment;
+            if (assignment == null || string.IsNullOrEmpty(assignment.RouteName)) return false;
+            var route = PatrolRouteManager.GetRoute(assignment.RouteName);
+            return route != null && route.Points.Count >= 2;
         }
 
         public override void Start()
@@ -215,17 +224,17 @@ namespace FiresCore.Npc.IdleBehaviors
             // own m_walk: walk tier forces it true (selects m_walkSpeed), run tier clears it (selects m_runSpeed
             // + run animation). The published multiplier is applied to the active field by CompanionSpeedRamp —
             // we never touch SetMoveDir. The Default preset keeps the exact legacy path (force walk, no publish).
-            var ch = Char;
+            var character = Char;
             if (_preset == null)
             {
-                ch?.SetWalk(true);
+                character?.SetWalk(true);
                 if (onPiece) TryMoveDirectToPosition(target, run: false);
                 else         TryMoveToPosition(target, walk: true);
             }
             else
             {
-                ch?.SetWalk(!_runTier);
-                FiresCore.Npc.Patrol.PatrolSpeedState.Set(ch, _currentSpeedMul, _runTier);
+                character?.SetWalk(!_runTier);
+                FiresCore.Npc.Patrol.PatrolSpeedState.Set(character, _currentSpeedMul, _runTier);
                 if (onPiece) TryMoveDirectToPosition(target, run: _runTier);
                 else         TryMoveToPosition(target, walk: !_runTier, run: _runTier);
             }
@@ -239,8 +248,8 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (Transform == null) return;
             Transform.position = point;
-            var rb = HostGameObject != null ? HostGameObject.GetComponent<Rigidbody>() : null;
-            if (rb != null) { rb.position = point; rb.linearVelocity = Vector3.zero; }
+            var body = HostGameObject != null ? HostGameObject.GetComponent<Rigidbody>() : null;
+            if (body != null) { body.position = point; body.linearVelocity = Vector3.zero; }
         }
 
         // Stop AND clamp residual horizontal velocity. A bare StopMovement (SetMoveDir(0)) leaves a non-kinematic
@@ -250,11 +259,11 @@ namespace FiresCore.Npc.IdleBehaviors
         private void HoldStill()
         {
             StopMovement();
-            var rb = HostGameObject != null ? HostGameObject.GetComponent<Rigidbody>() : null;
-            if (rb != null && !rb.isKinematic)
+            var body = HostGameObject != null ? HostGameObject.GetComponent<Rigidbody>() : null;
+            if (body != null && !body.isKinematic)
             {
-                var v = rb.linearVelocity;
-                rb.linearVelocity = new Vector3(0f, v.y, 0f);
+                var velocity = body.linearVelocity;
+                body.linearVelocity = new Vector3(0f, velocity.y, 0f);
             }
         }
 
@@ -268,28 +277,28 @@ namespace FiresCore.Npc.IdleBehaviors
         // follows a rounded path (matching the drawn line) instead of jerking point-to-point.
         private Vector3 CarrotAhead()
         {
-            var pts = _route.Points;
-            int n = pts.Count;
+            var points = _route.Points;
+            int count = points.Count;
             float remain = LookAheadDistance;
-            int cur = _index;
-            Vector3 here = pts[cur];
+            int current = _index;
+            Vector3 here = points[current];
             int guard = 0;
-            while (remain > 0f && guard++ < n + 2)
+            while (remain > 0f && guard++ < count + 2)
             {
-                int nxt = _route.IsLoop ? ((cur + _direction) % n + n) % n : cur + _direction;
-                if (!_route.IsLoop && (nxt < 0 || nxt >= n)) return here;   // open-route end → clamp the carrot
-                Vector3 to = pts[nxt];
-                float len = Vector3.Distance(here, to);
+                int next = _route.IsLoop ? ((current + _direction) % count + count) % count : current + _direction;
+                if (!_route.IsLoop && (next < 0 || next >= count)) return here;   // open-route end → clamp the carrot
+                Vector3 nextPoint = points[next];
+                float len = Vector3.Distance(here, nextPoint);
 
                 // Must-hit clamp: don't let the carrot cross a mandatory node — pin it at (or before) that node.
-                if (_route.MustHit.Contains(nxt))
-                    return len >= remain ? OnCurve(cur, nxt, remain / len) : to;
+                if (_route.MustHit.Contains(next))
+                    return len >= remain ? OnCurve(current, next, remain / len) : nextPoint;
 
-                if (len < 0.001f) { cur = nxt; here = to; continue; }
-                if (len >= remain) return OnCurve(cur, nxt, remain / len);
+                if (len < 0.001f) { current = next; here = nextPoint; continue; }
+                if (len >= remain) return OnCurve(current, next, remain / len);
                 remain -= len;
-                cur = nxt;
-                here = to;
+                current = next;
+                here = nextPoint;
             }
             return here;
         }
@@ -298,13 +307,13 @@ namespace FiresCore.Npc.IdleBehaviors
         // the exact straight-chord point (unchanged legacy behaviour). PatrolSpline segments run in index order
         // (i → i+1), so travelling forward the segment is `cur` and travelling back it's `nxt` (this also handles
         // the loop wrap seam, where cur/nxt straddle 0 and Min() would pick the wrong segment).
-        private Vector3 OnCurve(int cur, int nxt, float f)
+        private Vector3 OnCurve(int current, int next, float fraction)
         {
-            float sm = Smoothing;
-            if (sm <= 0.0001f) return Vector3.Lerp(_route.Points[cur], _route.Points[nxt], f);
-            int seg = _direction > 0 ? cur : nxt;
-            float local = _direction > 0 ? f : 1f - f;
-            return PatrolSpline.Point(_route.Points, _route.IsLoop, seg, local, sm);
+            float smoothing = Smoothing;
+            if (smoothing <= 0.0001f) return Vector3.Lerp(_route.Points[current], _route.Points[next], fraction);
+            int seg = _direction > 0 ? current : next;
+            float local = _direction > 0 ? fraction : 1f - fraction;
+            return PatrolSpline.Point(_route.Points, _route.IsLoop, seg, local, smoothing);
         }
 
         // True when the route surface under <paramref name="point"/> is a player-built Piece (bridge, floor,
@@ -312,7 +321,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // directly instead of via FindPath. A short downward probe + a Piece-component check is definitive.
         private static bool IsOnBuildPiece(Vector3 point)
         {
-            if (Physics.Raycast(point + Vector3.up * 2f, Vector3.down, out var hit, 6f, BuildPieceMask, QueryTriggerInteraction.Ignore))
+            if (Physics.Raycast(point + Vector3.up * BuildPieceProbeHeight, Vector3.down, out var hit, BuildPieceProbeDistance, BuildPieceMask, QueryTriggerInteraction.Ignore))
                 return hit.collider != null && hit.collider.GetComponentInParent<Piece>() != null;
             return false;
         }
@@ -359,10 +368,10 @@ namespace FiresCore.Npc.IdleBehaviors
         // wrap only matters for a stop flagged near the loop seam.
         private void AdvanceIndex()
         {
-            int n = _route.Points.Count;
-            if (n == 0) return;
-            _index = _route.IsLoop ? (((_index + _direction) % n) + n) % n
-                                   : Mathf.Clamp(_index + _direction, 0, n - 1);
+            int count = _route.Points.Count;
+            if (count == 0) return;
+            _index = _route.IsLoop ? (((_index + _direction) % count) + count) % count
+                                   : Mathf.Clamp(_index + _direction, 0, count - 1);
         }
 
         // Escalating stuck recovery, sampled each frame we issue a move. _stuckBestDist is the closest we've
@@ -377,7 +386,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // less ground per second, so require proportionally less closing distance to count as progress and
             // grant proportionally more patience before escalating — otherwise a deliberately slow span reads as
             // "stuck" and false-skips its nodes. Fast zones tighten symmetrically (they close distance quickly).
-            float mul = Mathf.Clamp(_currentSpeedMul, 0.1f, 3f);
+            float mul = Mathf.Clamp(_currentSpeedMul, MinStuckSpeedScale, MaxStuckSpeedScale);
             float minProgress = StuckMinProgress * mul;
             float recoverDelay = StuckRecoverDelay / mul;
 
@@ -442,16 +451,16 @@ namespace FiresCore.Npc.IdleBehaviors
             float bestSq = float.MaxValue;
             for (int i = 0; i < _route.Points.Count; i++)
             {
-                float d = (Transform.position - _route.Points[i]).sqrMagnitude;
-                if (d < bestSq) { bestSq = d; best = i; }
+                float sqrDistance = (Transform.position - _route.Points[i]).sqrMagnitude;
+                if (sqrDistance < bestSq) { bestSq = sqrDistance; best = i; }
             }
             return best;
         }
 
         private void RerollDeviation()
         {
-            var c = Random.insideUnitCircle * DeviationRadius;
-            _deviation = new Vector3(c.x, 0f, c.y);
+            var deviation = Random.insideUnitCircle * DeviationRadius;
+            _deviation = new Vector3(deviation.x, 0f, deviation.y);
         }
 
         // Cumulative arc-length along the route polyline: _cum[i] = distance from Points[0] to Points[i]. Lets
@@ -460,12 +469,12 @@ namespace FiresCore.Npc.IdleBehaviors
         private void BuildArcLengths()
         {
             _cum = null;
-            var pts = _route?.Points;
-            if (pts == null || pts.Count == 0) return;
-            _cum = new float[pts.Count];
+            var points = _route?.Points;
+            if (points == null || points.Count == 0) return;
+            _cum = new float[points.Count];
             _cum[0] = 0f;
-            for (int i = 1; i < pts.Count; i++)
-                _cum[i] = _cum[i - 1] + Vector3.Distance(pts[i - 1], pts[i]);
+            for (int i = 1; i < points.Count; i++)
+                _cum[i] = _cum[i - 1] + Vector3.Distance(points[i - 1], points[i]);
         }
 
         // Resolve the DBSM speed multiplier + tier for the current node index. Identity (1.0, walk tier) for the
@@ -479,12 +488,12 @@ namespace FiresCore.Npc.IdleBehaviors
             var sec = _preset.SectionAt(_index);
             if (sec != null)
             {
-                int lo = Mathf.Clamp(sec.Low, 0, _cum.Length - 1);
-                int hi = Mathf.Clamp(sec.High, 0, _cum.Length - 1);
-                float len = _cum[hi] - _cum[lo];
-                float here = _cum[Mathf.Clamp(_index, lo, hi)] - _cum[lo];
-                float u = len > 1e-3f ? here / len : 0f;
-                _currentSpeedMul = Mathf.Max(0.05f, sec.Sample(u));
+                int low = Mathf.Clamp(sec.Low, 0, _cum.Length - 1);
+                int high = Mathf.Clamp(sec.High, 0, _cum.Length - 1);
+                float len = _cum[high] - _cum[low];
+                float here = _cum[Mathf.Clamp(_index, low, high)] - _cum[low];
+                float sectionProgress = len > 1e-3f ? here / len : 0f;
+                _currentSpeedMul = Mathf.Max(MinSectionSpeedMultiplier, sec.Sample(sectionProgress));
             }
             _runTier = _currentSpeedMul > _preset.RunThreshold;
         }

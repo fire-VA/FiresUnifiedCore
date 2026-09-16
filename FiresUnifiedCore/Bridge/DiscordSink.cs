@@ -175,7 +175,7 @@ namespace FiresCore.Bridge
         /// <summary>A server-side anti-cheat list changed. No-ops unless the sink implements <see cref="IDiscordAntiCheatSink"/>.</summary>
         public static void OnServerListChanged(DiscordListChangeInfo info, Action onComplete = null)
         {
-            if (_impl is IDiscordAntiCheatSink s) s.OnServerListChanged(info, onComplete);
+            if (_impl is IDiscordAntiCheatSink sink) sink.OnServerListChanged(info, onComplete);
             else onComplete?.Invoke();
         }
 
@@ -202,7 +202,7 @@ namespace FiresCore.Bridge
         public static void PostEvent(DiscordEventKind kind, string title, string description,
             IReadOnlyList<KeyValuePair<string, string>> fields, string platformId = null, Action onComplete = null)
         {
-            if (_impl is IDiscordEventSink s) s.PostEvent(kind, title, description, fields, platformId, onComplete);
+            if (_impl is IDiscordEventSink sink) sink.PostEvent(kind, title, description, fields, platformId, onComplete);
             else onComplete?.Invoke();
         }
 
@@ -213,7 +213,7 @@ namespace FiresCore.Bridge
 
         public static void OnPlayerDeath(DiscordDeathInfo info, Action onComplete = null)
         {
-            if (_impl is IDiscordEventSink s) s.OnPlayerDeath(info, onComplete);
+            if (_impl is IDiscordEventSink sink) sink.OnPlayerDeath(info, onComplete);
             else onComplete?.Invoke();
         }
 

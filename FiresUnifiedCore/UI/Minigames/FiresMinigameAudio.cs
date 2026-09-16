@@ -48,14 +48,14 @@ namespace FiresCore.UI.Minigames
             try
             {
                 string res = null;
-                foreach (var n in _asm.GetManifestResourceNames())
-                    if (n.EndsWith(endsWith, StringComparison.OrdinalIgnoreCase)) { res = n; break; }
+                foreach (var resourceName in _asm.GetManifestResourceNames())
+                    if (resourceName.EndsWith(endsWith, StringComparison.OrdinalIgnoreCase)) { res = resourceName; break; }
                 if (res == null) { FiresCore.Logging.FiresLogger.LogError($"[FiresMinigame] audio '{endsWith}' not embedded in {_asm.GetName().Name}."); return false; }
-                byte[] d;
-                using (var s = _asm.GetManifestResourceStream(res)) using (var ms = new System.IO.MemoryStream()) { s.CopyTo(ms); d = ms.ToArray(); }
-                if (!ParseWav(d, gain, out float[] buf, out int ch, out int sr)) return false;
-                ch = Mathf.Max(1, ch);
-                var clip = _clipCreate.Invoke(null, new object[] { name, buf.Length / ch, ch, sr, false });
+                byte[] data;
+                using (var stream = _asm.GetManifestResourceStream(res)) using (var ms = new System.IO.MemoryStream()) { stream.CopyTo(ms); data = ms.ToArray(); }
+                if (!ParseWav(data, gain, out float[] buf, out int channels, out int sampleRate)) return false;
+                channels = Mathf.Max(1, channels);
+                var clip = _clipCreate.Invoke(null, new object[] { name, buf.Length / channels, channels, sampleRate, false });
                 _clipSetData.Invoke(clip, new object[] { buf, 0 });
                 _clips[name] = clip;
                 return true;
@@ -201,56 +201,56 @@ namespace FiresCore.UI.Minigames
         }
 
         // Minimal 16-bit PCM WAV parse (bytes) → gained/clamped float samples + format. Mirrors FiresCore.UI.WavLoader.
-        private static bool ParseWav(byte[] d, float gain, out float[] samples, out int channels, out int sampleRate)
+        private static bool ParseWav(byte[] data, float gain, out float[] samples, out int channels, out int sampleRate)
         {
             samples = null; channels = 0; sampleRate = 0;
-            if (d == null || d.Length < 44 || d[0] != 'R' || d[1] != 'I' || d[2] != 'F' || d[3] != 'F') return false;
-            channels = BitConverter.ToInt16(d, 22);
-            sampleRate = BitConverter.ToInt32(d, 24);
-            int bits = BitConverter.ToInt16(d, 34);
+            if (data == null || data.Length < 44 || data[0] != 'R' || data[1] != 'I' || data[2] != 'F' || data[3] != 'F') return false;
+            channels = BitConverter.ToInt16(data, 22);
+            sampleRate = BitConverter.ToInt32(data, 24);
+            int bits = BitConverter.ToInt16(data, 34);
             if (bits != 16 || channels < 1) return false;
-            int p = 12, dataOff = -1, dataLen = 0;
-            while (p + 8 <= d.Length)
+            int chunkOffset = 12, dataOffset = -1, dataLength = 0;
+            while (chunkOffset + 8 <= data.Length)
             {
-                int len = BitConverter.ToInt32(d, p + 4);
-                if (d[p] == 'd' && d[p + 1] == 'a' && d[p + 2] == 't' && d[p + 3] == 'a') { dataOff = p + 8; dataLen = len; break; }
-                p += 8 + len + (len & 1);
+                int len = BitConverter.ToInt32(data, chunkOffset + 4);
+                if (data[chunkOffset] == 'd' && data[chunkOffset + 1] == 'a' && data[chunkOffset + 2] == 't' && data[chunkOffset + 3] == 'a') { dataOffset = chunkOffset + 8; dataLength = len; break; }
+                chunkOffset += 8 + len + (len & 1);
             }
-            if (dataOff < 0) return false;
-            dataLen = Mathf.Min(dataLen, d.Length - dataOff);
-            int total = dataLen / 2;
+            if (dataOffset < 0) return false;
+            dataLength = Mathf.Min(dataLength, data.Length - dataOffset);
+            int total = dataLength / 2;
             samples = new float[total];
             for (int i = 0; i < total; i++)
-                samples[i] = Mathf.Clamp(BitConverter.ToInt16(d, dataOff + i * 2) / 32768f * gain, -1f, 1f);
+                samples[i] = Mathf.Clamp(BitConverter.ToInt16(data, dataOffset + i * 2) / 32768f * gain, -1f, 1f);
             return true;
         }
 
         // ── Procedural fallbacks (PencilSfx idiom) — a dull thud and a short tick, for games with no sourced clip. ──
         public static float[] MakeThud(int sampleRate = 22050, float dur = 0.09f)
         {
-            int n = (int)(sampleRate * dur);
-            var buf = new float[n];
+            int sampleCount = (int)(sampleRate * dur);
+            var buf = new float[sampleCount];
             var rng = new System.Random(90210);
             float phase = 0f;
-            for (int i = 0; i < n; i++)
+            for (int i = 0; i < sampleCount; i++)
             {
-                float t = (float)i / sampleRate;
-                float f = 60f + 95f * Mathf.Exp(-t * 34f);
-                phase += 2f * Mathf.PI * f / sampleRate;
-                float noise = t < 0.006f ? (float)(rng.NextDouble() * 2.0 - 1.0) * 0.5f * (1f - t / 0.006f) : 0f;
-                buf[i] = Mathf.Clamp((Mathf.Sin(phase) * 0.9f + noise) * Mathf.Exp(-t / 0.028f), -1f, 1f);
+                float time = (float)i / sampleRate;
+                float frequency = 60f + 95f * Mathf.Exp(-time * 34f);
+                phase += 2f * Mathf.PI * frequency / sampleRate;
+                float noise = time < 0.006f ? (float)(rng.NextDouble() * 2.0 - 1.0) * 0.5f * (1f - time / 0.006f) : 0f;
+                buf[i] = Mathf.Clamp((Mathf.Sin(phase) * 0.9f + noise) * Mathf.Exp(-time / 0.028f), -1f, 1f);
             }
             return buf;
         }
 
         public static float[] MakeTick(int sampleRate = 22050, float dur = 0.03f, float freq = 1150f)
         {
-            int n = (int)(sampleRate * dur);
-            var buf = new float[n];
-            for (int i = 0; i < n; i++)
+            int sampleCount = (int)(sampleRate * dur);
+            var buf = new float[sampleCount];
+            for (int i = 0; i < sampleCount; i++)
             {
-                float t = (float)i / sampleRate;
-                buf[i] = Mathf.Sin(2f * Mathf.PI * freq * t) * Mathf.Exp(-t / 0.005f) * 0.7f;
+                float time = (float)i / sampleRate;
+                buf[i] = Mathf.Sin(2f * Mathf.PI * freq * time) * Mathf.Exp(-time / 0.005f) * 0.7f;
             }
             return buf;
         }

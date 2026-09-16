@@ -8,22 +8,9 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Handles companion interactions with fire sources (campfires, hearths, kilns, cooking stations).
-    /// Companion will add fuel to fires and cook food.
-    /// 
-    /// FEATURES:
-    /// - Adds wood to campfires/hearths when fuel is low
-    /// - Cooks food at cooking stations
-    /// - Removes cooked food from stations
-    /// - Pulls fuel from companion inventory or nearby chests
-    /// 
-    /// SUPPORTED FIRE TYPES:
-    /// - Campfire (fire_pit)
-    /// - Hearth (hearth)
-    /// - Bonfire (bonfire)
-    /// - Cooking Station (piece_cookingstation)
-    /// - Iron Cooking Station (piece_cookingstation_iron)
-    /// - Cauldron (piece_cauldron)
+    /// Keeps fires going and food cooking: adds fuel to campfires, hearths and bonfires when low, cooks and
+    /// collects food at cooking stations and cauldrons, and takes fuel from the companion's inventory or nearby
+    /// chests.
     /// </summary>
     public class FireTendingBehavior : IdleSubBehavior
     {
@@ -36,12 +23,12 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float FIRE_DETECTION_RANGE = 10f;
-        private const float INTERACTION_DISTANCE = 2f;
-        private const float MIN_FUEL_TO_ADD = 5f;      // Only add fuel if below this
-        private const float FUEL_TO_ADD = 10f;          // Add this much fuel at once
-        private const float COOK_CHECK_INTERVAL = 2f;
-        private const float MAX_TEND_TIME = 60f;
+        private const float FireDetectionRange = 10f;
+        private const float InteractionDistance = 2f;
+        private const float MinFuelToAdd = 5f;      // Only add fuel if below this
+        private const float FuelToAdd = 10f;          // Add this much fuel at once
+        private const float CookCheckInterval = 2f;
+        private const float MaxTendTime = 60f;
         
         #endregion
         
@@ -93,7 +80,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _rigidbody = companion.GetComponent<Rigidbody>();
             _zanim = companion.GetComponent<ZSyncAnimation>();
             
-            MaxDuration = MAX_TEND_TIME + 30f;
+            MaxDuration = MaxTendTime + 30f;
         }
         
         /// <summary>
@@ -331,7 +318,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             float dist = Vector3.Distance(Transform.position, targetPos);
             
-            if (dist < INTERACTION_DISTANCE)
+            if (dist < InteractionDistance)
             {
                 StopMovement();
                 
@@ -339,7 +326,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 GameObject targetObj = _targetFireplace?.gameObject ?? _targetCookingStation?.gameObject;
                 if (targetObj != null)
                 {
-                    if (!InteractableOccupancyManager.TryOccupy(targetObj, _character, MAX_TEND_TIME))
+                    if (!InteractableOccupancyManager.TryOccupy(targetObj, _character, MaxTendTime))
                     {
                         // Someone else grabbed it first
                         if (CompanionIdleBehavior.VerboseLogging)
@@ -509,7 +496,7 @@ namespace FiresCore.Npc.IdleBehaviors
             FaceTarget(_targetCookingStation.transform.position);
             
             // Check for cooked food periodically
-            if (Time.time - _lastCookCheck >= COOK_CHECK_INTERVAL)
+            if (Time.time - _lastCookCheck >= CookCheckInterval)
             {
                 _lastCookCheck = Time.time;
                 
@@ -581,14 +568,14 @@ namespace FiresCore.Npc.IdleBehaviors
             float nearestDist = float.MaxValue;
             
             // Use SearchCenter for staying companions (searches around home position)
-            float searchRadius = GetEffectiveSearchRadius(FIRE_DETECTION_RANGE);
+            float searchRadius = GetEffectiveSearchRadius(FireDetectionRange);
             var colliders = Physics.OverlapSphere(SearchCenter, searchRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var fireplace = col.GetComponent<Fireplace>() ?? col.GetComponentInParent<Fireplace>();
+                var fireplace = collider.GetComponent<Fireplace>() ?? collider.GetComponentInParent<Fireplace>();
                 if (fireplace == null) continue;
                 
                 // Check if fireplace is already being used by another companion or player
@@ -616,14 +603,14 @@ namespace FiresCore.Npc.IdleBehaviors
             float nearestDist = float.MaxValue;
             
             // Use SearchCenter for staying companions (searches around home position)
-            float searchRadius = GetEffectiveSearchRadius(FIRE_DETECTION_RANGE);
+            float searchRadius = GetEffectiveSearchRadius(FireDetectionRange);
             var colliders = Physics.OverlapSphere(SearchCenter, searchRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var station = col.GetComponent<CookingStation>() ?? col.GetComponentInParent<CookingStation>();
+                var station = collider.GetComponent<CookingStation>() ?? collider.GetComponentInParent<CookingStation>();
                 if (station == null) continue;
                 
                 // Check if cooking station is already being used by another companion or player
@@ -1077,7 +1064,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 (Vector3.back + Vector3.left).normalized
             };
             
-            float safeDistance = INTERACTION_DISTANCE + 0.5f; // Slightly beyond interaction distance
+            float safeDistance = InteractionDistance + 0.5f; // Slightly beyond interaction distance
             
             foreach (var dir in directions)
             {
@@ -1156,21 +1143,21 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check for physical obstructions (walls, objects)
             // Use a small sphere check to see if position is clear
             Collider[] colliders = Physics.OverlapSphere(pos + Vector3.up * 0.5f, 0.4f);
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
-                if (col.isTrigger) continue;
+                if (collider == null) continue;
+                if (collider.isTrigger) continue;
                 
                 // Ignore terrain
-                if (col.gameObject.layer == LayerMask.NameToLayer("terrain"))
+                if (collider.gameObject.layer == LayerMask.NameToLayer("terrain"))
                     continue;
                 
                 // Ignore the fire itself
-                if (col.GetComponent<Fireplace>() != null || col.GetComponentInParent<Fireplace>() != null)
+                if (collider.GetComponent<Fireplace>() != null || collider.GetComponentInParent<Fireplace>() != null)
                     continue;
                     
                 // Ignore cooking stations
-                if (col.GetComponent<CookingStation>() != null || col.GetComponentInParent<CookingStation>() != null)
+                if (collider.GetComponent<CookingStation>() != null || collider.GetComponentInParent<CookingStation>() != null)
                     continue;
                 
                 // Found an obstruction

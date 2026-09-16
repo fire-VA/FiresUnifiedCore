@@ -45,9 +45,9 @@ namespace FiresCore.UI.ContextMenu
             Held(Modifier1 != null ? Modifier1.Value : KeyCode.LeftAlt) &&
             Held(Modifier2 != null ? Modifier2.Value : KeyCode.LeftShift);
 
-        private static bool Held(KeyCode k)
+        private static bool Held(KeyCode key)
         {
-            switch (k)
+            switch (key)
             {
                 case KeyCode.None:         return true; // this modifier not required
                 case KeyCode.LeftAlt:
@@ -56,7 +56,7 @@ namespace FiresCore.UI.ContextMenu
                 case KeyCode.RightShift:   return Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
                 case KeyCode.LeftControl:
                 case KeyCode.RightControl: return Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-                default:                   return Input.GetKey(k);
+                default:                   return Input.GetKey(key);
             }
         }
     }

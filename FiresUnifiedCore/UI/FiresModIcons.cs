@@ -64,8 +64,8 @@ namespace FiresCore.UI
             if (!_loadImageResolved)
             {
                 _loadImageResolved = true;
-                var t = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
-                _loadImage = t?.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]) });
+                var type = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
+                _loadImage = type?.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]) });
             }
             if (_loadImage == null) return false;
             try { return (bool)_loadImage.Invoke(null, new object[] { tex, data }); }

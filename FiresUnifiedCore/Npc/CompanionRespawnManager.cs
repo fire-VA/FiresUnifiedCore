@@ -19,6 +19,17 @@ namespace FiresCore.Npc
     /// </summary>
     public class CompanionRespawnManager : MonoBehaviour
     {
+        private const float LoginRestoreDelay = 3f;
+        private const float AppearanceRestoreDelay = 0.2f;
+        private const float VaultSyncRetryDelay = 15f;
+        private const float OwnerOfflineRetryDelay = 30f;
+        private const float KennelSyncRetryDelay = 10f;
+        private const float FailedRestoreRetryDelay = 30f;
+        private const int SpawnPositionAttempts = 10;
+        private const float SpawnScatterRadius = 5f;
+        private const float FallbackSpawnForwardDistance = 3f;
+        private const float SpawnHeightOffset = 0.5f;
+
         private static CompanionRespawnManager _instance;
         public static CompanionRespawnManager Instance
         {
@@ -194,27 +205,28 @@ namespace FiresCore.Npc
         private IEnumerator RestoreCompanionsForPlayer(Player player)
      {
             // Wait a moment for the world to fully load
-            yield return new WaitForSeconds(3f);
+            yield return new WaitForSeconds(LoginRestoreDelay);
 
             if (player == null) yield break;
 
             // Wait until the player's spawn gate is open before touching ZDOs or
             // m_customData. Writing while IsTeleporting=true deadlocks the loading screen.
             {
-                const float GATE_TIMEOUT = 35f;
+                const float GateTimeout = 35f;
+                const float GatePollInterval = 0.25f;
                 float gateStart = Time.realtimeSinceStartup;
                 while (player != null
                        && !PlayerSpawnGate.IsReadyForCustomDataWrite(player)
-                       && (Time.realtimeSinceStartup - gateStart) < GATE_TIMEOUT)
+                       && (Time.realtimeSinceStartup - gateStart) < GateTimeout)
                 {
-                    yield return new WaitForSeconds(0.25f);
+                    yield return new WaitForSeconds(GatePollInterval);
                 }
 
                 if (player == null) yield break;
 
                 if (!PlayerSpawnGate.IsReadyForCustomDataWrite(player))
                 {
-                    Debug.LogWarning($"[CompanionRespawnManager] Player spawn gate did not open in time for {player.GetPlayerName()} â€” aborting restore");
+                    Debug.LogWarning($"[CompanionRespawnManager] Player spawn gate did not open in time for {player.GetPlayerName()} — aborting restore");
                     yield break;
                 }
             }
@@ -251,7 +263,7 @@ namespace FiresCore.Npc
              yield break;
              }
 
-            // ?? PLAYER FOLLOWING REGISTRY MIGRATION & SELF-HEAL ?????????????
+            // PLAYER FOLLOWING REGISTRY MIGRATION & SELF-HEAL
             // The authoritative source for "is this companion set to follow"
             // is now the player's ZDO (PlayerFollowingRegistry).  On first
             // login under the new system the registry is empty, so we import
@@ -262,13 +274,13 @@ namespace FiresCore.Npc
             if (savedCompanions != null)
             {
                 var followingIds = new List<string>();
-                foreach (var sd in savedCompanions)
+                foreach (var saveData in savedCompanions)
                 {
-                    if (sd == null) continue;
-                    if (sd.IsStationedAsNpc) continue;
-                    if (!sd.IsFollowing) continue;
-                    if (string.IsNullOrEmpty(sd.CompanionId)) continue;
-                    followingIds.Add(sd.CompanionId);
+                    if (saveData == null) continue;
+                    if (saveData.IsStationedAsNpc) continue;
+                    if (!saveData.IsFollowing) continue;
+                    if (string.IsNullOrEmpty(saveData.CompanionId)) continue;
+                    followingIds.Add(saveData.CompanionId);
                 }
                 if (followingIds.Count > 0)
                 {
@@ -311,7 +323,7 @@ namespace FiresCore.Npc
              {
                  if (VerboseLogging && savedData.IsFollowing)
                  {
-                     Debug.Log($"[CompanionRespawnManager] Vault says {savedData.CompanionName} should follow, but player registry says no ï¿½ skipping (registry is authoritative)");
+                     Debug.Log($"[CompanionRespawnManager] Vault says {savedData.CompanionName} should follow, but player registry says no - skipping (registry is authoritative)");
                  }
                  continue;
              }
@@ -340,18 +352,18 @@ namespace FiresCore.Npc
           // Wait for CompanionController to finish initializing
           float timeout = 5f;
           float waited = 0f;
-          CompanionController cc = null;
+          CompanionController controller = null;
           while (waited < timeout)
           {
-              cc = existingGO.GetComponent<CompanionController>();
-              if (cc != null && !string.IsNullOrEmpty(cc.companionId)) break;
+              controller = existingGO.GetComponent<CompanionController>();
+              if (controller != null && !string.IsNullOrEmpty(controller.companionId)) break;
               yield return new WaitForSeconds(0.5f);
               waited += 0.5f;
           }
 
-          if (cc != null)
+          if (controller != null)
           {
-              cc.CommandFollow(player);
+              controller.CommandFollow(player);
               MessageHud.instance?.ShowMessage(MessageHud.MessageType.TopLeft,
                   $"{savedData.CompanionName ?? "Your companion"} has rejoined you!");
           }
@@ -410,30 +422,14 @@ namespace FiresCore.Npc
        }
         else if (savedData.IsPendingRespawn && savedData.DeathTimestamp > 0)
         {
-            // CRASH-SAFE PENDING RESPAWN (Phase 4 of save refactor).
-            // The resolver stamped RespawnTimeRemaining from the roster's
-            // absolute wall-clock deadline. Three cases:
-            //
-            //   ï¿½ remaining > 0 ? schedule a respawn for that many
-            //     seconds from now. This is the actual crash-safety
-            //     payoff: a companion that died 30s before a crash comes
-            //     back ~90s after login (if delay was 120s), not
-            //     instantly with full HP.
-            //
-            //   ï¿½ remaining == 0 ? deadline already passed; spawn
-            //     immediately as before. Same as legacy behaviour for
-            //     companions whose timer expired while logged out.
-            //
-            //   ï¿½ savedData has no RespawnTimeRemaining (vault-fallback
-            //     source from before Phase 3) ? spawn immediately, same
-            //     as legacy behaviour. The vault path doesn't carry a
-            //     wall-clock deadline so we can't do better here.
+            // Time left on the roster's wall-clock respawn deadline: schedule the respawn for what remains, or spawn
+            // now when it has passed or the data came from the vault, which carries no deadline.
             float remaining = savedData.RespawnTimeRemaining;
             if (remaining > 0.5f)
             {
                 if (VerboseLogging)
                 {
-                    Debug.Log($"[CompanionRespawnManager] Companion {savedData.CompanionName} has {remaining:F1}s remaining on persisted respawn timer ï¿½ scheduling respawn instead of immediate login spawn");
+                    Debug.Log($"[CompanionRespawnManager] Companion {savedData.CompanionName} has {remaining:F1}s remaining on persisted respawn timer - scheduling respawn instead of immediate login spawn");
                 }
 
                 ScheduleRespawn(
@@ -452,7 +448,7 @@ namespace FiresCore.Npc
                 // metadata so stats aren't lost.
                 if (VerboseLogging)
                 {
-                    Debug.Log($"[CompanionRespawnManager] Companion {savedData.CompanionName} has persisted death state with no remaining timer ï¿½ spawning for login");
+                    Debug.Log($"[CompanionRespawnManager] Companion {savedData.CompanionName} has persisted death state with no remaining timer - spawning for login");
                 }
 
                 yield return StartCoroutine(SpawnCompanionForPlayer(player, savedData));
@@ -504,13 +500,13 @@ namespace FiresCore.Npc
               var zdoCompanionId = zdo.GetString("companion_id", "");
               if (zdoCompanionId == companionId)
               {
-                  // Found the ZDO ï¿½ return the CompanionController if it exists,
+                  // Found the ZDO - return the CompanionController if it exists,
                   // otherwise return a marker (null controller but we know it exists).
-                  var cc = znetView.GetComponent<CompanionController>();
-                  if (cc != null) return cc;
+                  var controller = znetView.GetComponent<CompanionController>();
+                  if (controller != null) return controller;
 
                   // The object exists but hasn't initialized its CompanionController yet.
-                  // We still need to signal "exists" ï¿½ use a special sentinel approach:
+                  // We still need to signal "exists" - use a special sentinel approach:
                   // Teleport the existing object to the player and skip spawning.
                   if (VerboseLogging)
                       Debug.Log($"[CompanionRespawnManager] Found existing ZDO for companion {companionId} but CompanionController not yet initialized");
@@ -721,7 +717,7 @@ if (prefab == null)
                 var randomLoadout = controller.GetComponent<CompanionRandomLoadout>();
                 if (randomLoadout != null)
                 {
-                    randomLoadout.Invoke("RestoreModelStateFromZDO", 0.2f);
+                    randomLoadout.Invoke("RestoreModelStateFromZDO", AppearanceRestoreDelay);
                 }
             }
             
@@ -877,9 +873,9 @@ if (prefab == null)
      if (FiresCore.Bridge.NpcDormancyBridge.IsAvailable)
      {
          Vector3 kennelPos = Vector3.zero;
-         foreach (var p in Player.GetAllPlayers())
+         foreach (var onlinePlayer in Player.GetAllPlayers())
          {
-             if (p != null && p.GetPlayerID() == data.OwnerPlayerId) { kennelPos = p.transform.position; break; }
+             if (onlinePlayer != null && onlinePlayer.GetPlayerID() == data.OwnerPlayerId) { kennelPos = onlinePlayer.transform.position; break; }
          }
          if (CompanionRestoreService.TrySpawnDormantById(data.OwnerPlayerId, data.CompanionId, kennelPos))
          {
@@ -888,8 +884,8 @@ if (prefab == null)
          }
      }
 
-     Debug.LogWarning($"[CompanionRespawnManager] Vault data not found for {data.CompanionId} (owner {data.OwnerPlayerId}) ï¿½ deferring respawn 15s to allow vault sync");
-     data.RespawnTime = Time.time + 15f;
+     Debug.LogWarning($"[CompanionRespawnManager] Vault data not found for {data.CompanionId} (owner {data.OwnerPlayerId}) - deferring respawn 15s to allow vault sync");
+     data.RespawnTime = Time.time + VaultSyncRetryDelay;
      _pendingRespawns[data.CompanionId] = data;
      yield break;
  }
@@ -956,7 +952,7 @@ if (prefab == null)
     }
 
    // Re-schedule for later
-          data.RespawnTime = Time.time + 30f;  // Try again in 30 seconds
+          data.RespawnTime = Time.time + OwnerOfflineRetryDelay;  // Try again in 30 seconds
      _pendingRespawns[data.CompanionId] = data;
  yield break;
     }
@@ -988,7 +984,7 @@ if (prefab == null)
             {
                 Debug.LogWarning($"[CompanionRespawnManager] Kennel has no entry yet for {data.CompanionId} " +
                                  $"— deferring respawn 10s (never spawning a bare identity-less fallback).");
-                data.RespawnTime = Time.time + 10f;
+                data.RespawnTime = Time.time + KennelSyncRetryDelay;
                 _pendingRespawns[data.CompanionId] = data;
                 yield break;
             }
@@ -1105,7 +1101,7 @@ if (prefab == null)
 
             CompanionSaveData savedData = null;
 
-   // Get save data outside try/catch ï¿½ Phase 4 prefers roster.
+   // Get save data outside try/catch - Phase 4 prefers roster.
            try
 {
                savedData = CompanionSavedDataResolver.ResolveByCompanionId(data.OwnerPlayerId, data.CompanionId);
@@ -1179,7 +1175,7 @@ if (prefab == null)
    // It would appear as a level-1 nameless "CompanionNpc" with full bars and
    // none of the original identity / progression.  Destroy it and reschedule
    // so the player can try again once the vault is healthy.
-   Debug.LogError($"[CompanionRespawnManager] Vault data missing for {data.CompanionId} (owner {data.OwnerPlayerId}) after retry ï¿½ destroying zombie spawn and rescheduling respawn");
+   Debug.LogError($"[CompanionRespawnManager] Vault data missing for {data.CompanionId} (owner {data.OwnerPlayerId}) after retry - destroying zombie spawn and rescheduling respawn");
 
    try { CompanionNetworkHelper.Destroy(controller.gameObject); }
    catch (Exception ex) { Debug.LogWarning($"[CompanionRespawnManager] Failed to destroy zombie companion: {ex.Message}"); }
@@ -1189,7 +1185,7 @@ if (prefab == null)
        CompanionId   = data.CompanionId,
        OwnerPlayerId = data.OwnerPlayerId,
        PrefabName    = data.PrefabName,
-       RespawnTime   = Time.time + 30f,
+       RespawnTime   = Time.time + FailedRestoreRetryDelay,
        TombstoneZDOID = data.TombstoneZDOID
    };
    _pendingRespawns[data.CompanionId] = rescheduled;
@@ -1197,7 +1193,7 @@ if (prefab == null)
    if (Player.m_localPlayer != null && Player.m_localPlayer.GetPlayerID() == data.OwnerPlayerId)
    {
        MessageHud.instance?.ShowMessage(MessageHud.MessageType.TopLeft,
-           "Companion vault data not ready ï¿½ respawn deferred 30s");
+           "Companion vault data not ready - respawn deferred 30s");
    }
    yield break;
    }
@@ -1292,7 +1288,7 @@ if (prefab == null)
                 var randomLoadout = controller.GetComponent<CompanionRandomLoadout>();
                 if (randomLoadout != null)
                 {
-                    randomLoadout.Invoke("RestoreModelStateFromZDO", 0.2f);
+                    randomLoadout.Invoke("RestoreModelStateFromZDO", AppearanceRestoreDelay);
                 }
             }
             
@@ -1372,20 +1368,8 @@ if (prefab == null)
             }
             else
             {
-                // ?? Restore the OWNER'S persistent intent, not blanket-follow ??
-                //
-                // Previously this branch unconditionally called CommandFollow
-                // and SetShouldFollow(true) regardless of what the companion
-                // had been doing before death. That overrode an explicit Stay
-                // command across the death/respawn cycle: owner places
-                // companion to guard a spot ? companion dies ? respawns and
-                // walks back to the owner. The owner's last command must be
-                // honoured.
-                //
-                // savedData.IsFollowing is the authoritative persistent
-                // intent (written by CompanionRosterWriter on every Stay /
-                // Follow command and on dismissal). HasHomePosition +
-                // HomePosition{X,Y,Z} carries the Stay anchor.
+                // Restore the owner's last command rather than always following: a companion told to stay and guard a
+                // spot must respawn back to its anchor. savedData.IsFollowing and the home position carry that intent.
                 Player owner = null;
                 foreach (var player in Player.GetAllPlayers())
                 {
@@ -1415,7 +1399,7 @@ if (prefab == null)
                     }
                     else
                     {
-                        // Owner not loaded yet ï¿½ set persistent flag and let
+                        // Owner not loaded yet - set persistent flag and let
                         // the deferred-follow watcher pick it up.
                         Debug.LogWarning($"[CompanionRespawnManager] Owner not found for {controller.companionName} after respawn, setting follow state directly");
                         controller.SetFollowMode(true);
@@ -1440,13 +1424,13 @@ if (prefab == null)
                     }
                     else
                     {
-                        // No saved home ? fall back to the companion's current
+                        // No saved home - fall back to the companion's current
                         // (post-respawn) position so they at least don't run
                         // off looking for the player.  This is best-effort;
                         // a companion that was Staying without a recorded
                         // home is an old-save edge case.
                         stayPos = controller.transform.position;
-                        Debug.LogWarning($"[CompanionRespawnManager] {controller.companionName} respawning in Stay mode but had no HomePosition ï¿½ using current position {stayPos}");
+                        Debug.LogWarning($"[CompanionRespawnManager] {controller.companionName} respawning in Stay mode but had no HomePosition - using current position {stayPos}");
                     }
 
                     var combatMovement = controller.GetComponent<CompanionCombatMovement>();
@@ -1479,7 +1463,7 @@ if (prefab == null)
               // pending" signal; the periodic FlushDebugMirror picks up
               // the new state on its next tick.
 
-            // ?? ROSTER MIRROR (Phase 3 of save refactor) ??????????????
+            // ROSTER MIRROR (Phase 3 of save refactor)
             // Side-by-side write to the player-customData roster: clears
             // IsPendingRespawn, refreshes the snapshot from the now-restored
             // live companion, preserves the prior FollowState (so a
@@ -1598,9 +1582,9 @@ private Vector3 GetSpawnPositionNearPlayer(Player player)
         {
             Vector3 basePos = player.transform.position;
 
- for (int i = 0; i < 10; i++)
+ for (int i = 0; i < SpawnPositionAttempts; i++)
    {
- Vector2 randomOffset = UnityEngine.Random.insideUnitCircle * 5f;
+ Vector2 randomOffset = UnityEngine.Random.insideUnitCircle * SpawnScatterRadius;
       Vector3 testPos = basePos + new Vector3(randomOffset.x, 0f, randomOffset.y);
 
                 if (ZoneSystem.instance != null)
@@ -1608,13 +1592,13 @@ private Vector3 GetSpawnPositionNearPlayer(Player player)
          float groundHeight;
        if (ZoneSystem.instance.GetGroundHeight(testPos, out groundHeight))
        {
-               testPos.y = groundHeight + 0.5f;
+               testPos.y = groundHeight + SpawnHeightOffset;
         return testPos;
  }
         }
      }
 
-       return basePos + player.transform.forward * 3f + Vector3.up * 0.5f;
+       return basePos + player.transform.forward * FallbackSpawnForwardDistance + Vector3.up * SpawnHeightOffset;
     }
 
         /// <summary>
@@ -1843,10 +1827,10 @@ private Vector3 GetSpawnPositionNearPlayer(Player player)
             PlayRespawnEffect(spawnPos);
             
             // Special resurrection VFX
-            var resFx = ZNetScene.instance?.GetPrefab("vfx_spiritbolt_explosion");
-            if (resFx != null)
+            var respawnFx = ZNetScene.instance?.GetPrefab("vfx_spiritbolt_explosion");
+            if (respawnFx != null)
             {
-                UnityEngine.Object.Instantiate(resFx, spawnPos, Quaternion.identity);
+                UnityEngine.Object.Instantiate(respawnFx, spawnPos, Quaternion.identity);
             }
             
             // Notify

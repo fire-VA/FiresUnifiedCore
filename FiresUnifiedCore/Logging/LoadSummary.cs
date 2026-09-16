@@ -69,13 +69,13 @@ namespace FiresCore.Logging
         // Console display width of a title. Grapheme clusters count one cell EXCEPT emoji
         // (astral-plane clusters like 📖/📦): the console font renders those TWO cells wide,
         // so counting them as one left the top border a dash longer than the bottom frame.
-        private static int DisplayWidth(string s)
+        private static int DisplayWidth(string text)
         {
-            if (string.IsNullOrEmpty(s)) return 0;
+            if (string.IsNullOrEmpty(text)) return 0;
             try
             {
                 int width = 0;
-                var elements = System.Globalization.StringInfo.GetTextElementEnumerator(s);
+                var elements = System.Globalization.StringInfo.GetTextElementEnumerator(text);
                 while (elements.MoveNext())
                 {
                     string element = (string)elements.Current;
@@ -83,7 +83,7 @@ namespace FiresCore.Logging
                 }
                 return width;
             }
-            catch { return s.Length; }
+            catch { return text.Length; }
         }
 
         private static void EmitTopBorder(string title, string tag)

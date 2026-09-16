@@ -8,34 +8,10 @@ using FiresCore.Npc.Events;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Dedicated cooking behavior for companions.
-    ///
-    /// FULL LOOP
-    /// ---------
-    /// 1. Scan for nearby CookingStation(s) within range.
-    /// 2. Check whether the companion carries raw food that any station accepts.
-    ///    If not, scan nearby chests for raw food and pull what is needed.
-    /// 3. Walk to the station, fill every empty slot with the appropriate raw item.
-    /// 4. Stand at the station and wait.  Every tick we:
-    ///    a. Collect any slot that is DONE (slotstatus == 2) so it doesn't burn.
-    ///    b. Refill vacated slots with more raw food if available.
-    ///    c. Detect burned items (slotstatus == 3) and collect them so the slot
-    ///       is freed up.
-    /// 5. When all food is loaded and nothing is left to add, keep waiting until
-    ///    every slot that still has food is collected.
-    /// 6. Deposit cooked food to nearby chests.
-    /// 7. Complete and notify the owner.
-    ///
-    /// DESIGN NOTES
-    /// ------------
-    /// * Handles multiple cooking stations in sequence (visits nearest first).
-    /// * Pulls raw food from chests when the companion's own inventory is empty.
-    /// * Never keeps burned/spoiled food ï¿½ collects it immediately to free the slot.
-    /// * Deposits cooked output to chests using SmartStorageOrganizer so it lands
-    ///   in the right chest (food storage, near cauldron, etc.).
-    /// * Priority is elevated when the companion has raw food that is about to
-    ///   expire (m_shared.m_foodBurnTime > 0 and item is close to its limit) ï¿½
-    ///   this is a nice-to-have future extension; for now priority is 0.
+    /// Cooks for the owner: finds nearby cooking stations (nearest first), pulls raw food from chests when the
+    /// companion has none, fills every empty slot, then waits at the station collecting finished and burned
+    /// food and refilling freed slots until nothing is left, and deposits the results through
+    /// SmartStorageOrganizer before reporting back.
     /// </summary>
     public class CompanionCookingBehavior : WorkBehaviorBase<CompanionCookingBehavior.CookPhase>
     {
@@ -51,16 +27,16 @@ namespace FiresCore.Npc.IdleBehaviors
             get
             {
                 if (HasRawFoodInInventory()) return 20;
-                // Check if any nearby station has finished cooking ï¿½ collecting
+                // Check if any nearby station has finished cooking - collecting
                 // before it burns is time-critical so beat all priority-0 tasks.
                 var stations = FindCookingStations();
-                foreach (var s in stations)
-                    if (HasDoneItems(s) || HasBurnedItems(s)) return 50;
+                foreach (var station in stations)
+                    if (HasDoneItems(station) || HasBurnedItems(station)) return 50;
                 return 0;
             }
         }
 
-        // ?? phase enum ????????????????????????????????????????????????????????
+        // phase enum
 
         public enum CookPhase
         {
@@ -75,23 +51,23 @@ namespace FiresCore.Npc.IdleBehaviors
             Complete
         }
 
-        // ?? tuneable constants ????????????????????????????????????????????????
+        // tuneable constants
 
-        private const float STATION_SCAN_RADIUS  = 12f;
+        private const float StationScanRadius  = 12f;
         private float ChestSearchRadius => CompanionSettings.ChestSearchRadius;
-        private const float INTERACTION_DIST     = 2.0f;
-        private const float MAX_COOK_TIME        = 300f;  // 5-minute global cap
-        private const float TEND_CHECK_INTERVAL  = 1.5f;  // how often we query slot state
-        private const float TEND_CHECK_INTERVAL_URGENT = 0.3f; // when food is done/burning, react fast
-        private const float IDLE_GIVE_UP_TIME    = 40f;   // bail if nothing happens this long
+        private const float InteractionDist     = 2.0f;
+        private const float MaxCookTime        = 300f;  // 5-minute global cap
+        private const float TendCheckInterval  = 1.5f;  // how often we query slot state
+        private const float TendCheckIntervalUrgent = 0.3f; // when food is done/burning, react fast
+        private const float IdleGiveUpTime    = 40f;   // bail if nothing happens this long
 
         // slotstatus ZDO values used by Valheim's CookingStation
-        private const int STATUS_EMPTY  = 0;
-        private const int STATUS_COOKING = 1;
-        private const int STATUS_DONE   = 2;
-        private const int STATUS_BURNED = 3;
+        private const int StatusEmpty  = 0;
+        private const int StatusCooking = 1;
+        private const int StatusDone   = 2;
+        private const int StatusBurned = 3;
 
-        // ?? state ?????????????????????????????????????????????????????????????
+        // state
 
         private List<CookingStation> _stations = new List<CookingStation>();
         private CookingStation _currentStation;
@@ -101,13 +77,13 @@ namespace FiresCore.Npc.IdleBehaviors
         private int _itemsDeposited;
 
         private float _tendTimer;
-        private float _idleTimer;   // time with nothing cooking ï¿½ bail guard
+        private float _idleTimer;   // time with nothing cooking - bail guard
 
         private List<Container>           _depositChests   = new List<Container>();
         private List<ItemDrop.ItemData>   _toDeposit       = new List<ItemDrop.ItemData>();
         private int                        _depositIndex;
 
-        // Stations that failed pathfinding this session â€” skipped in Scanning until behavior restarts.
+        // Stations that failed pathfinding this session — skipped in Scanning until behavior restarts.
         private HashSet<CookingStation> _failedStations = new HashSet<CookingStation>();
 
         // Set by the command system (Shift+MMB on a CookingStation) to force this
@@ -115,7 +91,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // autonomous CanStart checks. Cleared once consumed in Start().
         private GameObject _commandedTarget;
 
-        // ?? WorkBehaviorBase wiring ???????????????????????????????????????????
+        // WorkBehaviorBase wiring
 
         protected override CookPhase InitialPhase => CookPhase.Scanning;
 
@@ -128,7 +104,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 CookPhase.PullingFood     => 10f,
                 CookPhase.MovingToStation => 30f,
                 CookPhase.LoadingFood     => 15f,
-                CookPhase.Tending         => MAX_COOK_TIME,
+                CookPhase.Tending         => MaxCookTime,
                 CookPhase.MovingToDeposit => 20f,
                 CookPhase.Depositing      => 15f,
                 _                         => 10f
@@ -174,12 +150,12 @@ namespace FiresCore.Npc.IdleBehaviors
             };
         }
 
-        // ?? lifecycle ?????????????????????????????????????????????????????????
+        // lifecycle
 
         public override void Initialize(CompanionController companion, CompanionIdleBehavior idleBehavior)
         {
             base.Initialize(companion, idleBehavior);
-            MaxDuration = MAX_COOK_TIME;
+            MaxDuration = MaxCookTime;
         }
 
         /// <summary>
@@ -197,7 +173,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Companion == null) return false;
 
             // Commanded path: the player explicitly told this companion to cook
-            // at a specific station â€” skip the toggle and autonomous checks. We
+            // at a specific station — skip the toggle and autonomous checks. We
             // still verify the target actually has a CookingStation component.
             if (_commandedTarget != null)
             {
@@ -205,7 +181,7 @@ namespace FiresCore.Npc.IdleBehaviors
                                     ?? _commandedTarget.GetComponentInParent<CookingStation>();
                 if (commandedStation != null)
                 {
-                    LogVerbose("CanStart: TRUE â€” commanded cooking station");
+                    LogVerbose("CanStart: TRUE — commanded cooking station");
                     return true;
                 }
                 // Target lost its station component (destroyed, replaced); drop the command.
@@ -219,16 +195,16 @@ namespace FiresCore.Npc.IdleBehaviors
             var stations = FindCookingStations();
             if (stations.Count == 0)
             {
-                LogVerbose("CanStart: FALSE ï¿½ no cooking stations nearby");
+                LogVerbose("CanStart: FALSE - no cooking stations nearby");
                 return false;
             }
 
             // Check if any station already has food we should collect first.
-            foreach (var s in stations)
+            foreach (var station in stations)
             {
-                if (HasDoneItems(s) || HasBurnedItems(s))
+                if (HasDoneItems(station) || HasBurnedItems(station))
                 {
-                    LogVerbose("CanStart: TRUE ï¿½ station has finished/burned food to collect");
+                    LogVerbose("CanStart: TRUE - station has finished/burned food to collect");
                     return true;
                 }
             }
@@ -236,11 +212,11 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check if we have raw food to cook (in inventory or in nearby chests).
             if (HasRawFoodForAnyStation(stations))
             {
-                LogVerbose("CanStart: TRUE ï¿½ have raw food for a station");
+                LogVerbose("CanStart: TRUE - have raw food for a station");
                 return true;
             }
 
-            LogVerbose("CanStart: FALSE ï¿½ no raw food available");
+            LogVerbose("CanStart: FALSE - no raw food available");
             return false;
         }
 
@@ -256,7 +232,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             // If the player commanded a specific station, pin it as the active
             // target and put it at the head of the candidate list so Scanning
-            // picks it on the first tick. Then clear the command flag â€” it has
+            // picks it on the first tick. Then clear the command flag — it has
             // served its purpose and shouldn't survive a behavior restart.
             if (_commandedTarget != null)
             {
@@ -304,7 +280,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
         }
 
-        // ?? event-driven wake-up ?????????????????????????????????????????????
+        // event-driven wake-up
         // The CookingStation patch (below) calls into here the moment a slot
         // transitions to Done.  Reset the tend timer so the very next Update
         // tick runs the collection loop instead of waiting for the urgent poll
@@ -316,11 +292,11 @@ namespace FiresCore.Npc.IdleBehaviors
         private static readonly object _activeBehaviorsLock = new object();
 
         // When the first slot in the station hits Done, we schedule a single
-        // batched pickup at this time (Time.time + COLLECT_BATCH_DELAY) so any
+        // batched pickup at this time (Time.time + CollectBatchDelay) so any
         // additional slots that finish in the same window are picked up in one
         // pass.  -1 means "no pickup currently pending".
         private float _pendingCollectTime = -1f;
-        private const float COLLECT_BATCH_DELAY = 1.5f;
+        private const float CollectBatchDelay = 1.5f;
 
         private void OnStationFinished(CookingStation station)
         {
@@ -329,13 +305,13 @@ namespace FiresCore.Npc.IdleBehaviors
             if (CurrentPhase != CookPhase.Tending && CurrentPhase != CookPhase.LoadingFood)
                 return;
 
-            // First "ding" of the batch ï¿½ schedule a delayed collect.  Don't
+            // First "ding" of the batch - schedule a delayed collect.  Don't
             // overwrite an already-scheduled time, otherwise a cluster of slots
             // finishing back-to-back would keep pushing the deadline forward
             // forever and food would burn.
             if (_pendingCollectTime < 0f)
             {
-                _pendingCollectTime = Time.time + COLLECT_BATCH_DELAY;
+                _pendingCollectTime = Time.time + CollectBatchDelay;
                 _idleTimer = 0f;
             }
         }
@@ -373,8 +349,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 var zdo = nview.GetZDO();
                 for (int i = 0; i < slotCount; i++)
                 {
-                    int status = zdo.GetInt("slotstatus" + i, STATUS_EMPTY);
-                    if (status == STATUS_DONE && prev[i] != STATUS_DONE)
+                    int status = zdo.GetInt("slotstatus" + i, StatusEmpty);
+                    if (status == StatusDone && prev[i] != StatusDone)
                     {
                         anyNewlyDone = true;
                     }
@@ -390,9 +366,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     snapshot = _activeBehaviors.ToArray();
                 }
-                foreach (var beh in snapshot)
+                foreach (var behavior in snapshot)
                 {
-                    try { beh?.OnStationFinished(__instance); } catch { }
+                    try { behavior?.OnStationFinished(__instance); } catch { }
                 }
             }
         }
@@ -424,7 +400,7 @@ namespace FiresCore.Npc.IdleBehaviors
             base.Cancel();
         }
 
-        // ?? phase handlers ????????????????????????????????????????????????????
+        // phase handlers
 
         private bool UpdateScanning()
         {
@@ -439,68 +415,68 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // Priority 1: collect finished or burned items from any station.
-            foreach (var s in _stations)
+            foreach (var station in _stations)
             {
-                if (_failedStations.Contains(s)) continue;
-                if (!IsReachable(s.transform.position)) { _failedStations.Add(s); continue; }
-                if (HasDoneItems(s) || HasBurnedItems(s))
+                if (_failedStations.Contains(station)) continue;
+                if (!IsReachable(station.transform.position)) { _failedStations.Add(station); continue; }
+                if (HasDoneItems(station) || HasBurnedItems(station))
                 {
                     // EARLY RESERVATION so other companions don't pick the same station.
-                    if (!InteractableOccupancyManager.TryOccupy(s.gameObject, Character, MAX_COOK_TIME))
+                    if (!InteractableOccupancyManager.TryOccupy(station.gameObject, Character, MaxCookTime))
                     {
-                        _failedStations.Add(s);
+                        _failedStations.Add(station);
                         continue;
                     }
-                    _currentStation = s;
-                    LogVerbose($"Scan: found station with finished food ï¿½ going to collect");
+                    _currentStation = station;
+                    LogVerbose($"Scan: found station with finished food - going to collect");
                     SetPhase(CookPhase.MovingToStation);
                     MoveToPosition(InteractionPointHelper.GetInteractionPoint(
-                        s.gameObject, Transform.position, INTERACTION_DIST));
+                        station.gameObject, Transform.position, InteractionDist));
                     return false;
                 }
             }
 
             // Priority 2: find a station with free slots and raw food to load.
-            foreach (var s in _stations)
+            foreach (var station in _stations)
             {
-                if (_failedStations.Contains(s)) continue;
-                if (!IsReachable(s.transform.position)) { _failedStations.Add(s); continue; }
-                if (!HasFreeSlot(s)) continue;
+                if (_failedStations.Contains(station)) continue;
+                if (!IsReachable(station.transform.position)) { _failedStations.Add(station); continue; }
+                if (!HasFreeSlot(station)) continue;
 
-                if (HasRawFoodForStation(s, GetStorageInventory()))
+                if (HasRawFoodForStation(station, GetStorageInventory()))
                 {
                     // EARLY RESERVATION
-                    if (!InteractableOccupancyManager.TryOccupy(s.gameObject, Character, MAX_COOK_TIME))
+                    if (!InteractableOccupancyManager.TryOccupy(station.gameObject, Character, MaxCookTime))
                     {
-                        _failedStations.Add(s);
+                        _failedStations.Add(station);
                         continue;
                     }
-                    // Raw food already in inventory ï¿½ go straight to station.
-                    _currentStation = s;
-                    LogVerbose($"Scan: have raw food in inventory for {s.name}");
+                    // Raw food already in inventory - go straight to station.
+                    _currentStation = station;
+                    LogVerbose($"Scan: have raw food in inventory for {station.name}");
                     SetPhase(CookPhase.MovingToStation);
                     MoveToPosition(InteractionPointHelper.GetInteractionPoint(
-                        s.gameObject, Transform.position, INTERACTION_DIST));
+                        station.gameObject, Transform.position, InteractionDist));
                     return false;
                 }
 
                 // Check chests.
                 Resources.RefreshNearbyChests(true);
-                _rawFoodChest = FindChestWithRawFood(s);
+                _rawFoodChest = FindChestWithRawFood(station);
                 if (_rawFoodChest != null)
                 {
                     // EARLY RESERVATION
-                    if (!InteractableOccupancyManager.TryOccupy(s.gameObject, Character, MAX_COOK_TIME))
+                    if (!InteractableOccupancyManager.TryOccupy(station.gameObject, Character, MaxCookTime))
                     {
-                        _failedStations.Add(s);
+                        _failedStations.Add(station);
                         _rawFoodChest = null;
                         continue;
                     }
-                    _currentStation = s;
-                    LogVerbose($"Scan: found raw food in chest for {s.name}");
+                    _currentStation = station;
+                    LogVerbose($"Scan: found raw food in chest for {station.name}");
                     SetPhase(CookPhase.MovingToChest);
                     MoveToPosition(InteractionPointHelper.GetContainerInteractionPoint(
-                        _rawFoodChest, Transform.position, INTERACTION_DIST));
+                        _rawFoodChest, Transform.position, InteractionDist));
                     return false;
                 }
             }
@@ -518,7 +494,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            if (DistanceTo(_rawFoodChest.transform.position) <= INTERACTION_DIST || ContinueMovement())
+            if (DistanceTo(_rawFoodChest.transform.position) <= InteractionDist || ContinueMovement())
             {
                 StopMovement();
                 FaceTarget(_rawFoodChest.transform.position);
@@ -553,11 +529,11 @@ namespace FiresCore.Npc.IdleBehaviors
                 LogVerbose($"Pulled {pulled} raw food items from chest");
                 SetPhase(CookPhase.MovingToStation);
                 MoveToPosition(InteractionPointHelper.GetInteractionPoint(
-                    _currentStation.gameObject, Transform.position, INTERACTION_DIST));
+                    _currentStation.gameObject, Transform.position, InteractionDist));
             }
             else
             {
-                LogVerbose("Chest had no usable raw food ï¿½ re-scanning");
+                LogVerbose("Chest had no usable raw food - re-scanning");
                 SetPhase(CookPhase.Scanning);
             }
             return false;
@@ -571,12 +547,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            if (DistanceTo(_currentStation.transform.position) <= INTERACTION_DIST || ContinueMovement())
+            if (DistanceTo(_currentStation.transform.position) <= InteractionDist || ContinueMovement())
             {
                 StopMovement();
                 FaceTarget(_currentStation.transform.position);
 
-                if (!InteractableOccupancyManager.TryOccupy(_currentStation.gameObject, Character, MAX_COOK_TIME))
+                if (!InteractableOccupancyManager.TryOccupy(_currentStation.gameObject, Character, MaxCookTime))
                 {
                     LogVerbose("Station occupied by another companion");
                     _currentStation = null;
@@ -635,7 +611,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (addedAny) PlayInteractAnimation();
 
-            // Transition to tending regardless ï¿½ even if we loaded nothing,
+            // Transition to tending regardless - even if we loaded nothing,
             // there may already be items cooking from before.
             SetPhase(CookPhase.Tending);
             _tendTimer = 0f;
@@ -668,16 +644,16 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 _pendingCollectTime = -1f;
                 _tendTimer = 0f;
-                LogVerbose("Batched collect deadline reached ï¿½ collecting now");
+                LogVerbose("Batched collect deadline reached - collecting now");
             }
             else
             {
-                // Use a tight interval whenever something is finished ï¿½ done food has a
+                // Use a tight interval whenever something is finished - done food has a
                 // limited grace period before it burns, so we want to grab it ASAP.
                 // When nothing is done yet, fall back to the normal interval to save work.
                 float interval = (HasDoneItems(_currentStation) || HasBurnedItems(_currentStation))
-                    ? TEND_CHECK_INTERVAL_URGENT
-                    : TEND_CHECK_INTERVAL;
+                    ? TendCheckIntervalUrgent
+                    : TendCheckInterval;
 
                 _tendTimer += Time.deltaTime;
                 if (_tendTimer < interval)
@@ -703,20 +679,20 @@ namespace FiresCore.Npc.IdleBehaviors
             if (!nview.IsOwner())
             {
                 nview.ClaimOwnership();
-                LogVerbose("Claimed station ZDO ownership ï¿½ yielding one tick before collecting");
+                LogVerbose("Claimed station ZDO ownership - yielding one tick before collecting");
                 return false;
             }
 
             bool actedThisTick = false;
 
-            // ?? skill-driven batch collection ????????????????????????????????
+            // skill-driven batch collection
             // Higher cooking skill = more reliable collection.  At low skill the
-            // companion has a chance to "fumble" any given Done item ï¿½ we simply
+            // companion has a chance to "fumble" any given Done item - we simply
             // skip it on this pass and the next Update will see it has tipped
             // into Burnt status (still collected, but yields wood instead of
             // food).  Burned slots are always cleared so we free the slot.
-            int doneCount   = CountSlotsWithStatus(_currentStation, STATUS_DONE);
-            int burnedCount = CountSlotsWithStatus(_currentStation, STATUS_BURNED);
+            int doneCount   = CountSlotsWithStatus(_currentStation, StatusDone);
+            int burnedCount = CountSlotsWithStatus(_currentStation, StatusBurned);
 
             float skill = GetCookingSkill();
             float fumblePerItem = ComputeCookingFumbleChance(skill);
@@ -729,14 +705,14 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             int targetPickups = doneToCollect + burnedCount;
-            const int MAX_PICKUPS_PER_TICK = 16;
-            if (targetPickups > MAX_PICKUPS_PER_TICK) targetPickups = MAX_PICKUPS_PER_TICK;
+            const int MaxPickupsPerTick = 16;
+            if (targetPickups > MaxPickupsPerTick) targetPickups = MaxPickupsPerTick;
 
             int pickups = 0;
             while (pickups < targetPickups && (HasDoneItems(_currentStation) || HasBurnedItems(_currentStation)))
             {
                 if (!_currentStation.Interact(Humanoid, false, false))
-                    break; // inventory full or station refused ï¿½ stop trying
+                    break; // inventory full or station refused - stop trying
 
                 _itemsCooked++;
                 pickups++;
@@ -750,10 +726,10 @@ namespace FiresCore.Npc.IdleBehaviors
                 // Award skill XP only for items that came off as Done (not burned
                 // and not fumbled).  doneToCollect is the perfect-skill count.
                 if (doneToCollect > 0)
-                    RaiseCookingSkill(doneToCollect * COOKING_SKILL_XP_PER_ITEM);
+                    RaiseCookingSkill(doneToCollect * CookingSkillXpPerItem);
             }
 
-            // ?? refill vacated slots ?????????????????????????????????????????
+            // refill vacated slots
             var storage = GetStorageInventory();
             if (storage != null)
             {
@@ -773,12 +749,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
 
-            // ?? idle-give-up guard ????????????????????????????????????????????
+            // idle-give-up guard
             // CRITICAL: only count time toward the give-up limit when there is
-            // genuinely nothing to do ï¿½ no slots cooking, no done/burned food to
+            // genuinely nothing to do - no slots cooking, no done/burned food to
             // collect, and no raw food left to refill with.  Previously the timer
             // accumulated on EVERY non-acting tick, including the normal wait while
-            // food is cooking, so companions routinely hit IDLE_GIVE_UP_TIME (~40s)
+            // food is cooking, so companions routinely hit IdleGiveUpTime (~40s)
             // mid-cook and walked away, leaving everything to burn.
             bool anyCooking       = AnySlotCooking(_currentStation);
             bool haveMore         = storage != null && HasRawFoodForStation(_currentStation, storage);
@@ -786,26 +762,26 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (actedThisTick || anyCooking || stillNeedCollect)
             {
-                // Fire is live or we just did something ï¿½ reset idle watchdog.
+                // Fire is live or we just did something - reset idle watchdog.
                 _idleTimer = 0f;
             }
             else if (!haveMore)
             {
-                // Nothing cooking, nothing done, nothing to load ? truly idle.
-                _idleTimer += TEND_CHECK_INTERVAL;
-                if (_idleTimer >= IDLE_GIVE_UP_TIME)
+                // Nothing cooking, nothing done, nothing to load - truly idle.
+                _idleTimer += TendCheckInterval;
+                if (_idleTimer >= IdleGiveUpTime)
                 {
-                    LogVerbose($"Idle for {_idleTimer:F0}s with nothing on the fire ï¿½ finishing");
+                    LogVerbose($"Idle for {_idleTimer:F0}s with nothing on the fire - finishing");
                     TryTransitionToDeposit();
                     return false;
                 }
             }
-            // else: raw food is available but slots are all full / station busy ï¿½ keep waiting.
+            // else: raw food is available but slots are all full / station busy - keep waiting.
 
             // Clean-finish: everything collected and nothing more to cook.
             if (!anyCooking && !stillNeedCollect && !haveMore)
             {
-                LogVerbose("All food collected and nothing left to cook ï¿½ depositing");
+                LogVerbose("All food collected and nothing left to cook - depositing");
                 TryTransitionToDeposit();
                 return false;
             }
@@ -828,7 +804,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            if (DistanceTo(chest.transform.position) <= INTERACTION_DIST || ContinueMovement())
+            if (DistanceTo(chest.transform.position) <= InteractionDist || ContinueMovement())
             {
                 StopMovement();
                 FaceTarget(chest.transform.position);
@@ -887,7 +863,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_toDeposit.Count == 0)
                 SetPhase(CookPhase.Complete);
             else
-                AdvanceToNextChest();   // this chest is full ï¿½ try the next one
+                AdvanceToNextChest();   // this chest is full - try the next one
 
             return false;
         }
@@ -909,7 +885,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return true;
         }
 
-        // ?? helpers ï¿½ deposit ????????????????????????????????????????????????
+        // helpers - deposit
 
         private void TryTransitionToDeposit()
         {
@@ -943,7 +919,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             SetPhase(CookPhase.MovingToDeposit);
             MoveToPosition(InteractionPointHelper.GetContainerInteractionPoint(
-                _depositChests[0], Transform.position, INTERACTION_DIST));
+                _depositChests[0], Transform.position, InteractionDist));
         }
 
         private List<Container> BuildDepositChestList()
@@ -987,23 +963,23 @@ namespace FiresCore.Npc.IdleBehaviors
             var nextChest = _depositChests[_depositIndex];
             if (nextChest != null)
                 MoveToPosition(InteractionPointHelper.GetContainerInteractionPoint(
-                    nextChest, Transform.position, INTERACTION_DIST));
+                    nextChest, Transform.position, InteractionDist));
         }
 
-        // ?? helpers ï¿½ stations ???????????????????????????????????????????????
+        // helpers - stations
 
         private List<CookingStation> FindCookingStations()
         {
-            float radius  = GetEffectiveSearchRadius(STATION_SCAN_RADIUS);
+            float radius  = GetEffectiveSearchRadius(StationScanRadius);
             var result    = new List<CookingStation>();
             var seen      = new HashSet<CookingStation>();
             var colliders = Physics.OverlapSphere(SearchCenter, radius);
 
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
-                var station = col.GetComponent<CookingStation>()
-                           ?? col.GetComponentInParent<CookingStation>();
+                if (collider == null) continue;
+                var station = collider.GetComponent<CookingStation>()
+                           ?? collider.GetComponentInParent<CookingStation>();
                 if (station == null || seen.Contains(station)) continue;
                 if (!InteractableOccupancyManager.CanUseInteractable(station.gameObject, Character)) continue;
                 seen.Add(station);
@@ -1025,7 +1001,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
         }
 
-        // ?? helpers ï¿½ slot state ?????????????????????????????????????????????
+        // helpers - slot state
 
         private bool HasFreeSlot(CookingStation station)
         {
@@ -1035,8 +1011,8 @@ namespace FiresCore.Npc.IdleBehaviors
 
             for (int i = 0; i < station.m_slots.Length; i++)
             {
-                int status = nview.GetZDO().GetInt("slotstatus" + i, STATUS_EMPTY);
-                if (status == STATUS_EMPTY) return true;
+                int status = nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty);
+                if (status == StatusEmpty) return true;
             }
             return false;
         }
@@ -1048,7 +1024,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (nview == null || !nview.IsValid()) return false;
 
             for (int i = 0; i < station.m_slots.Length; i++)
-                if (nview.GetZDO().GetInt("slotstatus" + i, STATUS_EMPTY) == STATUS_DONE)
+                if (nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty) == StatusDone)
                     return true;
             return false;
         }
@@ -1060,7 +1036,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (nview == null || !nview.IsValid()) return false;
 
             for (int i = 0; i < station.m_slots.Length; i++)
-                if (nview.GetZDO().GetInt("slotstatus" + i, STATUS_EMPTY) == STATUS_BURNED)
+                if (nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty) == StatusBurned)
                     return true;
             return false;
         }
@@ -1073,14 +1049,14 @@ namespace FiresCore.Npc.IdleBehaviors
 
             for (int i = 0; i < station.m_slots.Length; i++)
             {
-                int status = nview.GetZDO().GetInt("slotstatus" + i, STATUS_EMPTY);
-                if (status == STATUS_COOKING || status == STATUS_DONE)
+                int status = nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty);
+                if (status == StatusCooking || status == StatusDone)
                     return true;
             }
             return false;
         }
 
-        // ?? helpers ï¿½ raw food ???????????????????????????????????????????????
+        // helpers - raw food
 
         private bool HasRawFoodInInventory()
         {
@@ -1095,12 +1071,12 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool HasRawFoodForAnyStation(List<CookingStation> stations)
         {
             var storage = GetStorageInventory();
-            foreach (var s in stations)
+            foreach (var station in stations)
             {
-                if (storage != null && HasRawFoodForStation(s, storage))
+                if (storage != null && HasRawFoodForStation(station, storage))
                     return true;
                 // Also check chests.
-                if (FindChestWithRawFood(s) != null)
+                if (FindChestWithRawFood(station) != null)
                     return true;
             }
             return false;
@@ -1132,8 +1108,8 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (station?.m_conversion == null || item == null) return false;
             string prefab = item.m_dropPrefab?.name ?? "";
-            foreach (var conv in station.m_conversion)
-                if (conv.m_from != null && conv.m_from.gameObject.name == prefab)
+            foreach (var conversion in station.m_conversion)
+                if (conversion.m_from != null && conversion.m_from.gameObject.name == prefab)
                     return true;
             return false;
         }
@@ -1209,7 +1185,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 // Pull one at a time.
                 int toPull = Mathf.Min(item.m_stack, freeSlots - pulled);
-                for (int n = 0; n < toPull; n++)
+                for (int pullIndex = 0; pullIndex < toPull; pullIndex++)
                 {
                     var clone = item.Clone();
                     clone.m_stack = 1;
@@ -1236,12 +1212,12 @@ namespace FiresCore.Npc.IdleBehaviors
 
             int free = 0;
             for (int i = 0; i < station.m_slots.Length; i++)
-                if (nview.GetZDO().GetInt("slotstatus" + i, STATUS_EMPTY) == STATUS_EMPTY)
+                if (nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty) == StatusEmpty)
                     free++;
             return free;
         }
 
-        // ?? slot status counter ?????????????????????????????????????????????
+        // slot status counter
 
         private int CountSlotsWithStatus(CookingStation station, int targetStatus)
         {
@@ -1251,27 +1227,27 @@ namespace FiresCore.Npc.IdleBehaviors
 
             int count = 0;
             for (int i = 0; i < station.m_slots.Length; i++)
-                if (nview.GetZDO().GetInt("slotstatus" + i, STATUS_EMPTY) == targetStatus)
+                if (nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty) == targetStatus)
                     count++;
             return count;
         }
 
-        // ?? cooking skill (custom, stored on companion ZDO) ?????????????????
+        // cooking skill (custom, stored on companion ZDO)
         // Valheim doesn't have a vanilla "Cooking" SkillType so we keep our own
-        // 0ï¿½100 value on the companion's ZDO.  Higher skill = lower per-item
+        // 0-100 value on the companion's ZDO.  Higher skill = lower per-item
         // fumble chance during the batched collection pass; at 80+ the companion
         // never burns food.
 
-        private const string COOKING_SKILL_KEY = "companion_cooking_skill";
-        private const float COOKING_SKILL_MAX = 100f;
-        private const float COOKING_SKILL_XP_PER_ITEM = 0.5f; // ~200 successful cooks ? mastery
+        private const string CookingSkillKey = "companion_cooking_skill";
+        private const float CookingSkillMax = 100f;
+        private const float CookingSkillXpPerItem = 0.5f; // ~200 successful cooks ? mastery
 
         private float GetCookingSkill()
         {
             if (Companion == null) return 0f;
             var nview = Companion.GetComponent<ZNetView>();
             var zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
-            return zdo?.GetFloat(COOKING_SKILL_KEY, 0f) ?? 0f;
+            return zdo?.GetFloat(CookingSkillKey, 0f) ?? 0f;
         }
 
         private void RaiseCookingSkill(float amount)
@@ -1283,11 +1259,11 @@ namespace FiresCore.Npc.IdleBehaviors
             var zdo = nview.GetZDO();
             if (zdo == null) return;
 
-            float current = zdo.GetFloat(COOKING_SKILL_KEY, 0f);
-            float next = Mathf.Clamp(current + amount, 0f, COOKING_SKILL_MAX);
+            float current = zdo.GetFloat(CookingSkillKey, 0f);
+            float next = Mathf.Clamp(current + amount, 0f, CookingSkillMax);
             if (next != current)
             {
-                zdo.Set(COOKING_SKILL_KEY, next);
+                zdo.Set(CookingSkillKey, next);
                 LogVerbose($"Cooking skill: {current:F1} ? {next:F1}");
             }
         }
@@ -1299,15 +1275,15 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <item>Skill 25  ? ~15%</item>
         /// <item>Skill 50  ? ~7%</item>
         /// <item>Skill 75  ? ~2%</item>
-        /// <item>Skill 80+ ? 0% (perfect, the behavior we always had)</item>
+        /// <item>Skill 80+ - 0% (perfect, the behavior we always had)</item>
         /// </list>
         /// </summary>
         private static float ComputeCookingFumbleChance(float skill)
         {
             if (skill >= 80f) return 0f;
             // Smooth quadratic falloff from 0.25 at skill=0 to 0 at skill=80.
-            float t = Mathf.Clamp01(skill / 80f);
-            float ease = 1f - (t * t);
+            float skillFactor = Mathf.Clamp01(skill / 80f);
+            float ease = 1f - (skillFactor * skillFactor);
             return 0.25f * ease;
         }
     }

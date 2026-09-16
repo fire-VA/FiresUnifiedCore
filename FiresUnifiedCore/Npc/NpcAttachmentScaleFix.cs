@@ -4,21 +4,11 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Kills the "100x hair/beard" attachments on our NPC bodies (static NPCs, companions, wilds).
-    ///
-    /// Root cause: vanilla <c>VisEquipment.AttachItem</c> instantiates the item prefab's "attach"
-    /// child and sets localPosition/localRotation — but NEVER localScale. The instance keeps the
-    /// attach child's authored LOCAL scale while losing the prefab ROOT's scale factor and
-    /// inheriting the target joint's scale instead. Vanilla items author everything at scale 1 so
-    /// nobody notices; modded hair/beard prefabs (ObjectDB-sourced styles) frequently carry non-1
-    /// root scales with compensating children — attach one of those to a head bone and it renders
-    /// orders of magnitude wrong.
-    ///
-    /// Fix: after attach, force the instance's WORLD scale back to the attach child's authored
-    /// world scale (root factor included): localScale = authoredLossy / joint.lossyScale. Scoped to
-    /// our companion-stack bodies only (CompanionController present) so players/vanilla creatures
-    /// keep exact vanilla behavior. attach_skin instances are skipped — skinned meshes follow the
-    /// body's bones, transform scale is irrelevant there.
+    /// Fixes hair and beard attachments rendering at a hundred times their size on Fires NPC bodies.
+    /// VisEquipment.AttachItem sets position and rotation but never scale, so a modded style whose root scale is
+    /// not 1 loses that factor and inherits the joint's instead. After attach, the instance's world scale is
+    /// restored to the attach child's authored world scale. Only bodies with a CompanionController are touched,
+    /// and skinned attachments are skipped since they follow the bones.
     /// </summary>
     [HarmonyPatch(typeof(VisEquipment), "AttachItem")]
     internal static class NpcAttachmentScaleFix

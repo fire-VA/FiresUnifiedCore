@@ -5,26 +5,9 @@ using FiresCore.Npc.Archetypes;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Handles blocking and parrying mechanics for companion NPCs.
-    /// 
-    /// DESIGN PHILOSOPHY:
-    /// Blocking should be deliberate and meaningful, not spammy.
-    /// - When we decide to block, we COMMIT to it for a minimum duration
-    /// - After dropping block, there's a cooldown before we can block again
-    /// - We evaluate threats properly before deciding to block
-    /// - Perfect parries (timed blocks) require skill and timing
-    /// 
-    /// BLOCK DECISION FACTORS:
-    /// - Enemy is attacking AND facing us
-    /// - Incoming projectile detected
-    /// - EnemyAttackRecognition says we should block
-    /// - We're in melee range
-    /// - We have stamina/resources to block
-    /// - We haven't just stopped blocking (cooldown)
-    /// 
-    /// BLOCK COMMITMENT:
-    /// Once we start blocking, we hold it for at least MIN_BLOCK_DURATION.
-    /// This prevents jittery on/off behavior and makes blocks meaningful.
+    /// Deliberate blocking and parrying. A block starts only when an enemy in melee range is attacking and
+    /// facing the companion, a projectile is incoming or EnemyAttackRecognition calls for it, and there is stamina
+    /// to spare; it is then held for at least MinBlockDuration, and a cooldown follows before the next one.
     /// </summary>
     public class BlockingBehavior
     {
@@ -49,9 +32,9 @@ namespace FiresCore.Npc.Combat
         // PROJECTILE TRACKING
         // ========================================
         private float _lastProjectileScan;
-        private const float PROJECTILE_SCAN_INTERVAL = 0.1f;
-        private const float PROJECTILE_DETECT_RANGE = 20f;
-        private const float PROJECTILE_DANGER_TIME = 0.8f; // Block if projectile arrives within this time
+        private const float ProjectileScanInterval = 0.1f;
+        private const float ProjectileDetectRange = 20f;
+        private const float ProjectileDangerTime = 0.8f; // Block if projectile arrives within this time
         private Projectile _incomingProjectile;
         private float _projectileTimeToImpact;
         
@@ -63,35 +46,35 @@ namespace FiresCore.Npc.Combat
         /// Once we start blocking, hold for at least this long.
         /// This prevents jittery block spam.
    /// </summary>
-        private const float MIN_BLOCK_DURATION = 0.5f;
+        private const float MinBlockDuration = 0.5f;
         
         /// <summary>
    /// Maximum time to hold a block before forcing release.
         /// Prevents getting stuck in block state.
         /// </summary>
-        private const float MAX_BLOCK_DURATION = 2.5f;
+        private const float MaxBlockDuration = 2.5f;
         
         /// <summary>
         /// After stopping a block, wait this long before blocking again.
   /// This is the key to preventing spam - forces deliberate decisions.
      /// </summary>
-   private const float BLOCK_COOLDOWN = 0.8f;
+   private const float BlockCooldown = 0.8f;
         
         /// <summary>
         /// Minimum time between block DECISIONS (not state changes).
         /// Prevents rapid evaluation spam.
         /// </summary>
-        private const float DECISION_INTERVAL = 0.15f;
+        private const float DecisionInterval = 0.15f;
         
         /// <summary>
     /// Time window for a parry (block started just before hit).
       /// </summary>
-      private const float PARRY_WINDOW = 0.25f;
+      private const float ParryWindow = 0.25f;
         
         /// <summary>
         /// How far ahead to anticipate attacks (start block before hit).
      /// </summary>
-        private const float BLOCK_ANTICIPATION = 0.3f;
+        private const float BlockAnticipation = 0.3f;
       
       // ========================================
         // ENEMY TRACKING
@@ -139,7 +122,7 @@ namespace FiresCore.Npc.Combat
         /// <summary>
         /// Whether block is on cooldown (can't start new block).
         /// </summary>
-        public bool IsOnCooldown => Time.time - _lastBlockStopTime < BLOCK_COOLDOWN;
+        public bool IsOnCooldown => Time.time - _lastBlockStopTime < BlockCooldown;
 
         /// <summary>
         /// Check if a shield is equipped.
@@ -288,7 +271,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
         private void UpdateWhileBlocking(Character target, float distToTarget)
   {
     // Check if we've held block too long (force release)
- if (Time.time - _blockStartTime > MAX_BLOCK_DURATION)
+ if (Time.time - _blockStartTime > MaxBlockDuration)
           {
     ForceStopBlocking("max duration");
     return;
@@ -331,7 +314,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
             }
 
             // Throttle decisions
-            if (Time.time - _lastBlockDecisionTime < DECISION_INTERVAL)
+            if (Time.time - _lastBlockDecisionTime < DecisionInterval)
             {
                 return;
             }
@@ -440,7 +423,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
 
             // Get level-based combat modifiers
             float levelBlockBonus = 0f;
-            float levelAnticipation = BLOCK_ANTICIPATION;
+            float levelAnticipation = BlockAnticipation;
             
             if (_combatExperience != null)
             {
@@ -585,31 +568,31 @@ weaponType == CompanionCombat.WeaponType.Staff)
         /// </summary>
         private bool ScanForIncomingProjectiles()
         {
-            if (Time.time - _lastProjectileScan < PROJECTILE_SCAN_INTERVAL)
+            if (Time.time - _lastProjectileScan < ProjectileScanInterval)
             {
                 // Use cached result
-                return _incomingProjectile != null && _projectileTimeToImpact < PROJECTILE_DANGER_TIME;
+                return _incomingProjectile != null && _projectileTimeToImpact < ProjectileDangerTime;
             }
             _lastProjectileScan = Time.time;
             _incomingProjectile = null;
             _projectileTimeToImpact = float.MaxValue;
             
             // Find all projectiles in range
-            var colliders = Physics.OverlapSphere(_context.Transform.position, PROJECTILE_DETECT_RANGE);
+            var colliders = Physics.OverlapSphere(_context.Transform.position, ProjectileDetectRange);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var projectile = col.GetComponent<Projectile>();
+                var projectile = collider.GetComponent<Projectile>();
                 if (projectile == null) continue;
                 
                 // Check if projectile is heading toward us
-                var rb = projectile.GetComponent<Rigidbody>();
-                if (rb == null) continue;
+                var body = projectile.GetComponent<Rigidbody>();
+                if (body == null) continue;
                 
                 Vector3 projectilePos = projectile.transform.position;
-                Vector3 projectileVel = rb.linearVelocity;
+                Vector3 projectileVel = body.linearVelocity;
                 
                 if (projectileVel.sqrMagnitude < 1f) continue; // Not moving
                 
@@ -626,7 +609,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
                 float timeToImpact = distToUs / speed;
                 
                 // Check if this is the most imminent threat
-                if (timeToImpact < _projectileTimeToImpact && timeToImpact < PROJECTILE_DANGER_TIME)
+                if (timeToImpact < _projectileTimeToImpact && timeToImpact < ProjectileDangerTime)
                 {
                     // Verify it will actually hit us (within ~2m)
                     Vector3 impactPoint = projectilePos + projectileVel * timeToImpact;
@@ -681,7 +664,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
     }
 
         /// <summary>
-        /// Start blocking - commits to blocking for MIN_BLOCK_DURATION.
+        /// Start blocking - commits to blocking for MinBlockDuration.
         /// SURVIVAL INSTINCT: Will NOT block if stamina is critically low.
         /// </summary>
         private void StartBlocking()
@@ -743,7 +726,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
 
             _isBlocking = true;
             _blockStartTime = Time.time;
-            _blockCommitEndTime = Time.time + MIN_BLOCK_DURATION;
+            _blockCommitEndTime = Time.time + MinBlockDuration;
 
             // Set animation
             if (_context.ZAnim != null)
@@ -907,7 +890,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
 
          // We are blocking - calculate damage reduction
    float timeSinceBlockStart = Time.time - _blockStartTime;
-            bool isPerfectParry = timeSinceBlockStart < PARRY_WINDOW;
+            bool isPerfectParry = timeSinceBlockStart < ParryWindow;
 
      // Calculate block power
  float blockPower = 0f;
@@ -1077,7 +1060,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
         {
             if (!_isBlocking)
             {
-      float cooldownRemaining = BLOCK_COOLDOWN - (Time.time - _lastBlockStopTime);
+      float cooldownRemaining = BlockCooldown - (Time.time - _lastBlockStopTime);
       if (cooldownRemaining > 0)
                     return $"Cooldown: {cooldownRemaining:F1}s";
     return "Ready";

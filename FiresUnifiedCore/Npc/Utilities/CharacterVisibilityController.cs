@@ -5,23 +5,9 @@ using UnityEngine;
 namespace FiresCore.Npc.Utilities
 {
     /// <summary>
-    /// Controls character visibility for stealth, vanish, and teleportation effects.
-    /// 
-    /// VALHEIM-SPECIFIC IMPLEMENTATION:
-    /// Valheim uses custom shaders (Custom/Player, Custom/Creature) that don't support
-    /// standard Unity transparency properties. Instead, we use Valheim's actual ghost
-    /// material which is designed for transparent effects.
-    /// 
-    /// MODES:
-    /// - Hidden: Completely invisible (renderer.enabled = false)
-    /// - Ghost: Uses Valheim's ghost material for true transparency
-    /// - Normal: Fully visible with original materials
-    /// 
-    /// USAGE:
-    /// var visibility = new CharacterVisibilityController(character);
-    /// visibility.SetHidden(true);  // Hide completely
-    /// visibility.SetGhostMode(true);  // Apply ghost transparency
-    /// visibility.Restore();  // Return to normal
+    /// Hides a character, gives it a ghost look, or restores it, for stealth, vanish and teleport effects.
+    /// Valheim's Custom/Player and Custom/Creature shaders ignore standard transparency, so ghost mode swaps in
+    /// the game's own ghost material.
     /// </summary>
     public class CharacterVisibilityController
     {
@@ -360,9 +346,9 @@ namespace FiresCore.Npc.Utilities
                 ghostMatWithAlpha = new Material(_ghostMaterial);
                 if (ghostMatWithAlpha.HasProperty("_Color"))
                 {
-                    Color c = ghostMatWithAlpha.color;
-                    c.a = alpha;
-                    ghostMatWithAlpha.color = c;
+                    Color color = ghostMatWithAlpha.color;
+                    color.a = alpha;
+                    ghostMatWithAlpha.color = color;
                 }
             }
             

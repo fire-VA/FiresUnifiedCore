@@ -5,17 +5,10 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Vanilla <c>VisEquipment.UpdateEquipmentVisuals</c> reads the hair/beard item hashes straight out of
-    /// the ZDO every frame and instantiates them itself (no m_isPlayer needed - VisEquipment is ENABLED on
-    /// our NPC rigs for armor/body support). On our NPCs, hair and beard are OWNED by the NpcFashionManager
-    /// bone-binding pipeline - vanilla's spawner is a SECOND writer. Any stale s_hairItem / s_beardItem hash
-    /// persisted by older builds (pre-pipeline-unification static NPCs, old companions) made vanilla spawn a
-    /// duplicate attach on the NPC rig, mis-scaled ~100x ("blocks out the sun"), but ONLY on bodies whose
-    /// ZDO carried the stale hash - which is why the bug looked intermittent and survived the attach-side
-    /// fixes. Single-writer, applied to hair: on any body that carries NpcVisEquipment, force the incoming
-    /// hash to 0 (vanilla then destroys any existing instance and attaches nothing) and heal the stale ZDO
-    /// entry so the data stops carrying it. Players and vanilla creatures have no NpcVisEquipment - vanilla
-    /// behavior there is untouched.
+    /// Keeps vanilla from spawning hair and beards on Fires NPC rigs, where NpcFashionManager owns them. A stale hair or
+    /// beard hash left in an NPC's ZDO by older builds made UpdateEquipmentVisuals attach a second, wildly mis-scaled copy.
+    /// On any body with NpcVisEquipment the incoming hash is forced to 0 and the stale ZDO entry is healed; players and
+    /// vanilla creatures are untouched.
     /// </summary>
     [HarmonyPatch]
     public static class VanillaHairSpawnGate

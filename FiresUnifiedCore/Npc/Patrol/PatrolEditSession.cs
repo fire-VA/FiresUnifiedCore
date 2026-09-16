@@ -22,22 +22,22 @@ namespace FiresCore.Npc.Patrol
         public static SpeedPreset GetEditingPreset(PatrolRoute route)
         {
             if (route == null) return null;
-            var p = route.GetPreset(PresetName);
-            if (p == null && route.Presets.Count > 0) { p = route.Presets[0]; PresetName = p.Name; }
-            return p;
+            var preset = route.GetPreset(PresetName);
+            if (preset == null && route.Presets.Count > 0) { preset = route.Presets[0]; PresetName = preset.Name; }
+            return preset;
         }
 
         /// <summary>Like <see cref="GetEditingPreset"/> but creates a fresh preset when the route has none.</summary>
         public static SpeedPreset EnsureEditingPreset(PatrolRoute route)
         {
-            var p = GetEditingPreset(route);
-            if (p == null)
+            var preset = GetEditingPreset(route);
+            if (preset == null)
             {
-                p = new SpeedPreset { Name = UniquePresetName(route, "Speeds") };
-                route.Presets.Add(p);
-                PresetName = p.Name;
+                preset = new SpeedPreset { Name = UniquePresetName(route, "Speeds") };
+                route.Presets.Add(preset);
+                PresetName = preset.Name;
             }
-            return p;
+            return preset;
         }
 
         /// <summary>

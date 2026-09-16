@@ -11,6 +11,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
     /// </summary>
     public class SlowdownEffect : CompanionStatusEffectBase
     {
+        private const float SlowdownDuration = 5f;
+
         /// <summary>Speed multiplier (0.5 = 50% speed, 0.3 = 30% speed)</summary>
         public float SpeedMultiplier { get; set; } = 0.5f;
         
@@ -26,7 +28,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
         {
             m_name = "Slowed";
             m_tooltip = "Movement speed reduced";
-            Duration = 5f;
+            Duration = SlowdownDuration;
         }
         
         protected override void OnEffectApplied()

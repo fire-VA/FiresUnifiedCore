@@ -24,7 +24,7 @@ namespace FiresCore.Npc
         private static HashSet<long> _restoredPlayers = new HashSet<long>();
 
         // PERF CACHE: Avoid per-frame GetComponent<CompanionController>() in Harmony patches.
-        // Maps Character instance ID ? CompanionController (null means "not a companion").
+        // Maps Character instance ID -> CompanionController (null means "not a companion").
         // Entries are added on first lookup and removed when Character is destroyed.
         private static readonly Dictionary<int, CompanionController> _companionLookupCache = new Dictionary<int, CompanionController>();
         private static readonly Dictionary<int, Rigidbody> _rigidbodyCache = new Dictionary<int, Rigidbody>();
@@ -35,7 +35,7 @@ namespace FiresCore.Npc
         private static readonly List<object> _tempHudKeys = new List<object>();
 
         /// <summary>
-        /// Cached companion lookup ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â avoids GetComponent on every Character every frame.
+        /// Cached companion lookup - avoids GetComponent on every Character every frame.
         /// Returns null for non-companions (cached negative result).
         /// </summary>
         internal static CompanionController GetCachedCompanion(Character instance)
@@ -107,24 +107,13 @@ namespace FiresCore.Npc
         // client's ZDOMan had received every companion ZDO from the server,
         // which caused the duplication bug. _restoredPlayers below is still
         // used by Player_OnSpawned_Postfix to distinguish first login (server
-        // is restoring) from death respawn (companions are stranded ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â reel
+        // is restoring) from death respawn (companions are stranded - reel
         // them in).
 
         /// <summary>
-        /// Pre-arm the companion-teleport suppression at the moment the local
-        /// player dies. Player_OnSpawned_Postfix already raises this flag for
-        /// the death-respawn branch, but OnSpawned only fires AFTER the new
-        /// player object is constructed ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â leaving a multi-second gap (death ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢
-        /// "Starting respawn" ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ fade ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ "Local player destroyed" ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ new player
-        /// spawned ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ OnSpawned) during which the previous flag has expired and
-        /// the new one isn't set yet. CheckFollowTeleport ticks fire during
-        /// that gap, hit owner==null, and used to dismiss companions wholesale.
-        /// Setting the flag from OnDeath closes the gap at its earliest point.
-        ///
-        /// The 30 s window is intentionally generous: it covers fade-out
-        /// (~2 s), loading screen (variable, observed up to ~25 s on heavy
-        /// saves), and the wakeup settle. Player_OnSpawned_Postfix replaces
-        /// this with its own narrower 10 s window once the new player is up.
+        /// Suppresses companion follow-teleports from the moment the local player dies. OnSpawned only re-arms the
+        /// suppression once the new player exists, and during the gap in between CheckFollowTeleport saw no owner and
+        /// dismissed companions. The window is generous enough to cover a slow loading screen.
         /// </summary>
         [HarmonyPatch(typeof(Player), "OnDeath")]
         [HarmonyPostfix]
@@ -142,19 +131,9 @@ namespace FiresCore.Npc
         }
 
         /// <summary>
-        /// Patch Player.OnSpawned to:
-        ///  1. Re-register NPC data sync RPCs (they go stale across logout/login).
-        ///  2. Trigger the companion reconcile-on-arrival flow for the
-        ///     transitions that DO fire OnSpawned: initial login (engine's
-        ///     Game.SpawnPlayer ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Player.AwakeAndSpawn) and death-respawn.
-        ///     Wayshrine / portal / dungeon teleports go through
-        ///     Player.TeleportTo, which reuses the existing player object
-        ///     and never re-invokes OnSpawned ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â those are picked up by
-        ///     Player_TeleportTo_Postfix instead. Both entry points run
-        ///     the same <see cref="ReconcileFollowersAfterArrival"/>
-        ///     coroutine, which waits for IsTeleporting=false and
-        ///     CanMove=true and then dispatches
-        ///     <see cref="CompanionTeleportService.RequestReconcileFollowers"/>.
+        /// On Player.OnSpawned (login and death-respawn) re-registers the NPC data sync RPCs, which go stale across
+        /// logout, and starts <see cref="ReconcileFollowersAfterArrival"/>. Portal, wayshrine and dungeon teleports
+        /// never re-run OnSpawned and are handled by the TeleportTo postfix instead.
         /// </summary>
         [HarmonyPatch(typeof(Player), "OnSpawned")]
         [HarmonyPostfix]
@@ -195,26 +174,10 @@ namespace FiresCore.Npc
         }
 
         /// <summary>
-        /// Coroutine that waits for the local player to fully arrive at a
-        /// new position (loading screen finished, wakeup animation done,
-        /// CanMove returns true) and then dispatches a single reconcile
-        /// request to the server.
-        ///
-        /// Why we wait: <c>Player.OnSpawned</c> fires near the end of the
-        /// transition but <c>IsTeleporting()</c> can still be true and
-        /// <c>CanMove()</c> can still be false for several frames (longer
-        /// for heavy saves). Sending the reconcile request before those
-        /// settle would race with the destination zone load ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the server
-        /// gets the position the local player REPORTED but the
-        /// destination ZDOMan sectors may not be fully populated yet, so
-        /// the companion ZDO position write goes out into a half-loaded
-        /// zone. Waiting for stable IsTeleporting=false + CanMove=true
-        /// guarantees the server-side teleport lands cleanly.
-        ///
-        /// Also extends the local CheckFollowTeleport suppression every
-        /// frame while IsTeleporting is still true, so individual
-        /// companion controllers never compete with the in-flight
-        /// reconcile.
+        /// Waits until the local player has really arrived (not teleporting and able to move), then sends one
+        /// reconcile request. OnSpawned fires while the destination zone is still loading, so reconciling then
+        /// wrote companion positions into a half-loaded zone. Local follow-teleports stay suppressed while it
+        /// waits.
         /// </summary>
         private static IEnumerator ReconcileFollowersAfterArrival(Player player)
         {
@@ -259,24 +222,6 @@ namespace FiresCore.Npc
             Debug.Log("[CompanionPatches][DIAG] ReconcileFollowersAfterArrival: reconcile dispatched, coroutine ending");
         }
 
-        // TeleportFollowersToPlayerAfterRespawn was the death-respawn-only
-        // companion reel-in coroutine. It ran two passes (loaded
-        // companions via TeleportToOwner, then unloaded ZDOs via direct
-        // position rewrite) and was wired only into the death-respawn
-        // branch of Player.OnSpawned.
-        //
-        // Replaced by reconcile-on-arrival, dispatched from two hooks:
-        //   Player.OnSpawned (login, death-respawn) and
-        //   Player.TeleportTo (wayshrine, portal, dungeon).
-        // Both paths run ReconcileFollowersAfterArrival, which dispatches
-        // CompanionTeleportService.RequestReconcileFollowers; the server
-        // scans ZDOMan for the player's followers and teleports the ones
-        // far from the player position.
-        //
-        // The server-side ZDOMan scan is functionally equivalent to the
-        // old pass-2 (and a superset of pass-1, since the server is the
-        // authoritative writer for any ZDO it claims, regardless of
-        // whether a client has the GameObject loaded).
 
         /// <summary>
         /// Patch ZNetScene.Awake to handle scene reloads
@@ -294,7 +239,7 @@ namespace FiresCore.Npc
                 _restoredPlayers.Clear();
                 CompanionRestoreService.ResetSessionTracking();
 
-                // PERF: Clear component caches ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â all Characters are destroyed on scene reload
+                // PERF: Clear component caches - all Characters are destroyed on scene reload
                 _companionLookupCache.Clear();
                 _rigidbodyCache.Clear();
                 _stateControllerCache.Clear();
@@ -311,20 +256,9 @@ namespace FiresCore.Npc
         }
 
         /// <summary>
-        /// Patch ZNet.RPC_CharacterID (server-side) to push all config files ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â including
-        /// UILayouts ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â to the newly connected client. RPC_CharacterID fires once the
-        /// client's character ZDO has spawned and the server has its UID ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â i.e. the
-        /// connecting player is fully alive on the server side. This is the right
-        /// trigger for heavy server-side work that needs the player's character
-        /// established.
-        ///
-        /// Runs inline at RPC_CharacterID time ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â right after the eager RPC_PeerInfo push
-        /// at <see cref="VaultPatches"/>. FiresSteamworksPatcher's network-rate bumps
-        /// make the config stream fast enough that we no longer need the previous
-        /// AutoTune-coordinated defer; the bulk push completes well before
-        /// FiresGhettoNetworkMod's probe begins competing for bandwidth (probe gates on
-        /// Game.m_playerInitialSpawn + 30s settle delay, which fires later in the
-        /// connection sequence than RPC_CharacterID).
+        /// Pushes every config file, UI layouts included, to a client once ZNet.RPC_CharacterID shows its character is
+        /// established on the server. The push finishes before FiresGhettoNetworkMod's bandwidth probe starts, so it
+        /// no longer needs to defer to it.
         /// </summary>
         [HarmonyPatch(typeof(ZNet), "RPC_CharacterID")]
         [HarmonyPostfix]
@@ -360,32 +294,10 @@ namespace FiresCore.Npc
         // preserved in CompanionRestoreService.WaitForPeerAndRestore.
 
         /// <summary>
-        /// Restores companions from the player's vault data.
-        ///
-        /// As of the server-restoration refactor this is the single source of
-        /// truth for "spawn the missing companions, leave the existing ones,
-        /// reconcile follow state."
-        ///
-        /// CALLED FROM:
-        /// - <c>CompanionRestoreService.RestoreForPlayerServerSide</c> on the
-        ///   dedicated server, with <paramref name="player"/> = <c>null</c>
-        ///   and <paramref name="ownerPos"/> resolved from the peer's
-        ///   character ZDO position.
-        /// - <c>CompanionRestoreService.ForceRestoreForLocalPlayer</c> on
-        ///   listen-host / single-player, with <paramref name="player"/> =
-        ///   <c>Player.m_localPlayer</c> and <paramref name="ownerPos"/> =
-        ///   the player's transform position.
-        ///
-        /// NULL-PLAYER HANDLING:
-        /// When <paramref name="player"/> is null, every code path that
-        /// would otherwise touch <c>m_customData</c> (vault ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ roster
-        /// migrator, follow-registry import / read) skips with a fallback
-        /// to the vault entry's own <c>IsFollowing</c> flag. Spawn
-        /// positions use <paramref name="ownerPos"/> directly. Follow
-        /// commands degrade to a direct <c>companion_wasfollowing</c> ZDO
-        /// write ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the client-side <c>CompanionController</c> reads that
-        /// flag in <c>LoadFromZDO</c> when its own zone loads and
-        /// reconciles the in-memory follow target with the local Player.
+        /// Spawns the player's missing companions from saved data, leaves existing ones alone and reconciles
+        /// follow state. On a dedicated server <paramref name="player"/> is null and <paramref name="ownerPos"/>
+        /// comes from the character ZDO, so roster and follow-registry reads fall back to the saved entry and
+        /// follow intent is written straight to companion_wasfollowing for the client to pick up in LoadFromZDO.
         /// </summary>
         internal static void RestoreCompanionsFromVault(Player player, long playerId, Vector3 ownerPos = default)
         {
@@ -399,7 +311,7 @@ namespace FiresCore.Npc
 
             // Phase 7 (one-shot migration): if this player has nothing on
             // their roster but the vault still has companion entries,
-            // copy vault ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ roster before the resolver runs. After this
+            // copy vault → roster before the resolver runs. After this
             // returns the resolver finds the migrated entries on the
             // roster and can stop consulting the vault on subsequent
             // logins. Idempotent: re-runs are no-ops once the roster has
@@ -412,7 +324,7 @@ namespace FiresCore.Npc
                 ? ownerPos
                 : (player != null ? player.transform.position : Vector3.zero);
 
-            // Vault ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ roster migration only meaningful when we have a
+            // Vault → roster migration only meaningful when we have a
             // live Player object (it writes to m_customData). Skipping
             // server-side is fine: the migration is just a one-time copy
             // of legacy vault entries into the roster, and the roster is
@@ -433,9 +345,9 @@ namespace FiresCore.Npc
             // Phase 4 read switch: prefer the per-player roster on
             // Player.m_customData; fall back to JSON vault if the roster
             // is empty / unavailable. The resolver also handles:
-            //   ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ server-binding filter (entries from other server world UIDs are skipped),
-            //   ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ Dismissed entries excluded (no auto-spawn on login),
-            //   ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ respawn-deadline ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ seconds-remaining translation
+            //   • server-binding filter (entries from other server world UIDs are skipped),
+            //   • Dismissed entries excluded (no auto-spawn on login),
+            //   • respawn-deadline → seconds-remaining translation
             //     so downstream code below sees consistent fields
             //     regardless of source.
             // The legacy realm-id filter further down still runs as
@@ -482,31 +394,19 @@ namespace FiresCore.Npc
 
             Debug.Log($"[CompanionPatches] Found {savedCompanions.Count} companion(s) in vault for player {playerId} (realm: {currentRealmId})");
 
-            // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ PLAYER FOLLOWING REGISTRY MIGRATION & SELF-HEAL ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-            // The authoritative "is this companion set to follow" flag now
-            // lives on the OWNER PLAYER'S ZDO via PlayerFollowingRegistry.
-            // On first login under the new system the registry is empty, so
-            // import every vault entry that says IsFollowing=true.  Re-running
-            // every login is also a self-heal in case the registry ever drifts.
-            // After this point the registry is authoritative for restore
-            // decisions ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â vault.IsFollowing is just the cached mirror.
-            //
-            // Server-side path (player == null): skipped because the
-            // registry lives on the owner Player's m_customData and we
-            // don't have one. We fall back to vault.IsFollowing as the
-            // authoritative source for the per-companion loop below
-            // (see ResolveRegistryFollowing helper), and the registry
-            // self-heals client-side on the next normal client restore.
+            // The follow registry on the owner's player data is authoritative; importing the vault's follow flags each
+            // login seeds it the first time and heals any drift. A server-side restore has no player object, so it
+            // falls back to the vault flag and the client heals the registry on its next restore.
             if (player != null)
             {
                 var followingIds = new List<string>();
-                foreach (var sd in savedCompanions)
+                foreach (var saveData in savedCompanions)
                 {
-                    if (sd == null) continue;
-                    if (sd.IsStationedAsNpc) continue;
-                    if (!sd.IsFollowing) continue;
-                    if (string.IsNullOrEmpty(sd.CompanionId)) continue;
-                    followingIds.Add(sd.CompanionId);
+                    if (saveData == null) continue;
+                    if (saveData.IsStationedAsNpc) continue;
+                    if (!saveData.IsFollowing) continue;
+                    if (string.IsNullOrEmpty(saveData.CompanionId)) continue;
+                    followingIds.Add(saveData.CompanionId);
                 }
                 if (followingIds.Count > 0)
                 {
@@ -517,7 +417,7 @@ namespace FiresCore.Npc
             // Companion-persistence mode flag. When true, we adopt existing ZDOs
             // (live or unloaded) rather than destroying and re-spawning. The
             // destroy-stale sweeps below are skipped in persistent mode because
-            // those ZDOs are no longer "stale" ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â they're the canonical source.
+            // those ZDOs are no longer "stale" - they're the canonical source.
             bool persistent = FiresCore.Bridge.NpcConfigBridge.GetBool("PersistentCompanions", true);
 
             // Persistent mode: index every existing companion ZDO in the world by
@@ -555,72 +455,72 @@ namespace FiresCore.Npc
 
             // Build a "preserve" set: following companions whose live Unity instance is
             // already in the world (their ZDO loaded with the zone). We do NOT want to
-            // destroy + re-spawn these ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â we just teleport them to the player.
+            // destroy + re-spawn these - we just teleport them to the player.
             // Anything in preserveIds is excluded from the destroy sweeps below.
             // (In persistent mode this is subsumed by the adopt-existing-ZDO path,
             // but the set is still built for the legacy-mode code path.)
             var preserveIds = new HashSet<string>();
             {
                 var liveById = new Dictionary<string, CompanionController>();
-                foreach (var c in UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None))
+                foreach (var companion in UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None))
                 {
-                    if (c == null || c.ownerPlayerId != playerId) continue;
-                    if (string.IsNullOrEmpty(c.companionId)) continue;
-                    if (c.isStaticPlacement) continue;
-                    var npcMod = c.GetComponent<CompanionNpcModule>();
+                    if (companion == null || companion.ownerPlayerId != playerId) continue;
+                    if (string.IsNullOrEmpty(companion.companionId)) continue;
+                    if (companion.isStaticPlacement) continue;
+                    var npcMod = companion.GetComponent<CompanionNpcModule>();
                     if (npcMod != null && npcMod.IsStationedAsNpc) continue;
 
-                    var nv = c.GetComponent<ZNetView>();
-                    if (nv == null || !nv.IsValid()) continue;
+                    var netView = companion.GetComponent<ZNetView>();
+                    if (netView == null || !netView.IsValid()) continue;
 
                     // Only the first live instance per ID is preserved; any later
                     // duplicates will be cleaned up by the dedup sweep below.
-                    if (!liveById.ContainsKey(c.companionId))
-                        liveById[c.companionId] = c;
+                    if (!liveById.ContainsKey(companion.companionId))
+                        liveById[companion.companionId] = companion;
                 }
 
-                foreach (var sd in savedCompanions)
+                foreach (var saveData in savedCompanions)
                 {
-                    if (sd == null || string.IsNullOrEmpty(sd.CompanionId)) continue;
-                    if (sd.IsStationedAsNpc) continue;
-                    if (sd.IsPendingRespawn) continue; // dead ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ must respawn fresh
+                    if (saveData == null || string.IsNullOrEmpty(saveData.CompanionId)) continue;
+                    if (saveData.IsStationedAsNpc) continue;
+                    if (saveData.IsPendingRespawn) continue; // dead → must respawn fresh
                     // Server-side (player == null): registry lookup unavailable;
                     // fall back to the vault entry's own IsFollowing flag.
                     bool follows = player != null
-                        ? PlayerFollowingRegistry.IsFollowing(player, sd.CompanionId)
-                        : sd.IsFollowing;
+                        ? PlayerFollowingRegistry.IsFollowing(player, saveData.CompanionId)
+                        : saveData.IsFollowing;
                     if (!follows) continue;
-                    if (!liveById.ContainsKey(sd.CompanionId)) continue;
-                    preserveIds.Add(sd.CompanionId);
+                    if (!liveById.ContainsKey(saveData.CompanionId)) continue;
+                    preserveIds.Add(saveData.CompanionId);
                 }
 
                 if (preserveIds.Count > 0)
-                    Debug.Log($"[CompanionPatches] Preserving {preserveIds.Count} live following companion(s) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â will teleport instead of re-spawning");
+                    Debug.Log($"[CompanionPatches] Preserving {preserveIds.Count} live following companion(s) - will teleport instead of re-spawning");
             }
 
             // Build the set of companion IDs that we'll actually RE-SPAWN from vault.
             // Only following or pending-respawn companions get re-spawned, so only
             // those need their stale ZDOs destroyed. Stay-mode companions should keep
-            // their ZDOs ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â we skip them in the restore loop anyway. Preserved (live
+            // their ZDOs - we skip them in the restore loop anyway. Preserved (live
             // following) companions are also excluded so we don't destroy them.
             //
             // Use the REGISTRY here (not vault.IsFollowing) so a clobbered vault
             // flag can no longer un-follow a companion the player explicitly set.
             var vaultIds = new HashSet<string>();
-            foreach (var c in savedCompanions)
+            foreach (var saved in savedCompanions)
             {
-                if (c == null || string.IsNullOrEmpty(c.CompanionId)) continue;
-                if (c.IsStationedAsNpc) continue;
-                if (preserveIds.Contains(c.CompanionId)) continue; // alive ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â leave alone
+                if (saved == null || string.IsNullOrEmpty(saved.CompanionId)) continue;
+                if (saved.IsStationedAsNpc) continue;
+                if (preserveIds.Contains(saved.CompanionId)) continue; // alive - leave alone
                 // Server-side fallback to vault flag, same as preserveIds loop above.
                 bool registrySaysFollowing = player != null
-                    ? PlayerFollowingRegistry.IsFollowing(player, c.CompanionId)
-                    : c.IsFollowing;
-                if (!registrySaysFollowing && !c.IsPendingRespawn) continue; // stay-mode ? leave ZDO alone
-                vaultIds.Add(c.CompanionId);
+                    ? PlayerFollowingRegistry.IsFollowing(player, saved.CompanionId)
+                    : saved.IsFollowing;
+                if (!registrySaysFollowing && !saved.IsPendingRespawn) continue; // stay-mode ? leave ZDO alone
+                vaultIds.Add(saved.CompanionId);
             }
 
-            // ZDO-level "stale" sweep ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â LEGACY MODE ONLY.
+            // ZDO-level "stale" sweep - LEGACY MODE ONLY.
             // In legacy mode, vault is the source of truth and any existing
             // ZDO matching a vault entry must be destroyed so we re-spawn
             // fresh. In persistent mode the existing ZDO IS the source of
@@ -631,23 +531,23 @@ namespace FiresCore.Npc
                 DestroyStaleCompanionZDOs(playerId, vaultIds);
             }
 
-            // Same-companion-id dedup sweep ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â runs in BOTH modes.
+            // Same-companion-id dedup sweep - runs in BOTH modes.
             // Catches actual duplicates (two CompanionControllers with the
             // same companion_id, e.g. legacy data left over from earlier
-            // bug-fix rounds). Persistent mode benefits from this too ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â any
+            // bug-fix rounds). Persistent mode benefits from this too - any
             // duplicates produced by the old destroy/re-spawn flow get
             // consolidated to one instance on first persistent-mode login.
             {
                 var allControllers = UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None);
                 var seen = new HashSet<string>();
                 int dupesDestroyed = 0;
-                foreach (var c in allControllers)
+                foreach (var companion in allControllers)
                 {
-                    if (c == null || c.ownerPlayerId != playerId) continue;
-                    if (string.IsNullOrEmpty(c.companionId)) continue;
-                    if (!seen.Add(c.companionId))
+                    if (companion == null || companion.ownerPlayerId != playerId) continue;
+                    if (string.IsNullOrEmpty(companion.companionId)) continue;
+                    if (!seen.Add(companion.companionId))
                     {
-                        CompanionNetworkHelper.Destroy(c.gameObject);
+                        CompanionNetworkHelper.Destroy(companion.gameObject);
                         dupesDestroyed++;
                     }
                 }
@@ -655,7 +555,7 @@ namespace FiresCore.Npc
                     Debug.Log($"[CompanionPatches] Dedup sweep destroyed {dupesDestroyed} duplicate companion(s)");
             }
 
-            // Destroy-instance-matching-vault-IDs sweep ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â LEGACY MODE ONLY.
+            // Destroy-instance-matching-vault-IDs sweep - LEGACY MODE ONLY.
             // Same reason as above: in persistent mode the existing instance
             // is the canonical entity and we adopt it; destroying it would
             // be the very bug we're trying to eliminate.
@@ -663,22 +563,22 @@ namespace FiresCore.Npc
             {
                 var allControllers = UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None);
                 int staleDestroyed = 0;
-                foreach (var c in allControllers)
+                foreach (var companion in allControllers)
                 {
-                    if (c == null || c.ownerPlayerId != playerId) continue;
-                    if (string.IsNullOrEmpty(c.companionId)) continue;
-                    if (!vaultIds.Contains(c.companionId)) continue;
+                    if (companion == null || companion.ownerPlayerId != playerId) continue;
+                    if (string.IsNullOrEmpty(companion.companionId)) continue;
+                    if (!vaultIds.Contains(companion.companionId)) continue;
 
                     // Skip static placed NPCs and stationed NPCs
-                    if (c.isStaticPlacement) continue;
-                    var npcModule = c.GetComponent<CompanionNpcModule>();
+                    if (companion.isStaticPlacement) continue;
+                    var npcModule = companion.GetComponent<CompanionNpcModule>();
                     if (npcModule != null && npcModule.IsStationedAsNpc) continue;
 
-                    CompanionNetworkHelper.Destroy(c.gameObject);
+                    CompanionNetworkHelper.Destroy(companion.gameObject);
                     staleDestroyed++;
                 }
                 if (staleDestroyed > 0)
-                    Debug.Log($"[CompanionPatches] Destroyed {staleDestroyed} stale companion instance(s) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â will re-spawn from vault");
+                    Debug.Log($"[CompanionPatches] Destroyed {staleDestroyed} stale companion instance(s) - will re-spawn from vault");
             }
 
             int restoredCount = 0;
@@ -698,7 +598,7 @@ namespace FiresCore.Npc
 
                     Debug.Log($"[CompanionPatches] Processing companion: {companionData.CompanionName} (ID: {companionData.CompanionId}), IsFollowing={companionData.IsFollowing}, IsPendingRespawn={companionData.IsPendingRespawn}");
 
-                    // Stationed NPCs live permanently in the world ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â never touch them.
+                    // Stationed NPCs live permanently in the world - never touch them.
                     if (companionData.IsStationedAsNpc)
                     {
                         Debug.Log($"[CompanionPatches] Companion {companionData.CompanionName} is stationed as NPC - skipping restoration (exists in world)");
@@ -707,7 +607,7 @@ namespace FiresCore.Npc
                     }
 
                     // AUTHORITATIVE follow flag for this companion = registry.
-                    // Vault.IsFollowing is only the migrated mirror ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â except
+                    // Vault.IsFollowing is only the migrated mirror - except
                     // server-side (player == null), where the registry isn't
                     // accessible and the vault flag IS the source of truth.
                     bool registryFollowing = player != null
@@ -716,9 +616,9 @@ namespace FiresCore.Npc
 
                     // Stay-mode companions (not following, not pending respawn) have a fixed
                     // home position in the world. The correct behaviour is:
-                    //   * Instance still present  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ leave it completely alone.
-                    //   * Instance gone (ZDO loss) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ re-spawn at home position.
-                    // NEVER destroy a stay-mode instance and then skip re-spawning it ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â that
+                    //   * Instance still present  → leave it completely alone.
+                    //   * Instance gone (ZDO loss) → re-spawn at home position.
+                    // NEVER destroy a stay-mode instance and then skip re-spawning it - that
                     // is the exact bug that caused companions to vanish on login.
                     if (!registryFollowing && !companionData.IsPendingRespawn)
                     {
@@ -734,7 +634,7 @@ namespace FiresCore.Npc
                             continue;
                         }
 
-                        // Instance and ZDO are both gone ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â re-spawn at the saved home position.
+                        // Instance and ZDO are both gone - re-spawn at the saved home position.
                         Debug.Log($"[CompanionPatches] Stay-mode companion {companionData.CompanionName} has no world instance OR ZDO - re-spawning at home position");
 
                         string stayPrefab = companionData.PrefabName ?? "CompanionNpc";
@@ -759,7 +659,7 @@ namespace FiresCore.Npc
 
                                 // CRITICAL: Set vanilla Character.IsTamed() too. CompanionController.UpdateCompanionBehavior
                                 // polls _character.IsTamed() every frame and overwrites isTamed back to whatever vanilla
-                                // says ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â without this call, our isTamed=true above flips back to false next tick and the
+                                // says - without this call, our isTamed=true above flips back to false next tick and the
                                 // companion shows the wild "give X coins to recruit" prompt despite following.
                                 var stayChar = stayGO.GetComponent<Character>();
                                 if (stayChar != null) stayChar.SetTamed(true);
@@ -782,7 +682,7 @@ namespace FiresCore.Npc
                             }
                             else
                             {
-                                // Spawn succeeded but controller wiring failed ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the
+                                // Spawn succeeded but controller wiring failed - the
                                 // ZNetView is already registered with ZNetScene, so
                                 // raw Object.Destroy here would leave a stale m_instances
                                 // entry that NREs in ZNetScene.RemoveObjects later.
@@ -797,7 +697,7 @@ namespace FiresCore.Npc
                         continue;
                     }
 
-                    // Pending respawn ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â check whether the timer expired offline.
+                    // Pending respawn - check whether the timer expired offline.
                     if (companionData.IsPendingRespawn)
                     {
                         Debug.Log($"[CompanionPatches] Companion {companionData.CompanionName} was pending respawn - checking timer");
@@ -808,7 +708,7 @@ namespace FiresCore.Npc
 
                         if (remainingTime <= 0)
                         {
-                            // Timer expired while offline ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â fall through to spawn logic below.
+                            // Timer expired while offline - fall through to spawn logic below.
                             Debug.Log($"[CompanionPatches] Respawn timer expired ({timeSinceDeath}s since death) - spawning {companionData.CompanionName}");
                         }
                         else
@@ -843,21 +743,21 @@ namespace FiresCore.Npc
                         var live = FindExistingCompanion(companionData.CompanionId);
                         if (live != null)
                         {
-                            Vector3 tpPos = GetSafeSpawnPosition(player, effectiveOwnerPos);
-                            live.transform.position = tpPos;
+                            Vector3 teleportPosition = GetSafeSpawnPosition(player, effectiveOwnerPos);
+                            live.transform.position = teleportPosition;
 
                             // Reset velocity so they don't keep their pre-teleport momentum
-                            var rb = live.GetComponent<Rigidbody>();
-                            if (rb != null)
+                            var body = live.GetComponent<Rigidbody>();
+                            if (body != null)
                             {
-                                rb.linearVelocity = Vector3.zero;
-                                rb.angularVelocity = Vector3.zero;
+                                body.linearVelocity = Vector3.zero;
+                                body.angularVelocity = Vector3.zero;
                             }
 
                             // Make sure they're following (registry is authoritative
                             // when present; vault flag is the source of truth
                             // server-side). When player is null we can't call
-                            // CommandFollow ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set the persistent follow flag on
+                            // CommandFollow - set the persistent follow flag on
                             // the ZDO directly so the client-side controller
                             // reconciles when it sees the companion.
                             if (registryFollowing)
@@ -868,26 +768,26 @@ namespace FiresCore.Npc
                                 }
                                 else
                                 {
-                                    var nv = live.GetComponent<ZNetView>();
-                                    var z = nv != null && nv.IsValid() ? nv.GetZDO() : null;
-                                    if (z != null) z.Set("companion_wasfollowing", true);
+                                    var netView = live.GetComponent<ZNetView>();
+                                    var liveZdo = netView != null && netView.IsValid() ? netView.GetZDO() : null;
+                                    if (liveZdo != null) liveZdo.Set("companion_wasfollowing", true);
                                 }
                             }
 
                             ClearRespawnStateInVault(playerId, companionData.CompanionId);
                             live.SaveToZDO();
                             restoredCount++;
-                            Debug.Log($"[CompanionPatches] Teleported live following companion {companionData.CompanionName} to player at {tpPos} (skipped re-spawn)");
+                            Debug.Log($"[CompanionPatches] Teleported live following companion {companionData.CompanionName} to player at {teleportPosition} (skipped re-spawn)");
                             continue;
                         }
-                        // Fallthrough: no live instance found despite preserve flag ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â re-spawn as normal.
+                        // Fallthrough: no live instance found despite preserve flag - re-spawn as normal.
                     }
 
                     // PERSISTENT MODE: adopt existing ZDO (unloaded zone) by
                     // rewriting its position so it materialises near the player
                     // when its zone loads (the zone-load loop is driven by
                     // TamedCompanionZoneLoader on the server). Skips the
-                    // destroy + spawn-fresh path entirely ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the existing ZDO is
+                    // destroy + spawn-fresh path entirely - the existing ZDO is
                     // the canonical entity.
                     //
                     // The "live instance" case is already handled by the
@@ -904,11 +804,11 @@ namespace FiresCore.Npc
 
                             if (registryFollowing)
                             {
-                                Vector3 tpPos = GetSafeSpawnPosition(player, effectiveOwnerPos);
-                                adoptZdo.SetPosition(tpPos);
+                                Vector3 teleportPosition = GetSafeSpawnPosition(player, effectiveOwnerPos);
+                                adoptZdo.SetPosition(teleportPosition);
                                 adoptZdo.DataRevision++;
                                 ZDOMan.instance?.ForceSendZDO(adoptZdo.m_uid);
-                                Debug.Log($"[CompanionPatches] Adopted unloaded companion ZDO {companionData.CompanionName} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {tpPos} (will materialise on zone load)");
+                                Debug.Log($"[CompanionPatches] Adopted unloaded companion ZDO {companionData.CompanionName} → {teleportPosition} (will materialise on zone load)");
                             }
                             else
                             {
@@ -925,7 +825,7 @@ namespace FiresCore.Npc
                         }
                         catch (Exception adoptEx)
                         {
-                            Debug.LogWarning($"[CompanionPatches] Adopt path threw for {companionData.CompanionName}: {adoptEx.Message} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â falling through to spawn-from-vault");
+                            Debug.LogWarning($"[CompanionPatches] Adopt path threw for {companionData.CompanionName}: {adoptEx.Message} - falling through to spawn-from-vault");
                             // Fallthrough to spawn-from-vault as a recovery path.
                         }
                     }
@@ -952,7 +852,7 @@ namespace FiresCore.Npc
                         }
                     }
 
-                    // CRITICAL: One more check right before spawning ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â a stale ZDO may have
+                    // CRITICAL: One more check right before spawning - a stale ZDO may have
                     // loaded between the dedup sweep and now. Destroy it to prevent duplication.
                     var stale = FindExistingCompanion(companionData.CompanionId);
                     if (stale != null)
@@ -980,7 +880,7 @@ namespace FiresCore.Npc
 
                             // CRITICAL: Set vanilla Character.IsTamed() too. CompanionController.UpdateCompanionBehavior
                             // polls _character.IsTamed() every frame and overwrites isTamed back to whatever vanilla
-                            // says ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â without this call, our isTamed=true above flips back to false next tick and the
+                            // says - without this call, our isTamed=true above flips back to false next tick and the
                             // companion shows the wild "give X coins to recruit" prompt despite following.
                             var respChar = companionGO.GetComponent<Character>();
                             if (respChar != null) respChar.SetTamed(true);
@@ -1007,8 +907,8 @@ namespace FiresCore.Npc
                                 {
                                     if (respNview != null && respNview.IsValid())
                                     {
-                                        var rzdo = respNview.GetZDO();
-                                        if (rzdo != null) rzdo.Set("companion_wasfollowing", true);
+                                        var respawnZdo = respNview.GetZDO();
+                                        if (respawnZdo != null) respawnZdo.Set("companion_wasfollowing", true);
                                     }
                                 }
                             }
@@ -1042,7 +942,7 @@ namespace FiresCore.Npc
                         else
                         {
                             Debug.LogWarning($"[CompanionPatches] Spawned companion has no CompanionController component");
-                            // Same reason as the stay-mode branch above ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â go through
+                            // Same reason as the stay-mode branch above - go through
                             // ZNetScene so the ZDO is unregistered cleanly.
                             CompanionNetworkHelper.Destroy(companionGO);
                             failedCount++;
@@ -1081,7 +981,7 @@ namespace FiresCore.Npc
         /// <see cref="Player"/> object and we use its transform for both
         /// position AND forward direction (so the spawn ring is oriented
         /// in front of the player). On the dedicated-server path we have
-        /// only a position (peer's character ZDO position), no forward ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â
+        /// only a position (peer's character ZDO position), no forward -
         /// we synthesize a forward of <c>Vector3.forward</c>. The ring
         /// search itself is direction-agnostic so this just affects the
         /// "preferred" first-attempt direction.
@@ -1174,7 +1074,7 @@ namespace FiresCore.Npc
         /// <c>companion_id</c> with another and destroys the extras. Cleans
         /// up duplicates left over from earlier sessions where the
         /// stay-mode restore re-spawned a companion whose home zone was
-        /// unloaded ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the original ZDO came back online when the zone
+        /// unloaded - the original ZDO came back online when the zone
         /// activated, leaving two ZDOs for the same id. Runs once per
         /// player connect from <see cref="CompanionRestoreService"/>; only
         /// the host actually does the destroy (each ZDO is destroyed by
@@ -1267,7 +1167,7 @@ namespace FiresCore.Npc
                 }
                 else
                 {
-                    // Duplicate ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â destroy it
+                    // Duplicate - destroy it
                     Debug.LogWarning($"[CompanionPatches] Destroying duplicate companion {companionId} (name: {controller.companionName})");
                     CompanionNetworkHelper.Destroy(controller.gameObject);
                     destroyed++;
@@ -1330,7 +1230,7 @@ namespace FiresCore.Npc
                     }
                     else
                     {
-                        // No Unity object yet ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â destroy the ZDO directly
+                        // No Unity object yet - destroy the ZDO directly
                         ZDOMan.instance.DestroyZDO(zdo);
                     }
                     destroyed++;
@@ -1432,7 +1332,7 @@ namespace FiresCore.Npc
         private static CompanionSaveData ParseCompanionData(object obj)
         {
             if (obj == null) return null;
-            if (obj is CompanionSaveData csd) return csd;
+            if (obj is CompanionSaveData saveData) return saveData;
 
             try
             {
@@ -1482,28 +1382,10 @@ namespace FiresCore.Npc
         }
 
         /// <summary>
-        /// Per-player logout cleanup for companions.
-        ///
-        /// PERSISTENT MODE (Companions.Persistence.PersistentCompanions = true, default):
-        ///   1. Flush the player's authoritative state to vault as a backup mirror.
-        ///   2. Refresh per-companion roster snapshots so in-session progression
-        ///      (kills, levels, equipment) is captured before the GameObject
-        ///      potentially unloads when its zone goes out of scope.
-        ///   3. Release ZDO ownership (SetOwner(0L)). ZDOMan's natural
-        ///      closest-peer rule promotes the server to owner because
-        ///      TamedCompanionZoneLoader keeps companion zones loaded
-        ///      server-side. Companions stay alive in the world like
-        ///      vanilla tames; restoration on next login adopts existing
-        ///      ZDOs instead of re-spawning from vault.
-        ///
-        /// LEGACY MODE (PersistentCompanions = false):
-        ///   1. Same vault flush + roster refresh.
-        ///   2. Then destroy the ZDO + Unity object. Restore on next login
-        ///      re-spawns fresh from vault. Smaller server footprint, but
-        ///      companions don't behave as living entities while their owner
-        ///      is offline.
-        ///
-        /// Stationed NPCs are exempted from BOTH paths.
+        /// Logout cleanup for a player's companions. Both modes flush the player's state to the vault mirror
+        /// and refresh roster snapshots first. Persistent mode (the default) then releases ZDO ownership so the
+        /// server, which keeps companion zones loaded, adopts them and they live on like vanilla tames; legacy
+        /// mode destroys them for a fresh spawn at next login. Stationed NPCs are exempt from both.
         /// </summary>
         private static void DestroyPlayerCompanionsOnLogout(long playerId)
         {
@@ -1519,7 +1401,7 @@ namespace FiresCore.Npc
                 int skippedStationedCount = 0;
 
                 // Phase 6 (save refactor): the legacy "world has 0 / vault
-                // has N ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ skip" safety guard is gone. The roster on the
+                // has N → skip" safety guard is gone. The roster on the
                 // player's m_customData is now authoritative for owned
                 // companions, so a session with 0 live companions simply
                 // doesn't refresh any roster entries (RefreshLiveSnapshot
@@ -1550,7 +1432,7 @@ namespace FiresCore.Npc
                     if (companion.ownerPlayerId != playerId) continue;
 
                     // Skip static placed NPCs and stationed companions in
-                    // both modes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â they're permanent world fixtures.
+                    // both modes - they're permanent world fixtures.
                     if (companion.isStaticPlacement)
                     {
                         skippedStationedCount++;
@@ -1789,7 +1671,7 @@ namespace FiresCore.Npc
                     // E-interact: walk the player's whole inventory looking for
                     // tamingItemPrefab (Coins by default). Works whether coins
                     // live in the regular grid, equipment slots, or the VAInventory
-                    // coin purse ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the helper inspects every stack on the player.
+                    // coin purse - the helper inspects every stack on the player.
                     // The helper itself shows a "Need X (have Y)" message on
                     // shortfall, so we don't duplicate the prompt here.
                     companion.TryAutoTameWithInventoryItems(player);
@@ -2018,21 +1900,9 @@ namespace FiresCore.Npc
         }
 
         /// <summary>
-        /// Patch Character.RaiseSkill to short-circuit it for our companions.
-        ///
-        /// Vanilla RaiseSkill expects every tamed Character to have BOTH a
-        /// <see cref="Tameable"/> AND a <see cref="MonsterAI"/> component.  Our
-        /// companions use <see cref="CompanionAI"/> instead and have neither, so
-        /// every time a companion landed a skill-granting hit Valheim spammed:
-        ///
-        ///   "{name} is tamed but missing tameable or monster AI script!"
-        ///
-        /// into the log (multiple times per second during combat).  We don't use
-        /// vanilla skill leveling on companions ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â they have their own
-        /// CompanionSkills system that's driven by CompanionController hooks ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â
-        /// so we can safely skip the entire vanilla method for any Character
-        /// that is one of our companions.  This both kills the warning spam
-        /// and saves the per-call overhead of the now-noop method.
+        /// Skips Character.RaiseSkill for companions. Vanilla expects every tamed character to have Tameable and
+        /// MonsterAI, and companions have neither, so each skill-granting hit logged a "missing tameable or monster AI"
+        /// warning. Companions level through CompanionSkills instead.
         /// </summary>
         [HarmonyPatch(typeof(Character), nameof(Character.RaiseSkill))]
         [HarmonyPrefix]
@@ -2040,7 +1910,7 @@ namespace FiresCore.Npc
         {
             if (__instance != null && __instance.GetComponent<CompanionController>() != null)
             {
-                // Companion ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ skip vanilla.  CompanionSkills handles XP separately.
+                // Companion → skip vanilla.  CompanionSkills handles XP separately.
                 return false;
             }
             return true;
@@ -2246,7 +2116,6 @@ namespace FiresCore.Npc
         /// Tracks if the companion command ping was just used this frame.
         /// Used to prevent player attacks (kick) when using Shift+MMB to ping.
         /// </summary>
-        private static bool _pingUsedThisFrame = false;
         private static int _lastPingFrame = -1;
 
         /// <summary>
@@ -2255,7 +2124,6 @@ namespace FiresCore.Npc
         /// </summary>
         public static void NotifyPingUsed()
         {
-            _pingUsedThisFrame = true;
             _lastPingFrame = Time.frameCount;
         }
 
@@ -2279,7 +2147,6 @@ namespace FiresCore.Npc
             // Reset the flag each frame in a consistent location
             if (Time.frameCount > _lastPingFrame + 2)
             {
-                _pingUsedThisFrame = false;
             }
         }
 
@@ -2287,9 +2154,9 @@ namespace FiresCore.Npc
         /// Patch Player.PlayerAttackInput to suppress the unarmed kick when the
         /// player is using Shift+MMB to ping a companion.
         ///
-        /// IMPORTANT ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only block when the player is UNARMED. With a weapon
+        /// IMPORTANT - only block when the player is UNARMED. With a weapon
         /// equipped, all vanilla input (LMB primary, RMB secondary, sprint
-        /// modifier, etc.) must keep working ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â otherwise holding Shift to ping
+        /// modifier, etc.) must keep working - otherwise holding Shift to ping
         /// would also cancel weapon attacks. The unarmed kick is the only
         /// vanilla action mapped to MMB by default, so that's all we suppress.
         /// </summary>
@@ -2299,7 +2166,7 @@ namespace FiresCore.Npc
         {
             if (__instance == null) return true;
 
-            // If a weapon is equipped in either hand, never block ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the player
+            // If a weapon is equipped in either hand, never block - the player
             // is armed, so MMB has no vanilla unarmed-kick action to suppress.
             if (__instance.m_rightItem != null || __instance.m_leftItem != null)
             {
@@ -2345,7 +2212,7 @@ namespace FiresCore.Npc
                 var stateController = companion.GetStateController();
                 if (stateController != null)
                 {
-                    // Clear any stuck emote first ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â must happen before entering UIInteraction
+                    // Clear any stuck emote first - must happen before entering UIInteraction
                     // so the animation reset doesn't fight the new state.
                     stateController.ForceStopEmote();
 
@@ -2769,17 +2636,8 @@ namespace FiresCore.Npc
         #region Character.SetMoveDir Kinematic Fix
 
         /// <summary>
-        /// Companion movement coordination - ONLY blocks for TRUE frozen states.
-        /// 
-        /// IMPORTANT: We do NOT block vanilla pathfinding!
-        /// The authority system coordinates WHICH system calls MoveTo(),
-        /// but once a system has authority, vanilla pathfinding handles the movement.
-        /// 
-        /// This patch only blocks movement for:
-        /// - UI interaction (inventory open, etc.)
-        /// - Emote playing
-        /// - Chair sitting
-        /// - Kinematic rigidbody (teleporting, etc.)
+        /// Blocks Character.SetMoveDir for companions only in truly frozen states (UI open, emote, seated, kinematic
+        /// body). Pathfinding is never blocked; movement authority decides who moves.
         /// </summary>
         [HarmonyPatch(typeof(Character), nameof(Character.SetMoveDir))]
         [HarmonyPrefix]
@@ -2787,7 +2645,7 @@ namespace FiresCore.Npc
         {
             try
             {
-                // PERF: Use cached lookup ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â avoids GetComponent on every Character every frame
+                // PERF: Use cached lookup - avoids GetComponent on every Character every frame
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true; // Not a companion, allow normal execution
 
@@ -2924,7 +2782,7 @@ namespace FiresCore.Npc
                 {
                     var companion = GetCachedCompanion(character);
                     if (companion != null)
-                        return false; // Skip MonsterAI ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â CompanionAI handles this
+                        return false; // Skip MonsterAI - CompanionAI handles this
                 }
             }
             catch { }
@@ -2978,7 +2836,7 @@ namespace FiresCore.Npc
             if (nview == null || !nview.IsValid() || nview.GetZDO() == null)
                 return false;
 
-            // Guard model index bounds ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â UpdateColors does m_models[GetModelIndex()]
+            // Guard model index bounds - UpdateColors does m_models[GetModelIndex()]
             // and the ZDO can store an index that's >= m_models.Length on freshly
             // spawned companions whose model array hasn't fully initialised yet.
             int modelIndex = ve.GetModelIndex();
@@ -3044,7 +2902,7 @@ namespace FiresCore.Npc
                 if (!IsOurPrefab(__instance.gameObject))
                     return true;
 
-                // Guard m_nview ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the original method does m_nview.GetZDO().GetInt()
+                // Guard m_nview - the original method does m_nview.GetZDO().GetInt()
                 // which NREs on freshly spawned companions before Start() runs.
                 // m_nview is PRIVATE in the live assembly — a direct read compiles against the
                 // publicized DLL but throws FieldAccessException at runtime (silently swallowed by
@@ -3121,17 +2979,17 @@ namespace FiresCore.Npc
             try
             {
                 if (ve == null || !IsOurPrefab(ve.gameObject)) return;
-                var smr = ve.m_bodyModel;
+                var bodyRenderer = ve.m_bodyModel;
                 var models = ve.m_models;
-                if (smr == null || models == null || models.Length == 0) return;
+                if (bodyRenderer == null || models == null || models.Length == 0) return;
                 int idx = ResolveVisModelIndex(ve);
                 if (idx < 0 || idx >= models.Length) return;
                 var target = models[idx].m_mesh;
-                var current = smr.sharedMesh;
+                var current = bodyRenderer.sharedMesh;
                 if (target == null || target == current) return;   // vanilla no-ops on same reference
                 string key = ve.gameObject.name + "|" + target.name + "|" + idx;
                 if (!_baseModelDiagLogged.Add(key)) return;
-                Debug.Log($"[BodyMeshDiag] {ve.gameObject.name} idx={idx} smrBones={(smr.bones != null ? smr.bones.Length : -1)} " +
+                Debug.Log($"[BodyMeshDiag] {ve.gameObject.name} idx={idx} smrBones={(bodyRenderer.bones != null ? bodyRenderer.bones.Length : -1)} " +
                           $"current='{(current != null ? current.name : "null")}' curBind={(current != null && current.bindposes != null ? current.bindposes.Length : -1)} curVerts={(current != null ? current.vertexCount : -1)} " +
                           $"target='{target.name}' tgtBind={(target.bindposes != null ? target.bindposes.Length : -1)} tgtVerts={target.vertexCount} " +
                           $"guardFires={IsIncompatibleBaseModel(ve)}");
@@ -3168,9 +3026,9 @@ namespace FiresCore.Npc
             try
             {
                 if (ve == null || !IsOurPrefab(ve.gameObject)) return false;
-                var smr = ve.m_bodyModel;
+                var bodyRenderer = ve.m_bodyModel;
                 var models = ve.m_models;
-                if (smr == null || models == null || models.Length == 0) return false;
+                if (bodyRenderer == null || models == null || models.Length == 0) return false;
                 int idx = ResolveVisModelIndex(ve);
                 if (idx < 0 || idx >= models.Length) return false;
                 var mesh = models[idx].m_mesh;
@@ -3180,7 +3038,7 @@ namespace FiresCore.Npc
                 // check is what keeps vanilla UpdateBaseModel from re-assigning a rejected mesh every
                 // frame after the guard healed the renderer — vanilla re-assigns whenever
                 // sharedMesh != m_models[idx].m_mesh, so without it the heal would be fought forever.
-                return !NpcBodyMeshGuard.IsAssignable(mesh, smr);
+                return !NpcBodyMeshGuard.IsAssignable(mesh, bodyRenderer);
             }
             catch { return false; }
         }
@@ -3220,48 +3078,23 @@ namespace FiresCore.Npc
         #region Player Teleport - Companion Follow
 
         /// <summary>
-        /// Patch Player.TeleportTo to teleport following companions with the player.
-        /// 
-        /// PROBLEM: When a player uses a portal, bed, or any teleport, their following
-        /// companions are left behind. The companion eventually loses follow state or
-        /// gets stuck trying to pathfind across the world.
-        /// 
-        /// SOLUTION: Hook into Player.TeleportTo and teleport all following companions
-        /// to the player's new position after a short delay.
-        ///
-        /// DUNGEON / DISTANT TELEPORT NOTE:
-        /// Dungeon doors (interior at YÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€¹Ã¢â‚¬Â 5000) sometimes call TeleportTo with
-        /// distantTeleport=FALSE despite the huge Y jump, so trusting the flag
-        /// alone is unreliable.  We capture the player's position in a Prefix
-        /// and compute the actual delta in the Postfix ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â anything larger than
-        /// LONG_JUMP_THRESHOLD (XZ) or LONG_JUMP_VERTICAL (Y) is treated as a
-        /// distant teleport for our purposes, even when the engine flag says
-        /// otherwise.  Forcibly moving companions on the SAME frame as one of
-        /// these jumps causes simultaneous ZNetView ownership transfers + ZDO
-        /// position writes + RPC broadcasts while the destination zone is still
-        /// streaming, which has been observed to deadlock the loading screen
-        /// (black screen forever, requires close + relaunch).
+        /// Brings following companions along on Player.TeleportTo. The engine's distantTeleport flag is unreliable
+        /// (dungeon doors jump thousands of meters in Y with it false), so the prefix records the start position
+        /// and any move past <see cref="LongJumpThreshold"/> or <see cref="LongJumpVertical"/> counts as a long
+        /// jump; moving companions in the same frame as one of those deadlocked the loading screen.
         /// </summary>
-        private const float LONG_JUMP_THRESHOLD = 200f;   // XZ-distance threshold for "distant teleport" detection
-        private const float LONG_JUMP_VERTICAL  = 500f;   // Y-distance threshold (catches dungeon interiors at YÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€¹Ã¢â‚¬Â 5000)
+        private const float LongJumpThreshold = 200f;   // XZ-distance threshold for "distant teleport" detection
+        private const float LongJumpVertical  = 500f;   // Y-distance threshold (catches dungeon interiors at Y≈5000)
         private static Vector3 _teleportSourcePos;
         private static bool _teleportSourceCaptured;
 
         /// <summary>
-        /// Global timestamp (Time.unscaledTime) until which CompanionController.CheckFollowTeleport
-        /// must NOT auto-teleport companions on its own.  Set when we detect a long-jump
-        /// player teleport (dungeon entry / portal / etc.) so the deferred Phase 2
-        /// coroutine is the only thing that moves companions during the loading
-        /// screen + zone-stream window.  Without this, the companion's own 1Hz
-        /// stranded-distance tick fires TeleportToOwner before the destination zone
-        /// is even loaded ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â and ZoneSystem.GetGroundHeight returns the OUTSIDE
-        /// world's terrain Y for dungeon-interior XZ coordinates, putting the
-        /// companion at the surface (YÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€¹Ã¢â‚¬Â 38) instead of next to the player at YÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€¹Ã¢â‚¬Â 5000.
-        /// That mismatch then re-triggers the stranded check every tick ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ infinite
-        /// loop / black screen.
+        /// Time.unscaledTime until which CompanionController.CheckFollowTeleport must not teleport companions itself. Set
+        /// for long-jump teleports: before the destination zone loads, GetGroundHeight returns the surface height for a
+        /// dungeon interior, which put the companion outside and retriggered the stranded check every tick.
         /// </summary>
         public static float SuppressCompanionTeleportsUntil = 0f;
-        public const float SUPPRESS_DURATION_LONG_JUMP = 6f; // seconds ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â covers loading screen + zone settle
+        public const float SUPPRESS_DURATION_LONG_JUMP = 6f; // seconds - covers loading screen + zone settle
 
         // ── Suppression durations (named, co-located, doc-commented) ──
         // Every place in this file that writes SuppressCompanionTeleportsUntil uses one of
@@ -3317,40 +3150,40 @@ namespace FiresCore.Npc
 
             try
             {
-                var lp = Player.m_localPlayer;
+                var localPlayer = Player.m_localPlayer;
 
                 // m_localPlayer == null while in-game (Game.instance != null) means
-                // we're inside the auto-respawn coroutine ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the old Player object was
+                // we're inside the auto-respawn coroutine - the old Player object was
                 // destroyed and the new one has not been constructed yet. This window
                 // covers the entire respawn sequence: fade-out, zone-load, spawn-point
                 // selection, new-Player instantiation. It can run for tens of seconds
                 // on a heavy save and the OnDeath timer (30s) may expire inside it.
                 // Companion ZDO writes / ability RPCs during this window deadlock the
-                // zone stream ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the canonical respawn-freeze mechanism. Hold the gate
+                // zone stream - the canonical respawn-freeze mechanism. Hold the gate
                 // closed for the whole window and re-arm on every call so we don't
                 // fall through if the timer happens to lapse mid-respawn.
-                if (lp == null)
+                if (localPlayer == null)
                 {
                     if (Game.instance != null)
                     {
                         SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_LP_NULL_REARM;
                         return true;
                     }
-                    // No Game.instance ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â main menu / character select ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â let things proceed.
+                    // No Game.instance - main menu / character select - let things proceed.
                     return false;
                 }
 
                 // Loading screen still active.
-                if (lp.IsTeleporting())
+                if (localPlayer.IsTeleporting())
                 {
                     SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_LOADING_REARM;
                     return true;
                 }
 
-                // Player spawned but wakeup animation hasn't finished ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â
+                // Player spawned but wakeup animation hasn't finished -
                 // CanMove() returns false until the character has full control.
                 // Keep suppressing so CheckFollowTeleport can't fire early.
-                if (!lp.CanMove())
+                if (!localPlayer.CanMove())
                 {
                     SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_LOADING_REARM;
                     return true;
@@ -3385,7 +3218,7 @@ namespace FiresCore.Npc
             {
                 if (__instance != Player.m_localPlayer) return;
 
-                // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ robust distant-teleport detection ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
+                // - robust distant-teleport detection -
                 // The engine flag is unreliable (dungeons sometimes pass false),
                 // so we measure the delta ourselves. Any jump bigger than the
                 // thresholds is treated as a distant teleport regardless of the
@@ -3395,9 +3228,9 @@ namespace FiresCore.Npc
                 if (_teleportSourceCaptured)
                 {
                     Vector3 src = _teleportSourcePos;
-                    float dxz = Vector2.Distance(new Vector2(src.x, src.z), new Vector2(pos.x, pos.z));
+                    float horizontalDistance = Vector2.Distance(new Vector2(src.x, src.z), new Vector2(pos.x, pos.z));
                     float dy  = Mathf.Abs(src.y - pos.y);
-                    if (dxz > LONG_JUMP_THRESHOLD || dy > LONG_JUMP_VERTICAL)
+                    if (horizontalDistance > LongJumpThreshold || dy > LongJumpVertical)
                     {
                         isLongJump = true;
                     }
@@ -3409,15 +3242,15 @@ namespace FiresCore.Npc
                     // SUPPRESS the companion controllers' own CheckFollowTeleport
                     // for the next several seconds. Their stranded-distance
                     // check will see the player ~5000m away (because the
-                    // player just jumped) and try to teleport locally ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â
+                    // player just jumped) and try to teleport locally -
                     // those local writes race with the destination zone
                     // load.
                     SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_LONG_JUMP;
-                    Debug.Log($"[CompanionPatches] Long-jump teleport (engineFlag={distantTeleport}) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â suppressing local CheckFollowTeleport for {SUPPRESS_DURATION_LONG_JUMP:F1}s; reconcile-on-arrival coroutine started.");
+                    Debug.Log($"[CompanionPatches] Long-jump teleport (engineFlag={distantTeleport}) - suppressing local CheckFollowTeleport for {SUPPRESS_DURATION_LONG_JUMP:F1}s; reconcile-on-arrival coroutine started.");
 
                     // Player.TeleportTo reuses the existing player object,
                     // so Player.OnSpawned does NOT fire for wayshrine /
-                    // portal / dungeon teleports ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only for login and
+                    // portal / dungeon teleports - only for login and
                     // death-respawn. Without this start, reconcile never
                     // dispatches and followers stay stranded at the source
                     // zone. Same coroutine the OnSpawned hook uses; waits
@@ -3427,19 +3260,8 @@ namespace FiresCore.Npc
                     __instance.StartCoroutine(ReconcileFollowersAfterArrival(__instance));
                 }
 
-                // No depart-time companion dispatch. The previous design
-                // (MoveCompanionsTo here, dispatching the position the
-                // player is teleporting to) raced with the destination
-                // zone load on long jumps ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the server got the RPC before
-                // the destination zone was loaded server-side, the ZDO
-                // position write went out into nowhere, and the companion
-                // either snapped back via ownership flap or stayed at the
-                // source. Reconcile-on-arrival (the coroutine started
-                // above) replaces this ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â by the time it dispatches, the
-                // loading screen is done, the destination zone is loaded,
-                // and the player has control. The server then scans
-                // ZDOMan for the player's followers and reels in the ones
-                // that are far away.
+                // Nothing is dispatched at departure: that raced the destination zone load on long jumps. The arrival
+                // reconcile started above moves the followers once the player has control.
             }
             catch (Exception ex)
             {
@@ -3447,35 +3269,6 @@ namespace FiresCore.Npc
             }
         }
 
-        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-        //  Phase 2 cleanup: the deferred-sweep teleport machinery is gone.
-        //
-        //  Removed in Phase 2 of the companion refactor (see
-        //  COMPANION_REFACTOR_PLAN.md). Every callsite now flows through
-        //  CompanionTeleportService (Modules/Companions/Core/), which:
-        //    1. Releases local ZDO ownership for long-jumps so the server
-        //       promotes via ZDOMan's closest-peer rule.
-        //    2. Routes a targeted RPC to the SERVER peer specifically (not
-        //       Everybody), so only the verified-authoritative peer runs
-        //       the write. No more ownership-flap revert loop.
-        //    3. Server claims ownership explicitly, then calls the
-        //       canonical CompanionController.TeleportToDestination, which
-        //       broadcasts RPC_TeleportToPosition Everybody for visual
-        //       sync on every other peer.
-        //
-        //  The old code that lived here:
-        //    - TeleportFollowingCompanionsDelayed (deferred 2-sweep coroutine)
-        //    - SweepFollowingCompanions (per-sweep distance-and-RPC iterator)
-        //    - GetSafeTeleportPositionNearPlayer (now unused ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â service
-        //      lets CompanionController pick the safe spot via its own
-        //      GetSafeTeleportPositionNearPoint helper, which already has
-        //      dungeon-altitude awareness)
-        //    - RequestRemoteCompanionTeleport (Everybody-broadcast helper)
-        //    - OnRequestCompanionTeleport + RPC_RequestCompanionTeleport
-        //      (the IsOwner-on-receive RPC handler)
-        //    - ZNet_Start_RegisterCompanionTeleportRPC (registered the
-        //      legacy RPC at ZNet.Start)
-        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
 
 
         /// <summary>
@@ -3485,7 +3278,7 @@ namespace FiresCore.Npc
         /// alongside the player, so enemies ignore the crouch entirely.
         ///
         /// Formula mirrors Player.UpdateStealth with skill = 0 (companions are not skilled
-        /// sneakers). Tamed and wild companions both benefit ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â a following companion that
+        /// sneakers). Tamed and wild companions both benefit - a following companion that
         /// crouches with its owner should actually be harder to detect.
         /// </summary>
         [HarmonyPatch(typeof(Character), nameof(Character.GetStealthFactor))]
@@ -3505,7 +3298,7 @@ namespace FiresCore.Npc
                     ? StealthSystem.instance.GetLightFactor(__instance.GetCenterPoint())
                     : 0.5f;
 
-                // Skill = 0  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢  lerp factor 0, so result = 0.5 + lightFactor * 0.5
+                // Skill = 0  →  lerp factor 0, so result = 0.5 + lightFactor * 0.5
                 __result = Mathf.Clamp01(0.5f + lightFactor * 0.5f);
             }
             catch { /* never break vanilla stealth code */ }
@@ -3528,7 +3321,7 @@ namespace FiresCore.Npc
                 ref bool __result)
             {
                 // Only intercept when the shooter is NOT the local player
-                if (owner == null || owner is Player p && p == Player.m_localPlayer) return true;
+                if (owner == null || owner is Player ownerPlayer && ownerPlayer == Player.m_localPlayer) return true;
 
                 // Check if the owner is a companion
                 var companion = owner.GetComponent<CompanionController>();
@@ -3586,7 +3379,7 @@ namespace FiresCore.Npc
                 }
 
                 __result = !__instance.m_killProjectile;
-                return false; // Skip vanilla ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â we handled everything
+                return false; // Skip vanilla - we handled everything
             }
         }
     }

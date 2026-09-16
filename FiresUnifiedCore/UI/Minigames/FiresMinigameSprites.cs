@@ -32,13 +32,13 @@ namespace FiresCore.UI.Minigames
             try
             {
                 string res = null;
-                foreach (var n in asm.GetManifestResourceNames())
-                    if (n.EndsWith(endsWith, StringComparison.OrdinalIgnoreCase)) { res = n; break; }
+                foreach (var resourceName in asm.GetManifestResourceNames())
+                    if (resourceName.EndsWith(endsWith, StringComparison.OrdinalIgnoreCase)) { res = resourceName; break; }
                 if (res == null) { FiresCore.Logging.FiresLogger.LogError($"[FiresMinigame] sprite '{endsWith}' not embedded in {asm.GetName().Name}."); return null; }
 
                 byte[] data;
-                using (var s = asm.GetManifestResourceStream(res))
-                using (var ms = new System.IO.MemoryStream()) { s.CopyTo(ms); data = ms.ToArray(); }
+                using (var stream = asm.GetManifestResourceStream(res))
+                using (var ms = new System.IO.MemoryStream()) { stream.CopyTo(ms); data = ms.ToArray(); }
 
                 var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                 if (!LoadImageReflect(tex, data)) return null;
@@ -57,17 +57,17 @@ namespace FiresCore.UI.Minigames
                 if (!_loadImageResolved)
                 {
                     _loadImageResolved = true;
-                    Type t = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
-                    if (t == null)
-                        foreach (var a in AppDomain.CurrentDomain.GetAssemblies()) { t = a.GetType("UnityEngine.ImageConversion"); if (t != null) break; }
-                    if (t != null)
-                        _loadImage = t.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]), typeof(bool) })
-                                     ?? t.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]) });
+                    Type conversionType = Type.GetType("UnityEngine.ImageConversion, UnityEngine.ImageConversionModule");
+                    if (conversionType == null)
+                        foreach (var loadedAssembly in AppDomain.CurrentDomain.GetAssemblies()) { conversionType = loadedAssembly.GetType("UnityEngine.ImageConversion"); if (conversionType != null) break; }
+                    if (conversionType != null)
+                        _loadImage = conversionType.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]), typeof(bool) })
+                                     ?? conversionType.GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]) });
                 }
                 if (_loadImage == null) { FiresCore.Logging.FiresLogger.LogError("[FiresMinigame] ImageConversion.LoadImage not found"); return false; }
                 var args = _loadImage.GetParameters().Length == 3 ? new object[] { tex, data, false } : new object[] { tex, data };
-                var r = _loadImage.Invoke(null, args);
-                return !(r is bool b) || b;
+                var loaded = _loadImage.Invoke(null, args);
+                return !(loaded is bool succeeded) || succeeded;
             }
             catch (Exception ex) { FiresCore.Logging.FiresLogger.LogError($"[FiresMinigame] LoadImage reflect failed: {ex.Message}"); return false; }
         }

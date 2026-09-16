@@ -4,21 +4,9 @@ using UnityEngine;
 
 namespace FiresCore.Services
 {
-    // Cross-mod shader-swap registry. Stays a complete no-op until at
-    // least one consumer mod registers a swap, at which point Apply
-    // calls anywhere in the Fires-* family will respect the registered
-    // rules.
-    //
-    // Pattern:
-    //   ShaderSwapper.Register("Custom/Water", myCustomWaterShader);
-    //   ...
-    //   ShaderSwapper.Apply(material);                  // swaps if rule matches
-    //   ShaderSwapper.ApplyToRenderer(renderer);        // sweeps every mat
-    //   ShaderSwapper.ApplyToMaterials(bundleMats);     // bulk import path
-    //
-    // Match is by Shader.name (the asset name, not the path), so a swap
-    // registered for "Custom/Water" hits any material whose current
-    // shader reports that name even if loaded from a different bundle.
+    // Cross-mod shader swap rules: Register("Custom/Water", shader), then Apply, ApplyToRenderer or ApplyToMaterials
+    // swap any material whose shader reports that name, whichever bundle it came from. Does nothing until a rule is
+    // registered.
     public static class ShaderSwapper
     {
         private static readonly Dictionary<string, Shader> Swaps
@@ -85,8 +73,8 @@ namespace FiresCore.Services
         {
             if (materials == null) return 0;
             int swapped = 0;
-            foreach (var m in materials)
-                if (Apply(m)) swapped++;
+            foreach (var material in materials)
+                if (Apply(material)) swapped++;
             return swapped;
         }
     }

@@ -6,22 +6,10 @@ using UnityEngine;
 namespace FiresCore.Bridge
 {
     /// <summary>
-    /// The one place the family enumerates ALL typed data on a ZDO.
-    ///
-    /// Valheim 1.0 deleted <c>ZDOExtraData.GetFloats/GetVec3s/GetQuaternions/GetInts/GetLongs/GetStrings/
-    /// GetByteArrays(ZDOID)</c> - the bulk accessors that handed back every key/value pair a ZDO carried.
-    /// What survives is per-key lookup (<c>GetFloat(zid, hash, out value)</c>), which is fine when you
-    /// already know the key and useless when the whole point is "capture everything this object has"
-    /// (blueprint/section save, ZDO inspectors, migration tools).
-    ///
-    /// The data is still there, in seven private static
-    /// <c>Dictionary&lt;ZDOID, BinarySearchDictionary&lt;int, T&gt;&gt;</c> maps. BinarySearchDictionary is
-    /// public and implements <c>IEnumerable&lt;KeyValuePair&lt;int, T&gt;&gt;</c>, so once the map itself is
-    /// reachable the enumeration is ordinary. Hence: one reflection hop per type, cached, wrapped.
-    ///
-    /// AccessTools.StaticFieldRefAccess THROWS on every failure mode rather than returning null, and the
-    /// maps are readonly and only ever Clear()ed (never reassigned), so caching the resolved reference is
-    /// safe and a miss degrades to "no data" instead of an exception storm.
+    /// Enumerates every typed value on a ZDO. Valheim 1.0 removed ZDOExtraData's bulk getters and kept only per-key
+    /// lookups, but the data still sits in seven private static maps whose BinarySearchDictionary values are
+    /// enumerable, so each map is reached by one cached reflection hop. The maps are never reassigned, so the
+    /// cached reference stays valid, and a failed lookup degrades to no data.
     /// </summary>
     public static class ZdoExtraDataAccess
     {

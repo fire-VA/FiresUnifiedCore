@@ -25,18 +25,9 @@ namespace FiresCore.UI
     }
 
     /// <summary>
-    /// Reverse-engineers a live Unity UI GameObject hierarchy into a UILayoutDefinition.
-    /// This is the inverse of UICanvasRenderer � it reads components from GameObjects
-    /// and builds the data model tree.
-    /// 
-    /// Use cases:
-    /// - Capture existing programmatic UIs (DialogueUI, InfoNpcPlayerPanel, etc.) into
-    ///   editable layouts for the UI builder.
-    /// - Save captured UIs as templates for admin customization.
-    /// - "Import" any on-screen Unity UI into the builder system.
-    /// 
-    /// The parser walks the RectTransform hierarchy recursively, detecting component types
-    /// and extracting all relevant properties into UIElementNode trees.
+    /// Captures a live Unity UI hierarchy into a UILayoutDefinition, the inverse of UICanvasRenderer, by walking the
+    /// RectTransform tree and extracting each component's properties. Used to turn existing UIs into editable layouts
+    /// and templates.
     /// </summary>
     public static class UILayoutParser
     {
@@ -214,9 +205,7 @@ namespace FiresCore.UI
             return node;
         }
 
-        // ???????????????????????????????????????
         //  Type detection
-        // ???????????????????????????????????????
 
         private static UIElementType DetectElementType(GameObject go, bool legacyText = false)
         {
@@ -246,7 +235,7 @@ namespace FiresCore.UI
             if (go.GetComponent<Button>() != null)
                 return UIElementType.Button;
 
-            // Text (TMP_Text / TextMeshProUGUI � and NOT a child of something else)
+            // Text (TMP_Text / TextMeshProUGUI - and NOT a child of something else)
             var tmpText = go.GetComponent<TMP_Text>();
             if (tmpText != null)
             {
@@ -274,12 +263,12 @@ namespace FiresCore.UI
             if (go.GetComponent<Scrollbar>() != null)
                 return UIElementType.Panel; // Treat as panel container; children are the sliding area/handle
 
-            // Image (without being a panel � a panel typically has children or layout groups)
+            // Image (without being a panel - a panel typically has children or layout groups)
             var image = go.GetComponent<Image>();
             if (image != null)
             {
-                // Heuristic: if it has children, LayoutGroup, or is named like a panel ? Panel
-                // If it's a thin element (h<=4 or w<=4) ? Divider
+                // Heuristic: if it has children, LayoutGroup, or is named like a panel -> Panel
+                // If it's a thin element (h<=4 or w<=4) -> Divider
                 var rect = go.GetComponent<RectTransform>();
                 if (rect != null)
                 {
@@ -307,28 +296,28 @@ namespace FiresCore.UI
                 if (image.sprite != null && hasChildren)
                     return UIElementType.Panel;
 
-                // Leaf image with a sprite and no children � true Image element
+                // Leaf image with a sprite and no children - true Image element
                 if (image.sprite != null)
                     return UIElementType.Image;
 
-                // Has children but no sprite � container panel
+                // Has children but no sprite - container panel
                 if (hasChildren)
                     return UIElementType.Panel;
 
-                // Background-like image with no sprite � Panel
+                // Background-like image with no sprite - Panel
                 return UIElementType.Panel;
             }
 
-            // RawImage with a RenderTexture � camera preview element (e.g. AzuExtendedPlayerInventory character model)
+            // RawImage with a RenderTexture - camera preview element (e.g. AzuExtendedPlayerInventory character model)
             var rawImgCam = go.GetComponent<RawImage>();
             if (rawImgCam != null && rawImgCam.texture is RenderTexture)
                 return UIElementType.RenderCamera;
 
-            // RawImage � treat as Image type
+            // RawImage - treat as Image type
             if (go.GetComponent<RawImage>() != null)
                 return UIElementType.Image;
 
-            // Empty LayoutElement with no visuals ? Spacer
+            // Empty LayoutElement with no visuals -> Spacer
             var layoutElem = go.GetComponent<LayoutElement>();
             if (layoutElem != null && go.GetComponent<Graphic>() == null && go.transform.childCount == 0)
                 return UIElementType.Spacer;
@@ -337,9 +326,7 @@ namespace FiresCore.UI
             return UIElementType.Panel;
         }
 
-        // ???????????????????????????????????????
         //  Transform reader
-        // ???????????????????????????????????????
 
         private static void ReadTransform(RectTransform rect, UIElementNode node)
         {
@@ -355,9 +342,7 @@ namespace FiresCore.UI
             node.Rotation = euler.z;
         }
 
-        // ???????????????????????????????????????
         //  Component readers
-        // ???????????????????????????????????????
 
         private static void ReadComponents(GameObject go, UIElementNode node)
         {
@@ -544,10 +529,10 @@ namespace FiresCore.UI
 
                         if (!hasBundlePath || !bundleAlreadyCached)
                         {
-                            // No bundle path or bundle not cached � use PNG fallback
+                            // No bundle path or bundle not cached - use PNG fallback
                             spriteName = UIBuilderAssetCache.CacheSprite(img.sprite, spriteName);
                         }
-                        // else: sprite is in a bundle that's cached or will be cached �
+                        // else: sprite is in a bundle that's cached or will be cached -
                         // keep the original sprite name for bundle-based resolution at load time
                     }
                 }
@@ -592,11 +577,11 @@ namespace FiresCore.UI
             var rawImg = go.GetComponent<RawImage>();
             if (rawImg != null)
             {
-                var rt = rawImg.texture as RenderTexture;
-                if (rt != null)
+                var renderTexture = rawImg.texture as RenderTexture;
+                if (renderTexture != null)
                 {
-                    node.RenderCameraData.TextureWidth = rt.width;
-                    node.RenderCameraData.TextureHeight = rt.height;
+                    node.RenderCameraData.TextureWidth = renderTexture.width;
+                    node.RenderCameraData.TextureHeight = renderTexture.height;
                 }
                 node.RenderCameraData.BackgroundColor = ColorSer.From(rawImg.color);
             }
@@ -637,7 +622,7 @@ namespace FiresCore.UI
             };
 
             // Capture the actual Image.color separately from Button.colors.
-            // Unity multiplies Image.color � Button.colors.normalColor for the final visual.
+            // Unity multiplies Image.color - Button.colors.normalColor for the final visual.
             // If Image.color has alpha=0 the button is invisible, even if normalColor is opaque.
             // We also capture the Image sprite data into ImageData so it can be applied during rendering.
             if (img != null)
@@ -743,10 +728,10 @@ namespace FiresCore.UI
                     if (persistentCount > 0)
                     {
                         var actionParts = new List<string>();
-                        for (int pi = 0; pi < persistentCount; pi++)
+                        for (int listenerIndex = 0; listenerIndex < persistentCount; listenerIndex++)
                         {
-                            var target = onClick.GetPersistentTarget(pi);
-                            string methodName = onClick.GetPersistentMethodName(pi);
+                            var target = onClick.GetPersistentTarget(listenerIndex);
+                            string methodName = onClick.GetPersistentMethodName(listenerIndex);
                             if (!string.IsNullOrEmpty(methodName))
                             {
                                 string targetType = target != null ? target.GetType().Name : "?";
@@ -819,9 +804,9 @@ namespace FiresCore.UI
             catch { /* placeholder graphic may not be initialised */ }
 
             // Read background color
-            var bgImg = go.GetComponent<Image>();
-            if (bgImg != null)
-                node.InputFieldData.BackgroundColor = ColorSer.From(bgImg.color);
+            var background = go.GetComponent<Image>();
+            if (background != null)
+                node.InputFieldData.BackgroundColor = ColorSer.From(background.color);
         }
 
         private static void ReadScrollViewComponent(GameObject go, UIElementNode node)
@@ -838,14 +823,14 @@ namespace FiresCore.UI
                 Elasticity = scroll.elasticity
             };
 
-            // Read viewport color � viewport reference may be destroyed
+            // Read viewport color - viewport reference may be destroyed
             try
             {
                 if (scroll.viewport != null)
                 {
-                    var vpImg = scroll.viewport.GetComponent<Image>();
-                    if (vpImg != null)
-                        node.ScrollViewData.ViewportColor = ColorSer.From(vpImg.color);
+                    var viewportImage = scroll.viewport.GetComponent<Image>();
+                    if (viewportImage != null)
+                        node.ScrollViewData.ViewportColor = ColorSer.From(viewportImage.color);
                 }
             }
             catch { /* viewport may reference a destroyed object */ }
@@ -885,9 +870,9 @@ namespace FiresCore.UI
             catch { /* captionText may reference a destroyed object */ }
 
             // Read background
-            var bgImg = go.GetComponent<Image>();
-            if (bgImg != null)
-                node.DropdownData.BackgroundColor = ColorSer.From(bgImg.color);
+            var background = go.GetComponent<Image>();
+            if (background != null)
+                node.DropdownData.BackgroundColor = ColorSer.From(background.color);
 
             // Read template height
             try
@@ -909,11 +894,11 @@ namespace FiresCore.UI
             };
 
             // Read background color
-            var bgImg = go.GetComponent<Image>();
-            if (bgImg != null)
-                node.ToggleData.BackgroundColor = ColorSer.From(bgImg.color);
+            var background = go.GetComponent<Image>();
+            if (background != null)
+                node.ToggleData.BackgroundColor = ColorSer.From(background.color);
 
-            // Read checkmark color � graphic reference may be destroyed/null internally
+            // Read checkmark color - graphic reference may be destroyed/null internally
             try
             {
                 if (toggle.graphic != null)
@@ -950,7 +935,7 @@ namespace FiresCore.UI
                 WholeNumbers = slider.wholeNumbers
             };
 
-            // Read colors from child elements � references may be destroyed
+            // Read colors from child elements - references may be destroyed
             try
             {
                 if (slider.fillRect != null)
@@ -976,16 +961,14 @@ namespace FiresCore.UI
             // Background from first child Image
             try
             {
-                var bg = go.GetComponentInChildren<Image>();
-                if (bg != null && bg.gameObject != go)
-                    node.SliderData.BackgroundColor = ColorSer.From(bg.color);
+                var background = go.GetComponentInChildren<Image>();
+                if (background != null && background.gameObject != go)
+                    node.SliderData.BackgroundColor = ColorSer.From(background.color);
             }
             catch { /* child image may have been destroyed */ }
         }
 
-        // ???????????????????????????????????????
         //  Style reader
-        // ???????????????????????????????????????
 
         private static void ReadStyle(GameObject go, UIElementNode node)
         {
@@ -1039,7 +1022,7 @@ namespace FiresCore.UI
 
                         if (!hasBundlePath || !bundleAvailable)
                         {
-                            // No bundle path or bundle not available � use PNG fallback
+                            // No bundle path or bundle not available - use PNG fallback
                             spriteName = UIBuilderAssetCache.CacheSprite(img.sprite, spriteName);
                         }
                     }
@@ -1048,7 +1031,7 @@ namespace FiresCore.UI
             }
             else
             {
-                // No Image � transparent background
+                // No Image - transparent background
                 node.Style.BackgroundColor = ColorSer.Clear;
                 // Check if any Graphic exists for raycast
                 var graphic = go.GetComponent<Graphic>();
@@ -1056,78 +1039,76 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Layout component readers
-        // ???????????????????????????????????????
 
         private static void ReadLayoutGroup(GameObject go, UIElementNode node)
         {
-            var vlg = go.GetComponent<VerticalLayoutGroup>();
-            if (vlg != null)
+            var verticalLayout = go.GetComponent<VerticalLayoutGroup>();
+            if (verticalLayout != null)
             {
                 node.LayoutGroup = new UILayoutGroupDef
                 {
                     IsVertical = true,
-                    Spacing = vlg.spacing,
-                    Padding = RectOffsetSer.From(vlg.padding),
-                    ChildAlignment = (int)vlg.childAlignment,
-                    ChildControlWidth = vlg.childControlWidth,
-                    ChildControlHeight = vlg.childControlHeight,
-                    ChildForceExpandWidth = vlg.childForceExpandWidth,
-                    ChildForceExpandHeight = vlg.childForceExpandHeight
+                    Spacing = verticalLayout.spacing,
+                    Padding = RectOffsetSer.From(verticalLayout.padding),
+                    ChildAlignment = (int)verticalLayout.childAlignment,
+                    ChildControlWidth = verticalLayout.childControlWidth,
+                    ChildControlHeight = verticalLayout.childControlHeight,
+                    ChildForceExpandWidth = verticalLayout.childForceExpandWidth,
+                    ChildForceExpandHeight = verticalLayout.childForceExpandHeight
                 };
                 return;
             }
 
-            var hlg = go.GetComponent<HorizontalLayoutGroup>();
-            if (hlg != null)
+            var horizontalLayout = go.GetComponent<HorizontalLayoutGroup>();
+            if (horizontalLayout != null)
             {
                 node.LayoutGroup = new UILayoutGroupDef
                 {
                     IsVertical = false,
-                    Spacing = hlg.spacing,
-                    Padding = RectOffsetSer.From(hlg.padding),
-                    ChildAlignment = (int)hlg.childAlignment,
-                    ChildControlWidth = hlg.childControlWidth,
-                    ChildControlHeight = hlg.childControlHeight,
-                    ChildForceExpandWidth = hlg.childForceExpandWidth,
-                    ChildForceExpandHeight = hlg.childForceExpandHeight
+                    Spacing = horizontalLayout.spacing,
+                    Padding = RectOffsetSer.From(horizontalLayout.padding),
+                    ChildAlignment = (int)horizontalLayout.childAlignment,
+                    ChildControlWidth = horizontalLayout.childControlWidth,
+                    ChildControlHeight = horizontalLayout.childControlHeight,
+                    ChildForceExpandWidth = horizontalLayout.childForceExpandWidth,
+                    ChildForceExpandHeight = horizontalLayout.childForceExpandHeight
                 };
                 return;
             }
 
-            // GridLayoutGroup � used by inventory/crafting slot grids
-            var glg = go.GetComponent<GridLayoutGroup>();
-            if (glg != null)
+            // GridLayoutGroup - used by inventory/crafting slot grids
+            var gridLayout = go.GetComponent<GridLayoutGroup>();
+            if (gridLayout != null)
             {
                 node.GridLayoutGroup = new UIGridLayoutGroupDef
                 {
-                    CellSize = Vector2Ser.From(glg.cellSize),
-                    Spacing = Vector2Ser.From(glg.spacing),
-                    StartCorner = (int)glg.startCorner,
-                    StartAxis = (int)glg.startAxis,
-                    ChildAlignment = (int)glg.childAlignment,
-                    Constraint = (int)glg.constraint,
-                    ConstraintCount = glg.constraintCount,
-                    Padding = RectOffsetSer.From(glg.padding)
+                    CellSize = Vector2Ser.From(gridLayout.cellSize),
+                    Spacing = Vector2Ser.From(gridLayout.spacing),
+                    StartCorner = (int)gridLayout.startCorner,
+                    StartAxis = (int)gridLayout.startAxis,
+                    ChildAlignment = (int)gridLayout.childAlignment,
+                    Constraint = (int)gridLayout.constraint,
+                    ConstraintCount = gridLayout.constraintCount,
+                    Padding = RectOffsetSer.From(gridLayout.padding)
                 };
             }
         }
 
         private static void ReadLayoutElement(GameObject go, UIElementNode node)
         {
-            var le = go.GetComponent<LayoutElement>();
-            if (le == null) return;
+            var layoutElement = go.GetComponent<LayoutElement>();
+            if (layoutElement == null) return;
 
             node.LayoutElement = new UILayoutElementDef
             {
-                MinWidth = le.minWidth,
-                MinHeight = le.minHeight,
-                PreferredWidth = le.preferredWidth,
-                PreferredHeight = le.preferredHeight,
-                FlexibleWidth = le.flexibleWidth,
-                FlexibleHeight = le.flexibleHeight,
-                IgnoreLayout = le.ignoreLayout
+                MinWidth = layoutElement.minWidth,
+                MinHeight = layoutElement.minHeight,
+                PreferredWidth = layoutElement.preferredWidth,
+                PreferredHeight = layoutElement.preferredHeight,
+                FlexibleWidth = layoutElement.flexibleWidth,
+                FlexibleHeight = layoutElement.flexibleHeight,
+                IgnoreLayout = layoutElement.ignoreLayout
             };
         }
 
@@ -1143,9 +1124,7 @@ namespace FiresCore.UI
             };
         }
 
-        // ???????????????????????????????????????
         //  InventoryGrid capture
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Resolves the authoritative grid dimensions for an InventoryGrid.
@@ -1209,17 +1188,17 @@ namespace FiresCore.UI
                         var playerInv = Player.m_localPlayer.GetInventory();
                         if (playerInv != null)
                         {
-                            int pW = playerInv.GetWidth();
+                            int playerWidth = playerInv.GetWidth();
                             // GetHeight() returns the FULL extended height including hidden
                             // equipment rows. For capture purposes we only want the VISIBLE
                             // rows (vanilla 4 + extra rows from inventory mods). The
                             // UIOverrideSlotSystem reads the real visible height via reflection.
-                            int pH = UIOverrideSlotSystem.InventoryHeight;
-                            if (pH <= 0) pH = 4; // vanilla fallback
-                            if (pW > 0 && pH > 0)
+                            int playerHeight = UIOverrideSlotSystem.InventoryHeight;
+                            if (playerHeight <= 0) playerHeight = 4; // vanilla fallback
+                            if (playerWidth > 0 && playerHeight > 0)
                             {
-                                gridWidth = pW;
-                                gridHeight = pH;
+                                gridWidth = playerWidth;
+                                gridHeight = playerHeight;
                             }
                         }
                     }
@@ -1231,7 +1210,7 @@ namespace FiresCore.UI
             if (gridWidth <= 0 && cachedW > 0) gridWidth = cachedW;
             if (gridHeight <= 0 && cachedH > 0) gridHeight = cachedH;
 
-            // Final fallback � standard Valheim player inventory is 8x4
+            // Final fallback - standard Valheim player inventory is 8x4
             if (gridWidth <= 0) gridWidth = 8;
             if (gridHeight <= 0) gridHeight = 4;
 
@@ -1283,7 +1262,7 @@ namespace FiresCore.UI
         /// <summary>
         /// Detects InventoryGrid components and synthesizes a UIGridLayoutGroupDef
         /// from the runtime grid properties. Valheim's InventoryGrid doesn't use a
-        /// Unity GridLayoutGroup � it positions slot elements via code using m_elementSpace.
+        /// Unity GridLayoutGroup - it positions slot elements via code using m_elementSpace.
         /// This method reads those properties and creates an equivalent GridLayoutGroup
         /// definition so the UI builder can display and edit the grid structure.
         /// </summary>
@@ -1294,7 +1273,7 @@ namespace FiresCore.UI
 
             try
             {
-                // Read the grid root RectTransform � this is where slot elements live
+                // Read the grid root RectTransform - this is where slot elements live
                 var gridRoot = invGrid.m_gridRoot;
                 float elementSpace = invGrid.m_elementSpace;
 
@@ -1360,7 +1339,7 @@ namespace FiresCore.UI
         }
 
         /// <summary>
-        /// Parses children of an InventoryGrid's m_gridRoot. Instead of capturing all N�M
+        /// Parses children of an InventoryGrid's m_gridRoot. Instead of capturing all N-M
         /// dynamically-created slot elements (which would be hundreds of near-identical nodes),
         /// this captures a representative sample of slots and synthesizes a GridLayoutGroup
         /// so the builder can display the grid structure properly.
@@ -1434,7 +1413,7 @@ namespace FiresCore.UI
                 {
                     // Determine the visible slot boundary. Slots beyond totalSlots
                     // (gridWidth * gridHeight where gridHeight = visible rows) are
-                    // equipment/extra slots in hidden rows � capture them but mark as
+                    // equipment/extra slots in hidden rows - capture them but mark as
                     // inactive so they aren't rendered as regular grid cells.
                     int visibleSlots = totalSlots;
                     int capturedSlots = 0;
@@ -1457,7 +1436,7 @@ namespace FiresCore.UI
                                 isHiddenEquipmentSlot = true;
                         }
 
-                        // Skip capturing hidden equipment slots entirely � they belong
+                        // Skip capturing hidden equipment slots entirely - they belong
                         // to the equipment panel system, not the inventory grid UI.
                         // The UIOverrideSlotSystem / UIOverrideEquipmentAutoLayout handles
                         // equipment slot rendering separately.
@@ -1500,12 +1479,12 @@ namespace FiresCore.UI
                             var tempLayout = new UILayoutDefinition { RootElement = templateSlot };
                             templateJson = UILayoutSerializer.Serialize(tempLayout);
                         }
-                        catch { /* serialization failed � can't clone */ }
+                        catch { /* serialization failed - can't clone */ }
 
                         if (templateJson != null)
                         {
                             int generated = 0;
-                            for (int s = visibleCaptured; s < totalSlots; s++)
+                            for (int slotIndex = visibleCaptured; slotIndex < totalSlots; slotIndex++)
                             {
                                 try
                                 {
@@ -1513,16 +1492,16 @@ namespace FiresCore.UI
                                     if (cloned != null)
                                     {
                                         cloned.Id = "cap_" + (_idCounter++);
-                                        cloned.Name = $"Slot_{s}";
+                                        cloned.Name = $"Slot_{slotIndex}";
                                         cloned.SetMeta("slot_template", null);
-                                        cloned.SetMeta("grid_pos", $"{s % gridWidth},{s / gridWidth}");
+                                        cloned.SetMeta("grid_pos", $"{slotIndex % gridWidth},{slotIndex / gridWidth}");
                                         if (string.IsNullOrEmpty(cloned.Tag))
                                             cloned.Tag = "inventory_slot";
                                         node.AddChild(cloned);
                                         generated++;
                                     }
                                 }
-                                catch { /* clone failed � skip slot */ }
+                                catch { /* clone failed - skip slot */ }
                             }
                             Debug.Log($"[UILayoutParser] Generated {generated} additional slots to fill {totalSlots} total for '{go.name}'");
                         }
@@ -1530,9 +1509,9 @@ namespace FiresCore.UI
                 }
                 else if (elementPrefab != null)
                 {
-                    // No live children � InventoryGrid.UpdateGui() hasn't run yet.
+                    // No live children - InventoryGrid.UpdateGui() hasn't run yet.
                     // Parse the element prefab as a template and duplicate it to fill the grid.
-                    Debug.Log($"[UILayoutParser] Grid root '{go.name}' has 0 children � using m_elementPrefab as template");
+                    Debug.Log($"[UILayoutParser] Grid root '{go.name}' has 0 children - using m_elementPrefab as template");
 
                     var templateNode = ParseNode(elementPrefab);
                     if (templateNode != null)
@@ -1554,7 +1533,7 @@ namespace FiresCore.UI
                             templateJson = UILayoutSerializer.Serialize(tempLayout);
                         }
 
-                        for (int s = 1; s <= slotsToGenerate; s++)
+                        for (int slotNumber = 1; slotNumber <= slotsToGenerate; slotNumber++)
                         {
                             try
                             {
@@ -1562,15 +1541,15 @@ namespace FiresCore.UI
                                 if (cloned != null)
                                 {
                                     cloned.Id = "cap_" + (_idCounter++);
-                                    cloned.Name = $"Slot_{s}";
+                                    cloned.Name = $"Slot_{slotNumber}";
                                     cloned.SetMeta("slot_template", null);
-                                    cloned.SetMeta("grid_pos", $"{s % gridWidth},{s / gridWidth}");
+                                    cloned.SetMeta("grid_pos", $"{slotNumber % gridWidth},{slotNumber / gridWidth}");
                                     if (string.IsNullOrEmpty(cloned.Tag))
                                         cloned.Tag = "inventory_slot";
                                     node.AddChild(cloned);
                                 }
                             }
-                            catch { /* clone failed � skip slot */ }
+                            catch { /* clone failed - skip slot */ }
                         }
                         int total = 1 + slotsToGenerate;
                         Debug.Log($"[UILayoutParser] Synthesized {total}/{totalSlots} inventory grid slots from prefab for '{go.name}' ({gridWidth}x{gridHeight})");
@@ -1592,9 +1571,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Child parsing
-        // ???????????????????????????????????????
 
         private static void ParseChildren(GameObject go, UIElementNode node)
         {
@@ -1644,7 +1621,7 @@ namespace FiresCore.UI
             for (int i = 0; i < go.transform.childCount; i++)
             {
                 var child = go.transform.GetChild(i);
-                // Skip viewport and content � they're already handled
+                // Skip viewport and content - they're already handled
                 if (child == viewport || child == content) continue;
                 // Skip if this child is the viewport's parent
                 if (viewport != null && child == viewport.parent && child != go.transform) continue;
@@ -1658,9 +1635,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Utility helpers
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Tries to detect the font category from a TMP_Text component.
@@ -1782,9 +1757,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Known UI capture helpers
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Registry of known programmatic UIs that can be captured.
@@ -2133,7 +2106,7 @@ namespace FiresCore.UI
             var root = target.FindRoot();
             if (root == null)
             {
-                Debug.LogWarning($"[UILayoutParser] Cannot find root for '{target.DisplayName}' � is it currently visible?");
+                Debug.LogWarning($"[UILayoutParser] Cannot find root for '{target.DisplayName}' - is it currently visible?");
                 return null;
             }
 
@@ -2238,7 +2211,7 @@ namespace FiresCore.UI
             layout.SetMeta("canvas_sorting_order", target.SortingOrder.ToString());
 
             // Normalize dynamically-toggled inventory slot children to their empty default
-            // state. This applies to any captured UI that contains inventory grids �
+            // state. This applies to any captured UI that contains inventory grids -
             // vanilla, modded (AzuEPI, etc.), or discovered. Without this, slot children
             // (icon, amount, equipped, quality, etc.) retain whatever live item data was
             // present at capture time instead of starting blank for the game to populate.
@@ -2279,7 +2252,7 @@ namespace FiresCore.UI
             var root = target.FindRoot();
             if (root == null)
             {
-                Debug.LogWarning($"[UILayoutParser] Cannot find root for vanilla '{target.DisplayName}' � is it currently visible?");
+                Debug.LogWarning($"[UILayoutParser] Cannot find root for vanilla '{target.DisplayName}' - is it currently visible?");
                 return null;
             }
 
@@ -2295,7 +2268,7 @@ namespace FiresCore.UI
             SynthesizeCraftingRecipeEntries(layout);
 
             // Normalize dynamically-toggled elements to their default inactive state.
-            // When we capture, the UI is open and everything is active � slot indicators
+            // When we capture, the UI is open and everything is active - slot indicators
             // (equipped, selected, queued, noteleport, food), panels (container, split,
             // trophies, skills, texts, variant dialog), and per-item overlays are all shown.
             // The game toggles these on/off at runtime. We reset them to their intended
@@ -2431,9 +2404,7 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  Vanilla visibility normalization
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Names of elements inside inventory grid slots (InventoryGrid.Element children)
@@ -2441,14 +2412,14 @@ namespace FiresCore.UI
         /// to inactive. Only includes elements where Valheim calls .gameObject.SetActive().
         ///
         /// From decompiled InventoryGrid.UpdateGui():
-        ///   - selected: element.m_selected.SetActive(flag1 && ...) � uses SetActive
-        ///   - durability: element.m_durability.gameObject.SetActive(flag2) � uses SetActive
+        ///   - selected: element.m_selected.SetActive(flag1 && ...) - uses SetActive
+        ///   - durability: element.m_durability.gameObject.SetActive(flag2) - uses SetActive
         /// </summary>
         private static readonly HashSet<string> _slotDynamicChildren =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "selected",     // m_selected.SetActive() � only for gamepad-selected slot
-                "durability",   // m_durability.gameObject.SetActive() � only when item has durability < max
+                "selected",     // m_selected.SetActive() - only for gamepad-selected slot
+                "durability",   // m_durability.gameObject.SetActive() - only when item has durability < max
             };
 
         /// <summary>
@@ -2462,16 +2433,16 @@ namespace FiresCore.UI
         private static readonly HashSet<string> _slotManagedChildren =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "icon",         // Item icon sprite � .sprite and .enabled set per-frame
-                "amount",       // Stack count text � .text and .enabled set per-frame
-                "quality",      // Item quality text � .text and .enabled set per-frame
-                "equiped",      // Equipped indicator � .enabled set per-frame
-                "queued",       // Queued indicator � .enabled set per-frame
-                "noteleport",   // No-teleport indicator � .enabled set per-frame
-                "foodicon",     // Food type color indicator � .enabled and .color set per-frame
-                "selected",     // Gamepad selection highlight � SetActive() per-frame
-                "durability",   // Durability bar � SetActive() per-frame
-                "binding",      // Hotbar binding text � .text and .enabled set per-frame
+                "icon",         // Item icon sprite - .sprite and .enabled set per-frame
+                "amount",       // Stack count text - .text and .enabled set per-frame
+                "quality",      // Item quality text - .text and .enabled set per-frame
+                "equiped",      // Equipped indicator - .enabled set per-frame
+                "queued",       // Queued indicator - .enabled set per-frame
+                "noteleport",   // No-teleport indicator - .enabled set per-frame
+                "foodicon",     // Food type color indicator - .enabled and .color set per-frame
+                "selected",     // Gamepad selection highlight - SetActive() per-frame
+                "durability",   // Durability bar - SetActive() per-frame
+                "binding",      // Hotbar binding text - .text and .enabled set per-frame
             };
 
         /// <summary>
@@ -2482,12 +2453,12 @@ namespace FiresCore.UI
         private static readonly HashSet<string> _defaultInactivePanels =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "Container",         // m_container � hidden until chest opened
-                "SplitPanel",        // m_splitDialog � hidden until stack split
-                "TrophiesPanel",     // m_trophiesPanel � hidden by default
-                "VariantDialog",     // m_variantDialog � hidden by default
-                "SkillsDialog",      // m_skillsDialog � hidden by default
-                "TextsDialog",       // m_textsDialog � hidden by default
+                "Container",         // m_container - hidden until chest opened
+                "SplitPanel",        // m_splitDialog - hidden until stack split
+                "TrophiesPanel",     // m_trophiesPanel - hidden by default
+                "VariantDialog",     // m_variantDialog - hidden by default
+                "SkillsDialog",      // m_skillsDialog - hidden by default
+                "TextsDialog",       // m_textsDialog - hidden by default
             };
 
         /// <summary>
@@ -2499,39 +2470,39 @@ namespace FiresCore.UI
         private static readonly HashSet<string> _defaultInactiveElements =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                // ?? Crafting panel (from UpdateRecipe) ??
-                "CraftProgressPanel",       // m_craftProgressPanel.gameObject.SetActive � only during active crafting
-                "CraftProgressBar",         // child of CraftProgressPanel � only during active crafting
-                "itemCraftType",            // m_itemCraftType.gameObject.SetActive � only when upgrade item exists
-                "VariantButton",            // m_variantButton.gameObject.SetActive � only when item has variants
-                "MinStationLevel",          // m_minStationLevelIcon.gameObject.SetActive � only when station required
-                "QualityPanel",             // m_qualityPanel.gameObject.SetActive � only when recipe selected with quality
+                // Crafting panel (from UpdateRecipe)
+                "CraftProgressPanel",       // m_craftProgressPanel.gameObject.SetActive - only during active crafting
+                "CraftProgressBar",         // child of CraftProgressPanel - only during active crafting
+                "itemCraftType",            // m_itemCraftType.gameObject.SetActive - only when upgrade item exists
+                "VariantButton",            // m_variantButton.gameObject.SetActive - only when item has variants
+                "MinStationLevel",          // m_minStationLevelIcon.gameObject.SetActive - only when station required
+                "QualityPanel",             // m_qualityPanel.gameObject.SetActive - only when recipe selected with quality
 
-                // ?? Crafting station display (from UpdateRecipe) ??
-                "CraftingStationIcon",      // m_craftingStationIcon.gameObject.SetActive � only when station present
-                "CraftingStationLevelRoot", // m_craftingStationLevelRoot.gameObject.SetActive � only when station present
+                // Crafting station display (from UpdateRecipe)
+                "CraftingStationIcon",      // m_craftingStationIcon.gameObject.SetActive - only when station present
+                "CraftingStationLevelRoot", // m_craftingStationLevelRoot.gameObject.SetActive - only when station present
 
-                // ?? Repair panel (from UpdateRepair) ??
-                "repairPanel",              // m_repairPanel.gameObject.SetActive � only when station present
-                "repairPanelSelection",     // m_repairPanelSelection.gameObject.SetActive � only when station present
-                "repairButtonGlow",         // m_repairButtonGlow.gameObject.SetActive � only when repairable items exist
+                // Repair panel (from UpdateRepair)
+                "repairPanel",              // m_repairPanel.gameObject.SetActive - only when station present
+                "repairPanelSelection",     // m_repairPanelSelection.gameObject.SetActive - only when station present
+                "repairButtonGlow",         // m_repairButtonGlow.gameObject.SetActive - only when repairable items exist
 
-                // ?? Recipe list elements (from AddRecipeToList) ??
-                "QualityLevel",             // component4.gameObject.SetActive � only for items with quality > 1
-                "Durability",               // component3.gameObject.SetActive � only for damaged items
+                // Recipe list elements (from AddRecipeToList)
+                "QualityLevel",             // component4.gameObject.SetActive - only for items with quality > 1
+                "Durability",               // component3.gameObject.SetActive - only for damaged items
 
-                // ?? Recipe list sub-elements (from SetRecipe) ??
-                "selected",                 // .Find("selected").gameObject.SetActive � only for currently selected recipe
+                // Recipe list sub-elements (from SetRecipe)
+                "selected",                 // .Find("selected").gameObject.SetActive - only for currently selected recipe
 
-                // ?? Upgrade display (from SetupUpgradeItem) ??
+                // Upgrade display (from SetupUpgradeItem)
                 "upgradeItem",              // shown only when viewing an upgrade
-                "upgradeItemQualityArrow",  // m_upgradeItemQualityArrow � only during upgrades
+                "upgradeItemQualityArrow",  // m_upgradeItemQualityArrow - only during upgrades
             };
 
         /// <summary>
         /// Post-capture pass that resets dynamically-toggled vanilla UI elements to their
         /// intended default (inactive) state. When we capture while the UI is open,
-        /// everything is active � equipped indicators, selection highlights, per-item
+        /// everything is active - equipped indicators, selection highlights, per-item
         /// overlays, and sub-panels. This method walks the captured tree and sets
         /// Active=false on elements that the game normally keeps hidden until triggered.
         ///
@@ -2566,7 +2537,7 @@ namespace FiresCore.UI
             if (_defaultInactivePanels.Contains(name))
                 shouldDeactivate = true;
 
-            // Rule 2: Slot dynamic children � elements inside inventory_slot that use SetActive()
+            // Rule 2: Slot dynamic children - elements inside inventory_slot that use SetActive()
             if (!shouldDeactivate && parent != null)
             {
                 string parentTag = parent.Tag ?? "";
@@ -2616,7 +2587,7 @@ namespace FiresCore.UI
                     if (node.ImageData != null)
                     {
                         node.ImageData.ComponentEnabled = false;
-                        // Clear the captured item sprite � slot starts empty
+                        // Clear the captured item sprite - slot starts empty
                         if (name == "icon" || name == "foodicon")
                             node.ImageData.SpriteName = "";
                     }
@@ -2628,7 +2599,7 @@ namespace FiresCore.UI
                         // Clear captured item text (stack count, quality number, binding)
                         if (name == "amount" || name == "quality")
                             node.TextData.Text = "";
-                        // Keep binding text for row 0 (hotbar keys 1-8) � the game
+                        // Keep binding text for row 0 (hotbar keys 1-8) - the game
                         // enables binding.text for y==0 slots and disables for others.
                         // We leave binding text as-is since it's set once, not per-item.
                     }
@@ -2713,20 +2684,9 @@ namespace FiresCore.UI
         }
 
         /// <summary>
-        /// Normalizes a captured layout so it renders well in the editor workspace.
-        /// 
-        /// Captured UIs were originally children of some parent in the game's canvas hierarchy.
-        /// When we place them as direct children of the editor workspace canvas, any
-        /// stretch-anchored root will fill the entire workspace instead of its original parent area.
-        /// 
-        /// This method detects stretch-anchored roots and converts them to centered fixed-size
-        /// panels using the computed pixel dimensions from the original canvas. This makes them
-        /// appear at the correct size and be freely movable/resizable in the editor.
-        /// 
-        /// Also handles fixed-size roots that were positioned relative to a corner of their
-        /// original parent � these are re-centered so they appear in the middle of the workspace.
-        /// 
-        /// Call this after Parse() / ParseVanilla() when the layout will be opened in the editor.
+        /// Prepares a captured layout for the editor workspace: stretch-anchored roots become centered panels at
+        /// their original pixel size, and corner-anchored fixed-size roots are re-centered, so they don't fill the
+        /// workspace or open off to one side. Call after Parse or ParseVanilla when opening in the editor.
         /// </summary>
         public static void NormalizeForEditor(UILayoutDefinition layout)
         {
@@ -2791,25 +2751,25 @@ namespace FiresCore.UI
             }
             else
             {
-                // Fixed-size root � re-center it so it appears in the middle of the workspace
+                // Fixed-size root - re-center it so it appears in the middle of the workspace
                 // instead of being positioned relative to its original parent's corner.
                 // Preserve its original size but move it to center.
-                float w = root.SizeDelta.X;
-                float h = root.SizeDelta.Y;
-                if (w < 50f) w = 300f;
-                if (h < 50f) h = 200f;
+                float panelWidth = root.SizeDelta.X;
+                float panelHeight = root.SizeDelta.Y;
+                if (panelWidth < 50f) panelWidth = 300f;
+                if (panelHeight < 50f) panelHeight = 200f;
 
                 // Cap to the workspace content area
                 float maxFixedW = canvasSize.x - ScreenPadding * 2f;
                 float maxFixedH = canvasSize.y - ScreenPadding - 55f;
-                w = Mathf.Min(w, maxFixedW);
-                h = Mathf.Min(h, maxFixedH);
+                panelWidth = Mathf.Min(panelWidth, maxFixedW);
+                panelHeight = Mathf.Min(panelHeight, maxFixedH);
 
                 root.AnchorMin = new Vector2Ser(0.5f, 0.5f);
                 root.AnchorMax = new Vector2Ser(0.5f, 0.5f);
                 root.Pivot = new Vector2Ser(0.5f, 0.5f);
                 root.AnchoredPosition = new Vector2Ser(0, 0);
-                root.SizeDelta = new Vector2Ser(w, h);
+                root.SizeDelta = new Vector2Ser(panelWidth, panelHeight);
                 root.OffsetMin = new Vector2Ser(0, 0);
                 root.OffsetMax = new Vector2Ser(0, 0);
             }

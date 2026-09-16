@@ -30,20 +30,20 @@ namespace FiresCore.Npc.Patrol
         public static void Set(Character ch, float speedMul, bool run)
         {
             if (ch == null) return;
-            var s = _states.GetOrCreateValue(ch);
-            s.SpeedMul = speedMul;
-            s.Run = run;
-            s.Stamp = Time.time;
+            var state = _states.GetOrCreateValue(ch);
+            state.SpeedMul = speedMul;
+            state.Run = run;
+            state.Stamp = Time.time;
         }
 
         public static bool TryGet(Character ch, out float speedMul, out bool run)
         {
             speedMul = 1f; run = false;
             if (ch == null) return false;
-            if (!_states.TryGetValue(ch, out var s)) return false;
-            if (Time.time - s.Stamp > MaxAge) return false; // stale → patrol isn't driving this frame
-            speedMul = s.SpeedMul;
-            run = s.Run;
+            if (!_states.TryGetValue(ch, out var state)) return false;
+            if (Time.time - state.Stamp > MaxAge) return false; // stale → patrol isn't driving this frame
+            speedMul = state.SpeedMul;
+            run = state.Run;
             return true;
         }
 

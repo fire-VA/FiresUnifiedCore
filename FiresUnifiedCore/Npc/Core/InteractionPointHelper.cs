@@ -4,24 +4,9 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// Helper class for calculating proper interaction points for objects.
-    /// 
-    /// PROBLEM SOLVED:
-    /// Companions were pathfinding to object centers (container.transform.position) which:
-    /// - Puts them inside or behind objects
-    /// - Doesn't account for "front" of chests where lid opens
-    /// - Results in awkward paths when a direct line goes through walls
-    /// 
-    /// SOLUTION:
-    /// Find the ACTUAL interactable component (Switch, Hoverable collider, etc.) and calculate
-    /// a standing position near that specific point, not the prefab center.
-    /// 
-    /// KEY INSIGHT FROM VALHEIM:
-    /// - CraftingStation: Uses m_useDistance (default 2m) from transform.position
-    /// - Smelter: Has Switch components (m_addWoodSwitch, m_addOreSwitch) at specific positions
-    /// - Container: Interaction is at the chest itself (transform.position)
-    /// 
-    /// We need to find the actual interactable point, then stand close enough to it.
+    /// Finds where a companion should stand to use an object. Pathing to the prefab's center put companions inside
+    /// or behind it, so this resolves the actual interaction point (a smelter's switches, a crafting station's use
+    /// distance, the chest itself) and stands near that instead.
     /// </summary>
     public static class InteractionPointHelper
     {
@@ -163,8 +148,8 @@ namespace FiresCore.Npc.Core
             if (childSwitches.Length > 0)
             {
                 Vector3 avgPos = Vector3.zero;
-                foreach (var sw in childSwitches)
-                    avgPos += sw.transform.position;
+                foreach (var childSwitch in childSwitches)
+                    avgPos += childSwitch.transform.position;
                 avgPos /= childSwitches.Length;
                 return avgPos;
             }
@@ -270,18 +255,18 @@ namespace FiresCore.Npc.Core
             if (container == null)
                 return approachFrom;
             
-            Transform t = container.transform;
-            Vector3 containerPos = t.position;
+            Transform containerTransform = container.transform;
+            Vector3 containerPos = containerTransform.position;
             
             // Chests open toward their local forward direction
-            Vector3 frontDir = t.forward;
+            Vector3 frontDir = containerTransform.forward;
             
             // Calculate the front interaction point
             Vector3 frontPoint = containerPos + frontDir * standDistance;
             
             // Also calculate side points in case front is blocked
-            Vector3 rightPoint = containerPos + t.right * standDistance;
-            Vector3 leftPoint = containerPos - t.right * standDistance;
+            Vector3 rightPoint = containerPos + containerTransform.right * standDistance;
+            Vector3 leftPoint = containerPos - containerTransform.right * standDistance;
             
             // Prefer front, but pick closest accessible point
             Vector3[] candidates = { frontPoint, rightPoint, leftPoint };
@@ -350,16 +335,16 @@ namespace FiresCore.Npc.Core
         {
             // Look for colliders that might be the interaction point
             var colliders = target.GetComponentsInChildren<Collider>();
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
                 // Check if this collider or its parent has Hoverable
-                var hoverable = col.GetComponent<Hoverable>();
+                var hoverable = collider.GetComponent<Hoverable>();
                 if (hoverable == null)
-                    hoverable = col.GetComponentInParent<Hoverable>();
+                    hoverable = collider.GetComponentInParent<Hoverable>();
                 
                 if (hoverable != null)
                 {
-                    return col.bounds.center;
+                    return collider.bounds.center;
                 }
             }
             
@@ -505,9 +490,9 @@ namespace FiresCore.Npc.Core
             var overlaps = Physics.OverlapSphere(position + Vector3.up * 0.5f, 0.3f, LayerMask.GetMask("static_solid", "Default"));
             if (overlaps.Length > 0)
             {
-                foreach (var col in overlaps)
+                foreach (var collider in overlaps)
                 {
-                    if (col.gameObject.isStatic)
+                    if (collider.gameObject.isStatic)
                         return false;
                 }
             }
@@ -527,8 +512,8 @@ namespace FiresCore.Npc.Core
             if (target == null)
                 return approachFrom;
             
-            Transform t = target.transform;
-            Vector3 frontPoint = t.position + t.forward * standDistance;
+            Transform targetTransform = target.transform;
+            Vector3 frontPoint = targetTransform.position + targetTransform.forward * standDistance;
             return GetGroundPosition(frontPoint);
         }
         

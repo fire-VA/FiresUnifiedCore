@@ -6,20 +6,11 @@ using UnityEngine;
 
 namespace FiresCore.Materials
 {
-    // One-time static capture of a fully-finalized vanilla Heightmap material.
-    // sharedMaterial alone is missing per-instance state (cornerBiomes, splat
-    // texture array bindings) that RebuildRenderMesh writes onto m_material;
-    // cloning sharedMaterial leaves clones rendering as invisible / flat-color.
-    //
-    // Capture happens on the FIRST Heightmap.RebuildRenderMesh postfix (or
-    // earlier fallbacks). We clone the captured material, force Meadows
-    // cornerBiomes defaults, bind a 1×1 "no paint" mask, and stash it for
-    // the rest of the session. Recapture is callable for HD-shader mods
-    // that finish swapping after our first capture.
-    //
-    // Shader detection uses HasProperty("_ClearedMaskTex") rather than a
-    // shader-name literal so replacement shaders (ValheimHDTerrain etc.)
-    // are still recognized as heightmap shaders.
+    // A finalized vanilla Heightmap material, captured once. sharedMaterial lacks the per-instance state
+    // RebuildRenderMesh adds (corner biomes, splat bindings), so clones of it render invisible; this clones the material
+    // from the first RebuildRenderMesh, sets Meadows corner-biome defaults and a blank paint mask, and keeps it for the
+    // session. Recapture exists for HD shader mods that swap later, and heightmap shaders are recognized by their
+    // _ClearedMaskTex property rather than by name.
     public static class TerrainMaterialCache
     {
         private const string LogPrefix = "[TerrainMaterialCache]";
@@ -68,11 +59,11 @@ namespace FiresCore.Materials
             if (s_cachedMaterial != null) return 0;
             int scanned = 0;
             var heightmaps = UnityEngine.Object.FindObjectsByType<Heightmap>(FindObjectsSortMode.None);
-            foreach (var hm in heightmaps)
+            foreach (var heightmap in heightmaps)
             {
-                if (hm == null) continue;
+                if (heightmap == null) continue;
                 scanned++;
-                TryCaptureFrom(hm);
+                TryCaptureFrom(heightmap);
                 if (s_cachedMaterial != null) break;
             }
             return scanned;
@@ -84,12 +75,12 @@ namespace FiresCore.Materials
             return ForceCaptureFromScene();
         }
 
-        private static void TryCaptureFrom(Heightmap hm)
+        private static void TryCaptureFrom(Heightmap heightmap)
         {
             if (s_cachedMaterial != null) return;
-            if (hm == null) return;
+            if (heightmap == null) return;
 
-            Material source = ResolveSourceMaterial(hm);
+            Material source = ResolveSourceMaterial(heightmap);
             if (source == null || source.shader == null) return;
             if (!IsHeightmapShader(source)) return;
 
@@ -98,27 +89,27 @@ namespace FiresCore.Materials
             s_cachedMaterial = mat;
 
             FiresLogger.LogInfo(
-                $"{LogPrefix} Captured heightmap material from {hm.name} | " +
+                $"{LogPrefix} Captured heightmap material from {heightmap.name} | " +
                 $"shader='{source.shader.name}' (per-instance m_material clone). " +
                 $"Meadows defaults applied.");
         }
 
-        private static Material ResolveSourceMaterial(Heightmap hm)
+        private static Material ResolveSourceMaterial(Heightmap heightmap)
         {
             try
             {
                 if (s_heightmapMaterialField != null)
                 {
-                    var fromField = s_heightmapMaterialField.GetValue(hm) as Material;
+                    var fromField = s_heightmapMaterialField.GetValue(heightmap) as Material;
                     if (fromField != null) return fromField;
                 }
             }
             catch (Exception ex)
             {
-                FiresLogger.LogWarning($"{LogPrefix} m_material reflection read threw on {hm.name}: {ex.Message}");
+                FiresLogger.LogWarning($"{LogPrefix} m_material reflection read threw on {heightmap.name}: {ex.Message}");
             }
 
-            var rend = hm.GetComponent<MeshRenderer>();
+            var rend = heightmap.GetComponent<MeshRenderer>();
             return rend != null ? rend.sharedMaterial : null;
         }
 

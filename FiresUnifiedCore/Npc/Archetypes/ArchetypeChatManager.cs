@@ -23,10 +23,10 @@ namespace FiresCore.Npc.Archetypes
         private static Dictionary<string, List<int>> _recentMessageIndices = new Dictionary<string, List<int>>();
         
         // Cooldowns
-        private const float ARCHETYPE_ANNOUNCE_COOLDOWN = 120f; // Only announce archetype change every 2 minutes
-        private const float ABILITY_ANNOUNCE_COOLDOWN = 30f;    // Only announce same ability every 30 seconds
-        private const float GLOBAL_ABILITY_COOLDOWN = 5f;       // Global cooldown between ANY ability announcements
-        private const int MAX_RECENT_MESSAGES = 3;              // Remember last 3 messages per category
+        private const float ArchetypeAnnounceCooldown = 120f; // Only announce archetype change every 2 minutes
+        private const float AbilityAnnounceCooldown = 30f;    // Only announce same ability every 30 seconds
+        private const float GlobalAbilityCooldown = 5f;       // Global cooldown between ANY ability announcements
+        private const int MaxRecentMessages = 3;              // Remember last 3 messages per category
         
         // Global tracking
         private static float _lastGlobalAbilityAnnounce = -100f;
@@ -55,7 +55,7 @@ namespace FiresCore.Npc.Archetypes
             
             if (_lastArchetypeAnnounceTimes.TryGetValue(key, out float lastTime))
             {
-                if (Time.time - lastTime < ARCHETYPE_ANNOUNCE_COOLDOWN) return;
+                if (Time.time - lastTime < ArchetypeAnnounceCooldown) return;
             }
             
             _lastArchetypeAnnounceTimes[key] = Time.time;
@@ -191,7 +191,7 @@ namespace FiresCore.Npc.Archetypes
             if (owner == null || owner != Player.m_localPlayer) return;
             
             // Check global cooldown first
-            if (Time.time - _lastGlobalAbilityAnnounce < GLOBAL_ABILITY_COOLDOWN) return;
+            if (Time.time - _lastGlobalAbilityAnnounce < GlobalAbilityCooldown) return;
             
             // Check per-ability cooldown
             string companionId = companion.companionId ?? companion.GetInstanceID().ToString();
@@ -199,7 +199,7 @@ namespace FiresCore.Npc.Archetypes
             
             if (_lastAbilityAnnounceTimes.TryGetValue(key, out float lastTime))
             {
-                if (Time.time - lastTime < ABILITY_ANNOUNCE_COOLDOWN) return;
+                if (Time.time - lastTime < AbilityAnnounceCooldown) return;
             }
             
             _lastAbilityAnnounceTimes[key] = Time.time;
@@ -642,7 +642,7 @@ namespace FiresCore.Npc.Archetypes
             recentIndices.Add(selectedIndex);
             
             // Keep the recent list from growing too large
-            while (recentIndices.Count > MAX_RECENT_MESSAGES && recentIndices.Count > 0)
+            while (recentIndices.Count > MaxRecentMessages && recentIndices.Count > 0)
             {
                 recentIndices.RemoveAt(0);
             }

@@ -111,11 +111,11 @@ namespace FiresCore.UI.ContextMenu
         {
             string title = null;
             var items = new List<ContextMenuItem>();
-            foreach (var p in _providers)
+            foreach (var provider in _providers)
             {
                 IEnumerable<ContextMenuItem> group;
-                try { group = p.GetItems(target); }
-                catch (Exception ex) { Debug.LogWarning($"[FiresContextMenu] provider {p.GetType().Name} threw: {ex.Message}"); continue; }
+                try { group = provider.GetItems(target); }
+                catch (Exception ex) { Debug.LogWarning($"[FiresContextMenu] provider {provider.GetType().Name} threw: {ex.Message}"); continue; }
                 if (group == null) continue;
 
                 var list = new List<ContextMenuItem>(group);
@@ -123,7 +123,7 @@ namespace FiresCore.UI.ContextMenu
 
                 if (items.Count > 0) items.Add(ContextMenuItem.Sep());
                 items.AddRange(list);
-                if (title == null) { try { title = p.TitleFor(target); } catch { } }
+                if (title == null) { try { title = provider.TitleFor(target); } catch { } }
             }
             return items.Count == 0 ? (null, null) : (title, items);
         }

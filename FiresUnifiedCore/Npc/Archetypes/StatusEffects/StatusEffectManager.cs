@@ -18,30 +18,9 @@ using FiresCore.Npc.Archetypes.StatusEffects.Expert;
 namespace FiresCore.Npc.Archetypes.StatusEffects
 {
     /// <summary>
-    /// Central manager for companion status effects.
-    /// Handles registration with ObjectDB and provides helper methods for applying effects.
-    /// 
-    /// USAGE:
-    /// - Call RegisterAllEffects() during game initialization (after ObjectDB is loaded)
-    /// - Use the Apply* methods to easily apply effects to characters
-    /// 
-    /// ICON SYSTEM:
-    /// - Icons are cached when RegisterAllEffects() is called
-    /// - All Apply* methods automatically set the correct icon from cache
-    /// - Icons are colored rounded rectangles that display in the HUD
-    /// 
-    /// ORGANIZATION:
-    /// Effects are organized by archetype:
-    /// - Base/       - Foundation effects (Buff, DoT, Healing)
-    /// - Common/     - Shared effects (Invulnerable, Rooted, Slowdown)
-    /// - Tank/       - Tank effects (Fortify)
-    /// - Paladin/    - Paladin effects (Divine Protection, Holy Smite)
-    /// - Berserker/  - Berserker effects (Rage, Warcry)
-    /// - Rogue/      - Rogue effects (Poison, Stealth, Caltrops)
-    /// - Ranger/     - Ranger effects (Hunter's Mark, Eagle Eye)
-    /// - Mage/       - Mage effects (Elemental Infusion, Arcane Shield)
-    /// - Healer/     - Healer effects (Purify, Sanctuary, Purifying Circle)
-    /// - Monk/       - Monk effects (Chi Strike, Inner Peace)
+    /// Registers every companion status effect with ObjectDB (call RegisterAllEffects once ObjectDB is loaded)
+    /// and applies them with the right cached HUD icon through the Apply methods. Effects live in folders by
+    /// archetype.
     /// </summary>
     public static class StatusEffectManager
     {

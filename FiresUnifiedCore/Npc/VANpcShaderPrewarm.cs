@@ -7,62 +7,19 @@ using FiresCore.Lifecycle;
 using FiresCore.Logging;
 namespace FiresCore.Npc
 {
-    // VANpcShaderPrewarm â€” one-time pass at world load that forces Unity to
-    // compile shader variants + upload skinned/static meshes to the GPU for
-    // every loaded NPC prefab. The first time an NPC spawns near the player,
-    // Unity normally pays this cost SYNCHRONOUSLY on the spawn frame: typical
-    // hitch is 100â€“500 ms depending on shader complexity (Custom/Player has
-    // dozens of variants for hair, skin overlay, armor blends).
-    //
-    // Doing the work once at world load â€” when the loading-screen is still
-    // up and the player isn't yet running around â€” moves the cost out of the
-    // gameplay frame entirely. Subsequent NPC spawns hit warm shader caches
-    // and uploaded meshes, dropping the spawn-frame cost to <5 ms.
-    //
-    // How it works
-    // ------------
-    // The fundamental trick: Unity defers shader-variant compilation and
-    // mesh GPU upload until the first frame the mesh+material combination
-    // is actually rendered. So we instantiate each NPC prefab off-screen,
-    // render one frame with a dedicated camera scoped to a private layer,
-    // then destroy the clone. From Unity's perspective those shader
-    // variants are now compiled and the meshes are uploaded â€” even though
-    // the clone is gone, the GPU-side state persists.
-    //
-    // Safe-clone pattern (same as FAP's VAPieceIconRenderer)
-    // ------------------
-    // We don't want NPC Awake side effects firing (Character + Humanoid +
-    // CompanionAI + ZNetView all do non-trivial work, fire RPCs, register
-    // with global lists, play audio). The pattern:
-    //
-    //   1. EnsureInactiveStagingRoot â€” a hidden DontDestroyOnLoad GO that
-    //      is SetActive(false). Children are also inactive, so no Awake
-    //      fires during Instantiate.
-    //   2. DestroyImmediate every MonoBehaviour on the clone. With the
-    //      parent inactive, no Awake has fired yet so this is purely a
-    //      component removal (no OnDisable cascade).
-    //   3. Reparent to a render-stage root and SetActive(true). The
-    //      remaining Unity-engine components (Renderers, MeshFilters,
-    //      Cloth, Light) fire their first OnEnable now, but with all
-    //      MonoBehaviours stripped, no game logic runs.
-    //   4. Camera.Render() â€” forces shader/mesh upload for everything
-    //      visible on the dedicated layer.
-    //   5. DestroyImmediate the clone. GPU-side caches persist.
-    //
-    // Cost budget
-    // -----------
-    // ~50â€“200 ms total for 10â€“30 NPC prefabs, paid AFTER PlayerSpawnGate
-    // fires (player is in-world but loading screen has just closed â€”
-    // the spawn-finalization frames are over). Spread across multiple
-    // frames so each is bounded.
+    // Renders every loaded NPC prefab once, off-screen, just after the player spawns in, so Unity compiles
+    // shader variants and uploads meshes then instead of hitching the first frame each NPC appears. Clones
+    // are built under an inactive root with every MonoBehaviour stripped before activation, so no Awake,
+    // RPC or registration runs; a dedicated camera renders them on a private layer and they are destroyed.
+    // The GPU-side caches survive. The work is spread across frames.
     public static class VANpcShaderPrewarm
     {
         // Dedicated culling layer. 30 picked because FAP's icon renderer
-        // uses 31 â€” pairing them avoids stomping on each other if both run
+        // uses 31 — pairing them avoids stomping on each other if both run
         // in the same frame (unlikely, but cheap defense).
         private const int PrewarmLayer = 30;
 
-        // Remote stage position â€” far from any active zone so ambient
+        // Remote stage position — far from any active zone so ambient
         // lighting from the player's current biome doesn't bleed into the
         // shader-compilation pass. Same idea as VAPieceIconRenderer.
         private static readonly Vector3 StagePosition = new Vector3(-9000f, 3000f, -9000f);
@@ -77,7 +34,7 @@ namespace FiresCore.Npc
         private static bool _prewarmComplete;
         private static MonoBehaviour _host;
 
-        // One-shot init. Idempotent â€” second call no-ops. Wire from plugin
+        // One-shot init. Idempotent — second call no-ops. Wire from plugin
         // Awake.
         public static void Init()
         {
@@ -89,7 +46,7 @@ namespace FiresCore.Npc
             UnityEngine.Object.DontDestroyOnLoad(go);
             _host = go.AddComponent<HostBehaviour>();
 
-            // Gate on PlayerSpawnGate â€” same predicate the icon renderer
+            // Gate on PlayerSpawnGate — same predicate the icon renderer
             // uses. By the time it fires, the loading-screen is closed,
             // the player is in-world, and zone-streaming has settled.
             // That's the right window to spend a couple hundred ms on
@@ -99,11 +56,11 @@ namespace FiresCore.Npc
 
         private class HostBehaviour : MonoBehaviour { }
 
-        private static void OnLocalPlayerReady(Player p)
+        private static void OnLocalPlayerReady(Player player)
         {
             if (_prewarmComplete) return;
             if (FiresLogger.VerboseEnabled)
-                Debug.Log($"[NPC Prewarm] Local player ready ('{p?.GetPlayerName()}'); scheduling prewarm pass.");
+                Debug.Log($"[NPC Prewarm] Local player ready ('{player?.GetPlayerName()}'); scheduling prewarm pass.");
             _host.StartCoroutine(PrewarmCoroutine());
         }
 
@@ -128,17 +85,17 @@ namespace FiresCore.Npc
             if (prefabs == null || prefabs.Count == 0)
             {
                 if (FiresLogger.VerboseEnabled)
-                    Debug.Log("[NPC Prewarm] No NPC prefabs loaded â€” nothing to prewarm.");
+                    Debug.Log("[NPC Prewarm] No NPC prefabs loaded — nothing to prewarm.");
                 _prewarmComplete = true;
                 yield break;
             }
 
-            // Set up the off-screen camera + RT. Small RT (64Ã—64) because
-            // we don't care about the pixels â€” only that Render() runs and
+            // Set up the off-screen camera + RT. Small RT (64×64) because
+            // we don't care about the pixels — only that Render() runs and
             // forces shader/mesh GPU upload.
             GameObject camGo = null;
             Camera cam = null;
-            RenderTexture rt = null;
+            RenderTexture renderTexture = null;
             GameObject stagingRoot = null;
             float startTime = Time.realtimeSinceStartup;
             int prewarmed = 0;
@@ -158,9 +115,9 @@ namespace FiresCore.Npc
                 cam.fieldOfView = 35f;
                 cam.depth = -30;
 
-                rt = new RenderTexture(64, 64, 16, RenderTextureFormat.ARGB32) { name = "VANpcPrewarmRT" };
-                rt.Create();
-                cam.targetTexture = rt;
+                renderTexture = new RenderTexture(64, 64, 16, RenderTextureFormat.ARGB32) { name = "VANpcPrewarmRT" };
+                renderTexture.Create();
+                cam.targetTexture = renderTexture;
 
                 stagingRoot = new GameObject("VANpcPrewarmInactiveStage");
                 stagingRoot.SetActive(false);
@@ -168,8 +125,8 @@ namespace FiresCore.Npc
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[NPC Prewarm] Setup failed: {ex.Message} â€” aborting prewarm.");
-                CleanupResources(camGo, rt, stagingRoot);
+                Debug.LogWarning($"[NPC Prewarm] Setup failed: {ex.Message} — aborting prewarm.");
+                CleanupResources(camGo, renderTexture, stagingRoot);
                 _prewarmComplete = true;
                 yield break;
             }
@@ -195,10 +152,10 @@ namespace FiresCore.Npc
                 }
             }
 
-            CleanupResources(camGo, rt, stagingRoot);
+            CleanupResources(camGo, renderTexture, stagingRoot);
             _prewarmComplete = true;
 
-            Debug.Log($"[NPC Prewarm] Done â€” prewarmed {prewarmed} NPC prefab(s), "
+            Debug.Log($"[NPC Prewarm] Done — prewarmed {prewarmed} NPC prefab(s), "
                 + $"{failed} failed, in {(Time.realtimeSinceStartup - startTime):F1}s.");
         }
 
@@ -216,20 +173,20 @@ namespace FiresCore.Npc
                 clone.name = "Prewarm_" + prefab.name;
 
                 // STEP 2: strip all MonoBehaviours. With the parent inactive,
-                // no Awake has fired yet â€” DestroyImmediate is purely a
+                // no Awake has fired yet — DestroyImmediate is purely a
                 // component removal here. Anything in assembly_valheim
                 // (Character, Humanoid, ZNetView, MonsterAI, ...) gone.
                 // Mod-added MonoBehaviours from bundles also stripped. What
                 // survives: pure Unity-engine components (Renderer subclasses,
                 // MeshFilter, SkinnedMeshRenderer, Cloth, Animator, Light,
-                // AudioSource â€” all benign for a one-frame render).
+                // AudioSource — all benign for a one-frame render).
                 var monos = clone.GetComponentsInChildren<MonoBehaviour>(includeInactive: true);
                 for (int i = 0; i < monos.Length; i++)
                 {
-                    var mb = monos[i];
-                    if (mb == null) continue;
-                    try { UnityEngine.Object.DestroyImmediate(mb); }
-                    catch { /* RequireComponent guards â€” ignore */ }
+                    var behaviour = monos[i];
+                    if (behaviour == null) continue;
+                    try { UnityEngine.Object.DestroyImmediate(behaviour); }
+                    catch { /* RequireComponent guards — ignore */ }
                 }
 
                 // STEP 3: also strip Colliders (no physics interactions
@@ -243,11 +200,11 @@ namespace FiresCore.Npc
                 var audios = clone.GetComponentsInChildren<AudioSource>(true);
                 for (int i = 0; i < audios.Length; i++)
                 {
-                    var a = audios[i];
-                    if (a == null) continue;
-                    a.playOnAwake = false;
-                    a.mute = true;
-                    a.enabled = false;
+                    var audioSource = audios[i];
+                    if (audioSource == null) continue;
+                    audioSource.playOnAwake = false;
+                    audioSource.mute = true;
+                    audioSource.enabled = false;
                 }
 
                 // STEP 4: tag the hierarchy with PrewarmLayer so only our
@@ -282,24 +239,24 @@ namespace FiresCore.Npc
                 if (clone != null)
                 {
                     try { UnityEngine.Object.DestroyImmediate(clone); }
-                    catch { /* destroying-while-being-destroyed â€” ignore */ }
+                    catch { /* destroying-while-being-destroyed — ignore */ }
                 }
             }
         }
 
-        private static void SetLayerRecursive(Transform t, int layer)
+        private static void SetLayerRecursive(Transform root, int layer)
         {
-            if (t == null) return;
-            t.gameObject.layer = layer;
-            for (int i = 0; i < t.childCount; i++)
-                SetLayerRecursive(t.GetChild(i), layer);
+            if (root == null) return;
+            root.gameObject.layer = layer;
+            for (int i = 0; i < root.childCount; i++)
+                SetLayerRecursive(root.GetChild(i), layer);
         }
 
-        private static void CleanupResources(GameObject camGo, RenderTexture rt, GameObject stagingRoot)
+        private static void CleanupResources(GameObject camGo, RenderTexture renderTexture, GameObject stagingRoot)
         {
             try
             {
-                if (rt != null) { rt.Release(); UnityEngine.Object.Destroy(rt); }
+                if (renderTexture != null) { renderTexture.Release(); UnityEngine.Object.Destroy(renderTexture); }
             }
             catch { }
             try

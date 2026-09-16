@@ -141,11 +141,11 @@ namespace FiresCore.UI
                 _panel = (RectTransform)panelGo.transform;
                 _panel.SetParent(_canvasRect, false);
                 _panel.anchorMin = _panel.anchorMax = new Vector2(0.5f, 0.5f);
-                var bg = panelGo.AddComponent<Image>();
-                bg.sprite = FiresRoundedSkin.RoundedSprite(8, FiresPopupTheme.PanelBg, FiresPopupTheme.PanelEdge, 1);
-                bg.type = Image.Type.Sliced;
-                bg.color = Color.white;
-                bg.raycastTarget = false;
+                var image = panelGo.AddComponent<Image>();
+                image.sprite = FiresRoundedSkin.RoundedSprite(8, FiresPopupTheme.PanelBg, FiresPopupTheme.PanelEdge, 1);
+                image.type = Image.Type.Sliced;
+                image.color = Color.white;
+                image.raycastTarget = false;
 
                 var layout = panelGo.AddComponent<VerticalLayoutGroup>();
                 layout.padding = new RectOffset(10, 10, 7, 8);
@@ -175,8 +175,8 @@ namespace FiresCore.UI
                 tmp.alignment = TextAlignmentOptions.TopLeft;
                 tmp.textWrappingMode = TextWrappingModes.Normal;
                 tmp.raycastTarget = false;
-                var le = go.AddComponent<LayoutElement>();
-                le.preferredWidth = MaxWidth;
+                var layoutElement = go.AddComponent<LayoutElement>();
+                layoutElement.preferredWidth = MaxWidth;
                 try { UIBuilderHelper.ApplyBodyFont(tmp); } catch { }
                 return tmp;
             }

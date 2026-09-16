@@ -6,23 +6,11 @@ using FiresCore.Npc.Animation;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Enhanced base class for work behaviors (smelter operation, resource gathering, etc.).
-    /// Provides standardized phase management, resource access, and animation integration.
-    /// 
-    /// FEATURES:
-    /// - Built-in phase management with automatic timeout handling
-    /// - Integrated ResourceAccessService for chest/inventory operations
-    /// - Animation controller integration for emotes and work animations
-    /// - Standardized movement helpers
-    /// - Automatic stuck detection and recovery
-    /// 
-    /// USAGE:
-    /// 1. Create your behavior class extending WorkBehaviorBase&lt;YourPhaseEnum&gt;
-    /// 2. Override InitializePhaseManager() to configure phase timeouts
-    /// 3. Override UpdatePhase() to handle each phase
-    /// 4. Use Resources and Animation properties for common operations
+    /// Base class for phased work behaviors (smelting, gathering and similar): phase management with timeouts,
+    /// ResourceAccessService for chests and inventory, the animation controller, movement helpers and stuck
+    /// recovery. Subclasses configure InitializePhaseManager and implement UpdatePhase.
     /// </summary>
-    /// <typeparam name="TPhase">Enum type for behavior phases</typeparam>
+    /// <typeparam name="TPhase">The behavior's phase enum.</typeparam>
     public abstract class WorkBehaviorBase<TPhase> : IdleSubBehavior where TPhase : Enum
     {
         #region Properties

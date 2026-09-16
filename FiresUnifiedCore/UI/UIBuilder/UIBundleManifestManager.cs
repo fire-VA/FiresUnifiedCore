@@ -11,7 +11,7 @@ namespace FiresCore.UI
     /// Manages per-bundle manifests for cached asset bundles.
     /// 
     /// When we "yoink" a mod's asset bundle, we save:
-    ///   1. The raw bundle data file (no extension change � the actual UnityFS bytes)
+    ///   1. The raw bundle data file (no extension change - the actual UnityFS bytes)
     ///   2. A per-bundle manifest JSON listing all assets in the bundle
     ///   3. Bundle metadata (source mod, internal name, file size, etc.)
     /// 
@@ -21,9 +21,7 @@ namespace FiresCore.UI
     /// </summary>
     public static class UIBundleManifestManager
     {
-        // ???????????????????????????????????????
         //  Paths
-        // ???????????????????????????????????????
 
         private static readonly string BundleCacheDir = Path.Combine(
             FiresCore.Storage.FiresConfigPaths.UiAssets, "CapturedAssets", "bundles");
@@ -31,9 +29,7 @@ namespace FiresCore.UI
         private static readonly string ManifestDir = Path.Combine(
             FiresCore.Storage.FiresConfigPaths.UiAssets, "CapturedAssets", "bundle_manifests");
 
-        // ???????????????????????????????????????
         //  Data structures
-        // ???????????????????????????????????????
 
         /// <summary>Describes a single asset inside a cached bundle.</summary>
         public class BundleAssetEntry
@@ -74,22 +70,18 @@ namespace FiresCore.UI
             public int OtherCount;
         }
 
-        // ???????????????????????????????????????
         //  In-memory cache
-        // ???????????????????????????????????????
 
         private static readonly Dictionary<string, BundleManifest> _manifestCache =
             new Dictionary<string, BundleManifest>(StringComparer.OrdinalIgnoreCase);
 
         private static bool _manifestsLoaded;
 
-        // ???????????????????????????????????????
         //  Public API
-        // ???????????????????????????????????????
 
         /// <summary>
         /// Loads all bundle manifests from disk into memory.
-        /// Safe to call multiple times � only loads once.
+        /// Safe to call multiple times - only loads once.
         /// </summary>
         public static void LoadAllManifests()
         {
@@ -430,9 +422,7 @@ namespace FiresCore.UI
             return null;
         }
 
-        // ???????????????????????????????????????
         //  Serialization
-        // ???????????????????????????????????????
 
         private static void SaveManifest(BundleManifest manifest)
         {
@@ -476,34 +466,34 @@ namespace FiresCore.UI
 
             for (int i = 0; i < manifest.Assets.Count; i++)
             {
-                var a = manifest.Assets[i];
+                var asset = manifest.Assets[i];
                 sb.Append("    { ");
-                sb.Append($"\"name\": \"{EscapeJson(a.Name)}\", ");
-                sb.Append($"\"type\": \"{EscapeJson(a.Type)}\"");
+                sb.Append($"\"name\": \"{EscapeJson(asset.Name)}\", ");
+                sb.Append($"\"type\": \"{EscapeJson(asset.Type)}\"");
 
-                if (!string.IsNullOrEmpty(a.Path))
-                    sb.Append($", \"path\": \"{EscapeJson(a.Path)}\"");
+                if (!string.IsNullOrEmpty(asset.Path))
+                    sb.Append($", \"path\": \"{EscapeJson(asset.Path)}\"");
 
-                if (a.Width > 0) sb.Append($", \"width\": {a.Width}");
-                if (a.Height > 0) sb.Append($", \"height\": {a.Height}");
+                if (asset.Width > 0) sb.Append($", \"width\": {asset.Width}");
+                if (asset.Height > 0) sb.Append($", \"height\": {asset.Height}");
 
-                if (a.Type == "Sprite")
+                if (asset.Type == "Sprite")
                 {
-                    sb.Append($", \"pivotX\": {a.PivotX.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
-                    sb.Append($", \"pivotY\": {a.PivotY.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
-                    sb.Append($", \"ppu\": {a.PixelsPerUnit.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                    sb.Append($", \"pivotX\": {asset.PivotX.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                    sb.Append($", \"pivotY\": {asset.PivotY.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                    sb.Append($", \"ppu\": {asset.PixelsPerUnit.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
 
-                    if (a.BorderL != 0 || a.BorderB != 0 || a.BorderR != 0 || a.BorderT != 0)
+                    if (asset.BorderL != 0 || asset.BorderB != 0 || asset.BorderR != 0 || asset.BorderT != 0)
                     {
-                        sb.Append($", \"borderL\": {a.BorderL.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
-                        sb.Append($", \"borderB\": {a.BorderB.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
-                        sb.Append($", \"borderR\": {a.BorderR.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
-                        sb.Append($", \"borderT\": {a.BorderT.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                        sb.Append($", \"borderL\": {asset.BorderL.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                        sb.Append($", \"borderB\": {asset.BorderB.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                        sb.Append($", \"borderR\": {asset.BorderR.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                        sb.Append($", \"borderT\": {asset.BorderT.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
                     }
 
-                    if (a.IsPacked) sb.Append(", \"isPacked\": true");
-                    if (!string.IsNullOrEmpty(a.TextureName))
-                        sb.Append($", \"textureName\": \"{EscapeJson(a.TextureName)}\"");
+                    if (asset.IsPacked) sb.Append(", \"isPacked\": true");
+                    if (!string.IsNullOrEmpty(asset.TextureName))
+                        sb.Append($", \"textureName\": \"{EscapeJson(asset.TextureName)}\"");
                 }
 
                 sb.Append(" }");
@@ -588,14 +578,12 @@ namespace FiresCore.UI
             }
         }
 
-        // ???????????????????????????????????????
         //  JSON helpers (minimal parser, no deps)
-        // ???????????????????????????????????????
 
-        private static string EscapeJson(string s)
+        private static string EscapeJson(string text)
         {
-            if (string.IsNullOrEmpty(s)) return "";
-            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+            if (string.IsNullOrEmpty(text)) return "";
+            return text.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
         }
 
         private static string ExtractJsonString(string json, string key)

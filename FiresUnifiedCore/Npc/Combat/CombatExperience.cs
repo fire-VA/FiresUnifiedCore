@@ -5,33 +5,32 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Provides level-based combat improvements for companions.
-    /// As companions level up (0-100), they become progressively better at:
-    /// - Predicting enemy attacks (earlier reaction window)
-    /// - Blocking effectively (higher success rate)
-    /// - Parrying (tighter timing, but higher reward)
-    /// - Dodging (better timing and direction choice)
-    /// - Survival tactics (retreat earlier when low HP vs dangerous enemies)
-    /// 
-    /// DESIGN PHILOSOPHY:
-    /// Each level provides a SMALL bonus (0.5-1% per level for most stats).
-    /// Over 100 levels, this compounds to meaningful improvements:
-    /// - Level 0: Barely functional defense
-    /// - Level 25: Noticeably better at blocking
-    /// - Level 50: Reliable defensive companion
-    /// - Level 75: Excellent combat awareness
-    /// - Level 100: Master combatant with near-perfect timing
-    /// 
-    /// INTEGRATION:
-    /// This class is queried by BlockingBehavior, DodgeBehavior, and EnemyAttackRecognition
-    /// to modify their base chances and timing windows based on level.
-    /// 
-    /// MEMORY INTEGRATION:
-    /// Combines with CombatMemory - enemies that killed the companion are remembered,
-    /// and higher-level companions become better at avoiding those specific enemies.
+    /// Level-based combat skill: each level adds a small bonus to attack prediction, block, parry and dodge
+    /// timing and to retreating from dangerous enemies, compounding from barely functional at 0 to near-perfect
+    /// at 100. Queried by BlockingBehavior, DodgeBehavior and EnemyAttackRecognition, and combined with
+    /// CombatMemory so higher levels also avoid enemies that killed the companion before.
     /// </summary>
     public class CombatExperience : MonoBehaviour
     {
+        private const float BaseParryWindowSeconds = 0.25f;
+        private const float BaseParryCounterChance = 0.3f;
+        private const int MaxKilledByStacks = 3;
+        private const float BlockCautionDangerThreshold = 0.3f;
+        private const float DangerBlockChanceScale = 0.1f;
+        private const int ExperiencedEnemyMinEncounters = 5;
+        private const float ParryExperienceBonusPerEncounter = 0.01f;
+        private const float MaxParryExperienceBonus = 0.15f;
+        private const int FamiliarEnemyMinEncounters = 3;
+        private const float CounterFamiliarityBonusPerEncounter = 0.02f;
+        private const float MaxCounterFamiliarityBonus = 0.1f;
+        private const float RevengeCounterBonusPerKill = 0.05f;
+        private const float MaxOneShotterDodgeBonus = 0.2f;
+        private const float DangerDodgeChanceScale = 0.1f;
+        private const float AnticipationBonusPerEncounter = 0.01f;
+        private const float MaxAnticipationFamiliarityBonus = 0.1f;
+        private const float MaxOneShotterRetreatThreshold = 0.6f;
+        private const float MaxDangerousEnemyRetreatThreshold = 0.4f;
+
         #region Settings - Per-Level Bonuses (Small but Cumulative)
         
         [Header("Block Improvements Per Level")]
@@ -111,7 +110,7 @@ namespace FiresCore.Npc.Combat
         // Cached level for performance
         private int _cachedLevel;
         private float _lastLevelCheck;
-        private const float LEVEL_CHECK_INTERVAL = 1f;
+        private const float LevelCheckInterval = 1f;
         
         // Combat statistics for adaptive learning
         private int _totalBlockAttempts;
@@ -138,7 +137,7 @@ namespace FiresCore.Npc.Combat
         {
             get
             {
-                if (Time.time - _lastLevelCheck > LEVEL_CHECK_INTERVAL)
+                if (Time.time - _lastLevelCheck > LevelCheckInterval)
                 {
                     _lastLevelCheck = Time.time;
                     _cachedLevel = _progression?.Level ?? 0;
@@ -169,13 +168,13 @@ namespace FiresCore.Npc.Combat
         public float AnticipationWindow => baseAnticipationWindow + (Level * blockAnticipationPerLevel);
         
         /// <summary>Parry window in seconds (wider at higher levels).</summary>
-        public float ParryWindow => 0.25f + (Level * parryWindowPerLevel);
+        public float ParryWindow => BaseParryWindowSeconds + (Level * parryWindowPerLevel);
         
         /// <summary>Parry counter-attack chance bonus (0-0.5 at level 100).</summary>
         public float ParryCounterChanceBonus => Level * parryCounterChancePerLevel;
         
         /// <summary>Total parry counter-attack chance (0.3 base + level bonus).</summary>
-        public float TotalParryCounterChance => Mathf.Clamp01(0.3f + ParryCounterChanceBonus);
+        public float TotalParryCounterChance => Mathf.Clamp01(BaseParryCounterChance + ParryCounterChanceBonus);
         
         /// <summary>Retreat health threshold (0-1, retreats earlier at higher levels).</summary>
         public float RetreatThreshold => baseRetreatThreshold + (Level * retreatThresholdPerLevel);
@@ -256,7 +255,7 @@ namespace FiresCore.Npc.Combat
                 {
                     // We learned from dying to this enemy - block more effectively
                     float killerBonus = Level * killerDefenseBonusPerLevel;
-                    killerBonus *= Mathf.Min(memory.TimesKilledBy, 3); // Cap at 3x
+                    killerBonus *= Mathf.Min(memory.TimesKilledBy, MaxKilledByStacks); // Cap at 3x
                     baseChance += killerBonus;
                     
                     if (VerboseLogging)
@@ -267,10 +266,10 @@ namespace FiresCore.Npc.Combat
                 
                 // Also factor in overall danger level
                 float dangerLevel = _combatMemory.GetEnemyDangerLevel(enemy);
-                if (dangerLevel > 0.3f)
+                if (dangerLevel > BlockCautionDangerThreshold)
                 {
                     // More cautious against known dangerous enemies
-                    baseChance += dangerLevel * 0.1f * DangerRecognitionMultiplier;
+                    baseChance += dangerLevel * DangerBlockChanceScale * DangerRecognitionMultiplier;
                 }
             }
             
@@ -289,10 +288,10 @@ namespace FiresCore.Npc.Combat
             if (_combatMemory != null && enemy != null)
             {
                 var memory = _combatMemory.GetMemory(enemy);
-                if (memory != null && memory.DamageInstanceCount > 5)
+                if (memory != null && memory.DamageInstanceCount > ExperiencedEnemyMinEncounters)
                 {
                     // We've fought this enemy type many times - better at parrying
-                    float experienceBonus = Mathf.Min(memory.DamageInstanceCount * 0.01f, 0.15f);
+                    float experienceBonus = Mathf.Min(memory.DamageInstanceCount * ParryExperienceBonusPerEncounter, MaxParryExperienceBonus);
                     baseChance += experienceBonus * (Level / 100f); // Scales with level
                 }
             }
@@ -313,17 +312,17 @@ namespace FiresCore.Npc.Combat
             if (_combatMemory != null && enemy != null)
             {
                 var memory = _combatMemory.GetMemory(enemy);
-                if (memory != null && memory.DamageInstanceCount > 3)
+                if (memory != null && memory.DamageInstanceCount > FamiliarEnemyMinEncounters)
                 {
                     // We've parried this enemy type before - better counter timing
-                    float familiarityBonus = Mathf.Min(memory.DamageInstanceCount * 0.02f, 0.1f);
+                    float familiarityBonus = Mathf.Min(memory.DamageInstanceCount * CounterFamiliarityBonusPerEncounter, MaxCounterFamiliarityBonus);
                     baseChance += familiarityBonus;
                 }
                 
                 // Extra counter chance against enemies that killed us (revenge!)
                 if (memory != null && memory.TimesKilledBy > 0)
                 {
-                    baseChance += 0.05f * Mathf.Min(memory.TimesKilledBy, 3);
+                    baseChance += RevengeCounterBonusPerKill * Mathf.Min(memory.TimesKilledBy, MaxKilledByStacks);
                 }
             }
             
@@ -341,7 +340,7 @@ namespace FiresCore.Npc.Combat
             if (_combatMemory != null && _combatMemory.IsKnownOneShotter(enemy))
             {
                 // Extra dodge chance against enemies that can one-shot us
-                float oneshotBonus = 0.2f * (Level / 100f);
+                float oneshotBonus = MaxOneShotterDodgeBonus * (Level / 100f);
                 baseChance += oneshotBonus;
                 
                 if (VerboseLogging)
@@ -354,7 +353,7 @@ namespace FiresCore.Npc.Combat
             if (_combatMemory != null && enemy != null)
             {
                 float dangerLevel = _combatMemory.GetEnemyDangerLevel(enemy);
-                baseChance += dangerLevel * 0.1f;
+                baseChance += dangerLevel * DangerDodgeChanceScale;
             }
             
             return Mathf.Clamp01(baseChance);
@@ -372,10 +371,10 @@ namespace FiresCore.Npc.Combat
             if (_combatMemory != null && enemy != null)
             {
                 var memory = _combatMemory.GetMemory(enemy);
-                if (memory != null && memory.DamageInstanceCount > 3)
+                if (memory != null && memory.DamageInstanceCount > FamiliarEnemyMinEncounters)
                 {
                     // We've seen this enemy attack before
-                    float familiarityBonus = Mathf.Min(memory.DamageInstanceCount * 0.01f, 0.1f);
+                    float familiarityBonus = Mathf.Min(memory.DamageInstanceCount * AnticipationBonusPerEncounter, MaxAnticipationFamiliarityBonus);
                     window += familiarityBonus;
                 }
             }
@@ -397,12 +396,12 @@ namespace FiresCore.Npc.Combat
                 if (_combatMemory.IsKnownOneShotter(enemy))
                 {
                     // Retreat at 60% health against one-shotters (high level)
-                    threshold = Mathf.Max(threshold, 0.6f * (Level / 100f));
+                    threshold = Mathf.Max(threshold, MaxOneShotterRetreatThreshold * (Level / 100f));
                 }
                 else if (_combatMemory.IsKnownDangerous(enemy))
                 {
                     // Retreat earlier against known dangerous enemies
-                    threshold = Mathf.Max(threshold, 0.4f * (Level / 100f));
+                    threshold = Mathf.Max(threshold, MaxDangerousEnemyRetreatThreshold * (Level / 100f));
                 }
             }
             

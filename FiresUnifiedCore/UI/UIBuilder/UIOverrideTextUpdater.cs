@@ -99,11 +99,11 @@ namespace FiresCore.UI
                     {
                         try
                         {
-                            float cd = (float)_guardianCooldownField.GetValue(player);
-                            if (cd > 0)
+                            float cooldown = (float)_guardianCooldownField.GetValue(player);
+                            if (cooldown > 0)
                             {
-                                int mins = (int)(cd / 60f);
-                                int secs = (int)(cd % 60f);
+                                int mins = (int)(cooldown / 60f);
+                                int secs = (int)(cooldown % 60f);
                                 value = $"{mins}:{secs:D2}";
                             }
                             else
@@ -116,7 +116,7 @@ namespace FiresCore.UI
                     break;
             }
 
-            // Only write when value changed — avoids dirtying canvas with identical text
+            // Only write when value changed â€” avoids dirtying canvas with identical text
             if (Text != null)
             {
                 if (Text.text != value)

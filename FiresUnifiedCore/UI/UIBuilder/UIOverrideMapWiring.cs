@@ -30,7 +30,7 @@ namespace FiresCore.UI
             _rawImage = GetComponent<RawImage>();
             if (_rawImage == null)
             {
-                Debug.LogWarning("[UIOverrideMapWiring] No RawImage component found — cannot display map.");
+                Debug.LogWarning("[UIOverrideMapWiring] No RawImage component found â€” cannot display map.");
                 enabled = false;
                 return;
             }

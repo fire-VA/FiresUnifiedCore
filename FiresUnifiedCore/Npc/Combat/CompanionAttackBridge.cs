@@ -4,27 +4,10 @@ using System;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Bridges animation events to our companion's Attack instance for frame-perfect hit detection.
-    /// 
-    /// VANILLA HIT DETECTION STRATEGY:
-    /// The vanilla Attack system handles hit detection in Attack.OnAttackTrigger(), which is called:
-    /// 1. By CharacterAnimEvent when animation events fire (preferred)
-    /// 2. By us when monitoring animation progress (fallback)
-    /// 
-    /// ATTACK.UPDATE() IS CRITICAL:
-    /// The vanilla Attack.Update() method must be called every frame. It handles:
-    /// - Projectile burst timing
-    /// - Freeze frames on hit
-    /// - Attack state management
-    /// - Calling Stop() when animation ends
-    /// 
-    /// WeaponBehavior.UpdateNativeAttack() now calls Attack.Update() every frame.
-    /// This ensures vanilla timing logic runs correctly.
-    /// 
-    /// NORMALIZED TIME APPROACH:
-    /// We check the animator's progress through the attack animation.
-    /// When normalizedTime >= hitNormalizedTime, we trigger the hit.
-    /// This matches what animation events would do if they fired.
+    /// Drives hit detection for a companion's vanilla Attack. Attack.OnAttackTrigger normally fires from
+    /// animation events; as a fallback this triggers it once the animator's normalized time passes the hit
+    /// point. Attack.Update must still run every frame (WeaponBehavior.UpdateNativeAttack does it) for
+    /// projectile bursts, hit freeze and stopping at the end of the animation.
     /// </summary>
     public class CompanionAttackBridge : MonoBehaviour
     {

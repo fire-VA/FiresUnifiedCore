@@ -53,7 +53,7 @@ namespace FiresCore.Npc.IdleBehaviors
             FindNearbyChests();
             
             // Try to re-occupy the smelter
-            if (!InteractableOccupancyManager.TryOccupy(_targetSmelter.gameObject, _character, MAX_OPERATE_TIME))
+            if (!InteractableOccupancyManager.TryOccupy(_targetSmelter.gameObject, _character, MaxOperateTime))
             {
                 // Someone else grabbed it while we were fighting
                 if (CompanionIdleBehavior.VerboseLogging)
@@ -73,7 +73,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Resume from where we were, or start moving back to station
             float dist = Vector3.Distance(Transform.position, _targetPosition);
-            if (dist > INTERACTION_DISTANCE)
+            if (dist > InteractionDistance)
             {
                 // Need to walk back to the smelter first
                 SetPhase(OperatePhase.MovingToStation);
@@ -138,7 +138,6 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Reset anti-spam tracking
             _smelterIsFullWaitingForOutput = false;
-            _lastFillAttemptTime = 0f;
             _lastOreAddTime = 0f;
             _lastFuelAddTime = 0f;
             _lastAnyAddTime = 0f;
@@ -209,7 +208,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     // EARLY RESERVATION: Claim the smelter as soon as we commit to walking
                     // to it, so other companions evaluating CanStart this frame don't all
                     // pick the same station and converge into a cluster.
-                    if (!InteractableOccupancyManager.TryOccupy(_targetSmelter.gameObject, _character, MAX_OPERATE_TIME))
+                    if (!InteractableOccupancyManager.TryOccupy(_targetSmelter.gameObject, _character, MaxOperateTime))
                     {
                         if (CompanionIdleBehavior.VerboseLogging)
                             Debug.Log($"[SmelterOperator] {Companion.companionName} could not reserve {_targetSmelter.m_name} at Start - already taken by another companion");

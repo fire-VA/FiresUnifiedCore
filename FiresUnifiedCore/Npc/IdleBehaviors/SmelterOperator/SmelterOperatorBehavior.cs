@@ -6,32 +6,10 @@ using FiresCore.Npc.Events;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Handles companion operation of smelters, kilns, and other processing stations.
-    /// Companion will fill stations with ore/materials and collect outputs.
-    /// 
-    /// This is a partial class split across multiple files for maintainability:
-    /// - SmelterOperatorBehavior.cs: Core class, fields, initialization, CanStart
-    /// - SmelterOperatorBehavior.Lifecycle.cs: Start, Update, Cancel, Complete
-    /// - SmelterOperatorBehavior.StationPhases.cs: Station interaction phases
-    /// - SmelterOperatorBehavior.OutputPhases.cs: Output collection phases
-    /// - SmelterOperatorBehavior.KilnWorkflow.cs: Kiln coordination phases
-    /// - SmelterOperatorBehavior.Helpers.cs: Helper methods and utilities
-    /// 
-    /// FEATURES:
-    /// - Fills smelters with ore and coal from inventory or nearby chests
-    /// - Fills kilns with wood
-    /// - Collects processed outputs (bars, coal) - PICKS UP FROM GROUND
-    /// - Transfers outputs to nearby chests
-    /// - Can be commanded to a specific station via ping
-    /// - KILN+SMELTER WORKFLOW: Automatically coordinates kiln to produce coal for smelters
-    /// - CONTINUOUS OPERATION: Keeps working until out of materials or interrupted
-    /// 
-    /// SUPPORTED STATIONS:
-    /// - Smelter (smelter)
-    /// - Blast Furnace (blastfurnace)
-    /// - Charcoal Kiln (charcoal_kiln)
-    /// - Spinning Wheel (spinning_wheel)
-    /// - Windmill (windmill)
+    /// Runs processing stations (smelter, blast furnace, charcoal kiln, spinning wheel, windmill): fills them
+    /// from inventory or nearby chests, picks outputs up off the ground and stores them, keeps a kiln feeding
+    /// coal to smelters, and continues until materials run out or it is interrupted. Split across partial
+    /// files by phase; a ping can target a specific station.
     /// </summary>
     public partial class SmelterOperatorBehavior : IdleSubBehavior
     {
@@ -68,25 +46,25 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Settings
         
-        private const float STATION_DETECTION_RANGE = 15f;
+        private const float StationDetectionRange = 15f;
         // Use centralized settings from CompanionSettings
         private float CHEST_SEARCH_RADIUS => CompanionSettings.ChestSearchRadius;
         
         // INTERACTION DISTANCES - Use InteractionPointHelper constants for consistency
         // These ensure companions walk to the correct side of objects before interacting
-        private static float INTERACTION_DISTANCE => InteractionPointHelper.MAX_INTERACTION_RANGE;  // How close to be to interact
-        private static float ARRIVAL_DISTANCE => InteractionPointHelper.ARRIVAL_THRESHOLD;          // How close to consider "arrived"
+        private static float InteractionDistance => InteractionPointHelper.MAX_INTERACTION_RANGE;  // How close to be to interact
+        private static float ArrivalDistance => InteractionPointHelper.ARRIVAL_THRESHOLD;          // How close to consider "arrived"
         
-        private const float OPERATION_CHECK_INTERVAL = 2f; // Faster checks
-        private const float MAX_OPERATE_TIME = 600f;    // 10 minutes max - continuous operation
-        private const float PICKUP_SCAN_RADIUS = 10f;   // Radius to scan for ground items (large to catch all output)
-        private const float PICKUP_DISTANCE = 1.5f;     // How close to get to item before picking up
-        private const float OUTPUT_WAIT_TIME = 30f;     // Max time to wait for processing
+        private const float OperationCheckInterval = 2f; // Faster checks
+        private const float MaxOperateTime = 600f;    // 10 minutes max - continuous operation
+        private const float PickupScanRadius = 10f;   // Radius to scan for ground items (large to catch all output)
+        private const float PickupDistance = 1.5f;     // How close to get to item before picking up
+        private const float OutputWaitTime = 30f;     // Max time to wait for processing
         
         // THRESHOLD SETTINGS - Companions will only refill when station is below these levels
         // This prevents constant hovering and gives time for processing
-        private const float ORE_REFILL_THRESHOLD = 0.5f;   // Only add ore when below 50% capacity
-        private const float FUEL_REFILL_THRESHOLD = 0.3f;  // Only add fuel when below 30% capacity
+        private const float OreRefillThreshold = 0.5f;   // Only add ore when below 50% capacity
+        private const float FuelRefillThreshold = 0.3f;  // Only add fuel when below 30% capacity
         
         #endregion
         
@@ -176,38 +154,37 @@ namespace FiresCore.Npc.IdleBehaviors
         private Smelter _primarySmelter = null;
         private Vector3 _primarySmelterPosition;
         private float _lastSmelterOutputCheck = 0f;
-        private const float SMELTER_OUTPUT_CHECK_INTERVAL = 5f; // Check smelter output every 5 seconds during kiln workflow
+        private const float SmelterOutputCheckInterval = 5f; // Check smelter output every 5 seconds during kiln workflow
         
         // Idle waiting state
         private float _lastEmoteTime;
         private float _nextEmoteDelay;
         private static readonly string[] _waitingEmotes = { "emote_nonono", "emote_think", "emote_comehere", "emote_point", "emote_wave" };
-        private const float MIN_EMOTE_INTERVAL = 8f;
-        private const float MAX_EMOTE_INTERVAL = 20f;
+        private const float MinEmoteInterval = 8f;
+        private const float MaxEmoteInterval = 20f;
         
         // ANTI-SPAM: Track when smelter is full to prevent continuous fill attempts
         // Once full, we wait for output pickup before trying to fill again
         private bool _smelterIsFullWaitingForOutput = false;
-        private float _lastFillAttemptTime = 0f;
-        private const float MIN_FILL_ATTEMPT_INTERVAL = 0.5f; // Minimum seconds between fill attempts
+        private const float MinFillAttemptInterval = 0.5f; // Minimum seconds between fill attempts
         
         // ANTI-LOOP: Cooldown when materials are unavailable to prevent endlessly retrying
         // This gives ResourceGatheringBehavior a chance to gather the needed materials
         private static Dictionary<string, float> _materialUnavailableCooldowns = new Dictionary<string, float>();
-        private const float MATERIAL_UNAVAILABLE_COOLDOWN = 60f; // Wait 60 seconds before retrying after material shortage
+        private const float MaterialUnavailableCooldown = 60f; // Wait 60 seconds before retrying after material shortage
         
         // Individual input throttling - prevents rapid button spam
         // This matches how a player would interact with the station
         private float _lastOreAddTime = 0f;
         private float _lastFuelAddTime = 0f;
         private float _lastAnyAddTime = 0f;  // Track ANY add operation for animation pacing
-        private const float MIN_SINGLE_INPUT_INTERVAL = 1.0f; // Minimum seconds between individual ore/fuel adds (matches animation time)
+        private const float MinSingleInputInterval = 1.0f; // Minimum seconds between individual ore/fuel adds (matches animation time)
         
         // ANTI-LOOP: Track that we just pulled items to prevent immediately going back to PullingFromChests
         // This gives the inventory a frame to sync before we check HasOre() again
         private bool _justPulledItems = false;
         private float _pullCompletedTime = 0f;
-        private const float POST_PULL_GRACE_PERIOD = 0.5f; // Don't check chests for this long after pulling
+        private const float PostPullGracePeriod = 0.5f; // Don't check chests for this long after pulling
         
         // Switch positions for immersive interaction
         private Vector3 _fuelSwitchPosition;
@@ -223,19 +200,19 @@ namespace FiresCore.Npc.IdleBehaviors
         // AUTONOMOUS SCAN CACHING - avoid expensive Physics.OverlapSphere + chest scan every tick
         private Smelter _cachedAutonomousSmelter;
         private float _lastAutonomousScanTime = -999f;
-        private const float AUTONOMOUS_SCAN_COOLDOWN = 15f; // Only re-scan every 15 seconds
+        private const float AutonomousScanCooldown = 15f; // Only re-scan every 15 seconds
         private Vector3 _lastAutonomousScanHomePos;
         
         // PATHFINDING PROGRESS TRACKING - for better stuck detection
         private Vector3 _lastProgressPosition;
         private float _lastProgressTime;
         private float _noProgressDuration = 0f;
-        private const float PROGRESS_CHECK_INTERVAL = 1.0f;      // How often to check progress
-        private const float PROGRESS_THRESHOLD = 0.3f;           // Min distance to count as progress
-        private const float NO_PROGRESS_TIMEOUT = 8.0f;          // How long without progress before stuck
-        private const float PATHFINDING_TIMEOUT_BASE = 30f;      // Base timeout (increased from 20)
-        private const float PATHFINDING_TIMEOUT_PER_METER = 1.5f; // Extra time per meter of distance
-        private const float MAX_PATHFINDING_TIMEOUT = 60f;       // Maximum timeout regardless of distance
+        private const float ProgressCheckInterval = 1.0f;      // How often to check progress
+        private const float ProgressThreshold = 0.3f;           // Min distance to count as progress
+        private const float NoProgressTimeout = 8.0f;          // How long without progress before stuck
+        private const float PathfindingTimeoutBase = 30f;      // Base timeout (increased from 20)
+        private const float PathfindingTimeoutPerMeter = 1.5f; // Extra time per meter of distance
+        private const float MaxPathfindingTimeout = 60f;       // Maximum timeout regardless of distance
         
         #endregion
         
@@ -263,7 +240,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _chestInteraction = new ChestInteractionService(companion, _resources, "SmelterOperator");
             _chestInteraction.VerboseLogging = CompanionIdleBehavior.VerboseLogging;
             
-            MaxDuration = MAX_OPERATE_TIME + 60f; // Longer timeout for continuous operation
+            MaxDuration = MaxOperateTime + 60f; // Longer timeout for continuous operation
         }
         
         /// <summary>
@@ -358,7 +335,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         /// <summary>
         /// Finds a nearby smelter or kiln that needs attention for autonomous operation.
-        /// Results are cached for AUTONOMOUS_SCAN_COOLDOWN seconds to avoid expensive
+        /// Results are cached for AutonomousScanCooldown seconds to avoid expensive
         /// Physics.OverlapSphere + chest scanning on every idle behavior tick.
         /// The cache is invalidated if the companion's home position changes.
         /// </summary>
@@ -369,7 +346,7 @@ namespace FiresCore.Npc.IdleBehaviors
             Vector3 homePos = IdleBehavior.HomePosition;
             
             // Check cache validity: time-based + position-based
-            bool cacheValid = (Time.time - _lastAutonomousScanTime) < AUTONOMOUS_SCAN_COOLDOWN
+            bool cacheValid = (Time.time - _lastAutonomousScanTime) < AutonomousScanCooldown
                 && Vector3.Distance(homePos, _lastAutonomousScanHomePos) < 1f;
             
             if (cacheValid)
@@ -390,24 +367,24 @@ namespace FiresCore.Npc.IdleBehaviors
                 return _cachedAutonomousSmelter;
             }
             
-            // Cache miss ï¿½ do the expensive scan
+            // Cache miss - do the expensive scan
             _lastAutonomousScanTime = Time.time;
             _lastAutonomousScanHomePos = homePos;
             
             // Use the effective search radius: stay-mode work radius (50m) capped by the
             // companion's configured wander radius so they never walk outside their boundary.
-            float searchRadius = GetEffectiveSearchRadius(STATION_DETECTION_RANGE);
+            float searchRadius = GetEffectiveSearchRadius(StationDetectionRange);
             
             var colliders = Physics.OverlapSphere(homePos, searchRadius);
             
             Smelter bestSmelter = null;
             float bestScore = 0f;
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var smelter = col.GetComponent<Smelter>() ?? col.GetComponentInParent<Smelter>();
+                var smelter = collider.GetComponent<Smelter>() ?? collider.GetComponentInParent<Smelter>();
                 if (smelter == null) continue;
                 
                 // Check if available
@@ -471,7 +448,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
             
-            // Find nearby chests ï¿½ single scan from midpoint between smelter and companion
+            // Find nearby chests - single scan from midpoint between smelter and companion
             // with enough radius to cover both, instead of doing two separate scans + merge
             Vector3 smelterPos = smelter.transform.position;
             Vector3 companionPos = Transform?.position ?? smelterPos;

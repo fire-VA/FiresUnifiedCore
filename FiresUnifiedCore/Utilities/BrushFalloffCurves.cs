@@ -51,8 +51,8 @@ namespace FiresCore.Utilities
         {
             if (radius <= RadiusEpsilon) return 0f;
             if (dist >= radius) return 0f;
-            float p = 1f - dist / radius;
-            return Evaluate(preset, p);
+            float proximity = 1f - dist / radius;
+            return Evaluate(preset, proximity);
         }
 
         public static Preset Parse(string name)

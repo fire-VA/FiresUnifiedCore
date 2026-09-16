@@ -7,25 +7,11 @@ using FiresCore.Bridge;
 namespace FiresCore.Npc.Persistence
 {
     /// <summary>
-    /// The canonical dormant-NPC store: one server-owned, persistent data-ZDO per player per world.
-    /// Holds companions that have no live creature in the world — logged-out followers,
-    /// dead/pending-respawn, and dismissed.
-    ///
-    /// <para><b>Why this lives in Core.</b> Both companion frontends (FiresCompanions standalone and
-    /// FiresRPGmaker integrated) need the same dormant persistence. Per the project rule — anything
-    /// 2+ Fires mods depend on lives in <c>FiresUnifiedCore</c>, never forked per-mod — the store is
-    /// shared infrastructure and belongs here, not in a frontend. It was prototyped in FiresCompanions
-    /// during the clone; this is its destination. Core registers itself as the
-    /// <see cref="NpcDormancyBridge"/> provider, so the store is ALWAYS available — no
-    /// "vault present ⇒ disable kennel" coexistence gate.</para>
-    ///
-    /// <para><b>(character, world) scoping is structural.</b> The kennel ZDO physically lives in this
-    /// world's <c>.db</c> keyed by <c>kennel_owner = playerId</c>. A character joining a different
-    /// world finds no kennel for that (playerId, worldUid) tuple → nothing restores. No soft
-    /// <c>==0</c> escape hatches.</para>
-    ///
-    /// <para><b>Storage shape.</b> <c>kennel_owner</c> (long) + <c>kennel_data</c> (byte[] ZPackage of
-    /// <see cref="DormantNpcEntry"/> list). Server-authoritative: new ZDOs originate on the server.</para>
+    /// The dormant-NPC store: one server-owned, persistent data ZDO per player per world, holding companions with
+    /// no live creature (logged-out followers, dead or pending respawn, dismissed). It lives in Core because both
+    /// companion frontends need it, and registers itself as the <see cref="NpcDormancyBridge"/> provider so it
+    /// is always available. World scoping is structural: the ZDO sits in this world's save keyed by kennel_owner,
+    /// so another world finds nothing. Data is kennel_owner plus kennel_data, a ZPackage of DormantNpcEntry.
     /// </summary>
     [HarmonyPatch]
     public static class CompanionKennel
@@ -191,8 +177,8 @@ namespace FiresCore.Npc.Persistence
             var entries = GetEntries(playerId);
             for (int i = 0; i < entries.Count; i++)
             {
-                var e = entries[i];
-                if (e != null && string.Equals(e.NpcId, npcId, StringComparison.Ordinal)) return e;
+                var entry = entries[i];
+                if (entry != null && string.Equals(entry.NpcId, npcId, StringComparison.Ordinal)) return entry;
             }
             return null;
         }

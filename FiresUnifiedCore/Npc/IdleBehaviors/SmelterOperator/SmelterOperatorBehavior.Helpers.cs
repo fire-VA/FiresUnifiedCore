@@ -515,7 +515,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (maxOre <= 0) return false;
             
             float fillRatio = (float)queued / maxOre;
-            return fillRatio < ORE_REFILL_THRESHOLD;
+            return fillRatio < OreRefillThreshold;
         }
         
         /// <summary>
@@ -538,7 +538,7 @@ namespace FiresCore.Npc.IdleBehaviors
             float currentFuel = nview.GetZDO().GetFloat(ZDOVars.s_fuel, 0f);
             float fillRatio = currentFuel / _targetSmelter.m_maxFuel;
             
-            return fillRatio < FUEL_REFILL_THRESHOLD;
+            return fillRatio < FuelRefillThreshold;
         }
         
         /// <summary>
@@ -1133,13 +1133,13 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private Smelter FindNearbyKiln()
         {
-            var colliders = Physics.OverlapSphere(_targetPosition, STATION_DETECTION_RANGE);
+            var colliders = Physics.OverlapSphere(_targetPosition, StationDetectionRange);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                var smelter = col.GetComponent<Smelter>() ?? col.GetComponentInParent<Smelter>();
+                var smelter = collider.GetComponent<Smelter>() ?? collider.GetComponentInParent<Smelter>();
                 if (smelter == null) continue;
                 if (smelter == _targetSmelter) continue; // Skip our main target
                 
@@ -1266,13 +1266,13 @@ namespace FiresCore.Npc.IdleBehaviors
             ItemDrop nearest = null;
             float nearestDist = float.MaxValue;
             
-            var colliders = Physics.OverlapSphere(center, PICKUP_SCAN_RADIUS);
+            var colliders = Physics.OverlapSphere(center, PickupScanRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                ItemDrop itemDrop = col.GetComponent<ItemDrop>() ?? col.GetComponentInParent<ItemDrop>();
+                ItemDrop itemDrop = collider.GetComponent<ItemDrop>() ?? collider.GetComponentInParent<ItemDrop>();
                 if (itemDrop == null) continue;
                 
                 // Check if we can pickup
@@ -1339,13 +1339,13 @@ namespace FiresCore.Npc.IdleBehaviors
         private int CountNearbyGroundItems(Vector3 center)
         {
             int count = 0;
-            var colliders = Physics.OverlapSphere(center, PICKUP_SCAN_RADIUS);
+            var colliders = Physics.OverlapSphere(center, PickupScanRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                ItemDrop itemDrop = col.GetComponent<ItemDrop>() ?? col.GetComponentInParent<ItemDrop>();
+                ItemDrop itemDrop = collider.GetComponent<ItemDrop>() ?? collider.GetComponentInParent<ItemDrop>();
                 if (itemDrop == null) continue;
                 
                 // Check if we can pickup
@@ -1365,13 +1365,13 @@ namespace FiresCore.Npc.IdleBehaviors
             if (storageInv == null) return 0;
             
             // Find ItemDrops near the output point
-            var colliders = Physics.OverlapSphere(center, PICKUP_SCAN_RADIUS);
+            var colliders = Physics.OverlapSphere(center, PickupScanRadius);
             
-            foreach (var col in colliders)
+            foreach (var collider in colliders)
             {
-                if (col == null) continue;
+                if (collider == null) continue;
                 
-                ItemDrop itemDrop = col.GetComponent<ItemDrop>() ?? col.GetComponentInParent<ItemDrop>();
+                ItemDrop itemDrop = collider.GetComponent<ItemDrop>() ?? collider.GetComponentInParent<ItemDrop>();
                 if (itemDrop == null) continue;
                 
                 // Check if we can pickup
@@ -1692,7 +1692,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Set next emote time
             _lastEmoteTime = Time.time;
-            _nextEmoteDelay = Random.Range(MIN_EMOTE_INTERVAL, MAX_EMOTE_INTERVAL);
+            _nextEmoteDelay = Random.Range(MinEmoteInterval, MaxEmoteInterval);
         }
         
         /// <summary>
@@ -1752,7 +1752,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 (Vector3.back + Vector3.left).normalized
             };
             
-            // CRITICAL: Teleport CLOSER than ARRIVAL_DISTANCE so we actually "arrive"
+            // CRITICAL: Teleport CLOSER than ArrivalDistance so we actually "arrive"
             // Use a small offset (0.3m) from the target so we're not exactly on it
             float safeDistance = 0.3f;
             
@@ -1772,11 +1772,11 @@ namespace FiresCore.Npc.IdleBehaviors
                 // Check for obstructions
                 Collider[] colliders = Physics.OverlapSphere(testPos + Vector3.up * 0.5f, 0.4f);
                 bool blocked = false;
-                foreach (var col in colliders)
+                foreach (var collider in colliders)
                 {
-                    if (col == null || col.isTrigger) continue;
-                    if (col.gameObject.layer == LayerMask.NameToLayer("terrain")) continue;
-                    if (col.GetComponent<Smelter>() != null || col.GetComponentInParent<Smelter>() != null) continue;
+                    if (collider == null || collider.isTrigger) continue;
+                    if (collider.gameObject.layer == LayerMask.NameToLayer("terrain")) continue;
+                    if (collider.GetComponent<Smelter>() != null || collider.GetComponentInParent<Smelter>() != null) continue;
                     blocked = true;
                     break;
                 }

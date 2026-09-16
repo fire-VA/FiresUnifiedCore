@@ -39,7 +39,7 @@ namespace FiresCore.UI
         private static FieldInfo _guardianCooldownField;
         private static bool _reflectionLookedUp;
 
-        // Throttle updates to reduce canvas rebuilds — stats don't need 60fps precision
+        // Throttle updates to reduce canvas rebuilds â€” stats don't need 60fps precision
         private float _updateTimer;
         private const float UpdateInterval = 0.05f; // ~20Hz is visually smooth for bars
 
@@ -111,7 +111,7 @@ namespace FiresCore.UI
 
             _targetFill = max > 0f ? Mathf.Clamp01(current / max) : 0f;
 
-            // Only write to Image/Text when values actually changed — avoids dirtying canvas
+            // Only write to Image/Text when values actually changed â€” avoids dirtying canvas
             if (FillImage != null && !Mathf.Approximately(FillImage.fillAmount, _targetFill))
                 FillImage.fillAmount = _targetFill;
 

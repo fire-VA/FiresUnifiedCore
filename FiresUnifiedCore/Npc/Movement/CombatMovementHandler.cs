@@ -5,22 +5,9 @@ using FiresCore.Npc.Archetypes;
 namespace FiresCore.Npc.Movement
 {
     /// <summary>
-    /// Handles combat-specific movement logic for companions.
-    /// 
-    /// RESPONSIBILITIES:
-    /// - Strafe movement around targets
-    /// - Retreat movement (backing away)
-    /// - Intercept movement (protecting owner)
-    /// - Approach movement (closing distance)
-    /// - Repositioning for ranged combat
-    /// - Emergency dodge/block triggers
-    /// 
-    /// DESIGN:
-    /// This is a helper class, not a MonoBehaviour. It's instantiated and owned
-    /// by CompanionCombatMovement which calls its methods as needed.
-    /// 
-    /// All actual Character.SetMoveDir() calls go through the parent coordinator
-    /// to maintain single-source-of-truth for movement direction.
+    /// Combat movement (strafing, retreating, intercepting threats to the owner, approaching, repositioning for
+    /// ranged attacks, emergency dodge and block), owned by CompanionCombatMovement, which makes every actual
+    /// SetMoveDir call.
     /// </summary>
     public class CombatMovementHandler
     {
@@ -559,9 +546,9 @@ namespace FiresCore.Npc.Movement
                 ProjectileDetectionRange, 
                 LayerMask.GetMask("projectile", "piece_nonsolid"));
             
-            foreach (var col in projectiles)
+            foreach (var collider in projectiles)
             {
-                var proj = col.GetComponent<Projectile>();
+                var proj = collider.GetComponent<Projectile>();
                 if (proj != null)
                 {
                     Vector3 toUs = (_transform.position - proj.transform.position).normalized;

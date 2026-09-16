@@ -28,11 +28,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
             if (m_character != null)
             {
                 // Stop all current movement
-                var rb = m_character.GetComponent<Rigidbody>();
-                if (rb != null && !rb.isKinematic)
+                var body = m_character.GetComponent<Rigidbody>();
+                if (body != null && !body.isKinematic)
                 {
-                    rb.linearVelocity = Vector3.zero;
-                    rb.angularVelocity = Vector3.zero;
+                    body.linearVelocity = Vector3.zero;
+                    body.angularVelocity = Vector3.zero;
                 }
                 
                 m_character.SetMoveDir(Vector3.zero);
@@ -51,11 +51,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
             if (m_character == null) return;
             
             // Continuously freeze movement
-            var rb = m_character.GetComponent<Rigidbody>();
-            if (rb != null && !rb.isKinematic)
+            var body = m_character.GetComponent<Rigidbody>();
+            if (body != null && !body.isKinematic)
             {
-                rb.linearVelocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
             }
             
             // Prevent AI-driven movement

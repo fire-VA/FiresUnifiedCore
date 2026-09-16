@@ -11,36 +11,13 @@ using HarmonyLib;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Wires injected inventory slot visuals created by the UI override system to live
-    /// game inventory data. This class is a READ-ONLY visual mirror — it never modifies
-    /// inventory state, grid positions, or item data.
-    ///
-    /// <b>Design principle:</b> The UIOverrideSlotSystem owns slot registration and lookup.
-    /// This class only reads slot/item state and updates visual properties (icon sprite,
-    /// amount text, overlay active states) on injected GameObjects that were instantiated
-    /// from layout data by the override system.
-    ///
-    /// Attach to a GameObject tagged with <see cref="UIOverrideElementTags.EquipmentSlot"/>
-    /// or <see cref="UIOverrideElementTags.EquipmentPanel"/>.
-    ///
-    /// <b>What this does:</b>
-    /// - Finds the matching Slot from the live Slots system by grid position or slot ID
-    /// - Per-frame: copies icon, amount, overlay states from the slot's item data
-    /// - Per-frame: syncs overlay children (durability, equipped, quality, etc.)
-    /// - Shows slot hint sprite/label when empty
-    ///
-    /// <b>What this does NOT do:</b>
-    /// - Does NOT modify Inventory.m_height or InventoryGrid.m_elements
-    /// - Does NOT set m_gridPos on items or call AddItem/RemoveItem
-    /// - Does NOT create InventoryGrid.Element objects
-    /// - Does NOT handle drag/drop or equip/unequip — those go through
-    ///   UIOverrideSlotInteraction or InventoryGui methods
+    /// Read-only visual mirror for injected inventory slots: finds the live slot by grid position or id and
+    /// copies its icon, amount and overlay states each frame, showing the hint sprite when empty. It never
+    /// changes inventory state; drag, drop and equip go through UIOverrideSlotInteraction or InventoryGui.
     /// </summary>
     public class UIOverrideSlotMirror : MonoBehaviour
     {
-        // ???????????????????????????????????????
-        //  Configuration — set by the wiring code
-        // ???????????????????????????????????????
+        //  Configuration â€” set by the wiring code
 
         /// <summary>
         /// The slot ID to mirror (e.g., "Helmet", "Food", "Ammo", "Misc_0_0").
@@ -60,9 +37,7 @@ namespace FiresCore.UI
         /// </summary>
         public bool Interactive = false;
 
-        // ???????????????????????????????????????
         //  Cached child references
-        // ???????????????????????????????????????
 
         private Image _icon;
         private TMP_Text _amount;
@@ -77,9 +52,7 @@ namespace FiresCore.UI
         private bool _initialized;
         private int _lastUpdateFrame = -1;
 
-        // ???????????????????????????????????????
         //  Init
-        // ???????????????????????????????????????
 
         private void Start()
         {
@@ -89,32 +62,30 @@ namespace FiresCore.UI
 
         private void CacheChildReferences()
         {
-            var t = transform;
+            var root = transform;
 
-            // Icon — the main item display image
-            var iconT = t.Find("icon");
-            if (iconT != null) _icon = iconT.GetComponent<Image>();
+            // Icon â€” the main item display image
+            var iconTransform = root.Find("icon");
+            if (iconTransform != null) _icon = iconTransform.GetComponent<Image>();
 
             // Amount text
-            var amountT = t.Find("amount");
-            if (amountT != null) _amount = amountT.GetComponent<TMP_Text>();
+            var amountTransform = root.Find("amount");
+            if (amountTransform != null) _amount = amountTransform.GetComponent<TMP_Text>();
 
             // Overlays
-            _durabilityOverlay = t.Find("durability");
-            _equippedOverlay = t.Find("equiped") ?? t.Find("equipped");
-            _qualityOverlay = t.Find("quality");
-            _foodIconOverlay = t.Find("foodicon");
-            _noteleportOverlay = t.Find("noteleport");
-            _selectedOverlay = t.Find("selected");
+            _durabilityOverlay = root.Find("durability");
+            _equippedOverlay = root.Find("equiped") ?? root.Find("equipped");
+            _qualityOverlay = root.Find("quality");
+            _foodIconOverlay = root.Find("foodicon");
+            _noteleportOverlay = root.Find("noteleport");
+            _selectedOverlay = root.Find("selected");
 
             // Binding / label
-            var bindingT = t.Find("binding");
+            var bindingT = root.Find("binding");
             if (bindingT != null) _bindingLabel = bindingT.GetComponent<TMP_Text>();
         }
 
-        // ???????????????????????????????????????
         //  Per-frame visual sync
-        // ???????????????????????????????????????
 
         private void LateUpdate()
         {
@@ -127,7 +98,7 @@ namespace FiresCore.UI
             var slot = ResolveSlot();
             if (slot == null)
             {
-                // No matching slot — clear visuals
+                // No matching slot â€” clear visuals
                 ClearVisuals();
                 return;
             }
@@ -139,9 +110,7 @@ namespace FiresCore.UI
             SyncBinding(slot, item);
         }
 
-        // ???????????????????????????????????????
         //  Slot resolution
-        // ???????????????????????????????????????
 
         private UIOverrideSlotSystem.Slot ResolveSlot()
         {
@@ -162,9 +131,7 @@ namespace FiresCore.UI
             return null;
         }
 
-        // ???????????????????????????????????????
         //  Visual sync helpers
-        // ???????????????????????????????????????
 
         private void SyncIcon(ItemDrop.ItemData item)
         {
@@ -232,8 +199,8 @@ namespace FiresCore.UI
                 _qualityOverlay.gameObject.SetActive(show);
                 if (show)
                 {
-                    var qt = _qualityOverlay.GetComponent<TMP_Text>();
-                    if (qt != null) qt.text = item.m_quality.ToString();
+                    var label = _qualityOverlay.GetComponent<TMP_Text>();
+                    if (label != null) label.text = item.m_quality.ToString();
                 }
             }
 
@@ -251,7 +218,7 @@ namespace FiresCore.UI
                 _noteleportOverlay.gameObject.SetActive(show);
             }
 
-            // Selected — never show (avoid stale highlight)
+            // Selected â€” never show (avoid stale highlight)
             if (_selectedOverlay != null)
                 _selectedOverlay.gameObject.SetActive(false);
         }

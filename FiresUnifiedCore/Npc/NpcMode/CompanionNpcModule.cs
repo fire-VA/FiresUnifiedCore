@@ -8,27 +8,10 @@ using FiresCore.Npc.Vault;
 namespace FiresCore.Npc.NpcMode
 {
     /// <summary>
-    /// Enables NPC functionality on a companion, allowing it to serve as a quest giver,
-    /// info NPC, dialogue NPC, or trader while retaining companion capabilities.
-    /// 
-    /// CRITICAL INTEGRATION:
-    /// When stationed as NPC, this module DISABLES:
-    /// - CompanionAI state machine (via IsStationedAsNpc check)
-    /// - CompanionCombatMovement (via movement lock)
-    /// - Following behavior
-    /// 
-    /// When stationed as NPC, this module OPTIONALLY ALLOWS:
-    /// - Idle wandering within a radius (allowIdleWandering flag)
-    /// - Sitting on nearby chairs
-    /// 
-    /// MODES:
-    /// - Companion Mode (default): Normal companion behavior
-    /// - Stationed NPC (stationary): Completely locked in place, no movement at all
-    /// - Stationed NPC (with idle): Locked to area but can wander/sit within radius
-    /// 
-    /// HOVER TEXT:
-    /// - Stationed: Shows NPC options (Configure, Interact, Toggle Idle)
-    /// - Companion: Falls through to CompanionPatches hover text
+    /// Lets a companion be stationed as a quest giver, info, dialogue or trader NPC. While stationed, the AI
+    /// state machine, combat movement and following are disabled; optional idle mode still lets it wander a
+    /// radius and use nearby chairs. Stationed hover text offers the NPC options, otherwise it falls through to
+    /// the companion hover text.
     /// </summary>
     public class CompanionNpcModule : MonoBehaviour, Interactable, Hoverable
     {
@@ -122,7 +105,6 @@ namespace FiresCore.Npc.NpcMode
 
         // PERF: Track whether we've already zeroed velocity/moveDir to avoid
         // calling SetMoveDir/SetWalk/SetRun every frame (each hits Harmony patches)
-        private bool _stationaryEnforced;
 
         // Face-player: throttle how often we scan for the nearest player
         private float _facePlayerTimer;
@@ -259,7 +241,7 @@ namespace FiresCore.Npc.NpcMode
         {
             if (_isInPlacementMode) return;
 
-            // Static placed NPCs have no CompanionController ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ allow them through
+            // Static placed NPCs have no CompanionController - allow them through
             if (_companion == null && !isStaticPlacement) return;
 
             // Static fixtures NEVER run AI — re-assert every tick regardless of the stationed-flag timing.
@@ -300,7 +282,7 @@ namespace FiresCore.Npc.NpcMode
         {
             if (!isStationedAsNpc || !_hasStationedPosition || _isInPlacementMode) return;
 
-            // Face nearest player ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ works WITH Valheim's Character rotation system
+            // Face nearest player - works WITH Valheim's Character rotation system
             // instead of fighting it. We just set m_lookDir and let Character.UpdateBodyRotation
             // do the smooth turning.
             if (_character == null) return;
@@ -341,10 +323,10 @@ namespace FiresCore.Npc.NpcMode
             foreach (var player in Player.GetAllPlayers())
             {
                 if (player == null || player.IsDead()) continue;
-                float d = Vector3.Distance(transform.position, player.transform.position);
-                if (d < closestDist)
+                float playerDistance = Vector3.Distance(transform.position, player.transform.position);
+                if (playerDistance < closestDist)
                 {
-                    closestDist = d;
+                    closestDist = playerDistance;
                     closest = player;
                 }
             }
@@ -422,8 +404,8 @@ namespace FiresCore.Npc.NpcMode
 
         private bool HasPatrolRoute()
         {
-            var pa = GetComponent<FiresCore.Npc.Patrol.PatrolAssignment>();
-            return pa != null && pa.HasRoute;
+            var assignment = GetComponent<FiresCore.Npc.Patrol.PatrolAssignment>();
+            return assignment != null && assignment.HasRoute;
         }
 
         /// <summary>
@@ -701,13 +683,13 @@ namespace FiresCore.Npc.NpcMode
 
         /// <summary>
         /// Removes station mode, returning companion to normal behavior.
-        /// Static (hammer-placed) NPCs cannot be unstated ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ they have no owner to return to.
+        /// Static (hammer-placed) NPCs cannot be unstated - they have no owner to return to.
         /// </summary>
         public void Unstation()
         {
             if (isStaticPlacement)
             {
-                Debug.Log($"[CompanionNpcModule] Cannot unstation {DisplayName} ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ it was placed via hammer (static NPC)");
+                Debug.Log($"[CompanionNpcModule] Cannot unstation {DisplayName} - it was placed via hammer (static NPC)");
                 MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center,
                     $"{DisplayName} is a placed NPC and cannot be converted to a companion");
                 return;
@@ -777,7 +759,7 @@ namespace FiresCore.Npc.NpcMode
                 var body = GetComponent<Rigidbody>();
                 if (body != null)
                 {
-                    // Mirror of the stationed-state freeze (FreezeAll constraints) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â clear
+                    // Mirror of the stationed-state freeze (FreezeAll constraints) - clear
                     // constraints to release the lock when the NPC starts wandering again.
                     body.constraints = RigidbodyConstraints.None;
                     body.isKinematic = false;
@@ -796,7 +778,7 @@ namespace FiresCore.Npc.NpcMode
                     Debug.Log($"[CompanionNpcModule] Set CombatMovement home position to {_stationedPosition}");
                 }
 
-                // Enable idle behavior if present (re-fetch if null ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ it may have been
+                // Enable idle behavior if present (re-fetch if null - it may have been
                 // added after CompanionNpcModule.Awake() ran)
                 if (_idleBehavior == null)
                     _idleBehavior = GetComponent<CompanionIdleBehavior>();
@@ -1238,7 +1220,7 @@ namespace FiresCore.Npc.NpcMode
 
         public void SaveToZDO()
         {
-            // Reference parent namespace fully ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â CompanionPatches is in FiresCore.Npc
+            // Reference parent namespace fully - CompanionPatches is in FiresCore.Npc
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
             if (_nview == null || !_nview.IsValid()) return;
 
