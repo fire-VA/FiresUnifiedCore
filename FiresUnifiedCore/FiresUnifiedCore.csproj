@@ -208,6 +208,7 @@
     <Compile Include="Bridge\NpcUiBridge.cs" />
     <Compile Include="Bridge\NpcConfigBridge.cs" />
     <Compile Include="Bridge\NpcAssetBridge.cs" />
+    <Compile Include="Bridge\MeshBakeBridge.cs" />
     <Compile Include="Bridge\NpcFashionBridge.cs" />
     <Compile Include="Bridge\NpcHostBridge.cs" />
     <Compile Include="ClientLogRelay\ClientLogRelay.cs" />
