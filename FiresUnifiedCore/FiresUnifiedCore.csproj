@@ -214,13 +214,11 @@
     <Compile Include="ClientLogRelay\ClientLogRelay.cs" />
     <Compile Include="ClientLogRelay\ClientLogArtifacts.cs" />
     <Compile Include="ClientLogRelay\IClientLogConsumer.cs" />
-    <Compile Include="ClientLogRelay\LogErrorWarningExtractor.cs" />
     <Compile Include="ClientLogRelay\ModListDiff.cs" />
     <Compile Include="ClientLogRelay\ClientLogArtifactWriter.cs" />
     <Compile Include="ClientLogRelay\ClientLogRelayPaths.cs" />
     <Compile Include="ClientLogRelay\Transport\ClientLogCollector.cs" />
     <Compile Include="ClientLogRelay\Transport\ClientLogChunkedTransfer.cs" />
-    <Compile Include="ClientLogRelay\Interactions\ILogRequestHandler.cs" />
     <Compile Include="ClientLogRelay\Interactions\LogRequestContext.cs" />
     <Compile Include="ClientLogRelay\Interactions\LogRequestRegistry.cs" />
     <Compile Include="ClientLogRelay\Interactions\DisconnectLogRegistry.cs" />
@@ -239,6 +237,7 @@
     <Compile Include="Npc\IdleBehaviors\PatrolBehavior.cs" />
     <Compile Include="Npc\NpcSaveState.cs" />
     <Compile Include="Npc\NpcBodyMeshGuard.cs" />
+    <Compile Include="Npc\AttachedItemVisuals.cs" />
     <Compile Include="Npc\NpcVisEquipment.cs" />
     <Compile Include="Npc\VisEquipmentCompat.cs" />
     <Compile Include="Npc\VanillaHairSpawnGate.cs" />
@@ -606,7 +605,12 @@
     <Compile Include="Async\FrameBudgetScheduler.cs" />
     <Compile Include="Async\MainThreadDispatcher.cs" />
     <Compile Include="Async\PrewarmCoroutine.cs" />
+    <Compile Include="Config\ConfigHotReload.cs" />
     <Compile Include="Config\ConfigManager.cs" />
+    <Compile Include="Config\FiresConfigPresets.cs" />
+    <Compile Include="Config\FiresConfigChoices.cs" />
+    <Compile Include="Config\FiresConfigVisibility.cs" />
+    <Compile Include="Config\FiresAdminConfigGate.cs" />
     <Compile Include="Diagnostics\FrameTimer.cs" />
     <Compile Include="Diagnostics\VisEquipmentDropPrefabHeal.cs" />
     <Compile Include="Diagnostics\CharacterListLeakGuard.cs" />
@@ -621,13 +625,17 @@
     <Compile Include="Logging\FiresCoreBanner.cs" />
     <Compile Include="Logging\FiresLog.cs" />
     <Compile Include="Logging\FiresLogColorPatch.cs" />
+    <Compile Include="Logging\ConsoleOutput.cs" />
     <Compile Include="Logging\FiresLogger.cs" />
     <Compile Include="Logging\LoadSummary.cs" />
     <Compile Include="Logging\RateLimitedLogHandler.cs" />
     <Compile Include="Logging\UnityLogSuppressionPatch.cs" />
     <Compile Include="Materials\TerrainMaterialCache.cs" />
+    <Compile Include="Materials\VanillaShaderRebind.cs" />
+    <Compile Include="Materials\VanillaShaderRebindMenuHook.cs" />
     <Compile Include="Net\NetworkObjectHelper.cs" />
     <Compile Include="Net\SafeRoutedRpc.cs" />
+    <Compile Include="Net\WorldCacheSync.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Services\BundleLoader.cs" />
     <Compile Include="Services\BundleLoadInterceptor.cs" />
@@ -640,7 +648,17 @@
     <Compile Include="Services\WaterShaderBridge.cs" />
     <Compile Include="Services\WaterState.cs" />
     <Compile Include="Services\MoonPhase.cs" />
+    <Compile Include="Creatures\CreatureOverride.cs" />
+    <Compile Include="Creatures\CreatureOverrides.cs" />
+    <Compile Include="Sync\ServerOverrideStore.cs" />
+    <Compile Include="Recipes\RecipeOverride.cs" />
+    <Compile Include="Recipes\RecipeOverrideApplier.cs" />
+    <Compile Include="Recipes\RecipeOverrides.cs" />
     <Compile Include="Sync\AdminSyncing.cs" />
+    <Compile Include="World\ZdoOrphanService.cs" />
+    <Compile Include="World\NetworkPrefabs.cs" />
+    <Compile Include="Pieces\WearLooks.cs" />
+    <Compile Include="Pieces\HammerPieces.cs" />
     <Compile Include="Sync\ConfigPushService.cs" />
     <Compile Include="Sync\ConfigPullService.cs" />
     <Compile Include="Sync\ConfigDeleteService.cs" />
@@ -658,9 +676,18 @@
     <Compile Include="Dungeon\FiresDungeonRegistry.cs" />
     <Compile Include="Dungeon\FiresDungeonAssets.cs" />
     <Compile Include="Dungeon\FiresDungeonCore.cs" />
+    <Compile Include="Dungeon\FiresDungeonUniquePlacement.cs" />
     <Compile Include="Dungeon\FiresDungeonService.cs" />
     <Compile Include="Dungeon\FiresDungeonPortalLink.cs" />
     <Compile Include="Dungeon\DungeonDoorBlockerController.cs" />
+  </ItemGroup>
+  <PropertyGroup>
+    <FiresLogAnalysisDir>..\..\FiresLogBot\FiresLogAnalysis\</FiresLogAnalysisDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(FiresLogAnalysisDir)**\*.cs" Exclude="$(FiresLogAnalysisDir)bin\**;$(FiresLogAnalysisDir)obj\**">
+      <Link>SourceLinked\FiresLogAnalysis\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

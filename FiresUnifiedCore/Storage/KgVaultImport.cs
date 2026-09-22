@@ -79,12 +79,12 @@ namespace FiresCore.Storage
                 var bankCol = db.GetCollection<BankSlot>(VaultDatabase.BankCollection, BsonAutoId.ObjectId);
                 var existingBank = bankCol.FindAll().ToList();
                 var bankByKey = new Dictionary<string, BankSlot>(StringComparer.Ordinal);
-                foreach (var slot in existingBank) bankByKey[(slot.Owner ?? "") + "" + slot.Prefab] = slot;
+                foreach (var slot in existingBank) bankByKey[(slot.Owner ?? "") + "\u0001" + slot.Prefab] = slot;
                 int nextBankId = NextId(existingBank.Select(x => x._id));
                 int bankInserted = 0, bankMerged = 0;
                 foreach (var slot in bank)
                 {
-                    string key = (slot.Owner ?? "") + "" + slot.Prefab;
+                    string key = (slot.Owner ?? "") + "\u0001" + slot.Prefab;
                     if (bankByKey.TryGetValue(key, out var have))
                     {
                         have.Amount += slot.Amount;

@@ -679,20 +679,14 @@ namespace FiresCore.Npc
             if (_visEquipment.m_backAtgeir == null)
                 _visEquipment.m_backAtgeir = FindTransformRecursive(visual, "BackAtgeir_attach");
 
-            // Find cloth colliders
-            if (_visEquipment.m_clothColliders == null || _visEquipment.m_clothColliders.Count == 0)
-            {
-                var clothColliderTransform = FindTransformRecursive(visual, "ClothCollider");
-                if (clothColliderTransform != null)
-                {
-                    _visEquipment.m_clothColliders = new List<MagicaCloth2.ColliderComponent>(
-                        clothColliderTransform.GetComponentsInChildren<MagicaCloth2.ColliderComponent>(true));
-                }
-                else
-                {
-                    _visEquipment.m_clothColliders = new List<MagicaCloth2.ColliderComponent>();
-                }
-            }
+            // Cloth colliders, always rebuilt from the rig. A prefab baked before 1.0 still holds Unity CapsuleColliders
+            // in this list, where 1.0 keeps MagicaCloth ones, and MagicaCloth calls GetColliderType() on every entry it
+            // is handed, so a single stale reference fails the cloth build of every dress or cape the NPC wears. The
+            // vanilla Player spreads its colliders over several ClothCollider objects, so search the whole visual.
+            _visEquipment.m_clothColliders = new List<MagicaCloth2.ColliderComponent>(
+                visual.GetComponentsInChildren<MagicaCloth2.ColliderComponent>(true));
+
+            LogClothRigState();
 
             // Armor overlays need the body on Custom/Player. Static NPC prefabs skip CompanionPrefabManager's load-time
             // fix, so the Player prefab's material is copied here. Headless servers skip it: no shaders load there, and
@@ -2207,6 +2201,19 @@ namespace FiresCore.Npc
                 Debug.LogWarning($"[NpcVisEquipment] FixBodyMaterialOnPrefab failed for {prefab?.name}: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>Vanilla SetupCloth remaps a cape's MagicaCloth onto this rig through VisEquipment.m_boneMap, a
+        /// private map Awake fills from m_bodyModel.bones. NPCs assign their body mesh after Awake, so the map can be
+        /// empty or stale and the cloth stays bound to the source prefab's bones. Report the counts, do not assume.</summary>
+        private void LogClothRigState()
+        {
+            if (_visEquipment == null) return;
+
+            var boneMap = AccessTools.Field(typeof(VisEquipment), "m_boneMap")?.GetValue(_visEquipment) as Dictionary<string, Transform>;
+            int bodyBones = _visEquipment.m_bodyModel?.bones?.Length ?? -1;
+            Debug.Log($"[NpcVisEquipment][cloth] '{name}' boneMap={(boneMap == null ? "null" : boneMap.Count.ToString())} "
+                + $"bodyBones={bodyBones} clothColliders={_visEquipment.m_clothColliders?.Count ?? -1}");
         }
 
         /// <summary>Gives the body the working Custom/Player material copied from the Player prefab, which armor overlays need.</summary>

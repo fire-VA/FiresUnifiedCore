@@ -40,7 +40,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character.transform.position, null, 1.0f);
             AbilityFXManager.SpawnEffect("fx_shield_start", m_character.transform.position, null, 1.0f);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=gold>? IMMORTAL STANCE ?</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=gold>IMMORTAL STANCE</color>");
             
             // Taunt all enemies in range
             TauntAllEnemies();
@@ -154,7 +154,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         private float _lastAuraTick;
         
         public override string Description => 
-            $"<color=white>? AVATAR OF LIGHT ?</color>\n" +
+            $"<color=white>AVATAR OF LIGHT</color>\n" +
             $"+{(DamageBonus - 1f) * 100:F0}% damage\n" +
             $"2x healing power\n" +
             $"-{(1f - DamageReduction) * 100:F0}% damage taken\n" +
@@ -178,7 +178,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             SpawnVFX("fx_shield_start", m_character.transform.position);
             SpawnVFX("fx_DvergerMage_Support_start", m_character.transform.position);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=white>? AVATAR OF LIGHT ?</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=white>AVATAR OF LIGHT</color>");
             
             Debug.Log($"[AvatarOfLightEffect] {m_character.m_name} transformed into AVATAR OF LIGHT!");
         }
@@ -287,7 +287,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         public float AttackSpeedBonus { get; set; } = 1.3f; // +30% attack speed
         
         public override string Description => 
-            $"<color=red>? AVATAR OF WAR ?</color>\n" +
+            $"<color=red>AVATAR OF WAR</color>\n" +
             $"+{(DamageBonus - 1f) * 100:F0}% damage\n" +
             $"+{(AttackSpeedBonus - 1f) * 100:F0}% attack speed\n" +
             $"Immune to stagger";
@@ -311,7 +311,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             SpawnVFX("vfx_spray_fire", m_character.transform.position);
             SpawnVFX("vfx_sledge_hit", m_character.transform.position);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=red>? AVATAR OF WAR ?</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=red>AVATAR OF WAR</color>");
             
             Debug.Log($"[AvatarOfWarEffect] {m_character.m_name} transformed into AVATAR OF WAR!");
         }
@@ -394,7 +394,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         private Vector3 _lastAfterimagePos;
         
         public override string Description => 
-            $"<color=purple>? SHADOW DANCE ?</color>\n" +
+            $"<color=purple>SHADOW DANCE</color>\n" +
             $"Evade all attacks\n" +
             $"+{(DamageBonus - 1f) * 100:F0}% damage\n" +
             $"Shadow stepping through enemies";
@@ -419,7 +419,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             SpawnVFX("vfx_ghost_death", m_character.transform.position);
             SpawnVFX("fx_backstab", m_character.transform.position);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=purple>? SHADOW DANCE ?</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=purple>SHADOW DANCE</color>");
             
             Debug.Log($"[ShadowDanceEffect] {m_character.m_name} entered SHADOW DANCE!");
         }
@@ -723,7 +723,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         public override string Description => 
             _hasUsedShot 
                 ? "Perfect Shot used!"
-                : $"<color=yellow>? PERFECT SHOT ?</color>\n" +
+                : $"<color=yellow>PERFECT SHOT</color>\n" +
                   $"Next shot: {DamageMultiplier * 100:F0}% damage\n" +
                   $"Guaranteed critical hit";
         
@@ -743,7 +743,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             // Focus VFX
             SpawnVFX("fx_Lightning", m_character.transform.position);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=yellow>? PERFECT SHOT READY ?</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=yellow>PERFECT SHOT READY</color>");
             
             Debug.Log($"[PerfectShotEffect] {m_character.m_name} preparing PERFECT SHOT!");
         }
@@ -814,7 +814,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         public float DamageBonus { get; set; } = 2.0f; // Double damage
         
         public override string Description => 
-            $"<color=magenta>? ARCANE FORM ?</color>\n" +
+            $"<color=magenta>ARCANE FORM</color>\n" +
             $"Spells cost no Eitr\n" +
             $"+{(DamageBonus - 1f) * 100:F0}% magic damage";
         
@@ -837,7 +837,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             SpawnVFX("vfx_StaffShield", m_character.transform.position);
             SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=magenta>? ARCANE FORM ?</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=magenta>ARCANE FORM</color>");
             
             Debug.Log($"[ArcaneFormEffect] {m_character.m_name} transformed into ARCANE FORM!");
         }
@@ -905,7 +905,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         public float HealingBonus { get; set; } = 2.0f; // Double healing
         
         public override string Description => 
-            $"<color=green>? AVATAR OF LIFE ?</color>\n" +
+            $"<color=green>AVATAR OF LIFE</color>\n" +
             $"2x healing power\n" +
             $"Cannot die";
         
@@ -928,7 +928,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             SpawnVFX("fx_creature_tamed", m_character.transform.position);
             SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=green>? AVATAR OF LIFE ?</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=green>AVATAR OF LIFE</color>");
             
             Debug.Log($"[AvatarOfLifeEffect] {m_character.m_name} transformed into AVATAR OF LIFE!");
         }
@@ -1009,7 +1009,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         public float CritBonus { get; set; } = 2.0f; // Double crit damage
         
         public override string Description => 
-            $"<color=gold>? WAY OF PERFECTION ?</color>\n" +
+            $"<color=gold>WAY OF PERFECTION</color>\n" +
             $"2x attack speed\n" +
             $"All attacks critical hit";
         
@@ -1029,7 +1029,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             SpawnVFX("vfx_Cold", m_character.transform.position);
             SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=gold>? WAY OF PERFECTION ?</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=gold>WAY OF PERFECTION</color>");
             
             Debug.Log($"[WayOfPerfectionEffect] {m_character.m_name} achieved WAY OF PERFECTION!");
         }

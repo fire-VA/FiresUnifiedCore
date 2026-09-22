@@ -35,7 +35,7 @@ namespace FiresCore.Npc.Vault
             if (owner != null)
             {
                 // Use TryGetRoster so we can distinguish:
-                //   rosterKeyExists=true  ? the key is in m_customData (even if Entries is empty)
+                //   rosterKeyExists=true  - the key is in m_customData (even if Entries is empty)
                 //   rosterKeyExists=false - key was never written (genuine first-login / pre-migration)
                 // This matters for the vault-fallback decision below.
                 bool rosterKeyExists = PlayerCompanionStorage.TryGetRoster(owner, out var roster);
@@ -99,7 +99,7 @@ namespace FiresCore.Npc.Vault
                         PlayerCompanionStorage.SaveRoster(owner, roster);
 
                     if (VerboseLogging)
-                        Debug.Log($"{LogPrefix} ResolveAllForPlayer({ownerPlayerId}) ? roster: {list.Count} eligible, " +
+                        Debug.Log($"{LogPrefix} ResolveAllForPlayer({ownerPlayerId}) -> roster: {list.Count} eligible, " +
                                   $"skipped dismissed={skippedDismissed}, otherServer={skippedOtherServer}, nullSnapshot={skippedNullSnap}");
 
                     // CRITICAL: the roster key exists, so we own this player's companion
@@ -110,7 +110,7 @@ namespace FiresCore.Npc.Vault
                 }
 
                 if (VerboseLogging)
-                    Debug.Log($"{LogPrefix} ResolveAllForPlayer({ownerPlayerId}) ? roster key not found, trying vault");
+                    Debug.Log($"{LogPrefix} ResolveAllForPlayer({ownerPlayerId}) -> roster key not found, trying vault");
             }
 
             // Roster key was never written (genuine first-login / pre-Phase-3 migration).
@@ -119,7 +119,7 @@ namespace FiresCore.Npc.Vault
             {
                 var fromVault = FiresCore.Bridge.CompanionVaultBridge.GetCompanionsFor(ownerPlayerId);
                 if (VerboseLogging)
-                    Debug.Log($"{LogPrefix} ResolveAllForPlayer({ownerPlayerId}) ? vault: {fromVault?.Count ?? 0} entries");
+                    Debug.Log($"{LogPrefix} ResolveAllForPlayer({ownerPlayerId}) -> vault: {fromVault?.Count ?? 0} entries");
                 return fromVault;
             }
             catch (Exception ex)
@@ -150,7 +150,7 @@ namespace FiresCore.Npc.Vault
                 {
                     StampPendingFields(entry);
                     if (VerboseLogging)
-                        Debug.Log($"{LogPrefix} ResolveByCompanionId({companionId}) ? roster ({entry.FollowState}, pending={entry.IsPendingRespawn})");
+                        Debug.Log($"{LogPrefix} ResolveByCompanionId({companionId}) -> roster ({entry.FollowState}, pending={entry.IsPendingRespawn})");
                     return entry.Snapshot;
                 }
             }
@@ -166,7 +166,7 @@ namespace FiresCore.Npc.Vault
                     if (companion != null && companion.CompanionId == companionId)
                     {
                         if (VerboseLogging)
-                            Debug.Log($"{LogPrefix} ResolveByCompanionId({companionId}) ? vault");
+                            Debug.Log($"{LogPrefix} ResolveByCompanionId({companionId}) -> vault");
                         return companion;
                     }
                 }

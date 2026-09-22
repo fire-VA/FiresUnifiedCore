@@ -111,7 +111,7 @@ namespace FiresCore.UI
             if (layout?.RootElement == null) return null;
 
             var baselineRoot = GetBaselineRoot(layout);
-            if (baselineRoot == null) return null; // No baseline ? full override (legacy)
+            if (baselineRoot == null) return null; // No baseline -> full override (legacy)
 
             var modifiedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

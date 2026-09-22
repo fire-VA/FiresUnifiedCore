@@ -575,12 +575,12 @@ namespace FiresCore.Dungeon
             if (zoneSystem == null || zoneSystem.m_locations == null) return null;
 
             ZoneSystem.ZoneLocation loc = zoneSystem.m_locations.Find(l => l != null && l.m_prefabName == spec.CryptLocationPrefabName);
-            if (loc == null)
+            bool isNew = loc == null;
+            if (isNew)
             {
                 // World-gen specs get the full placement descriptor; door-/command-spawned specs get the manual record.
                 loc = spec.NearSpawnLocation != null ? BuildZoneLocation(spec) : BuildManualZoneLocation(spec);
                 if (loc == null) return null;
-                zoneSystem.m_locations.Add(loc);
             }
             else
             {
@@ -592,10 +592,15 @@ namespace FiresCore.Dungeon
 
             if (!loc.m_prefab.IsValid)
             {
+                // Never leave an enabled-but-invalid location in m_locations: 1.0's GetLocation(string) THROWS on
+                // exactly that shape, taking down any vanilla name lookup that walks the list.
+                if (!isNew) loc.m_enable = false;
                 Debug.LogWarning($"{spec.LogTag} dungeon location prefab not valid at SetupLocations; " +
                                  "client proxy resolution will fail until the bundle loads + a reload.");
                 return null;
             }
+            loc.m_enable = true; // re-arm a location the guard above disabled on an earlier (invalid) pass
+            if (isNew) zoneSystem.m_locations.Add(loc);
 
             // Vanilla forces m_prefabName = m_prefab.Name, then keys by Hash. CreateLocationProxy stamps the SAME
             // m_prefab.Name onto the proxy ZDO, so the client resolves by exactly this hash. Mirror it verbatim.
@@ -781,22 +786,22 @@ namespace FiresCore.Dungeon
             int seed = UnityEngine.Random.Range(int.MinValue, int.MaxValue);
 
             // Primary path: the vanilla private SpawnLocation(loc, seed, pos, rot, Full, List<GameObject>).
+            // Resolved by NAME and invoked with an arg array sized to the live parameter list: 1.0 appended a
+            // trailing 'bool cheated = false', and an exact 6-type lookup returned null — which silently sent every
+            // manual spawn down the degraded direct-instantiate fallback below since the 1.0 update.
             try
             {
                 if (_spawnLocationMethod == null)
-                {
-                    _spawnLocationMethod = AccessTools.Method(typeof(ZoneSystem), "SpawnLocation", new[]
-                    {
-                        typeof(ZoneSystem.ZoneLocation), typeof(int), typeof(Vector3), typeof(Quaternion),
-                        typeof(ZoneSystem.SpawnMode), typeof(List<GameObject>)
-                    });
-                }
+                    _spawnLocationMethod = AccessTools.Method(typeof(ZoneSystem), "SpawnLocation");
                 if (_spawnLocationMethod != null)
                 {
-                    _spawnLocationMethod.Invoke(zoneSystem, new object[]
-                    {
-                        loc, seed, pos, rot, ZoneSystem.SpawnMode.Full, new List<GameObject>()
-                    });
+                    var pars = _spawnLocationMethod.GetParameters();
+                    var args = new object[pars.Length];
+                    args[0] = loc; args[1] = seed; args[2] = pos; args[3] = rot;
+                    args[4] = ZoneSystem.SpawnMode.Full; args[5] = new List<GameObject>();
+                    for (int i = 6; i < pars.Length; i++)
+                        args[i] = pars[i].HasDefaultValue ? pars[i].DefaultValue : null;
+                    _spawnLocationMethod.Invoke(zoneSystem, args);
                     int rooms = LogGeneratedRooms(spec, pos);
                     Debug.Log($"{spec.LogTag} spawn: generated, placed {rooms} rooms (full pipeline).");
                     spec.OnDungeonGenerated?.Invoke();

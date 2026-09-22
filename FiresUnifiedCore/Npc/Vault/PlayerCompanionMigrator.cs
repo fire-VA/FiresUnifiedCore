@@ -99,7 +99,7 @@ namespace FiresCore.Npc.Vault
                 bool saved = PlayerCompanionStorage.SaveRoster(player, roster);
                 if (saved)
                 {
-                    Debug.Log($"{LogPrefix} Migrated {imported} companion{(imported == 1 ? "" : "s")} from vault ? roster for {playerId} (skipped {skipped}).");
+                    Debug.Log($"{LogPrefix} Migrated {imported} companion{(imported == 1 ? "" : "s")} from vault -> roster for {playerId} (skipped {skipped}).");
                 }
                 else
                 {

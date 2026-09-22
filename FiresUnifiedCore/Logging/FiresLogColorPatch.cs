@@ -1,31 +1,24 @@
 using System;
-using System.IO;
-using System.Reflection;
 using System.Text.RegularExpressions;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 
 namespace FiresCore.Logging
 {
-    // Harmony prefix on ConsoleLogListener.LogEvent that paints our mods'
-    // log lines with per-class colors via reflection into BepInEx's internal
-    // ConsoleManager. Other mods' lines pass through untouched. Warnings,
-    // errors, and fatal levels keep their vanilla colors so they stay
-    // visually distinct.
+    // Harmony prefix on ConsoleLogListener.LogEvent that sends every console line through ConsoleOutput, so the
+    // blocking console write happens off the main thread. Our mods' lines get per-class colours; everything else
+    // keeps BepInEx's level colour, and BepInEx's own filters (displayed levels, Unity logs on or off) still apply.
+    // Warnings, errors and fatal levels keep their vanilla colours so they stay visually distinct.
     //
-    // Multiple Fires-* mods often ship their own copy; the AppDomain-shared
-    // owner key ensures only the first-to-fire instance writes lines (the
-    // others stand down). Load order doesn't matter.
+    // Other Fires mods can ship a copy of this patch; the AppDomain-shared owner key makes exactly one of them write.
+    // Core takes the key when it starts, so with Core installed its copy is the one that writes.
     [HarmonyPatch]
     internal static class FiresLogColorPatch
     {
         private const ConsoleColor DefaultColor = ConsoleColor.Magenta;
-        private const ConsoleColor ResetColor = ConsoleColor.Gray;
         private const string OwnerKey = "FiresColorPatch.Owner";
         private const string MyOwnerName = "FiresUnifiedCore";
-        private const string BepInExConsoleManagerTypeName = "BepInEx.ConsoleManager";
-        private const string ConsoleStreamPropertyName = "ConsoleStream";
-        private const string SetConsoleColorMethodName = "SetConsoleColor";
 
         private static readonly (string keyword, ConsoleColor color)[] s_classColorRules =
         {
@@ -223,30 +216,58 @@ namespace FiresCore.Logging
             @"^\s*\[([^\]]+)\]",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-        private static bool s_reflectionResolved;
-        private static Func<object> s_consoleStreamGetter;
-        private static Action<ConsoleColor> s_setConsoleColor;
+        private static readonly Func<ConsoleLogListener, bool> s_writeUnityLogs = BindWriteUnityLogs();
+        private static readonly ConfigEntry<LogLevel> s_displayedLevels =
+            AccessTools.Field(typeof(ConsoleLogListener), "ConfigConsoleDisplayedLevel")?.GetValue(null) as ConfigEntry<LogLevel>;
+
+        // Called once from Core's setup: the writer starts, and Core's copy of this patch becomes the owner even if
+        // another mod's copy claimed the key while it was loading first.
+        internal static void TakeOwnership()
+        {
+            ConsoleOutput.Start();
+            AppDomain.CurrentDomain.SetData(OwnerKey, MyOwnerName);
+        }
 
         [HarmonyPatch(typeof(ConsoleLogListener), nameof(ConsoleLogListener.LogEvent))]
         [HarmonyPrefix]
-        private static bool LogEvent_Prefix(LogEventArgs eventArgs)
+        [HarmonyPriority(Priority.First)]
+        private static bool LogEvent_Prefix(ConsoleLogListener __instance, object sender, LogEventArgs eventArgs)
         {
             try
             {
-                if (eventArgs == null) return true;
-                string message = eventArgs.Data?.ToString();
-                if (string.IsNullOrEmpty(message)) return true;
-                if (!ClaimOwnershipOrBail()) return true;
-                if (!IsOurModMessage(message) && !IsOurModSource(eventArgs)) return true;
-                if (ShouldKeepVanillaColor(eventArgs.Level)) return true;
+                if (eventArgs == null || !ClaimOwnershipOrBail()) return true;
+                if (!ConsoleOutput.Started || s_writeUnityLogs == null || s_displayedLevels == null) return true;
+                if (!ConsoleShows(__instance, sender, eventArgs.Level)) return false;
 
-                ConsoleColor color = PickColorFromClassName(message);
-                return TryWriteWithColor(eventArgs, color);
+                string message = eventArgs.Data?.ToString();
+                ConsoleColor color = IsColouredFiresLine(eventArgs, message)
+                    ? PickColorFromClassName(message)
+                    : eventArgs.Level.GetConsoleColor();
+                return !ConsoleOutput.Write(color, eventArgs.ToStringLine());
             }
             catch
             {
                 return true;
             }
+        }
+
+        // The same filter BepInEx's ConsoleLogListener applies before it writes.
+        private static bool ConsoleShows(ConsoleLogListener listener, object sender, LogLevel level)
+        {
+            if (sender is UnityLogSource && !s_writeUnityLogs(listener)) return false;
+            return (level & s_displayedLevels.Value) != LogLevel.None;
+        }
+
+        private static bool IsColouredFiresLine(LogEventArgs eventArgs, string message)
+        {
+            if (string.IsNullOrEmpty(message) || ShouldKeepVanillaColor(eventArgs.Level)) return false;
+            return IsOurModMessage(message) || IsOurModSource(eventArgs);
+        }
+
+        private static Func<ConsoleLogListener, bool> BindWriteUnityLogs()
+        {
+            var getter = AccessTools.PropertyGetter(typeof(ConsoleLogListener), "WriteUnityLogs");
+            return getter != null ? AccessTools.MethodDelegate<Func<ConsoleLogListener, bool>>(getter) : null;
         }
 
         // Returns true when we are (or just became) the writer; false when
@@ -262,8 +283,8 @@ namespace FiresCore.Logging
             return owner == MyOwnerName;
         }
 
-        // internal so RateLimitedLogHandler shares the SAME tag set when deciding which native-console lines are
-        // ours (to drop their raw uncolored duplicate) — one source of truth for "is this a Fires mod line".
+        // internal so RateLimitedLogHandler shares the SAME tag set when deciding which Unity log lines are ours
+        // (to write them straight to BepInEx instead of the native writer) — one source of truth for "is this a Fires mod line".
         internal static bool IsOurModMessage(string message)
         {
             if (string.IsNullOrEmpty(message)) return false;
@@ -347,68 +368,5 @@ namespace FiresCore.Logging
             return DefaultColor;
         }
 
-        // Returns false to suppress the vanilla LogEvent body when we
-        // successfully wrote; true to let vanilla render the line when the
-        // reflection bind isn't available.
-        private static bool TryWriteWithColor(LogEventArgs eventArgs, ConsoleColor color)
-        {
-            EnsureReflection();
-            if (s_consoleStreamGetter == null || s_setConsoleColor == null) return true;
-
-            var stream = s_consoleStreamGetter() as TextWriter;
-            if (stream == null) return true;
-
-            try
-            {
-                s_setConsoleColor(color);
-                stream.Write(eventArgs.ToStringLine());
-            }
-            finally
-            {
-                s_setConsoleColor(ResetColor);
-            }
-            return false;
-        }
-
-        private static void EnsureReflection()
-        {
-            if (s_reflectionResolved) return;
-            s_reflectionResolved = true;
-            try
-            {
-                var asm = typeof(ConsoleLogListener).Assembly;
-                var consoleManagerType = asm.GetType(BepInExConsoleManagerTypeName, throwOnError: false);
-                if (consoleManagerType == null) return;
-
-                BindConsoleStreamGetter(consoleManagerType);
-                BindSetConsoleColor(consoleManagerType);
-            }
-            catch (Exception ex)
-            {
-                FiresLogger.LogWarning($"FiresLogColorPatch reflection bind failed: {ex.Message}");
-            }
-        }
-
-        private static void BindConsoleStreamGetter(Type consoleManagerType)
-        {
-            var streamProp = consoleManagerType.GetProperty(ConsoleStreamPropertyName,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            var getMethod = streamProp?.GetGetMethod(nonPublic: true);
-            if (getMethod == null) return;
-
-            s_consoleStreamGetter = (Func<object>)Delegate.CreateDelegate(typeof(Func<object>), getMethod);
-        }
-
-        private static void BindSetConsoleColor(Type consoleManagerType)
-        {
-            var setColorMethod = consoleManagerType.GetMethod(SetConsoleColorMethodName,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
-                binder: null,
-                types: new[] { typeof(ConsoleColor) },
-                modifiers: null);
-            if (setColorMethod == null) return;
-
-            s_setConsoleColor = (Action<ConsoleColor>)Delegate.CreateDelegate(typeof(Action<ConsoleColor>), setColorMethod);
-        }
     }
 }

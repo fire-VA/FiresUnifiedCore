@@ -3,6 +3,7 @@ using System;
 using FiresCore.Net;
 using FiresCore.Sync;
 using FiresCore.Logging;
+using HarmonyLib;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -103,9 +104,17 @@ namespace FiresCore.UI
             get { return Path.Combine(FiresCore.Storage.FiresConfigPaths.UiLayouts); }
         }
 
-        /// <summary>
-        /// Register chunked transfer RPCs. Called once during initialization.
-        /// </summary>
+        /// <summary>ZNet.Awake runs once per session, so a reconnect or world change re-binds the handlers
+        /// onto the fresh ZRoutedRpc instance. Without it a reconnected client kept dead handlers and
+        /// dropped every layout push until a full relaunch.</summary>
+        [HarmonyPatch(typeof(ZNet), "Awake")]
+        private static class LayoutRpcReRegisterOnSessionStart
+        {
+            [HarmonyPostfix]
+            private static void Postfix() => EnsureRpcsRegistered();
+        }
+
+        /// <summary>Register the chunked transfer RPCs onto the current ZRoutedRpc instance.</summary>
         public static void EnsureRpcsRegistered()
         {
             var current = ZRoutedRpc.instance;

@@ -129,7 +129,7 @@ namespace FiresCore.Npc.NpcMode
                             var arr = effectPrefabsField.GetValue(placeEffect) as System.Collections.IList;
                             if (arr == null)
                             {
-                                sb.AppendLine("  m_placeEffect.m_effectPrefabs  : <null> (safe ? EffectList.Create bails)");
+                                sb.AppendLine("  m_placeEffect.m_effectPrefabs  : <null> (safe - EffectList.Create bails)");
                             }
                             else
                             {

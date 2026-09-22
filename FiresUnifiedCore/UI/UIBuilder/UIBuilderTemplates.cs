@@ -342,7 +342,7 @@ namespace FiresCore.UI
                     UILayoutCodex.AddOrReplace(layout);
                     saved++;
 
-                    UnityEngine.Debug.Log($"[UIBuilderTemplates] Auto-captured template: {target.DisplayName} ? {fileName}");
+                    UnityEngine.Debug.Log($"[UIBuilderTemplates] Auto-captured template: {target.DisplayName} -> {fileName}");
                 }
                 catch (Exception ex)
                 {
@@ -370,7 +370,7 @@ namespace FiresCore.UI
             UILayoutSerializer.SaveToFile(layout, fileName);
             UILayoutCodex.AddOrReplace(layout);
 
-            UnityEngine.Debug.Log($"[UIBuilderTemplates] Saved captured template: {layout.DisplayName} ? {fileName}");
+            UnityEngine.Debug.Log($"[UIBuilderTemplates] Saved captured template: {layout.DisplayName} -> {fileName}");
             return layout;
         }
 

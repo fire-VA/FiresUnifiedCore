@@ -1337,8 +1337,8 @@ namespace FiresCore.Npc
             return eyeColors[UnityEngine.Random.Range(0, eyeColors.Length)];
         }
         
-        // The hair styles vanilla character creation offers. Keep in sync with DefaultHairItems and DefaultBeardItems
-        // in the RPGMaker DressingRoomScreenController. Variant prefabs and raw FBX clips are not selectable styles.
+        // Fallback pool for the window before ObjectDB is populated -- in 1.0 the main menu runs ObjectDB.Awake with
+        // zero items. GetAvailableHairStyles/GetAvailableBeardStyles prefer the live ObjectDB query over these.
         public static readonly string[] KnownHairStyles = {
             "HairNone",
             "Hair1","Hair2","Hair3","Hair4","Hair5","Hair6","Hair7","Hair8","Hair9","Hair10",
@@ -1354,10 +1354,9 @@ namespace FiresCore.Npc
             "Beard25","Beard26"
         };
         
-        /// <summary>
-        /// Gets available hair style prefab names.
-        /// </summary>
-        private List<string> GetAvailableHairStyles()
+        /// <summary>The one source of which hair styles exist, shared by the loadout roller, the static-NPC
+        /// randomiser and the dressing room. Mirrors the vanilla barber exactly.</summary>
+        public static List<string> GetAvailableHairStyles()
         {
             // Mirror the vanilla barber EXACTLY: enumerate ObjectDB Customization items whose prefab name
             // starts with "Hair" — the SAME pool PlayerCustomization shows, so modded customization
@@ -1377,10 +1376,8 @@ namespace FiresCore.Npc
             return KnownHairStyles.Where(h => !string.IsNullOrEmpty(h)).ToList();
         }
 
-        /// <summary>
-        /// Gets available beard style prefab names.
-        /// </summary>
-        private List<string> GetAvailableBeardStyles()
+        /// <summary>The one source of which beard styles exist. See GetAvailableHairStyles.</summary>
+        public static List<string> GetAvailableBeardStyles()
         {
             var objectDb = ObjectDB.instance;
             if (objectDb != null)

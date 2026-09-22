@@ -1,16 +1,13 @@
-using BepInEx.Logging;
 using System;
-using System.IO;
-using System.Reflection;
 using System.Text;
 using UnityEngine;
 
 namespace FiresCore.Logging
 {
     // Multi-color console banner writer. Consumers supply per-line Segment
-    // arrays; Print emits them through BepInEx's console stream so each
-    // segment renders in its declared color, and falls back to plain
-    // Debug.Log when the reflection bind isn't available.
+    // arrays; Print queues them on ConsoleOutput so each segment renders in
+    // its declared color, and falls back to plain Debug.Log when there is no
+    // console to write to.
     public static class Banner
     {
         public readonly struct Segment
@@ -21,14 +18,7 @@ namespace FiresCore.Logging
         }
 
         private const ConsoleColor ResetColor = ConsoleColor.Gray;
-        private const string BepInExConsoleManagerTypeName = "BepInEx.ConsoleManager";
-        private const string ConsoleStreamPropertyName = "ConsoleStream";
-        private const string SetConsoleColorMethodName = "SetConsoleColor";
         private const int PlainFallbackBufferCapacity = 128;
-
-        private static bool s_reflectionResolved;
-        private static Func<object> s_consoleStreamGetter;
-        private static Action<ConsoleColor> s_setConsoleColor;
 
         public static void Print(Segment[][] lines)
         {
@@ -51,36 +41,18 @@ namespace FiresCore.Logging
 
         private static bool TryWriteSegmented(Segment[][] lines)
         {
-            EnsureReflection();
-            if (s_consoleStreamGetter == null || s_setConsoleColor == null) return false;
+            if (!ConsoleOutput.Write(ResetColor, Environment.NewLine)) return false;
 
-            var stream = s_consoleStreamGetter() as TextWriter;
-            if (stream == null) return false;
-
-            try
+            foreach (var line in lines)
             {
-                s_setConsoleColor(ResetColor);
-                stream.WriteLine();
-
-                foreach (var line in lines)
+                if (line != null)
                 {
-                    if (line == null || line.Length == 0)
-                    {
-                        stream.WriteLine();
-                        continue;
-                    }
                     foreach (var seg in line)
                     {
-                        if (string.IsNullOrEmpty(seg.Text)) continue;
-                        s_setConsoleColor(seg.Color);
-                        stream.Write(seg.Text);
+                        if (!string.IsNullOrEmpty(seg.Text)) ConsoleOutput.Write(seg.Color, seg.Text);
                     }
-                    stream.WriteLine();
                 }
-            }
-            finally
-            {
-                ResetConsoleColorSafely();
+                ConsoleOutput.Write(ResetColor, Environment.NewLine);
             }
             return true;
         }
@@ -97,56 +69,6 @@ namespace FiresCore.Logging
                     if (!string.IsNullOrEmpty(seg.Text)) sb.Append(seg.Text);
                 }
                 Debug.Log(sb.ToString());
-            }
-        }
-
-        private static void EnsureReflection()
-        {
-            if (s_reflectionResolved) return;
-            s_reflectionResolved = true;
-            try
-            {
-                var asm = typeof(ConsoleLogListener).Assembly;
-                var consoleManagerType = asm.GetType(BepInExConsoleManagerTypeName, throwOnError: false);
-                if (consoleManagerType == null) return;
-
-                BindConsoleStreamGetter(consoleManagerType);
-                BindSetConsoleColor(consoleManagerType);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[FiresUnifiedCore] Banner reflection bind failed (plain fallback will be used): {ex.Message}");
-            }
-        }
-
-        private static void BindConsoleStreamGetter(Type consoleManagerType)
-        {
-            var streamProp = consoleManagerType.GetProperty(ConsoleStreamPropertyName,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            var getMethod = streamProp?.GetGetMethod(nonPublic: true);
-            if (getMethod == null) return;
-
-            s_consoleStreamGetter = (Func<object>)Delegate.CreateDelegate(typeof(Func<object>), getMethod);
-        }
-
-        private static void BindSetConsoleColor(Type consoleManagerType)
-        {
-            var setColorMethod = consoleManagerType.GetMethod(SetConsoleColorMethodName,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
-                binder: null,
-                types: new[] { typeof(ConsoleColor) },
-                modifiers: null);
-            if (setColorMethod == null) return;
-
-            s_setConsoleColor = (Action<ConsoleColor>)Delegate.CreateDelegate(typeof(Action<ConsoleColor>), setColorMethod);
-        }
-
-        private static void ResetConsoleColorSafely()
-        {
-            try { s_setConsoleColor?.Invoke(ResetColor); }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[FiresUnifiedCore] Banner color reset threw: {ex.Message}");
             }
         }
     }

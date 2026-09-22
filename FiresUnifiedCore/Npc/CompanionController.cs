@@ -1547,7 +1547,7 @@ if (isTamed && ownerPlayerId == 0 &&
 
       // Wild-faction gate: hostile wild companions (Bandit / Cultist) refuse to
       // be recruited regardless of currency or items offered. See
-      // Docs/WILD_COMPANION_SPAWN_PLAN.md ?10 - the design calls for bandits to
+      // Docs/WILD_COMPANION_SPAWN_PLAN.md section 10 - the design calls for bandits to
       // be kill-and-loot content, not recruit content. Neutrals (faction == 0)
       // fall through to the normal tame flow. If the ZDO has no
       // companion_wild_faction key at all (non-wild spawn: placed NPC, admin
@@ -2000,8 +2000,8 @@ _isRespawning = false;
             // Frost Caves, Mistlands fortresses, Ashlands fortresses) place the
             // interior at Y > ~3000.  ZoneSystem.GetGroundHeight ignores the input
             // Y and returns the OUTSIDE world terrain Y for the same XZ, so using
-            // it inside a dungeon produces a position at Y?30 (surface) while the
-            // player is at Y?5000.  Detect this and skip the ground-height
+            // it inside a dungeon produces a position at Y~30 (surface) while the
+            // player is at Y~5000.  Detect this and skip the ground-height
             // override entirely — just use the owner's actual Y.
             bool ownerAtInteriorAltitude = ownerPos.y > 1000f;
 
@@ -3025,7 +3025,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
             if (zdo == null) return;
 
             zdo.Set("companion_wasfollowing", follow);
-            Debug.Log($"[CompanionController] Persistent follow intent for {companionName} ({companionId}) ? {follow}");
+            Debug.Log($"[CompanionController] Persistent follow intent for {companionName} ({companionId}) -> {follow}");
         }
 
         /// <summary>

@@ -683,7 +683,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             
             if (m_character != null)
             {
-                m_character.Message(MessageHud.MessageType.Center, "<color=cyan>? Divine Hymn ?</color>");
+                m_character.Message(MessageHud.MessageType.Center, "<color=cyan>Divine Hymn</color>");
                 SpawnVFX("fx_DvergerMage_Support_start", m_character.transform.position);
             }
             

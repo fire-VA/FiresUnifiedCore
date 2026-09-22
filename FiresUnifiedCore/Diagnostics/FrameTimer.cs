@@ -140,6 +140,28 @@ namespace FiresCore.Diagnostics
             LastWindowSeconds = windowSeconds > 0.0 ? windowSeconds : 1.0;
         }
 
+        // The live accumulators, ranked by WORST SINGLE CALL rather than total.
+        // A stall is one long call, not a lot of short ones, so totals rank the
+        // busy systems while MaxMs ranks the system that actually froze the
+        // frame. Reads the current window without rotating it, because a stall
+        // is reported mid-window and the evidence would otherwise be cleared
+        // before anyone could ask for it. New method, not a changed signature —
+        // sibling mods are compiled against the old Core.
+        public static IReadOnlyList<LabelTiming> WorstSingleCalls(int topN)
+        {
+            var snapshot = new List<LabelTiming>(Stats.Count);
+            foreach (var kv in Stats)
+            {
+                double totalMs = kv.Value.TotalTicks * TicksToMs;
+                double maxMs = kv.Value.MaxTicksOneCall * TicksToMs;
+                double avgMs = kv.Value.CallCount > 0 ? totalMs / kv.Value.CallCount : 0.0;
+                snapshot.Add(new LabelTiming(kv.Key, totalMs, kv.Value.CallCount, avgMs, maxMs));
+            }
+            snapshot.Sort((a, b) => b.MaxMs.CompareTo(a.MaxMs));
+            if (topN > 0 && snapshot.Count > topN) snapshot.RemoveRange(topN, snapshot.Count - topN);
+            return snapshot;
+        }
+
         public static void Clear()
         {
             Stats.Clear();

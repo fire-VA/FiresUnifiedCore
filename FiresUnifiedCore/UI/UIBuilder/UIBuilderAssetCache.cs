@@ -172,7 +172,7 @@ namespace FiresCore.UI
                 _manifest.Entries.Add(entry);
                 SaveManifest();
 
-                Debug.Log($"[UIBuilderAssetCache] Cached sprite '{originalName}' ? {safeName}.png ({entry.TextureWidth}x{entry.TextureHeight})");
+                Debug.Log($"[UIBuilderAssetCache] Cached sprite '{originalName}' -> {safeName}.png ({entry.TextureWidth}x{entry.TextureHeight})");
                 return CachePrefix + safeName;
             }
             catch (Exception ex)
@@ -267,7 +267,7 @@ namespace FiresCore.UI
                 _manifest.Entries.Add(entry);
                 SaveManifest();
 
-                Debug.Log($"[UIBuilderAssetCache] Cached RawImage texture '{originalName}' ? {safeName}.png ({tex.width}x{tex.height})");
+                Debug.Log($"[UIBuilderAssetCache] Cached RawImage texture '{originalName}' -> {safeName}.png ({tex.width}x{tex.height})");
                 return CachePrefix + safeName;
             }
             catch (Exception ex)

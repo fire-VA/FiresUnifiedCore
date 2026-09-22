@@ -7,6 +7,7 @@ using System.Text;
 using BepInEx;
 using FiresCore.Logging;
 using FiresCore.Net;
+using HarmonyLib;
 using UnityEngine;
 
 namespace FiresCore.Sync
@@ -36,16 +37,27 @@ namespace FiresCore.Sync
         private static readonly Dictionary<ManifestKey, Dictionary<string, string>> _peerManifests =
             new Dictionary<ManifestKey, Dictionary<string, string>>();
 
-        private static bool _rpcsRegistered;
+        private static ZRoutedRpc _registeredOn;
+
+        /// <summary>ZNet.Awake runs once per session, so a reconnect or world change re-binds the handlers
+        /// onto the fresh ZRoutedRpc instance. A one-shot flag left a reconnected client unable to answer
+        /// the server's login manifest query, and every config folder timed out and was skipped.</summary>
+        [HarmonyPatch(typeof(ZNet), "Awake")]
+        private static class ManifestRpcReRegisterOnSessionStart
+        {
+            [HarmonyPostfix]
+            private static void Postfix() => EnsureRegistered();
+        }
 
         public static void EnsureRegistered()
         {
-            if (_rpcsRegistered) return;
-            if (ZRoutedRpc.instance == null) return;
+            var current = ZRoutedRpc.instance;
+            if (current == null) return;
+            if (ReferenceEquals(_registeredOn, current)) return;
 
             TryRegisterRpc(RpcRequest, RPC_OnRequest);
             TryRegisterRpc(RpcReply, RPC_OnReply);
-            _rpcsRegistered = true;
+            _registeredOn = current;
         }
 
         public static void RegisterFolder(string namespaceKey, Func<string> folderProvider,

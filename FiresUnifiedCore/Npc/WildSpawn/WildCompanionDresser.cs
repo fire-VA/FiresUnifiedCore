@@ -136,13 +136,13 @@ namespace FiresCore.Npc.WildSpawn
             string existingId = zdo.GetString("companion_id", string.Empty);
             if (!string.IsNullOrEmpty(existingId))
             {
-                Debug.Log($"[WildCompanionDresser] {gameObject.name}: skipping ? already has companion_id '{existingId}'.");
+                Debug.Log($"[WildCompanionDresser] {gameObject.name}: skipping - already has companion_id '{existingId}'.");
                 yield break;
             }
 
             if (zdo.GetBool("companion_tamed", false))
             {
-                FiresLogger.LogVerbose($"[WildCompanionDresser] {gameObject.name}: skipping ? companion_tamed=true.");
+                FiresLogger.LogVerbose($"[WildCompanionDresser] {gameObject.name}: skipping - companion_tamed=true.");
                 yield break;
             }
 

@@ -190,9 +190,9 @@ namespace FiresCore.Npc.AI
             
             // MOVEMENT STATE SYNC: Set the companion's walk/run flags on Character
             // so Valheim's UpdateWalking() picks the correct speed tier and animation.
-            //   m_walk=true  ? uses m_walkSpeed (slow walk)
-            //   m_run=true   ? uses m_runSpeed  (sprint)
-            //   both false   ? uses m_speed     (default jog)
+            //   m_walk=true  -> uses m_walkSpeed (slow walk)
+            //   m_run=true   -> uses m_runSpeed  (sprint)
+            //   both false   -> uses m_speed     (default jog)
             ApplyFollowSpeedToCharacter(_currentFollowSpeed);
             
             switch (_currentFollowSpeed)
