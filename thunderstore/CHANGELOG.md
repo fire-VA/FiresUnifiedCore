@@ -1,3 +1,8 @@
+* v0.2.35 - one status box for every Fires mod
+  - Fires mods share one status box in the log, about once a minute, instead of each printing its own repeating lines; turn it off or change the interval with [General] StatusBanner and StatusBannerSeconds
+  - fewer repeated log lines
+  - settings with a fixed list of choices, like Fires Tossin Shade's presets, show that list in ConfigurationManager
+
 * v0.2.33 - recipe and creature editing, orphan cleanup, no more pink textures
   - server admins can edit crafting recipes, and creature drops, stars, health and damage, in game with Fires All The Items; the server sends them to every player
   - new admin commands zdo_scan_orphans and zdo_clean_orphans find and remove saved objects left behind by removed mods

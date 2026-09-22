@@ -185,9 +185,16 @@ namespace FiresCore.Dungeon
             private static void Postfix(DungeonGenerator __instance)
             {
                 if (__instance == null || __instance.gameObject == null) return;
+                var dressSpec = FiresDungeonRegistry.MatchForDg(__instance.gameObject.name);
+                if (dressSpec == null) return;
+
+                // Visual prop markers dress on EVERY peer (each peer instantiates room roots locally); the
+                // dresser itself no-ops headless and on already-dressed markers.
+                try { FiresDungeonPropDresser.Dress(__instance, dressSpec); }
+                catch (Exception ex) { Debug.LogError($"{dressSpec.LogTag} prop dresser (Generate) threw: {ex}"); }
+
                 if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
-                var spec = FiresDungeonRegistry.MatchForDg(__instance.gameObject.name);
-                if (spec == null) return;
+                var spec = dressSpec;
 
                 // All rooms are now placed as children of the DG (synchronous on the server Generate path). Grow +
                 // re-center the env box to fully encompass them — THE fix for the fixed-size box leaking sky.
@@ -236,9 +243,15 @@ namespace FiresCore.Dungeon
             private static void Postfix(DungeonGenerator __instance)
             {
                 if (__instance == null || __instance.gameObject == null) return;
-                if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
                 var spec = FiresDungeonRegistry.MatchForDg(__instance.gameObject.name);
                 if (spec == null) return;
+
+                // Load is the CLIENT path for room roots (a remote peer rebuilds a saved dungeon's rooms from
+                // s_roomData here) — dress the visual prop markers on every peer before the server-only work.
+                try { FiresDungeonPropDresser.Dress(__instance, spec); }
+                catch (Exception ex) { Debug.LogError($"{spec.LogTag} prop dresser (Load) threw: {ex}"); }
+
+                if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
                 try { ScaleEnvBoxToRooms(__instance, spec); }
                 catch (Exception ex) { Debug.LogError($"{spec.LogTag} env-box auto-scale (Load) threw: {ex}"); }
             }

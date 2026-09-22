@@ -31,17 +31,22 @@ namespace FiresCore.Logging
         // can route the box to a mod-specific console color. Typical tag:
         // "[FiresAdminTerrain] [LoadSummary]".
         public static void EmitMiniBox(string title, string[] lines, string tag)
+            => EmitBox(title, lines, tag, BoxInnerWidth);
+
+        // The same box at a caller-chosen inner width, for body lines longer than the mini box's columns.
+        public static void EmitBox(string title, string[] lines, string tag, int innerWidth)
         {
             string emitTag = string.IsNullOrEmpty(tag) ? LogTag : tag;
+            int width = Math.Max(innerWidth, BoxInnerWidth);
             try
             {
-                EmitTopBorder(title, emitTag);
-                EmitBodyLines(lines ?? Array.Empty<string>(), emitTag);
-                EmitBottomBorder(emitTag);
+                EmitTopBorder(title, emitTag, width);
+                EmitBodyLines(lines ?? Array.Empty<string>(), emitTag, width);
+                EmitBottomBorder(emitTag, width);
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"{emitTag} EmitMiniBox failed: {ex.Message}");
+                Debug.LogWarning($"{emitTag} EmitBox failed: {ex.Message}");
             }
         }
 
@@ -86,10 +91,10 @@ namespace FiresCore.Logging
             catch { return text.Length; }
         }
 
-        private static void EmitTopBorder(string title, string tag)
+        private static void EmitTopBorder(string title, string tag, int innerWidth)
         {
             string safeTitle = title ?? string.Empty;
-            int titleSlotWidth = BoxInnerWidth - (TitleSidePadding * 2);
+            int titleSlotWidth = innerWidth - (TitleSidePadding * 2);
             int decorationWidth = Math.Max(0, titleSlotWidth - DisplayWidth(safeTitle));
             int leftDecoration = decorationWidth / 2;
             int rightDecoration = decorationWidth - leftDecoration;
@@ -103,26 +108,26 @@ namespace FiresCore.Logging
             EmitLine($"{tag} {top}");
         }
 
-        private static void EmitBodyLines(string[] lines, string tag)
+        private static void EmitBodyLines(string[] lines, string tag, int innerWidth)
         {
             foreach (var raw in lines)
             {
                 string content = raw ?? string.Empty;
-                if (content.Length > BoxInnerWidth)
-                    content = content.Substring(0, BoxInnerWidth);
-                int pad = BoxInnerWidth - content.Length;
+                if (content.Length > innerWidth)
+                    content = content.Substring(0, innerWidth);
+                int pad = innerWidth - content.Length;
                 EmitLine($"{tag} {VerticalRule} {content}{new string(SpaceChar, pad)} {VerticalRule}");
             }
         }
 
-        // Body lines span 1 space + 28 content + 1 space between the verticals,
-        // so the bottom rule is BoxInnerWidth + 2 — not +4, which overshot the
+        // Body lines span 1 space + the inner width + 1 space between the verticals,
+        // so the bottom rule is innerWidth + 2 — not +4, which overshot the
         // frame by two cells.
-        private static void EmitBottomBorder(string tag)
+        private static void EmitBottomBorder(string tag, int innerWidth)
         {
             string bottom =
                 BottomLeftCorner
-                + new string(HorizontalRule, BoxInnerWidth + TitleSidePadding)
+                + new string(HorizontalRule, innerWidth + TitleSidePadding)
                 + BottomRightCorner;
             EmitLine($"{tag} {bottom}");
         }

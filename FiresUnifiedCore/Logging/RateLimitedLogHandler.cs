@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using BepInEx.Logging;
 using UnityEngine;
@@ -7,8 +8,8 @@ namespace FiresCore.Logging
 {
     // Wraps Unity's default ILogHandler to throttle or drop known noise: Steam k_EResultLimitExceeded floods,
     // shader binary-data warnings during bundle load, missing-script warnings from other mods' prefabs, benign
-    // kinematic-velocity warnings, and known unfixable vanilla NRE stacks. Suppressed categories emit a periodic
-    // summary line so the filter's activity stays visible. Verbose mode passes everything through.
+    // kinematic-velocity warnings, and known unfixable vanilla NRE stacks. Each category announces itself once, and
+    // the running totals are Core's line in the status box. Verbose mode passes everything through.
     internal sealed class RateLimitedLogHandler : ILogHandler
     {
         private const string LogPrefix = "[FiresUnifiedCore]";
@@ -33,10 +34,7 @@ namespace FiresCore.Logging
         private const string ExpandWorldTerrainCompilerFragment = "ExpandWorldData.Terrain.FindCompiler";
 
         private const double LimitExceededThrottleSeconds   = 30.0;
-        private const int    NreSummaryEmitInterval         = 50;
-        private const int    ShaderWarningSummaryInterval   = 100;
-        private const int    MissingScriptSummaryInterval   = 100;
-        private const int    KinematicSummaryInterval       = 200;
+        private const string StatusSource                   = "Core";
 
         private static readonly TimeSpan LimitExceededInterval = TimeSpan.FromSeconds(LimitExceededThrottleSeconds);
 
@@ -55,6 +53,17 @@ namespace FiresCore.Logging
             _inner = inner ?? Debug.unityLogger.logHandler;
             _ourModLineSource = BepInEx.Logging.Logger.CreateLogSource(UnityLogSourceName);
             _mainThreadId = Thread.CurrentThread.ManagedThreadId;
+            StatusBanner.Register(StatusSource, DescribeSuppressed);
+        }
+
+        private string DescribeSuppressed()
+        {
+            var counts = new List<string>(4);
+            if (_suppressedShaderWarnings > 0) counts.Add($"{_suppressedShaderWarnings:N0} shader binary-data");
+            if (_suppressedMissingScriptWarnings > 0) counts.Add($"{_suppressedMissingScriptWarnings:N0} missing-script");
+            if (_suppressedKinematicWarnings > 0) counts.Add($"{_suppressedKinematicWarnings:N0} kinematic-velocity");
+            if (_suppressedValheimNreBugs > 0) counts.Add($"{_suppressedValheimNreBugs:N0} known no-fix NRE");
+            return counts.Count == 0 ? null : $"log filter held back {string.Join(", ", counts)} (verbose shows them)";
         }
 
         public void LogFormat(LogType logType, UnityEngine.Object context, string format, params object[] args)
@@ -97,7 +106,7 @@ namespace FiresCore.Logging
             if (!VerbosePassThrough() && IsKnownNoFixNre(exception))
             {
                 _suppressedValheimNreBugs++;
-                EmitNreSummaryIfDue();
+                AnnounceFirstNreSuppression();
                 return;
             }
             RelayException(exception, context);
@@ -197,19 +206,19 @@ namespace FiresCore.Logging
             if (logType == LogType.Warning && IsKinematicVelocityWarning(message))
             {
                 _suppressedKinematicWarnings++;
-                EmitKinematicSummaryIfDue();
+                AnnounceFirstKinematicSuppression();
                 return true;
             }
             if (logType == LogType.Warning && IsShaderBinaryWarning(message))
             {
                 _suppressedShaderWarnings++;
-                EmitShaderSummaryIfDue();
+                AnnounceFirstShaderSuppression();
                 return true;
             }
             if (logType == LogType.Warning && IsMissingScriptWarning(message))
             {
                 _suppressedMissingScriptWarnings++;
-                EmitMissingScriptSummaryIfDue();
+                AnnounceFirstMissingScriptSuppression();
                 return true;
             }
             if (IsLimitExceededAndThrottled(message)) return true;
@@ -261,36 +270,32 @@ namespace FiresCore.Logging
             return false;
         }
 
-        private void EmitNreSummaryIfDue()
+        private void AnnounceFirstNreSuppression()
         {
-            if (_suppressedValheimNreBugs != 1 && _suppressedValheimNreBugs % NreSummaryEmitInterval != 0) return;
-            _inner.LogFormat(LogType.Log, null,
-                $"{LogPrefix} Suppressed {{0}} known no-fix NRE floods (vanilla ShieldGenerator/ArcheryTarget + ExpandWorld prefab-destroy + ExpandWorld terrain-compiler-during-pregen) - set verbose to surface.",
-                _suppressedValheimNreBugs);
+            if (_suppressedValheimNreBugs != 1) return;
+            _inner.LogFormat(LogType.Log, null, "{0}",
+                $"{LogPrefix} Suppressing known no-fix NRE floods (vanilla ShieldGenerator/ArcheryTarget + ExpandWorld prefab-destroy + ExpandWorld terrain-compiler-during-pregen); the status box keeps the count. Set verbose to surface.");
         }
 
-        private void EmitShaderSummaryIfDue()
+        private void AnnounceFirstShaderSuppression()
         {
-            if (_suppressedShaderWarnings != 1 && _suppressedShaderWarnings % ShaderWarningSummaryInterval != 0) return;
-            _inner.LogFormat(LogType.Log, null,
-                $"{LogPrefix} Suppressed {{0}} shader binary-data warnings - VanillaAssetResolver handles the missing-on-export shaders. Set verbose to surface.",
-                _suppressedShaderWarnings);
+            if (_suppressedShaderWarnings != 1) return;
+            _inner.LogFormat(LogType.Log, null, "{0}",
+                $"{LogPrefix} Suppressing shader binary-data warnings - VanillaAssetResolver handles the missing-on-export shaders; the status box keeps the count. Set verbose to surface.");
         }
 
-        private void EmitMissingScriptSummaryIfDue()
+        private void AnnounceFirstMissingScriptSuppression()
         {
-            if (_suppressedMissingScriptWarnings != 1 && _suppressedMissingScriptWarnings % MissingScriptSummaryInterval != 0) return;
-            _inner.LogFormat(LogType.Log, null,
-                $"{LogPrefix} Suppressed {{0}} 'referenced script missing' warnings (bundle prefabs reference content-mod scripts not in this profile - cosmetic). Set verbose to surface.",
-                _suppressedMissingScriptWarnings);
+            if (_suppressedMissingScriptWarnings != 1) return;
+            _inner.LogFormat(LogType.Log, null, "{0}",
+                $"{LogPrefix} Suppressing 'referenced script missing' warnings (bundle prefabs reference content-mod scripts not in this profile - cosmetic); the status box keeps the count. Set verbose to surface.");
         }
 
-        private void EmitKinematicSummaryIfDue()
+        private void AnnounceFirstKinematicSuppression()
         {
-            if (_suppressedKinematicWarnings != 1 && _suppressedKinematicWarnings % KinematicSummaryInterval != 0) return;
-            _inner.LogFormat(LogType.Log, null,
-                $"{LogPrefix} Suppressed {{0}} kinematic-rigidbody velocity warnings (Valheim sets velocity on attached Characters - benign). Set verbose to surface.",
-                _suppressedKinematicWarnings);
+            if (_suppressedKinematicWarnings != 1) return;
+            _inner.LogFormat(LogType.Log, null, "{0}",
+                $"{LogPrefix} Suppressing kinematic-rigidbody velocity warnings (Valheim sets velocity on attached Characters - benign); the status box keeps the count. Set verbose to surface.");
         }
     }
 }
