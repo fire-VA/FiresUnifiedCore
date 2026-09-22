@@ -126,6 +126,7 @@ namespace FiresCore.Logging
         // threading explicit category through every EmitMiniBox call.
         private static readonly (string titleEmoji, ConsoleColor color)[] s_bannerTitleRules =
         {
+            (StatusBanner.TitleEmoji, ConsoleColor.DarkCyan), // periodic status box
             ("📦", ConsoleColor.Cyan),         // bundles
             ("🧱", ConsoleColor.Cyan),         // baked
             ("📐", ConsoleColor.Cyan),         // blueprints

@@ -537,6 +537,7 @@
     <Compile Include="UI\ContextMenu\ContextMenuView.cs" />
     <Compile Include="UI\ContextMenu\FiresContextMenuDriver.cs" />
     <Compile Include="UI\ContextMenu\ContextMenuConfig.cs" />
+    <Compile Include="UI\ContextMenu\WorldListContextMenu.cs" />
     <Compile Include="Input\FiresInputBlock.cs" />
     <Compile Include="Input\Chord.cs" />
     <Compile Include="Input\FiresPlaceGate.cs" />
@@ -629,6 +630,7 @@
     <Compile Include="Logging\FiresLogger.cs" />
     <Compile Include="Logging\LoadSummary.cs" />
     <Compile Include="Logging\RateLimitedLogHandler.cs" />
+    <Compile Include="Logging\StatusBanner.cs" />
     <Compile Include="Logging\UnityLogSuppressionPatch.cs" />
     <Compile Include="Materials\TerrainMaterialCache.cs" />
     <Compile Include="Materials\VanillaShaderRebind.cs" />
@@ -658,6 +660,7 @@
     <Compile Include="World\ZdoOrphanService.cs" />
     <Compile Include="World\NetworkPrefabs.cs" />
     <Compile Include="Pieces\WearLooks.cs" />
+    <Compile Include="Pieces\WearGate.cs" />
     <Compile Include="Pieces\HammerPieces.cs" />
     <Compile Include="Sync\ConfigPushService.cs" />
     <Compile Include="Sync\ConfigPullService.cs" />
@@ -677,6 +680,7 @@
     <Compile Include="Dungeon\FiresDungeonAssets.cs" />
     <Compile Include="Dungeon\FiresDungeonCore.cs" />
     <Compile Include="Dungeon\FiresDungeonUniquePlacement.cs" />
+    <Compile Include="Dungeon\FiresDungeonPropDresser.cs" />
     <Compile Include="Dungeon\FiresDungeonService.cs" />
     <Compile Include="Dungeon\FiresDungeonPortalLink.cs" />
     <Compile Include="Dungeon\DungeonDoorBlockerController.cs" />

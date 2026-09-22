@@ -94,21 +94,21 @@ namespace FiresCore.Lifecycle
             catch { return true; }
         }
 
-        // Diagnostic ENTER/EXIT bracket. A queued callback that ENTERs and
-        // never EXITs is the login-freeze fingerprint — keep until the
-        // freeze is fully characterized in the field.
+        // Verbose-only ENTER/EXIT bracket: a queued callback that ENTERs and never EXITs is the login-freeze
+        // fingerprint. FDT's stall attribution times these callbacks now, so the bracket stays off unless verbose.
         private static void InvokeWork(Player player, Action<Player> work)
         {
-            string targetDesc = ResolvePlayerName(player);
-            string workDesc = ResolveWorkDescription(work);
+            bool bracket = FiresLogger.VerboseEnabled;
+            string targetDesc = bracket ? ResolvePlayerName(player) : null;
+            string workDesc = bracket ? ResolveWorkDescription(work) : null;
 
-            FiresLogger.LogInfo($"{DiagnosticPrefix}.InvokeWork ENTER target={targetDesc} work={workDesc}");
+            if (bracket) FiresLogger.LogInfo($"{DiagnosticPrefix}.InvokeWork ENTER target={targetDesc} work={workDesc}");
             try { work(player); }
             catch (Exception ex)
             {
                 FiresLogger.LogWarning($"{LogPrefix} deferred action threw: {ex.Message}");
             }
-            FiresLogger.LogInfo($"{DiagnosticPrefix}.InvokeWork EXIT target={targetDesc} work={workDesc}");
+            if (bracket) FiresLogger.LogInfo($"{DiagnosticPrefix}.InvokeWork EXIT target={targetDesc} work={workDesc}");
         }
 
         private static string ResolvePlayerName(Player player)

@@ -12,6 +12,7 @@ namespace FiresCore.UI.ContextMenu
     /// provider claims the target. The menu stays interactive after Alt+Shift is released; releasing it with no
     /// menu open exits the mode. Cursor/crosshair/camera follow Tools/FIRES_CLICKABLE_UI_RECIPE.md: InputBlock
     /// (camera pin + input block), ModUiRegistry (real OS cursor), and crosshair-only suppression (the HUD stays up).
+    /// On the main menu it hands plain right-clicks to <see cref="WorldListContextMenu"/> (the world list).
     /// </summary>
     public sealed class FiresContextMenuDriver : MonoBehaviour
     {
@@ -56,6 +57,7 @@ namespace FiresCore.UI.ContextMenu
         {
             if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null) return;
             if (CtxDebug) LogGateState();
+            if (FejdStartup.instance != null && Player.m_localPlayer == null) WorldListContextMenu.Tick();
             if (Hud.instance == null || Player.m_localPlayer == null) { Disengage(); return; }
             if (!ContextMenuConfig.Enabled) { Disengage(); return; } // whole feature toggled off in config
             if (FiresContextMenu.SuppressDriver)
