@@ -1250,7 +1250,7 @@ namespace FiresCore.Npc.Movement
                 && _activeCommandType == type
                 && (_commandTargetObject == targetObject)
                 && (_commandTargetCharacter == targetCharacter)
-                && (_commandTargetPosition - targetPosition).sqrMagnitude < 1.0f) // ?1 m drift
+                && (_commandTargetPosition - targetPosition).sqrMagnitude < 1.0f) // ~1 m drift
             {
                 _commandTimeout = timeout > 0 ? Time.time + timeout : float.MaxValue;
                 if (onComplete != null) _onCommandComplete = onComplete;

@@ -1,4 +1,16 @@
-* v0.2.10 - no more config reload spam
+* v0.2.33 - recipe and creature editing, orphan cleanup, no more pink textures
+  - server admins can edit crafting recipes, and creature drops, stars, health and damage, in game with Fires All The Items; the server sends them to every player
+  - new admin commands zdo_scan_orphans and zdo_clean_orphans find and remove saved objects left behind by removed mods
+  - setting presets and a Simple/Advanced switch in the Fires config window, and locked settings show greyed out
+  - big world files a mod needs are sent to each player once instead of every join
+  - items and effects from mods built on the 1.0 game files no longer show up pink
+  - warnings and errors from Fires mods show in the log again
+  - server settings sync properly: empty and enum values, cleared when you leave, and locked settings stay locked
+  - companions' dresses and capes work again, and no more error at logout
+  - the BepInEx console window is written in the background, so a busy console no longer freezes the game
+  - Fires mods that add their own build pieces load faster
+
+ v0.2.10 - no more config reload spam
   - fixed Fires mods reloading their config every couple of seconds while connected to a server
   - other mods can now keep their builds out of Easy Bake Meshes
 

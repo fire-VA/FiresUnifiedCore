@@ -38,7 +38,6 @@ namespace FiresCore.Sync
         private const int FragmentCacheLifetimeSeconds = 60;
         private const double ReceivedLogThrottleSeconds = 12.0;
         private const string InternalSection = "Internal";
-        private const string LockExemptInternalKey = "lockexempt";
         private const string ReservedServerVersionIdentifier = "serverversion";
         private const string ConfigSyncRpcSuffix = " ConfigSync";
         private const int ManifestKeyHashPrime = 397;
@@ -162,7 +161,9 @@ namespace FiresCore.Sync
             var syncedEntry = configData(configEntry) as SyncedConfigEntry<T>
                 ?? new SyncedConfigEntry<T>(configEntry);
 
-            var tags = configEntry.Description.Tags?.ToArray() ?? new object[] { new ConfigurationManagerAttributes() };
+            var tags = configEntry.Description.Tags ?? Array.Empty<object>();
+            if (!tags.OfType<ConfigurationManagerAttributes>().Any())
+                tags = new object[] { new ConfigurationManagerAttributes() }.Concat(tags).ToArray();
             tags = tags.Concat(new object[] { syncedEntry }).ToArray();
 
             AccessTools.Field(typeof(ConfigDescription), "<Tags>k__BackingField")
@@ -361,7 +362,7 @@ namespace FiresCore.Sync
 
             foreach (var kv in parsed.customValues)
             {
-                if (!isServer && kv.Key.LocalBaseValue == null)
+                if (!isServer && !kv.Key.HasLocalBaseValue)
                     kv.Key.LocalBaseValue = kv.Key.BoxedValue;
                 kv.Key.BoxedValue = kv.Value;
             }
@@ -426,10 +427,10 @@ namespace FiresCore.Sync
                 if (anyValueChanged) configFile.Save();
             }
 
-            foreach (var customValue in allCustomValues.Where(c => c.LocalBaseValue != null))
+            foreach (var customValue in allCustomValues.Where(c => c.HasLocalBaseValue))
             {
                 customValue.BoxedValue = customValue.LocalBaseValue;
-                customValue.LocalBaseValue = null;
+                customValue.ClearLocalBaseValue();
             }
 
             lockedConfigChanged -= serverLockedSettingChanged;
@@ -484,21 +485,15 @@ namespace FiresCore.Sync
 
         private void HandleInternalEntry(ParsedConfigs parsed, string key, string typeName, object value)
         {
-            if (key == LockExemptInternalKey && value is bool flag)
-            {
-                lockExempt = flag;
-                return;
-            }
-
             var customValue = allCustomValues.FirstOrDefault(v => v.Identifier == key);
             if (customValue == null) return;
 
             bool typeOk = typeName == ""
                 && (!customValue.Type.IsValueType || Nullable.GetUnderlyingType(customValue.Type) != null);
-            typeOk |= GetZPackageTypeString(customValue.Type) == typeName;
+            typeOk |= GetZPackageTypeString(CustomValueWireType(customValue.Type)) == typeName;
 
             if (typeOk)
-                parsed.customValues[customValue] = value;
+                parsed.customValues[customValue] = FromCustomValueWireValue(customValue.Type, value);
             else
                 FiresLogger.LogWarning(
                     $"Got unexpected type {typeName} for internal value {key} for mod {DisplayName ?? Name}, " +
@@ -682,7 +677,7 @@ namespace FiresCore.Sync
             {
                 package.Write(InternalSection);
                 package.Write(customValue.Identifier);
-                package.Write(GetZPackageTypeString(customValue.Type));
+                package.Write(customValue.BoxedValue == null ? "" : GetZPackageTypeString(CustomValueWireType(customValue.Type)));
                 AddValueToZPackage(package, customValue.BoxedValue);
             }
 
@@ -700,6 +695,15 @@ namespace FiresCore.Sync
         private static Type configType(ConfigEntryBase config) => configType(config.SettingType);
 
         private static Type configType(Type type) => type.IsEnum ? Enum.GetUnderlyingType(type) : type;
+
+        // Vanilla ZRpc has no enum or Nullable reader, so those custom values travel as their underlying type.
+        private static Type CustomValueWireType(Type type) => configType(Nullable.GetUnderlyingType(type) ?? type);
+
+        private static object FromCustomValueWireValue(Type type, object wireValue)
+        {
+            Type valueType = Nullable.GetUnderlyingType(type) ?? type;
+            return wireValue != null && valueType.IsEnum ? Enum.ToObject(valueType, wireValue) : wireValue;
+        }
 
         public IEnumerator SendZPackage(long target, ZPackage package)
         {
@@ -849,29 +853,85 @@ namespace FiresCore.Sync
         public SyncedConfigEntry(ConfigEntry<T> config) : base(config) { }
     }
 
-#pragma warning disable 0067
-    public class CustomSyncedValueBase
+    public abstract class CustomSyncedValueBase
     {
+        private readonly ConfigSync configSync;
+        private object boxedValue;
+        private object localBaseValue;
+
         public string Identifier { get; }
         public Type Type { get; }
-        public object BoxedValue { get; set; }
-        public object LocalBaseValue { get; set; }
+
+        public object BoxedValue
+        {
+            get => boxedValue;
+            set
+            {
+                if (Equals(boxedValue, value)) return;
+                boxedValue = value;
+                ValueChanged?.Invoke();
+            }
+        }
+
+        public object LocalBaseValue
+        {
+            get => localBaseValue;
+            set
+            {
+                localBaseValue = value;
+                HasLocalBaseValue = true;
+            }
+        }
+
         public int Priority { get; }
 
         public event Action ValueChanged;
 
-        public CustomSyncedValueBase(string identifier, Type type, int priority = 0)
+        internal bool HasLocalBaseValue { get; private set; }
+
+        internal bool LocalIsOwner => configSync.IsSourceOfTruth;
+
+        protected CustomSyncedValueBase(ConfigSync configSync, string identifier, Type type, int priority)
         {
+            this.configSync = configSync;
             Identifier = identifier;
             Type = type;
             Priority = priority;
+            configSync.AddCustomValue(this);
+        }
+
+        internal void ClearLocalBaseValue()
+        {
+            localBaseValue = null;
+            HasLocalBaseValue = false;
         }
     }
-#pragma warning restore 0067
+
+    public sealed class CustomSyncedValue<T> : CustomSyncedValueBase
+    {
+        public CustomSyncedValue(ConfigSync configSync, string identifier, T value = default, int priority = 0)
+            : base(configSync, identifier, typeof(T), priority)
+        {
+            Value = value;
+        }
+
+        public T Value
+        {
+            get => (T)BoxedValue;
+            set => BoxedValue = value;
+        }
+
+        public void AssignLocalValue(T value)
+        {
+            if (LocalIsOwner) Value = value;
+            else LocalBaseValue = value;
+        }
+    }
 
     public class ConfigurationManagerAttributes
     {
         public bool? ReadOnly;
+        public Action<ConfigEntryBase> CustomDrawer;
     }
 
     public class ParsedConfigs

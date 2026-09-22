@@ -228,6 +228,12 @@ namespace FiresCore.UI
                 _search = "";
                 GUIUtility.keyboardControl = 0;
             }
+            bool showAdvanced = FiresConfigUI.ShowAdvanced;
+            string advancedTxt = showAdvanced ? "<b>Advanced</b>" : "Simple";
+            if (GUILayout.Button(advancedTxt, FiresRoundedSkin.ButtonSmall, GUILayout.Width(74f))
+                && FiresConfigUI.CfgShowAdvanced != null)
+                FiresConfigUI.CfgShowAdvanced.Value = !showAdvanced;
+
             bool showAll = FiresConfigUI.CfgShowAllPlugins != null && FiresConfigUI.CfgShowAllPlugins.Value;
             string allTxt = showAll ? "<b>All plugins</b>" : "Fires only";
             if (GUILayout.Button(allTxt, FiresRoundedSkin.ButtonSmall, GUILayout.Width(86f)) && FiresConfigUI.CfgShowAllPlugins != null)
@@ -288,6 +294,7 @@ namespace FiresCore.UI
                 int shown = 0;
                 foreach (var descriptor in CfgDiscovery.Descriptors)
                 {
+                    if (IsHiddenByAdvanced(descriptor)) continue;
                     if (!Matches(descriptor, _search)) continue;
                     string group = descriptor.ModName + "  -  " + descriptor.SectionDisplay;
                     if (group != lastGroup)
@@ -308,6 +315,7 @@ namespace FiresCore.UI
                 for (int i = 0; i < sections.Count; i++)
                 {
                     string section = sections[i];
+                    if (!SectionHasVisibleRows(_mod, section)) continue;
                     string key = CollapseKey(_mod, section);
                     bool collapsed = _collapsed.Contains(key);
                     bool changed = SectionHasChanged(_mod, section);
@@ -330,6 +338,7 @@ namespace FiresCore.UI
                     foreach (var descriptor in CfgDiscovery.Descriptors)
                     {
                         if (descriptor.ModName != _mod || descriptor.Section != section) continue;
+                        if (IsHiddenByAdvanced(descriptor)) continue;
                         DrawRow(descriptor);
                     }
                 }
@@ -339,14 +348,31 @@ namespace FiresCore.UI
             GUILayout.EndScrollView();
         }
 
+        private static bool IsHiddenByAdvanced(CfgDescriptor descriptor)
+            => descriptor.IsAdvanced && !FiresConfigUI.ShowAdvanced;
+
+        private static bool SectionHasVisibleRows(string modName, string section)
+        {
+            foreach (var descriptor in CfgDiscovery.Descriptors)
+            {
+                if (descriptor.ModName != modName || descriptor.Section != section) continue;
+                if (!IsHiddenByAdvanced(descriptor)) return true;
+            }
+            return false;
+        }
+
         private void DrawRow(CfgDescriptor descriptor)
         {
+            bool wasEnabled = GUI.enabled;
             try
             {
                 GUILayout.BeginHorizontal();
                 bool changed = IsChanged(descriptor);
                 string name = changed ? "<b><color=#FFD980>" + descriptor.Label + "</color></b>" : descriptor.Label;
+                if (descriptor.ReadOnlyAttr) name = "<color=#9AA0A6>" + descriptor.Label + "  (locked)</color>";
                 GUILayout.Label(name, FiresRoundedSkin.Label, GUILayout.Width(NameWidth));
+
+                if (descriptor.ReadOnlyAttr) GUI.enabled = false;
                 DrawWidget(descriptor);
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button("Reset", FiresRoundedSkin.ButtonSmall, GUILayout.Width(56f)))
@@ -354,6 +380,7 @@ namespace FiresCore.UI
                     try { descriptor.Entry.BoxedValue = descriptor.Entry.DefaultValue; } catch { }
                     _editBuf.Remove(IdOf(descriptor));
                 }
+                GUI.enabled = wasEnabled;
                 GUILayout.EndHorizontal();
 
                 if (!string.IsNullOrEmpty(descriptor.Description))
@@ -361,6 +388,7 @@ namespace FiresCore.UI
             }
             catch (Exception ex)
             {
+                GUI.enabled = wasEnabled;
                 GUILayout.EndHorizontal();
                 FiresConfigUI.Log.LogWarning($"row '{descriptor.Section}/{descriptor.Key}' failed: {ex.Message}");
             }

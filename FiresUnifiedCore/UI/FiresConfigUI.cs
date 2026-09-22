@@ -62,6 +62,10 @@ namespace FiresCore.UI
 
         internal static ConfigEntry<KeyboardShortcut> CfgHotkey;
         internal static ConfigEntry<bool> CfgShowAllPlugins;
+        internal static ConfigEntry<bool> CfgShowAdvanced;
+
+        /// <summary>True when the window should show settings a mod tagged as advanced.</summary>
+        public static bool ShowAdvanced => CfgShowAdvanced == null || CfgShowAdvanced.Value;
 
         /// <summary>Bind the window's own settings into <paramref name="cfg"/> and register that config so its
         /// "00 - Config UI" section appears in the window. Call once (Core does this in Setup).</summary>
@@ -72,6 +76,10 @@ namespace FiresCore.UI
                 "Key that opens the Fires config window. (Console command 'va_config' also toggles it.)");
             CfgShowAllPlugins = cfg.Bind("00 - Config UI", "05 ShowAllPlugins", false,
                 "Show EVERY loaded plugin's config in the window, not just Fires mods. Re-open the window to refresh.");
+            CfgShowAdvanced = cfg.Bind("00 - Config UI", "06 ShowAdvanced", false,
+                "Show the deep tuning sliders that mods mark as advanced. OFF keeps the window to the "
+                + "toggles most players need. The same tag hides them in ConfigurationManager, so both "
+                + "windows agree.");
 
             // Flipping ShowAll changes the discovery source, so rebuild descriptors + the cached nav lists.
             CfgShowAllPlugins.SettingChanged += (s, e) => CfgDiscovery.Rebuild();

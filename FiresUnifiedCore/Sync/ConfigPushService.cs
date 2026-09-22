@@ -474,7 +474,7 @@ namespace FiresCore.Sync
             bool crlf = serverText.Contains("\r\n");
             var lines = new List<string>(serverText.Replace("\r\n", "\n").Split('\n'));
 
-            // Index the server file: (sectionkey) → line, section → last line of that section.
+            // Index the server file: (section\u0001key) → line, section → last line of that section.
             var keyLine = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var sectionEnd = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             string section = "";
@@ -487,7 +487,7 @@ namespace FiresCore.Sync
                 if (trimmed.Length == 0 || trimmed.StartsWith("#", StringComparison.Ordinal)) continue;
                 int equalsIndex = trimmed.IndexOf('=');
                 if (equalsIndex <= 0) continue;
-                keyLine[section + "" + trimmed.Substring(0, equalsIndex).Trim()] = i;
+                keyLine[section + "\u0001" + trimmed.Substring(0, equalsIndex).Trim()] = i;
                 sectionEnd[section] = i;
             }
 
@@ -498,7 +498,7 @@ namespace FiresCore.Sync
             foreach (var entry in adminEntries)
             {
                 string line = entry.key + " = " + entry.value;
-                if (keyLine.TryGetValue(entry.section + "" + entry.key, out int idx))
+                if (keyLine.TryGetValue(entry.section + "\u0001" + entry.key, out int idx))
                 {
                     int equalsIndex = lines[idx].IndexOf('=');
                     string keyText = equalsIndex > 0 ? lines[idx].Substring(0, equalsIndex).TrimEnd() : entry.key;

@@ -26,7 +26,7 @@ namespace FiresCore.Npc.AI
 
         // After exiting flee, the AI must spend at least this long in
         // a non-flee state before it is allowed to re-enter flee. Prevents
-        // the Combat?Fleeing flap when the underlying threat-analyzer
+        // the Combat<->Fleeing flap when the underlying threat-analyzer
         // condition oscillates around its trigger threshold (or returns
         // a transient stale value right after a respawn). Tuned to be
         // long enough that a real "oh god retreat" still fires within a

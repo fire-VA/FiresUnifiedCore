@@ -516,7 +516,7 @@ namespace FiresCore.Npc
                 bool registrySaysFollowing = player != null
                     ? PlayerFollowingRegistry.IsFollowing(player, saved.CompanionId)
                     : saved.IsFollowing;
-                if (!registrySaysFollowing && !saved.IsPendingRespawn) continue; // stay-mode ? leave ZDO alone
+                if (!registrySaysFollowing && !saved.IsPendingRespawn) continue; // stay-mode -> leave ZDO alone
                 vaultIds.Add(saved.CompanionId);
             }
 

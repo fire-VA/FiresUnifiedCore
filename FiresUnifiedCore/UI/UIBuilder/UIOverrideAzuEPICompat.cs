@@ -162,22 +162,22 @@ namespace FiresCore.UI
                         nameLower.Contains("camera") || nameLower.Contains("model"))
                     {
                         btn.onClick.AddListener(OnTogglePreview);
-                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' ? Preview");
+                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Preview");
                     }
                     else if (nameLower.Contains("stat"))
                     {
                         btn.onClick.AddListener(OnToggleStats);
-                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' ? Stats");
+                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Stats");
                     }
                     else if (nameLower.Contains("vanity") || nameLower.Contains("transmog"))
                     {
                         btn.onClick.AddListener(OnToggleVanity);
-                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' ? Vanity");
+                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Vanity");
                     }
                     else if (nameLower.Contains("loadout") || nameLower.Contains("preset"))
                     {
                         btn.onClick.AddListener(OnToggleLoadout);
-                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' ? Loadout");
+                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Loadout");
                     }
                     else
                     {

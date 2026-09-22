@@ -35,7 +35,7 @@ namespace FiresCore.ClientLogRelay
 
         /// <summary>
         /// Returns a subdirectory under the default client-logs root, creating it on first
-        /// access. Example: <c>GetDefaultClientLogsDir("MyMod", "archived")</c> ?
+        /// access. Example: <c>GetDefaultClientLogsDir("MyMod", "archived")</c> ->
         /// <c>{ConfigPath}/MyMod/ClientLogs/archived</c>.
         /// </summary>
         public static string GetDefaultClientLogsDir(string modId, string subfolder)

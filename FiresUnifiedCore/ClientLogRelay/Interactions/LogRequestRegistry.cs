@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -6,9 +6,9 @@ namespace FiresCore.ClientLogRelay.Interactions
 {
     /// <summary>
     /// Process-global cache of <see cref="LogRequestContext"/> entries keyed by Discord
-    /// message id. Populated by <see cref="Consumers.DiscordWebhookConsumer"/> after a
-    /// successful webhook POST; read by the host mod's bot listener when it detects a
-    /// user reaction on a previously-posted snapshot message.
+    /// message id. Populated by the host mod's snapshot consumer after a successful webhook
+    /// POST; read by its reaction poller when it detects a user reaction on a
+    /// previously-posted snapshot message.
     ///
     /// Entries expire after <see cref="DefaultTtl"/> to keep the cache bounded across
     /// long uptimes. Thread-safe.
@@ -27,6 +27,7 @@ namespace FiresCore.ClientLogRelay.Interactions
         {
             public LogRequestContext Context;
             public DateTime          ExpiresUtc;
+            public DateTime          RegisteredUtc;
         }
 
         /// <summary>
@@ -37,12 +38,27 @@ namespace FiresCore.ClientLogRelay.Interactions
         public static void Register(LogRequestContext ctx, TimeSpan? ttl = null)
         {
             if (ctx == null || string.IsNullOrEmpty(ctx.MessageId)) return;
-            var expires = DateTime.UtcNow + (ttl ?? DefaultTtl);
+            var now = DateTime.UtcNow;
+            var expires = now + (ttl ?? DefaultTtl);
 
             lock (_lock)
             {
-                _entries[ctx.MessageId] = new Entry { Context = ctx, ExpiresUtc = expires };
+                _entries[ctx.MessageId] = new Entry { Context = ctx, ExpiresUtc = expires, RegisteredUtc = now };
                 RunJanitorIfDue();
+            }
+        }
+
+        /// <summary>
+        /// True when <paramref name="messageId"/> was registered within the last <paramref name="window"/>.
+        /// The reaction poller waits this out so the bot's own pre-reactions clear Discord's per-message rate limit first.
+        /// </summary>
+        public static bool IsWithinRegistrationWindow(string messageId, TimeSpan window)
+        {
+            if (string.IsNullOrEmpty(messageId)) return false;
+            lock (_lock)
+            {
+                if (!_entries.TryGetValue(messageId, out var entry)) return false;
+                return DateTime.UtcNow - entry.RegisteredUtc < window;
             }
         }
 

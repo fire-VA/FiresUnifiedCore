@@ -38,7 +38,7 @@ namespace FiresCore.Npc.Vault
 
         #endregion
         
-        #region Periodic Flush (Phase 6: authoritative ? debug-mirror)
+        #region Periodic Flush (Phase 6: authoritative -> debug-mirror)
 
         /// <summary>
         /// Periodic tick driver. Mirrors the authoritative state

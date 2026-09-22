@@ -1,13 +1,15 @@
 using System;
 using System.Collections.Generic;
+using FiresCore.Materials;
 using UnityEngine;
 
 namespace FiresCore.Services
 {
     // Repairs bundle prefabs whose custom shaders or "_copy" materials lost their backing on export, replacing
     // the per-mod ShaderReplacement and MaterialSwapper copies. Vanilla shaders and named materials are
-    // harvested from ZNetScene on first use. A shader resolves by exact cached name, then Shader.Find, then the
-    // optional name map, then Standard; a "_copy" material resolves to its vanilla original. Common material
+    // harvested from ZNetScene on first use. A shader resolves to a working one by exact cached name, then Shader.Find,
+    // then the game's loaded shader of that name, then the optional name map, then Standard, never to a rip bundle's
+    // uncompiled copy; a "_copy" material resolves to its vanilla original. Common material
     // properties are carried across the swap, extendable with RegisterPreservedProperty.
     public static class VanillaAssetResolver
     {
@@ -33,6 +35,9 @@ namespace FiresCore.Services
 
         private static bool _warmed;
         private static Shader _fallbackShader;
+        private static ZNetScene _warmedScene;
+        private static int _warmedPrefabCount;
+        private static readonly HashSet<int> RepairedPrefabIds = new HashSet<int>();
 
         // ─── Status ────────────────────────────────────────────────────
 
@@ -44,19 +49,22 @@ namespace FiresCore.Services
 
         // ─── Cache warming ─────────────────────────────────────────────
 
-        // Scan every prefab currently registered in ZNetScene and harvest
-        // its shaders + non-_copy named materials. Idempotent — subsequent
-        // calls only add anything new. Returns total cache size after the
-        // pass (shaders + materials). Returns 0 if ZNetScene isn't ready;
-        // caller can retry on a later tick.
+        // Harvest shaders + non-_copy named materials from the prefabs registered in ZNetScene. A repeat call on the
+        // same ZNetScene only reads prefabs appended since the last pass; a new scene, or a list that shrank, is read
+        // in full. Returns total cache size after the pass (shaders + materials). Returns 0 if ZNetScene isn't
+        // ready; caller can retry on a later tick.
         public static int Warm()
         {
-            if (ZNetScene.instance == null) return ShaderCount + MaterialCount;
-            var prefabs = ZNetScene.instance.m_prefabs;
+            var scene = ZNetScene.instance;
+            if (scene == null) return ShaderCount + MaterialCount;
+            var prefabs = scene.m_prefabs;
             if (prefabs == null || prefabs.Count == 0) return ShaderCount + MaterialCount;
 
-            foreach (var prefab in prefabs)
-                WarmFromPrefab(prefab);
+            bool sameScene = scene == _warmedScene && prefabs.Count >= _warmedPrefabCount;
+            for (int i = sameScene ? _warmedPrefabCount : 0; i < prefabs.Count; i++)
+                WarmFromPrefab(prefabs[i]);
+            _warmedScene = scene;
+            _warmedPrefabCount = prefabs.Count;
 
             _warmed = ShaderCache.Count > 0 || MaterialCache.Count > 0;
             return ShaderCount + MaterialCount;
@@ -84,8 +92,7 @@ namespace FiresCore.Services
 
                 foreach (var mat in mats)
                 {
-                    if (mat == null || mat.shader == null) continue;
-                    if (mat.shader.name.Contains(InternalErrorShaderToken)) continue;
+                    if (mat == null || !IsWorkingShader(mat.shader)) continue;
 
                     if (!ShaderCache.ContainsKey(mat.shader.name))
                     {
@@ -114,6 +121,8 @@ namespace FiresCore.Services
             _fallbackShader = null;
             _fallbackMaterial = null;
             _warmed = false;
+            _warmedScene = null;
+            _warmedPrefabCount = 0;
         }
 
         // Register a custom-shader-name → vanilla-shader-name redirect.
@@ -145,31 +154,30 @@ namespace FiresCore.Services
             shader = null;
             if (string.IsNullOrEmpty(name)) return false;
 
-            if (ShaderCache.TryGetValue(name, out shader) && shader != null)
+            if (TryResolveShaderNamed(name, out shader)) return true;
+            return ShaderNameMap.TryGetValue(name, out var aliasName) && TryResolveShaderNamed(aliasName, out shader);
+        }
+
+        private static bool TryResolveShaderNamed(string name, out Shader shader)
+        {
+            if (ShaderCache.TryGetValue(name, out shader) && IsWorkingShader(shader))
                 return true;
 
             shader = Shader.Find(name);
-            if (shader != null && !shader.name.Contains(InternalErrorShaderToken))
+            if (!IsWorkingShader(shader) && !VanillaShaderRebind.TryFindGameShader(name, out shader))
             {
-                ShaderCache[name] = shader;
-                return true;
+                shader = null;
+                return false;
             }
 
-            if (ShaderNameMap.TryGetValue(name, out var aliasName))
-            {
-                if (ShaderCache.TryGetValue(aliasName, out shader) && shader != null)
-                    return true;
-                shader = Shader.Find(aliasName);
-                if (shader != null && !shader.name.Contains(InternalErrorShaderToken))
-                {
-                    ShaderCache[aliasName] = shader;
-                    return true;
-                }
-            }
-
-            shader = null;
-            return false;
+            ShaderCache[name] = shader;
+            return true;
         }
+
+        private static bool IsWorkingShader(Shader shader) =>
+            shader != null
+            && !shader.name.Contains(InternalErrorShaderToken)
+            && !VanillaShaderRebind.IsUnsupported(shader);
 
         public static bool TryResolveMaterial(string materialName, out Material material)
         {
@@ -235,6 +243,28 @@ namespace FiresCore.Services
         // total number of swaps performed (shader + material combined).
         // Idempotent — a re-run on the same prefab is a no-op once swaps
         // are complete.
+        // Repairs each bundle prefab once per prefab instance, warming the cache only when one still needs it. A
+        // bundle re-loaded after a relogin yields new instances, which are repaired again. Failures are logged under
+        // the caller's tag and never stop the rest.
+        public static void RepairPrefabsOnce(IEnumerable<GameObject> prefabs, AssetSwapMode mode, string logTag)
+        {
+            if (prefabs == null) return;
+            bool warmed = false;
+            foreach (var prefab in prefabs)
+            {
+                if (prefab == null || RepairedPrefabIds.Contains(prefab.GetInstanceID())) continue;
+                if (!warmed)
+                {
+                    try { Warm(); }
+                    catch (Exception ex) { Debug.LogWarning($"{logTag} shader warm failed: {ex.Message}"); }
+                    warmed = true;
+                }
+                RepairedPrefabIds.Add(prefab.GetInstanceID());
+                try { ApplyToPrefab(prefab, mode); }
+                catch (Exception ex) { Debug.LogWarning($"{logTag} shader fix {prefab.name}: {ex.Message}"); }
+            }
+        }
+
         public static int ApplyToPrefab(GameObject prefab, AssetSwapMode mode = AssetSwapMode.Both)
         {
             if (prefab == null) return 0;
@@ -287,6 +317,63 @@ namespace FiresCore.Services
 
             if (modified) renderer.sharedMaterials = materials;
             return swaps;
+        }
+
+        /// <summary>Restores renderers whose material lost its shader and fell back to Unity's error shader -- the
+        /// magenta seen in game. Equipment and its effects attach AFTER any prefab-level pass, so nothing repaired
+        /// them. The vanilla material of the same name is restored whole, bringing its real shader and textures with
+        /// it; a material whose shader still works is never touched, and anything unresolvable is named in the log
+        /// rather than silently recoloured. Returns the number of slots restored.</summary>
+        public static int RepairBrokenShaders(GameObject root, string context)
+        {
+            if (root == null) return 0;
+
+            Renderer[] renderers;
+            try { renderers = root.GetComponentsInChildren<Renderer>(includeInactive: true); }
+            catch { return 0; }
+            if (renderers == null) return 0;
+
+            if (!_warmed) Warm();
+
+            int repaired = 0;
+            foreach (var renderer in renderers)
+            {
+                if (renderer == null) continue;
+                var materials = renderer.sharedMaterials;
+                if (materials == null) continue;
+
+                bool modified = false;
+                for (int i = 0; i < materials.Length; i++)
+                {
+                    var material = materials[i];
+                    if (material == null) continue;
+                    if (material.shader != null && !material.shader.name.Contains(InternalErrorShaderToken)) continue;
+
+                    if (TryResolveMaterial(material.name, out var vanillaMaterial) && vanillaMaterial != null)
+                    {
+                        materials[i] = vanillaMaterial;
+                        modified = true;
+                        repaired++;
+                        continue;
+                    }
+
+                    Debug.LogWarning($"[VanillaAssetResolver][magenta] {context}: no vanilla material named "
+                        + $"'{material.name}' to restore -- '{DescribeHierarchyPath(renderer.transform)}' slot {i} "
+                        + $"shader='{(material.shader != null ? material.shader.name : "<null>")}'");
+                }
+
+                if (modified) renderer.sharedMaterials = materials;
+            }
+
+            return repaired;
+        }
+
+        private static string DescribeHierarchyPath(Transform transform)
+        {
+            var path = new System.Text.StringBuilder(transform.name);
+            for (var parent = transform.parent; parent != null; parent = parent.parent)
+                path.Insert(0, parent.name + "/");
+            return path.ToString();
         }
 
         // Walks every Renderer under the prefab and replaces null material

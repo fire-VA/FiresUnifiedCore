@@ -672,7 +672,7 @@ namespace FiresCore.UI
             overrideEntry.UnmatchedCount = 0;
             overrideEntry.InjectedCount = 0;
 
-            // Build a name?GO lookup of the vanilla hierarchy for fast matching
+            // Build a name->GO lookup of the vanilla hierarchy for fast matching
             var vanillaLookup = new Dictionary<string, List<GameObject>>(StringComparer.OrdinalIgnoreCase);
             BuildVanillaLookup(vanillaGO.transform, vanillaLookup, "");
 
@@ -741,7 +741,7 @@ namespace FiresCore.UI
             layout.SetMeta(MetaKeyEnabled, "true");
             PersistOverrides();
 
-            Debug.Log($"[UIVanillaOverride] === Override complete: '{layoutUID}' ? '{target}' ===");
+            Debug.Log($"[UIVanillaOverride] === Override complete: '{layoutUID}' -> '{target}' ===");
             Debug.Log($"[UIVanillaOverride]   Matched: {overrideEntry.MatchedCount} elements modified");
             Debug.Log($"[UIVanillaOverride]   Injected: {overrideEntry.InjectedCount} mod elements instantiated from layout data");
             Debug.Log($"[UIVanillaOverride]   Unmatched: {overrideEntry.UnmatchedCount} layout nodes had no vanilla counterpart");
@@ -1952,7 +1952,7 @@ namespace FiresCore.UI
         }
 
         /// <summary>
-        /// Builds a name?GameObjects lookup for all descendants of the given transform.
+        /// Builds a name->GameObjects lookup for all descendants of the given transform.
         /// Used for fallback matching when parallel tree walk fails.
         /// </summary>
         private static void BuildVanillaLookup(Transform root, Dictionary<string, List<GameObject>> lookup, string path)

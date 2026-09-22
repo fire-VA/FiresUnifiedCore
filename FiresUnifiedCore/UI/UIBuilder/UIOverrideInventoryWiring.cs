@@ -154,7 +154,7 @@ namespace FiresCore.UI
                 interaction.GridPosition = new Vector2Int(gridX, gridY);
             }
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired equipment slot '{go.name}' ? " +
+            Debug.Log($"[UIOverrideInventoryWiring] Wired equipment slot '{go.name}' -> " +
                 $"SlotID='{slotId}' Grid=({gridX},{gridY}) Interactive={interactive}");
             return true;
         }
@@ -178,7 +178,7 @@ namespace FiresCore.UI
                 {
                     string numPart = slotId.Substring("ToolHotbar".Length);
                     if (int.TryParse(numPart, out int parsed))
-                        hotbarIndex = parsed - 1; // 1-based ID ? 0-based index
+                        hotbarIndex = parsed - 1; // 1-based ID -> 0-based index
                 }
             }
 
@@ -200,7 +200,7 @@ namespace FiresCore.UI
             mirror.HotbarIndex = hotbarIndex;
             mirror.Interactive = interactive;
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired hotbar slot '{go.name}' ? " +
+            Debug.Log($"[UIOverrideInventoryWiring] Wired hotbar slot '{go.name}' -> " +
                 $"Index={hotbarIndex} Interactive={interactive}");
             return true;
         }
@@ -238,7 +238,7 @@ namespace FiresCore.UI
             mirror.HotbarIndex = hotbarIndex;
             mirror.Interactive = interactive;
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired tool hotbar slot '{go.name}' ? " +
+            Debug.Log($"[UIOverrideInventoryWiring] Wired tool hotbar slot '{go.name}' -> " +
                 $"Index={hotbarIndex} Interactive={interactive}");
             return true;
         }

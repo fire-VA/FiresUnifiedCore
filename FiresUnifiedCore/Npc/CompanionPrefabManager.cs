@@ -900,28 +900,9 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             // crash downstream iterators (BalrondExtendedAnimals.SpawnerBuilder etc.)
             // during ZNetScene.Awake. Unity's overloaded == catches both null and
             // fake-null with a single predicate.
-            int dead = ZNetScene.instance.m_prefabs.RemoveAll(p => p == null);
+            int dead = FiresCore.World.NetworkPrefabs.ScrubDeadEntries(ZNetScene.instance);
             if (dead > 0)
-                Debug.Log($"[CompanionPrefabManager] Scrubbed {dead} fake-null entries from ZNetScene.m_prefabs");
-
-            try
-            {
-                var namedField = typeof(ZNetScene).GetField("m_namedPrefabs",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (namedField != null && namedField.GetValue(ZNetScene.instance) is Dictionary<int, GameObject> dict)
-                {
-                    var deadKeys = new List<int>();
-                    foreach (var kvp in dict)
-                        if (kvp.Value == null) deadKeys.Add(kvp.Key);
-                    foreach (var k in deadKeys) dict.Remove(k);
-                    if (deadKeys.Count > 0)
-                        Debug.Log($"[CompanionPrefabManager] Scrubbed {deadKeys.Count} fake-null entries from ZNetScene.m_namedPrefabs");
-                }
-            }
-            catch (System.Exception ex)
-            {
-                Debug.LogWarning($"[CompanionPrefabManager] Could not scrub ZNetScene.m_namedPrefabs: {ex.Message}");
-            }
+                Debug.Log($"[CompanionPrefabManager] Scrubbed {dead} fake-null entries from ZNetScene's prefab lists");
 
             // CRITICAL: Fix shaders BEFORE registering prefabs
             // The asset bundle has broken Custom/Player shader references.

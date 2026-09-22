@@ -337,9 +337,9 @@ namespace FiresCore.UI
             if (missing.Count > 0)
             {
                 sb.AppendLine();
-                sb.AppendLine("? Missing Mods:");
+                sb.AppendLine("Missing Mods:");
                 foreach (string mod in missing)
-                    sb.AppendLine($"  ? {mod}");
+                    sb.AppendLine($"  - {mod}");
             }
 
             string plugins = layout.GetMeta("dependency_plugins");
@@ -707,7 +707,7 @@ namespace FiresCore.UI
             var missing = GetMissingDependencies(layout);
             if (missing.Count > 0)
             {
-                sb.AppendLine("## ? Missing Dependencies");
+                sb.AppendLine("## Missing Dependencies");
                 sb.AppendLine();
                 for (int i = 0; i < missing.Count; i++)
                     sb.AppendLine($"- **{missing[i]}** - NOT LOADED");
@@ -851,7 +851,7 @@ namespace FiresCore.UI
                 for (int i = 0; i < components.Count; i++)
                 {
                     var component = components[i];
-                    sb.AppendLine($"| `{Escape(component.FullTypeName)}` | `{Escape(component.GameObjectPath)}` | {(component.Enabled ? "?" : "?")} |");
+                    sb.AppendLine($"| `{Escape(component.FullTypeName)}` | `{Escape(component.GameObjectPath)}` | {(component.Enabled ? "yes" : "no")} |");
                 }
                 sb.AppendLine();
             }
@@ -1443,7 +1443,7 @@ namespace FiresCore.UI
             var missing = GetMissingDependencies(layout);
             if (missing.Count > 0)
             {
-                sb.AppendLine("## ? Missing Dependencies");
+                sb.AppendLine("## Missing Dependencies");
                 sb.AppendLine();
                 for (int i = 0; i < missing.Count; i++)
                     sb.AppendLine($"- **{missing[i]}** - NOT LOADED");

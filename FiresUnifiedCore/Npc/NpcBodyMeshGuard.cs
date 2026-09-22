@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FiresCore.Async;
 using UnityEngine;
 
 namespace FiresCore.Npc
@@ -8,8 +9,9 @@ namespace FiresCore.Npc
     /// Catches Unity's render-time body-mesh rejection ("SkinnedMeshRenderer: Rendering stopped because the data
     /// for mesh ... does not match"), which leaves an NPC invisible. The bone-count check cannot predict it (the
     /// live bodyfem matches the baked rig's count but not its vertex layout) and Unity offers no API, so this
-    /// listens for the message, blacklists that mesh and rig pairing for the session, and swaps affected bodies
-    /// to their best remaining candidate. Every body-mesh assignment site consults the blacklist.
+    /// listens for the message on the threaded log event (Unity raises it from its skinning work, so the
+    /// main-thread event never delivers it), blacklists that mesh and rig pairing for the session, and swaps
+    /// affected bodies to their best remaining candidate. Every body-mesh assignment site consults the blacklist.
     /// </summary>
     public static class NpcBodyMeshGuard
     {
@@ -20,12 +22,18 @@ namespace FiresCore.Npc
         private static bool _healing;
         private static readonly HashSet<string> _rejected = new HashSet<string>();
         private static readonly HashSet<string> _logged = new HashSet<string>();
+        private static readonly HashSet<string> _healed = new HashSet<string>();
+        private static readonly HashSet<string> _queued = new HashSet<string>();
 
         public static void EnsureInstalled()
         {
             if (_installed) return;
             _installed = true;
-            Application.logMessageReceived += OnLogMessage;
+            // Unity reports the rejection from its skinning work, off the main thread, so the main-thread-only event
+            // never sees it; healing touches the scene and has to go back. Warm the dispatcher from here, which is the
+            // main thread, because it builds its host GameObject on first use.
+            MainThreadDispatcher.Enqueue(() => { });
+            Application.logMessageReceivedThreaded += OnLogMessage;
         }
 
         public static bool IsRejected(Mesh mesh, SkinnedMeshRenderer smr)
@@ -79,20 +87,41 @@ namespace FiresCore.Npc
             if (goEnd < 0) return;
             string goName = condition.Substring(goStart, goEnd - goStart);
 
-            _healing = true;
-            try { HealAll(meshName, goName); }
-            catch { }
-            finally { _healing = false; }
+            // One heal in flight per pairing: the message repeats every frame until the body renders again, and each
+            // heal sweeps every NPC in the scene.
+            string queueKey = meshName + "|" + goName;
+            lock (_queued)
+            {
+                if (!_queued.Add(queueKey)) return;
+            }
+
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                lock (_queued) { _queued.Remove(queueKey); }
+                if (_healing) return;
+                _healing = true;
+                try { HealAll(meshName, goName); }
+                catch { }
+                finally { _healing = false; }
+            });
         }
 
         private static void HealAll(string meshName, string goName)
         {
+            string pair = meshName + "|" + goName;
             int healed = 0;
             foreach (var npcVis in UnityEngine.Object.FindObjectsByType<NpcVisEquipment>(FindObjectsSortMode.None))
             {
                 if (npcVis != null && npcVis.HealRejectedBodyMesh(meshName, goName)) healed++;
             }
-            if (healed == 0)
+            if (healed > 0)
+            {
+                _healed.Add(pair);
+                return;
+            }
+            // Unity repeats the message every frame until the body renders again, so the swap that already healed this
+            // pairing must not then be reported as a miss.
+            if (!_healed.Contains(pair))
                 LogOnce("miss|" + meshName + "|" + goName,
                     $"[NpcBodyMeshGuard] '{meshName}' on '{goName}' was rejected by Unity but no NpcVisEquipment body matched — not one of our NPC rigs; leaving it alone.");
         }

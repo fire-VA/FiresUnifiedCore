@@ -1,5 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.IO;
+using FiresLogAnalysis;
 using UnityEngine;
 
 namespace FiresCore.ClientLogRelay
@@ -17,7 +19,7 @@ namespace FiresCore.ClientLogRelay
 
         /// <summary>
         /// True when at least one consumer is registered. Wire-transport layers should check
-        /// this before doing the work of soliciting a log from the client — no consumers,
+        /// this before doing the work of soliciting a log from the client - no consumers,
         /// no point.
         /// </summary>
         public static bool HasConsumers
@@ -69,8 +71,8 @@ namespace FiresCore.ClientLogRelay
         /// <summary>
         /// Called by the wire-transport layer once the client's log + mod list bytes have
         /// been received, verified, and decoded. The relay:
-        ///  1. Runs <see cref="LogErrorWarningExtractor"/> over the log bytes once.
-        ///  2. Populates the artifact's <c>ErrorsWarningsReport</c> + counts.
+        ///  1. Analyzes the log once with <see cref="AnalyzeLog"/>.
+        ///  2. Diffs the mod lists once with <see cref="ComputeModDiff"/>.
         ///  3. Fans out to every registered consumer.
         ///
         /// Consumer exceptions are caught and logged; one failing consumer does not affect
@@ -80,38 +82,8 @@ namespace FiresCore.ClientLogRelay
         {
             if (artifacts == null) return;
 
-            // Parse once for all consumers
-            try
-            {
-                var extraction = LogErrorWarningExtractor.Extract(
-                    artifacts.LogBytes, artifacts.PlayerName, artifacts.PlatformId);
-                artifacts.ErrorsWarningsReport = extraction.Report;
-                artifacts.ErrorCount           = extraction.ErrorCount;
-                artifacts.WarningCount         = extraction.WarningCount;
-                artifacts.BenignSkipped        = extraction.BenignSkipped;
-                artifacts.DuplicatesCollapsed  = extraction.DuplicatesCollapsed;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[ClientLogRelay] Extraction failed for {artifacts.PlatformId}: {ex.Message}");
-                artifacts.ErrorsWarningsReport = $"# Extraction error: {ex.Message}";
-            }
-
-            // Compute mod diff if the server-side mod list was provided
-            if (artifacts.ServerMods != null && artifacts.ServerMods.Count > 0)
-            {
-                try
-                {
-                    artifacts.ModDiff = ModListDiff.Compute(
-                        artifacts.ModList, artifacts.ServerMods,
-                        artifacts.PlayerName, artifacts.PlatformId,
-                        artifacts.BrandLabel, artifacts.CapturedUtc);
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"[ClientLogRelay] ModListDiff failed for {artifacts.PlatformId}: {ex.Message}");
-                }
-            }
+            AnalyzeLog(artifacts);
+            ComputeModDiff(artifacts);
 
             // Snapshot consumers inside the lock, invoke outside so a slow consumer
             // cannot stall other ReportArtifacts calls.
@@ -137,6 +109,47 @@ namespace FiresCore.ClientLogRelay
                 {
                     Debug.LogWarning($"[ClientLogRelay] Consumer '{consumer.ConsumerId}' threw: {ex.Message}");
                 }
+            }
+        }
+
+        /// <summary>
+        /// Runs FiresLogAnalysis over the client log and renders its report. A log the analyzer
+        /// throws on leaves <see cref="ClientLogArtifacts.LogAnalysis"/> null and the report says why.
+        /// </summary>
+        public static void AnalyzeLog(ClientLogArtifacts artifacts)
+        {
+            try
+            {
+                var analysis = LogAnalyzer.Analyze(new MemoryStream(artifacts.LogBytes, writable: false));
+                string logOwner = $"{artifacts.PlayerName} ({artifacts.PlatformId})";
+                artifacts.ErrorsWarningsReport = ReportWriter.Write(analysis, logOwner);
+                artifacts.LogAnalysis = analysis;
+            }
+            catch (Exception ex)
+            {
+                string failure = $"Log analysis failed for {artifacts.PlatformId}: {ex.GetType().Name}: {ex.Message}";
+                Debug.LogWarning($"[ClientLogRelay] {failure}");
+                artifacts.ErrorsWarningsReport = failure;
+            }
+        }
+
+        /// <summary>
+        /// Diffs the client mod list against the server's into <see cref="ClientLogArtifacts.ModDiff"/>.
+        /// Does nothing when the transport did not provide the server's mod list.
+        /// </summary>
+        public static void ComputeModDiff(ClientLogArtifacts artifacts)
+        {
+            if (artifacts.ServerMods == null || artifacts.ServerMods.Count == 0) return;
+            try
+            {
+                artifacts.ModDiff = ModListDiff.Compute(
+                    artifacts.ModList, artifacts.ServerMods,
+                    artifacts.PlayerName, artifacts.PlatformId,
+                    artifacts.BrandLabel, artifacts.CapturedUtc);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[ClientLogRelay] ModListDiff failed for {artifacts.PlatformId}: {ex.Message}");
             }
         }
 
@@ -192,7 +205,7 @@ namespace FiresCore.ClientLogRelay
                 if (priority > currentPriority)
                 {
                     Debug.Log($"[ClientLogRelay] Login snapshot owner changed: " +
-                              $"'{currentOwner}' (priority {currentPriority}) ? '{ownerId}' (priority {priority})");
+                              $"'{currentOwner}' (priority {currentPriority}) -> '{ownerId}' (priority {priority})");
                     AppDomain.CurrentDomain.SetData(LoginOwnerKey, ownerId);
                     AppDomain.CurrentDomain.SetData(LoginOwnerPriorityKey, priority);
                     return true;
@@ -214,7 +227,7 @@ namespace FiresCore.ClientLogRelay
         {
             if (string.IsNullOrEmpty(ownerId)) return false;
             string currentOwner = AppDomain.CurrentDomain.GetData(LoginOwnerKey) as string;
-            if (string.IsNullOrEmpty(currentOwner)) return true; // nobody claimed ? everyone allowed
+            if (string.IsNullOrEmpty(currentOwner)) return true; // nobody claimed, everyone allowed
             return string.Equals(currentOwner, ownerId, StringComparison.Ordinal);
         }
 
@@ -225,89 +238,6 @@ namespace FiresCore.ClientLogRelay
         public static string GetLoginSnapshotOwner()
         {
             return AppDomain.CurrentDomain.GetData(LoginOwnerKey) as string;
-        }
-
-        //  Log-request reaction dispatch
-        //  The host mod plugs in a single ILogRequestHandler. When it spots a recognised
-        //  reaction on a previously-posted snapshot message (via whatever bot / gateway /
-        //  polling it has available) it calls TryDispatchLogRequest and the relay:
-        //    1. Resolves the message id through LogRequestRegistry.
-        //    2. Authorises the reacting user via the handler.
-        //    3. Invokes the handler with the resolved context.
-        //
-        //  The relay never talks to Discord on its own here - it just routes.
-
-        private static Interactions.ILogRequestHandler _logRequestHandler;
-
-        /// <summary>
-        /// Installs (or replaces) the <see cref="Interactions.ILogRequestHandler"/> used to
-        /// service reaction-driven full-log requests. Pass <c>null</c> to remove.
-        /// </summary>
-        public static void RegisterLogRequestHandler(Interactions.ILogRequestHandler handler)
-        {
-            lock (_lock)
-            {
-                _logRequestHandler = handler;
-                Debug.Log(handler != null
-                    ? $"[ClientLogRelay] LogRequestHandler installed: {handler.GetType().FullName}"
-                    : "[ClientLogRelay] LogRequestHandler cleared");
-            }
-        }
-
-        /// <summary>
-        /// True when both a handler and at least one registry entry exist. Cheap pre-check
-        /// host pollers can use to skip reaction parsing altogether when there's nothing
-        /// to dispatch to.
-        /// </summary>
-        public static bool HasLogRequestHandler
-        {
-            get { lock (_lock) { return _logRequestHandler != null; } }
-        }
-
-        /// <summary>
-        /// Main entry point for reaction dispatch. Called by the host mod's bot listener
-        /// (or equivalent) once it has identified an incoming emoji-reaction event.
-        /// Returns true if the event was resolved to a known message AND an authorised
-        /// user, false otherwise. Not an error - an unknown message id just means the
-        /// reaction is on something this module didn't post.
-        /// </summary>
-        /// <param name="messageId">Discord message snowflake id the reaction was added to.</param>
-        /// <param name="discordUserId">Author of the reaction.</param>
-        /// <param name="emoji">Raw emoji string / name the bot saw. Forwarded unchanged to
-        /// the handler so handlers can enforce an emoji allowlist if they want.</param>
-        public static bool TryDispatchLogRequest(string messageId, string discordUserId, string emoji)
-        {
-            Interactions.ILogRequestHandler handler;
-            lock (_lock) { handler = _logRequestHandler; }
-            if (handler == null) return false;
-
-            if (!Interactions.LogRequestRegistry.TryGet(messageId, out var ctx))
-                return false;
-
-            bool authorised;
-            try { authorised = handler.IsAuthorized(discordUserId); }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[ClientLogRelay] ILogRequestHandler.IsAuthorized threw: {ex.Message}");
-                return false;
-            }
-
-            if (!authorised)
-            {
-                Debug.Log($"[ClientLogRelay] Log request from unauthorised Discord user '{discordUserId}' on message {messageId}; ignoring");
-                return false;
-            }
-
-            try
-            {
-                handler.HandleRequest(ctx, discordUserId, emoji);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[ClientLogRelay] ILogRequestHandler.HandleRequest threw: {ex.Message}");
-                return false;
-            }
         }
     }
 }

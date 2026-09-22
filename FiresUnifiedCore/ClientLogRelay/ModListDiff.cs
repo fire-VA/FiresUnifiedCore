@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -89,7 +89,7 @@ namespace FiresCore.ClientLogRelay
         {
             var sb = new StringBuilder();
             string label = string.IsNullOrEmpty(brandLabel) ? "ClientLogRelay" : brandLabel;
-            sb.AppendLine($"# {label} — Client vs Server Mod List Diff");
+            sb.AppendLine($"# {label} - Client vs Server Mod List Diff");
             sb.AppendLine($"# Player:          {playerName ?? "unknown"}");
             sb.AppendLine($"# PlatformID:      {platformId ?? "unknown"}");
             sb.AppendLine($"# Captured:        {capturedUtc:yyyy-MM-dd HH:mm:ss} UTC");
@@ -103,7 +103,7 @@ namespace FiresCore.ClientLogRelay
 
             if (result.VersionMismatches.Count > 0)
             {
-                sb.AppendLine("## Version mismatches (client ? server)");
+                sb.AppendLine("## Version mismatches (client vs server)");
                 foreach (var mismatch in result.VersionMismatches)
                     sb.AppendLine($"  {mismatch.Guid,-55} client={mismatch.ClientVersion}  server={mismatch.ServerVersion}");
                 sb.AppendLine();

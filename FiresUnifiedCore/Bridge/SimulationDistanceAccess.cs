@@ -18,9 +18,35 @@ namespace FiresCore.Bridge
             get
             {
                 var net = ZNet.instance;
-                return net != null ? net.GetSyncedSimulationDistance() : SimulationDistance.OriginalDistance;
+                if (net == null) return SimulationDistance.OriginalDistance;
+                try
+                {
+                    return net.GetSyncedSimulationDistance();
+                }
+                catch (NullReferenceException)
+                {
+                    // ZNet outlives its own dependencies on the way down. GetSyncedSimulationDistance
+                    // calls the private GetDesiredSimulationDistance, which reads
+                    // GraphicsSettingsManager.Instance.ActiveSettings - a MonoBehaviour singleton that is
+                    // already destroyed while ZNet.instance still answers. A null check on ZNet cannot see
+                    // that, so the baseline promised above has to be honoured here too.
+                    //
+                    // This is the teardown path: anything restoring vanilla state from OnDisable/OnDestroy
+                    // (ocean ring extenders, zone-loading bumps) reads this on the way out, and a throw
+                    // there aborts the restore half-done and leaves the setting bumped.
+                    if (!_teardownWarned)
+                    {
+                        _teardownWarned = true;
+                        Debug.Log("[SimulationDistanceAccess] simulation distance read while the game was tearing "
+                                  + "down (ZNet up, GraphicsSettingsManager gone) - returning vanilla's baseline. "
+                                  + "Harmless during logout; logged once per session.");
+                    }
+                    return SimulationDistance.OriginalDistance;
+                }
             }
         }
+
+        private static bool _teardownWarned;
 
         /// <summary>Zone radius that is fully simulated. Replaces <c>ZoneSystem.m_activeArea</c>.</summary>
         public static int Near => Current.NearSimulationDistance;

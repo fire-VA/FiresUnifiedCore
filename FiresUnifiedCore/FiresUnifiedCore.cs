@@ -22,7 +22,7 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.2.10";
+        public const string PluginVersion = "0.2.34";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -61,6 +61,7 @@ namespace FiresCore
         protected override void Setup()
         {
             Log = Logger;
+            FiresCore.Logging.FiresLogColorPatch.TakeOwnership();
             FiresCoreBanner.PrintBig();
             Debug.Log($"[{PluginName}] Awake() - version {PluginVersion}");
 

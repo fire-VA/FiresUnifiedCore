@@ -635,7 +635,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // schedules a single collection 1.5s after the FIRST slot in this
             // station hits Done.  That window lets any other slots that finish in
             // the same burst be collected in one batched pass instead of running
-            // the collect?refill cycle slot-by-slot (which previously caused the
+            // the collect->refill cycle slot-by-slot (which previously caused the
             // companion to grab slot 0 and miss slots 1+).
             //
             // When the deadline arrives we jump straight into the pickup loop,
@@ -1240,7 +1240,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private const string CookingSkillKey = "companion_cooking_skill";
         private const float CookingSkillMax = 100f;
-        private const float CookingSkillXpPerItem = 0.5f; // ~200 successful cooks ? mastery
+        private const float CookingSkillXpPerItem = 0.5f; // ~200 successful cooks -> mastery
 
         private float GetCookingSkill()
         {
@@ -1264,17 +1264,17 @@ namespace FiresCore.Npc.IdleBehaviors
             if (next != current)
             {
                 zdo.Set(CookingSkillKey, next);
-                LogVerbose($"Cooking skill: {current:F1} ? {next:F1}");
+                LogVerbose($"Cooking skill: {current:F1} -> {next:F1}");
             }
         }
 
         /// <summary>
         /// Per-item fumble chance based on cooking skill.  Tuned so:
         /// <list type="bullet">
-        /// <item>Skill 0   ? 25% chance to leave any given Done item on the fire (it will burn next tick)</item>
-        /// <item>Skill 25  ? ~15%</item>
-        /// <item>Skill 50  ? ~7%</item>
-        /// <item>Skill 75  ? ~2%</item>
+        /// <item>Skill 0   -> 25% chance to leave any given Done item on the fire (it will burn next tick)</item>
+        /// <item>Skill 25  -> ~15%</item>
+        /// <item>Skill 50  -> ~7%</item>
+        /// <item>Skill 75  -> ~2%</item>
         /// <item>Skill 80+ - 0% (perfect, the behavior we always had)</item>
         /// </list>
         /// </summary>

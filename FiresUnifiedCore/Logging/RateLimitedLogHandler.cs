@@ -1,4 +1,6 @@
 using System;
+using System.Threading;
+using BepInEx.Logging;
 using UnityEngine;
 
 namespace FiresCore.Logging
@@ -10,6 +12,7 @@ namespace FiresCore.Logging
     internal sealed class RateLimitedLogHandler : ILogHandler
     {
         private const string LogPrefix = "[FiresUnifiedCore]";
+        private const string UnityLogSourceName = "Unity Log";
 
         private const string LimitExceededFragment        = "Failed to send data k_EResultLimitExceeded";
         private const string ShaderBinaryWarningFragment  = "Failed to find expected binary shader data";
@@ -38,6 +41,8 @@ namespace FiresCore.Logging
         private static readonly TimeSpan LimitExceededInterval = TimeSpan.FromSeconds(LimitExceededThrottleSeconds);
 
         private readonly ILogHandler _inner;
+        private readonly ManualLogSource _ourModLineSource;
+        private readonly int _mainThreadId;
 
         private DateTime _lastLimitExceeded = DateTime.MinValue;
         private int _suppressedShaderWarnings;
@@ -48,22 +53,43 @@ namespace FiresCore.Logging
         public RateLimitedLogHandler(ILogHandler inner)
         {
             _inner = inner ?? Debug.unityLogger.logHandler;
+            _ourModLineSource = BepInEx.Logging.Logger.CreateLogSource(UnityLogSourceName);
+            _mainThreadId = Thread.CurrentThread.ManagedThreadId;
         }
 
         public void LogFormat(LogType logType, UnityEngine.Object context, string format, params object[] args)
         {
             string message = ResolveMessage(format, args);
-
-            // Drop the raw native-console echo for our OWN mods' lines. Every Debug.Log ALSO reaches BepInEx via
-            // Application.logMessageReceived (independent of this handler), where FiresLogColorPatch prints it as a
-            // single colored line — so forwarding to the native writer here is exactly what produces the second,
-            // uncolored "white duplicate". Suppressing the native echo leaves only the colored BepInEx line, the
-            // same result mods get by logging through their own ManualLogSource. Not verbose-gated: this removes a
-            // redundant duplicate, not diagnostic content, so it applies even in verbose mode.
-            if (FiresLogColorPatch.IsOurModMessage(message)) return;
+            if (TryWriteOurModLineToBepInEx(logType, message)) return;
 
             if (!VerbosePassThrough() && ShouldSuppress(logType, message)) return;
             _inner.LogFormat(logType, context, format, args);
+        }
+
+        // Our tagged lines go straight to BepInEx under the "Unity Log" source, so the console and LogOutput.log get each
+        // one once, colored, without Unity's uncolored native echo. BepInEx only hears what the inner handler forwards, so
+        // dropping them lost them everywhere. Off the main thread they keep the native path: BepInEx's console writer is
+        // not thread-safe.
+        private bool TryWriteOurModLineToBepInEx(LogType logType, string message)
+        {
+            if (Thread.CurrentThread.ManagedThreadId != _mainThreadId || !FiresLogColorPatch.IsOurModMessage(message)) return false;
+            _ourModLineSource.Log(ToBepInExLevel(logType), message);
+            return true;
+        }
+
+        private static LogLevel ToBepInExLevel(LogType logType)
+        {
+            switch (logType)
+            {
+                case LogType.Error:
+                case LogType.Assert:
+                case LogType.Exception:
+                    return LogLevel.Error;
+                case LogType.Warning:
+                    return LogLevel.Warning;
+                default:
+                    return LogLevel.Info;
+            }
         }
 
         public void LogException(Exception exception, UnityEngine.Object context)

@@ -49,6 +49,40 @@ namespace FiresCore.Bridge
             catch (Exception ex) { Warn(ex); return 0; }
         }
 
+        /// <summary>
+        /// Server-side ONE-PER-WORLD reconciler for a unique world-gen dungeon: heals vanilla's instance ledger from
+        /// the live world (pass the surface position of the dungeon's ZDOs, or null when a whole-map scan found
+        /// none), and auto-places the dungeon once on worlds whose location generation predates the spec. Call it
+        /// after ZoneSystem.LocationsGenerated is true. Returns a human-readable status.
+        /// </summary>
+        public static string ReconcileUniquePlacement(DungeonSpec spec, Vector3? physicalAnchor)
+        {
+            try { return FiresDungeonUniquePlacement.ReconcileUnique(spec, physicalAnchor); }
+            catch (Exception ex) { Warn(ex); return "reconcile failed: " + ex.Message; }
+        }
+
+        /// <summary>Count this spec's records in vanilla's location-instance ledger (what the unique gate reads).</summary>
+        public static int CountLocationInstances(DungeonSpec spec, out int placed, out Vector3 firstPos)
+        {
+            placed = 0; firstPos = Vector3.zero;
+            try { return FiresDungeonUniquePlacement.CountInstances(spec, out placed, out firstPos, out _); }
+            catch (Exception ex) { Warn(ex); return 0; }
+        }
+
+        /// <summary>Record the dungeon as placed at pos in vanilla's ledger (manual spawns call this on success).</summary>
+        public static bool RegisterPlacedLocationInstance(DungeonSpec spec, Vector3 pos)
+        {
+            try { return FiresDungeonUniquePlacement.RegisterPlacedInstance(spec, pos); }
+            catch (Exception ex) { Warn(ex); return false; }
+        }
+
+        /// <summary>Remove every ledger record of this spec's location (manual removes call this after teardown).</summary>
+        public static int RemoveLocationInstances(DungeonSpec spec)
+        {
+            try { return FiresDungeonUniquePlacement.RemoveInstances(spec); }
+            catch (Exception ex) { Warn(ex); return 0; }
+        }
+
         /// <summary>Start the server-side coroutine host (stale-heal / deferred actions). No-op off the server.</summary>
         public static void EnsureService()
         {

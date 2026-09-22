@@ -70,7 +70,13 @@ namespace FiresCore.Storage
         // ── standalone ──
         public static string Territories => Ensure(Path.Combine(Root, "Territories"));
         public static string Guilds      => Ensure(Path.Combine(Root, "Guilds"));
+        public static string Presets     => Ensure(Path.Combine(Root, "Presets"));
+        public static string Recipes     => Ensure(Path.Combine(Root, "Recipes"));
+        public static string Creatures   => Ensure(Path.Combine(Root, "Creatures"));
         public static string Cache       => Ensure(Path.Combine(Debug, "Cache"));
+
+        public static string PresetsFor(string modName) =>
+            Ensure(Path.Combine(Presets, string.IsNullOrWhiteSpace(modName) ? "Mod" : modName.Trim()));
 
         private static string Ensure(string dir)
         {

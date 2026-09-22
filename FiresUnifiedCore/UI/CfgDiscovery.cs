@@ -55,6 +55,10 @@ namespace FiresCore.UI
         public bool IsServerSynced;
         public bool IsServerLocked;
         public bool IsAdminOnly;
+
+        // Read from the entry's string tags, which FiresConfigVisibility writes and ConfigurationManager
+        // reads too, so both windows hide/lock exactly the same settings.
+        public bool IsAdvanced;
         public bool ReadOnlyAttr;
 
         public object BoxedValue => Entry.BoxedValue;
@@ -240,6 +244,7 @@ namespace FiresCore.UI
             if (newlineIndex >= 0) desc = desc.Substring(0, newlineIndex);
 
             GetAcceptable(entry, out bool hasRange, out double min, out double max, out string[] listOptions);
+            ReadVisibilityTags(entry, out bool isAdvanced, out bool isReadOnly);
 
             string[] options = listOptions;
             if (options == null && settingType.IsEnum) options = Enum.GetNames(settingType);
@@ -267,7 +272,25 @@ namespace FiresCore.UI
                 Options = options,
                 Default = entry.DefaultValue,
                 Entry = entry,
+                IsAdvanced = isAdvanced,
+                ReadOnlyAttr = isReadOnly,
             };
+        }
+
+        private static void ReadVisibilityTags(ConfigEntryBase entry, out bool isAdvanced, out bool isReadOnly)
+        {
+            isAdvanced = false;
+            isReadOnly = false;
+
+            var tags = entry.Description != null ? entry.Description.Tags : null;
+            if (tags == null) return;
+
+            foreach (object tag in tags)
+            {
+                if (!(tag is string name)) continue;
+                if (name == FiresCore.Config.FiresConfigVisibility.AdvancedTag) isAdvanced = true;
+                else if (name == FiresCore.Config.FiresConfigVisibility.ReadOnlyTag) isReadOnly = true;
+            }
         }
 
         private static CtrlKind ResolveKind(Type settingType, bool hasRange, string[] options)

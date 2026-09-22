@@ -57,7 +57,7 @@ namespace FiresCore.Bridge
             IReadOnlyList<DiscordRewardItem> items);
     }
 
-    /// <summary>Which server-side anti-cheat list changed — the Discord integration styles the readout by this.</summary>
+    /// <summary>Which server-side anti-cheat list changed - the Discord integration styles the readout by this.</summary>
     public enum DiscordListKind { Enforced, Whitelist, ServerOnly, Blacklist, AdminOnly }
 
     /// <summary>
@@ -73,7 +73,7 @@ namespace FiresCore.Bridge
         public string Trigger;                         // "admin Foo connected", "config edited", "startup", ...
         public System.Collections.Generic.IReadOnlyList<string> Added;    // e.g. "`com.foo.bar` `v1.2.3`"
         public System.Collections.Generic.IReadOnlyList<string> Removed;
-        public System.Collections.Generic.IReadOnlyList<string> Changed;  // enforced version bumps: "`guid` `v1` → `v2`"
+        public System.Collections.Generic.IReadOnlyList<string> Changed;  // enforced version bumps: "`guid` `v1` -> `v2`"
         public System.Collections.Generic.IReadOnlyList<string> Current;  // the FULL current list, formatted
         public int EnforcedCount, WhitelistCount, ServerOnlyCount, BlacklistCount, AdminOnlyCount;
     }
@@ -91,7 +91,7 @@ namespace FiresCore.Bridge
     /// Cross-mod contract for posting anti-cheat / character events to a Discord integration.
     /// The Discord integration mod registers a concrete implementation via <see cref="DiscordSink.Register"/>;
     /// producer mods (e.g. FiresVAngarde) call the static <see cref="DiscordSink"/> facade. When no sink
-    /// is registered the facade no-ops — and crucially still completes any <c>onComplete</c> callback — so
+    /// is registered the facade no-ops - and crucially still completes any <c>onComplete</c> callback - so
     /// Discord stays an optional dependency and anti-cheat enforcement (the kick) never blocks on it.
     /// </summary>
     public interface IDiscordSink
@@ -109,9 +109,6 @@ namespace FiresCore.Bridge
 
         /// <summary>Discord config bridge: whether per-login client-log artifacts should be captured.</summary>
         bool NotifyClientLoginArtifacts();
-
-        /// <summary>Discord config bridge: comma-separated Discord user IDs allowed to request logs.</summary>
-        string BotAdminDiscordIds();
 
         /// <summary>An admin/exempt player triggered a behavioral detection but was NOT kicked (monitoring mode).</summary>
         void OnAdminCheatDetected(string playerName, string platformId, string reason,
@@ -162,8 +159,6 @@ namespace FiresCore.Bridge
 
         public static bool NotifyClientLoginArtifacts() => _impl?.NotifyClientLoginArtifacts() ?? false;
 
-        public static string BotAdminDiscordIds() => _impl?.BotAdminDiscordIds() ?? string.Empty;
-
         public static void OnAdminCheatDetected(string playerName, string platformId, string reason,
             int detectionCount, IReadOnlyList<string> activeAdminCommands)
             => _impl?.OnAdminCheatDetected(playerName, platformId, reason, detectionCount, activeAdminCommands);
@@ -179,9 +174,9 @@ namespace FiresCore.Bridge
             else onComplete?.Invoke();
         }
 
-        // ── Server-list snapshot provider: the reverse direction. The Discord integration pulls the
+        // - Server-list snapshot provider: the reverse direction. The Discord integration pulls the
         //    CURRENT four-list dump on demand (a user reacted on a list message), so the readout is always
-        //    live rather than frozen at post time. The anti-cheat mod registers the provider at init. ──
+        //    live rather than frozen at post time. The anti-cheat mod registers the provider at init. -
 
         private static Func<string> _serverListSnapshotProvider;
 
@@ -196,8 +191,8 @@ namespace FiresCore.Bridge
             catch { return null; }
         }
 
-        // ── Domain events (leaderboard / guild / group / death). Routed to the sink only if it also implements
-        //    IDiscordEventSink, so these are no-ops against an older anti-cheat-only sink. All server-emitted. ──
+        // - Domain events (leaderboard / guild / group / death). Routed to the sink only if it also implements
+        //    IDiscordEventSink, so these are no-ops against an older anti-cheat-only sink. All server-emitted. -
 
         public static void PostEvent(DiscordEventKind kind, string title, string description,
             IReadOnlyList<KeyValuePair<string, string>> fields, string platformId = null, Action onComplete = null)

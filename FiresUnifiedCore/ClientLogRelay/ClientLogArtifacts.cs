@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using FiresLogAnalysis;
 
 namespace FiresCore.ClientLogRelay
 {
@@ -20,15 +21,14 @@ namespace FiresCore.ClientLogRelay
         public DateTime CapturedUtc { get; }
 
         /// <summary>
-        /// Populated by <see cref="ClientLogRelay.ReportArtifacts"/> after parsing the log.
-        /// Consumers receive the pre-computed report; they do not need to parse themselves.
+        /// Populated by <see cref="ClientLogRelay.AnalyzeLog"/>. Null when the analyzer could not read the log.
+        /// </summary>
+        public LogAnalysis LogAnalysis { get; internal set; }
+
+        /// <summary>
+        /// The <see cref="ReportWriter"/> report for <see cref="LogAnalysis"/>, or why the analysis failed.
         /// </summary>
         public string ErrorsWarningsReport { get; internal set; }
-
-        public int ErrorCount   { get; internal set; }
-        public int WarningCount { get; internal set; }
-        public int BenignSkipped { get; internal set; }
-        public int DuplicatesCollapsed { get; internal set; }
 
         /// <summary>
         /// Populated by <see cref="ClientLogRelay.ReportArtifacts"/> when <see cref="ServerMods"/> is non-null.
@@ -69,8 +69,8 @@ namespace FiresCore.ClientLogRelay
         }
 
         /// <summary>
-        /// Default subdirectory name used by <see cref="Consumers.DiskConsumer"/> for this
-        /// client. Format: <c>{SafePlayerName}_{SafePlatformId}</c>.
+        /// Default subdirectory name <see cref="ClientLogArtifactWriter"/> writes this client's
+        /// artifacts under. Format: <c>{SafePlayerName}_{SafePlatformId}</c>.
         /// </summary>
         public string DefaultFolderName => $"{SafePlayerName}_{SafePlatformId}";
     }
