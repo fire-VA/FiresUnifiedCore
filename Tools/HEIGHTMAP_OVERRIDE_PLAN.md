@@ -3,8 +3,8 @@
 Code: `FiresUnifiedCore/Terrain/HeightmapOverride*.cs` · Branch: `feat/heightmap-override-fix`
 
 Lifts Valheim's ±8 m limit on raising and lowering terrain to server-configured limits (sliders
-±1000 m), the way HeightmapUnlimited does, with no Jotunn dependency. Keeps vanilla limits in voxel
-worlds.
+±1000 m), the way HeightmapUnlimited does, with no Jotunn dependency. Applies in every world mode,
+including FiresAdminTerrain's voxel worlds.
 
 ---
 
@@ -87,7 +87,7 @@ On world start and whenever the limits change (including by server sync):
 
 ```
 [HeightmapOverride] Active — terrain may rise 1000 m and sink 1000 m from its generated height.
-[HeightmapOverride] Suppressed by FiresAdminTerrain voxel world — vanilla ±8 m.
+[HeightmapOverride] Suppressed by <owner> — vanilla ±8 m.     (only if a mod registers a suppressor)
 [HeightmapOverride] Disabled — vanilla ±8 m.
 ```
 
@@ -96,38 +96,32 @@ launch's report is the verification.
 
 ---
 
-## Voxel worlds
+## Voxel worlds — the override stays ON
 
-In `VoxelWrap`, a hoe or pickaxe edit regenerates the heightmap and `VoxelZoneStreamer` rewraps that
-zone **and its 8 neighbours** from the heightmap (`Heightmap_Regenerate_RewrapZone`). A ±1000 m edit
-would ask the voxel mesher to rebuild across 2 km of vertical range in nine zones. `VoxelOnly` has no
-heightmap surface to limit. So voxel worlds keep vanilla limits.
+An earlier version of this plan recommended suppressing the override in voxel worlds. **That was
+wrong,** and would have capped World Edit Commands and Infinity Hammer at ±8 m in exactly the worlds
+they need to work in.
 
-The predicate is the streamer's own gate, `VoxelZoneStreamer.ModeActive`:
-voxel `Enabled` **and** `CustomGeneration` **and** `WorldMode != Vanilla`. The override is suppressed
-exactly when the streamer would wrap.
+FiresAdminTerrain's voxel terrain is built **from the heightmap**:
 
-**Dependency direction:** FiresAdminTerrain references FiresUnifiedCore, so Core cannot reach into
-AdminTerrain. Core exposes `HeightmapOverrideLimits.RegisterSuppressor(owner, predicate)`;
-AdminTerrain registers.
+- `VoxelWrap` is client-only; the vanilla heightmap stays authoritative and each client's voxels mirror
+  it. `VoxelZoneStreamer`'s own comment: heightmap data is the ground truth, *"PLUS every edit
+  (hoe/pickaxe/IH/WEC comp deltas)"*.
+- `VoxelOnly` builds heightmap *data* (never its mesh or collider) and voxelises from it.
 
-### AdminTerrain integration (apply to the current local AdminTerrain)
+The rewrap samples `Heightmap.GetHeight` — the height **after** `ApplyToHeightmap` clamps it. Suppress the
+override and every edit above 8 m is flattened before the voxels ever see it.
 
-In `VoxelZoneStreamer`:
+The cost concern behind the old recommendation doesn't hold: a column's vertical chunk range comes from
+the terrain actually in it (lowest ground minus cave depth, to highest ground plus 2, in 32 m chunks),
+so cost scales with what gets built, not with the configured limit.
 
-```csharp
-internal static void RegisterHeightmapSuppressor()
-    => FiresCore.Terrain.HeightmapOverrideLimits.RegisterSuppressor("FiresAdminTerrain voxel world", () => ModeActive);
-```
+**`RegisterSuppressor` stays** as a general hook for a terrain mod whose heightmap edits genuinely must
+not apply. FiresAdminTerrain should **not** register one. The requirement still holds for anyone who
+does: the predicate must evaluate identically on every peer, because every peer runs `ApplyToHeightmap`.
 
-Call once from plugin init, after `FiresVoxelConfig.Bind`. `ModeActive` reads live config, so a mode
-change takes effect immediately.
-
-⚠️ **Required alongside it:** `FiresVoxelConfig.Enabled`, `CustomGeneration` and `WorldMode` are not
-registered with AdminTerrain's ConfigSync. The suppressor must evaluate identically on every peer —
-otherwise a client that considers the world voxel renders terrain clamped to ±8 while the server allows
-+1000, and players walk on ground they can't see. Sync those three. (Voxel mode itself has the same
-latent problem today: a client can voxel-wrap a world the server treats as vanilla.)
+How WEC/IH terrain tools reach voxel and skyland terrain: FiresAdminTerrain
+`Tools/WEC_IH_TERRAIN_BRIDGE_PLAN.md`.
 
 ---
 
@@ -154,5 +148,5 @@ latent problem today: a client can voxel-wrap a world the server treats as vanil
 5. `Enabled = false`: exactly vanilla ±8.
 6. Dedicated server + client: set limits on the server only; the client's log shows the server's values
    after joining, and both see the same ground.
-7. After the AdminTerrain integration: a `VoxelWrap` world logs `Suppressed by FiresAdminTerrain voxel
-   world`, and a vanilla-mode world logs `Active`.
+7. A `VoxelWrap` world logs `Active`, and a WEC `terrain raise=20` shows up in the voxel terrain at
+   the full 20 m.

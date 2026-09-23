@@ -23,7 +23,7 @@ namespace FiresCore.Terrain
             Enabled = config.Bind(
                 Section, "Enabled", true,
                 "Lift Valheim's ±8 m limit on raising and lowering terrain, to the MaxHeight / MinHeight below. " +
-                "Worlds running a voxel terrain mode keep the vanilla ±8 m. Applies live, no restart. [Synced with Server]");
+                "Applies live, no restart. The log reports the limits in force. [Synced with Server]");
 
             MaxHeight = config.Bind(
                 Section, "MaxHeight", HeightLimitRange,
