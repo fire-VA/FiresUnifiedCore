@@ -133,43 +133,34 @@ namespace FiresCore.Npc.IdleBehaviors
             int queued = nview.GetZDO().GetInt(ZDOVars.s_queued, 0);
             if (queued >= _nearbyKiln.m_maxOre) return false;
             
-            // Find wood in inventory
-            string[] woodTypes = { "Wood", "RoundLog", "FineWood", "ElderBark", "YggdrasilWood" };
-            
             foreach (var item in storageInv.GetAllItems())
             {
                 if (item == null) continue;
                 if (item.m_stack <= 0) continue; // Skip empty stacks
-                
+
                 string dropName = item.m_dropPrefab?.name ?? "";
-                if (string.IsNullOrEmpty(dropName)) continue;
-                
-                foreach (string woodType in woodTypes)
+                if (!PieceDataHelper.StationAccepts(_nearbyKiln, dropName)) continue;
+
+                // CRITICAL FIX: Remove from inventory FIRST, then call RPC
+                // This matches TryAddOre() behavior and prevents item duplication
+                string itemName = item.m_shared?.m_name ?? dropName;
+                int stackBefore = item.m_stack;
+                bool cheated = item.m_cheated;
+
+                if (!storageInv.RemoveOneItem(item))
                 {
-                    if (dropName.Equals(woodType, System.StringComparison.OrdinalIgnoreCase))
-                    {
-                        // CRITICAL FIX: Remove from inventory FIRST, then call RPC
-                        // This matches TryAddOre() behavior and prevents item duplication
-                        string itemName = item.m_shared?.m_name ?? dropName;
-                        int stackBefore = item.m_stack;
-                        
-                        if (!storageInv.RemoveOneItem(item))
-                        {
-                            if (CompanionIdleBehavior.VerboseLogging)
-                                Debug.LogWarning($"[SmelterOperator] Failed to remove wood from inventory: {itemName}");
-                            continue; // Try next item
-                        }
-                        
-                        // Successfully removed from inventory - now add to kiln via RPC
-                        nview.InvokeRPC("RPC_AddOre", dropName);
-                        _inventory.SaveToZDO();
-                        
-                        if (CompanionIdleBehavior.VerboseLogging)
-                            Debug.Log($"[SmelterOperator] Added wood to kiln: {itemName} (stack was {stackBefore}, now {stackBefore - 1})");
-                        
-                        return true;
-                    }
+                    if (CompanionIdleBehavior.VerboseLogging)
+                        Debug.LogWarning($"[SmelterOperator] Failed to remove wood from inventory: {itemName}");
+                    continue; // Try next item
                 }
+
+                nview.InvokeRPC(AddOreRpc, dropName, cheated);
+                _inventory.SaveToZDO();
+
+                if (CompanionIdleBehavior.VerboseLogging)
+                    Debug.Log($"[SmelterOperator] Added wood to kiln: {itemName} (stack was {stackBefore}, now {stackBefore - 1})");
+
+                return true;
             }
             
             return false;

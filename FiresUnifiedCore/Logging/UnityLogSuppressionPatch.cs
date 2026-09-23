@@ -8,7 +8,8 @@ namespace FiresCore.Logging
     // Suppresses known-noise Unity messages by prefixing BepInEx's UnityLogSource.OnUnityLogMessageReceived,
     // which listens on Application.logMessageReceived directly; replacing Debug.unityLogger's handler never
     // reached BepInEx's console and disk listeners. The type is resolved by name since Core has no reference to
-    // it. Verbose mode passes everything through.
+    // it. Each category announces itself once; the running totals join Core's line in the status box.
+    // Verbose mode passes everything through.
     [HarmonyPatch]
     internal static class UnityLogSuppressionPatch
     {
@@ -31,12 +32,15 @@ namespace FiresCore.Logging
         // each time they swallow a ClutterSystem NRE during custom-terrain / zone load; one per patch coordinate,
         // so it floods world-load. Harmless noise — suppress centrally like the rest of this list.
         private const string ClutterNreFragment          = "Suppressed ClutterSystem NRE";
+        // A dedicated server has no GPU, so vanilla's render and video paths fail on every boot: three
+        // "AsyncResourceUpload failed", the Hidden/VideoDecode + Hidden/VideoComposite materials and each of their
+        // shader passes. 17 errors a boot, all of them fake, which buries a real one. Headless only - on a client with
+        // a graphics device these mean something and still print.
+        private const string AsyncUploadFragment         = "AsyncResourceUpload failed";
+        private const string RenderPathPassesFragment    = "custom render path shader needs to have at least 1 passes";
+        private const string VideoMaterialFragment       = "Could not find material Hidden/Video";
+        private const string VideoPassFragment           = "Could not find video decode shader pass";
 
-        private const int ShaderSummaryInterval         = 100;
-        private const int MissingScriptSummaryInterval  = 100;
-        private const int KinematicSummaryInterval      = 200;
-        private const int NonReadableMeshSummaryInterval = 100;
-        private const int ClutterNreSummaryInterval      = 100;
         private const double LimitExceededThrottleSeconds = 30.0;
 
         private const string SummaryPrefix = "[FiresUnifiedCore]";
@@ -49,7 +53,19 @@ namespace FiresCore.Logging
         private static int _suppressedKinematicWarnings;
         private static int _suppressedNonReadableMeshWarnings;
         private static int _suppressedClutterNreWarnings;
+        private static int _suppressedHeadlessRenderErrors;
         private static DateTime _lastLimitExceeded = DateTime.MinValue;
+
+        // Read once while patching, on the main thread: the callback this patches fires on whichever thread logged,
+        // and SystemInfo is not worth touching from those.
+        private static bool _headless;
+
+        internal static int SuppressedShaderWarnings => _suppressedShaderWarnings;
+        internal static int SuppressedMissingScriptWarnings => _suppressedMissingScriptWarnings;
+        internal static int SuppressedKinematicWarnings => _suppressedKinematicWarnings;
+        internal static int SuppressedNonReadableMeshWarnings => _suppressedNonReadableMeshWarnings;
+        internal static int SuppressedClutterNreWarnings => _suppressedClutterNreWarnings;
+        internal static int SuppressedHeadlessRenderErrors => _suppressedHeadlessRenderErrors;
 
         // Diagnostic - surfaces in BepInEx logs once at startup so we
         // can confirm the patch wired in. If this isn't present in the
@@ -59,6 +75,9 @@ namespace FiresCore.Logging
 
         private static bool Prepare()
         {
+            try { _headless = Lifecycle.FiresMod.IsHeadless; }
+            catch { _headless = false; }
+
             var method = TargetMethod();
             if (method != null && !_diagnosticEmitted)
             {
@@ -124,35 +143,45 @@ namespace FiresCore.Logging
         {
             if (type == LogType.Warning && Contains(message, ShaderBinaryWarningFragment))
             {
-                _suppressedShaderWarnings++;
-                EmitShaderSummaryIfDue();
+                if (++_suppressedShaderWarnings == 1)
+                    Announce("shader binary-data warnings");
                 return true;
             }
             if (type == LogType.Warning && Contains(message, MissingScriptFragment))
             {
-                _suppressedMissingScriptWarnings++;
-                EmitMissingScriptSummaryIfDue();
+                if (++_suppressedMissingScriptWarnings == 1)
+                    Announce("'referenced script missing' warnings");
                 return true;
             }
             if (type == LogType.Warning
                 && (Contains(message, KinematicLinearFragment) || Contains(message, KinematicAngularFragment)))
             {
-                _suppressedKinematicWarnings++;
-                EmitKinematicSummaryIfDue();
+                if (++_suppressedKinematicWarnings == 1)
+                    Announce("kinematic-rigidbody velocity warnings");
                 return true;
             }
             if ((type == LogType.Warning || type == LogType.Error)
                 && (Contains(message, CombineMeshFragment)
                     || (Contains(message, NavMeshReadFragment) && Contains(message, NavMeshReadAccessFragment))))
             {
-                _suppressedNonReadableMeshWarnings++;
-                EmitNonReadableMeshSummaryIfDue();
+                if (++_suppressedNonReadableMeshWarnings == 1)
+                    Announce("non-readable-mesh warnings (CombineMeshes / RuntimeNavMeshBuilder read access - R/W-off meshes on Ashlands + modded content)");
                 return true;
             }
             if (type == LogType.Warning && Contains(message, ClutterNreFragment))
             {
-                _suppressedClutterNreWarnings++;
-                EmitClutterNreSummaryIfDue();
+                if (++_suppressedClutterNreWarnings == 1)
+                    Announce("'[EnvironmentBoxPatches] ClutterSystem NRE' warnings (custom-terrain / zone load)");
+                return true;
+            }
+            if (_headless
+                && (Contains(message, AsyncUploadFragment)
+                    || Contains(message, RenderPathPassesFragment)
+                    || Contains(message, VideoMaterialFragment)
+                    || Contains(message, VideoPassFragment)))
+            {
+                if (++_suppressedHeadlessRenderErrors == 1)
+                    Announce("vanilla render/video errors a headless server cannot avoid (no GPU)");
                 return true;
             }
             if (Contains(message, LimitExceededFragment))
@@ -174,43 +203,12 @@ namespace FiresCore.Logging
             catch { return false; }
         }
 
-        // Summaries route through Debug.Log → Unity native → BepInEx
-        // captures via Application.logMessageReceived → our prefix sees
-        // the summary text but it doesn't match a suppression fragment,
-        // so it passes through normally.
-        private static void EmitShaderSummaryIfDue()
+        // The announcement routes through Debug.Log → Unity native → BepInEx captures via
+        // Application.logMessageReceived → our prefix sees the text but it doesn't match a suppression
+        // fragment, so it passes through normally.
+        private static void Announce(string category)
         {
-            if (_suppressedShaderWarnings != 1
-                && _suppressedShaderWarnings % ShaderSummaryInterval != 0) return;
-            Debug.Log($"{SummaryPrefix} Suppressed {_suppressedShaderWarnings} shader binary-data warnings. Set verbose to surface.");
-        }
-
-        private static void EmitMissingScriptSummaryIfDue()
-        {
-            if (_suppressedMissingScriptWarnings != 1
-                && _suppressedMissingScriptWarnings % MissingScriptSummaryInterval != 0) return;
-            Debug.Log($"{SummaryPrefix} Suppressed {_suppressedMissingScriptWarnings} 'referenced script missing' warnings. Set verbose to surface.");
-        }
-
-        private static void EmitKinematicSummaryIfDue()
-        {
-            if (_suppressedKinematicWarnings != 1
-                && _suppressedKinematicWarnings % KinematicSummaryInterval != 0) return;
-            Debug.Log($"{SummaryPrefix} Suppressed {_suppressedKinematicWarnings} kinematic-rigidbody velocity warnings. Set verbose to surface.");
-        }
-
-        private static void EmitNonReadableMeshSummaryIfDue()
-        {
-            if (_suppressedNonReadableMeshWarnings != 1
-                && _suppressedNonReadableMeshWarnings % NonReadableMeshSummaryInterval != 0) return;
-            Debug.Log($"{SummaryPrefix} Suppressed {_suppressedNonReadableMeshWarnings} non-readable-mesh warnings (CombineMeshes / RuntimeNavMeshBuilder read access - R/W-off meshes on Ashlands + modded content). Set verbose to surface.");
-        }
-
-        private static void EmitClutterNreSummaryIfDue()
-        {
-            if (_suppressedClutterNreWarnings != 1
-                && _suppressedClutterNreWarnings % ClutterNreSummaryInterval != 0) return;
-            Debug.Log($"{SummaryPrefix} Suppressed {_suppressedClutterNreWarnings} '[EnvironmentBoxPatches] ClutterSystem NRE' warnings (custom-terrain / zone load). Set verbose to surface.");
+            Debug.Log($"{SummaryPrefix} Suppressing {category}; the status box keeps the count. Set verbose to surface.");
         }
     }
 }

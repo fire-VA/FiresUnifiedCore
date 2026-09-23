@@ -45,8 +45,8 @@ namespace FiresCore.Npc
             }
             else
             {
-                _followBehavior?.UpdateGroundedState();
-                _isGrounded = _followBehavior?.IsGrounded ?? _character?.IsOnGround() ?? false;
+                _traversal?.UpdateGroundedState();
+                _isGrounded = _traversal?.IsGrounded ?? _character?.IsOnGround() ?? false;
             }
         }
 

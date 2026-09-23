@@ -303,7 +303,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
         protected override void OnEffectApplied()
         {
             m_character?.Message(MessageHud.MessageType.Center, "HOLY FURY!");
-            AbilityFXManager.SpawnEffect("vfx_spray_fire", m_character?.transform.position ?? Vector3.zero, null, 0.7f);
+            AbilityFXManager.SpawnEffect("vfx_FireballHit", m_character?.transform.position ?? Vector3.zero, null, 0.7f);
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
@@ -536,7 +536,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
                 }
             }
             
-            AbilityFXManager.SpawnEffect("vfx_fireball_explosion", m_character.transform.position, null, AoERange / VfxReferenceRange);
+            AbilityFXManager.SpawnEffect("fx_fireball_staff_explosion", m_character.transform.position, null, AoERange / VfxReferenceRange);
         }
         
         public static bool ApplyBloodSacrifice(Character target, float duration)

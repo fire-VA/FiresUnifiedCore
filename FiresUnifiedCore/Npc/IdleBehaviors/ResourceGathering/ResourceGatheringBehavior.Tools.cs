@@ -114,49 +114,12 @@ namespace FiresCore.Npc.IdleBehaviors
             _requiredToolType = resource.RequiredTool;
             _requiredToolTier = resource.MinToolTier;
             
-            float searchRadius = CompanionSettings.ChestSearchRadius; // 50m by default
             bool shouldLog = VerboseLogging || CompanionIdleBehavior.VerboseLogging;
             
-            // Collect all search positions
-            var searchPositions = new System.Collections.Generic.List<Vector3>();
-            
-            // 1. Always search from companion's current position
-            searchPositions.Add(Transform.position);
-            
-            // 2. If we have a target position (commanded to gather), search from there too
-            if (_targetPosition != Vector3.zero)
-            {
-                searchPositions.Add(_targetPosition);
-            }
-            
-            // 3. If staying (has home), search from home position
-            if (IdleBehavior?.HasHomePosition == true)
-            {
-                searchPositions.Add(IdleBehavior.HomePosition);
-            }
-            
             if (shouldLog)
-            {
                 Debug.Log($"[ResourceGathering] {Companion?.companionName} TryFindToolInNearbyChests: searching for {_requiredToolType} tier>={_requiredToolTier}");
-                Debug.Log($"[ResourceGathering]   Search positions: {searchPositions.Count} locations, radius={searchRadius}m");
-                for (int i = 0; i < searchPositions.Count; i++)
-                    Debug.Log($"[ResourceGathering]   Position {i}: {searchPositions[i]}");
-            }
             
-            // Collect all unique chests from all search positions
-            var allChests = new System.Collections.Generic.HashSet<Container>();
-            foreach (var pos in searchPositions)
-            {
-                var chestsNearPos = ChestHelper.FindNearbyChests(pos, searchRadius);
-                if (chestsNearPos != null)
-                {
-                    foreach (var chest in chestsNearPos)
-                    {
-                        if (chest != null)
-                            allChests.Add(chest);
-                    }
-                }
-            }
+            var allChests = CollectToolSearchChests();
             
             if (allChests.Count == 0)
             {
@@ -169,7 +132,6 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"[ResourceGathering] {Companion?.companionName} TryFindToolInNearbyChests: found {allChests.Count} unique chests to search");
             
             ItemDrop.ItemData bestTool = null;
-            int bestTier = _requiredToolTier - 1;
             Container bestChest = null;
             
             foreach (var chest in allChests)
@@ -179,21 +141,15 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 foreach (var item in chestInv.GetAllItems())
                 {
-                    if (item == null) continue;
-                    
-                    if (!ResourceDataHelper.IsToolAppropriate(item, _requiredToolType, _requiredToolTier))
+                    if (!ResourceDataHelper.IsToolAppropriate(item, _requiredToolType, _requiredToolTier) ||
+                        !ResourceDataHelper.IsBetterTool(item, bestTool, _requiredToolType))
                         continue;
                     
-                    int toolTier = item.m_shared?.m_toolTier ?? 0;
-                    if (toolTier > bestTier)
-                    {
-                        bestTool = item;
-                        bestTier = toolTier;
-                        bestChest = chest;
+                    bestTool = item;
+                    bestChest = chest;
                         
-                        if (shouldLog)
-                            Debug.Log($"[ResourceGathering]   Found candidate: {item.m_shared?.m_name} tier={toolTier} in chest at {chest.transform.position}");
-                    }
+                    if (shouldLog)
+                        Debug.Log($"[ResourceGathering]   Found candidate: {item.m_shared?.m_name} tier={item.m_shared.m_toolTier} in chest at {chest.transform.position}");
                 }
             }
             
@@ -203,7 +159,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 _toolChest = bestChest;
                 
                 if (shouldLog)
-                    Debug.Log($"[ResourceGathering] {Companion?.companionName} TryFindToolInNearbyChests: FOUND {bestTool.m_shared?.m_name} (tier {bestTier}) in chest at {bestChest.transform.position}");
+                    Debug.Log($"[ResourceGathering] {Companion?.companionName} TryFindToolInNearbyChests: FOUND {bestTool.m_shared?.m_name} (tier {bestTool.m_shared.m_toolTier}) in chest at {bestChest.transform.position}");
                 
                 return true;
             }
@@ -448,54 +404,96 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
             
-            // CRITICAL FIX: Search from multiple positions - companion, target resource, and home
-            // This ensures we find tools within 50m of ANY relevant location
-            var searchPositions = new System.Collections.Generic.List<Vector3>();
-            searchPositions.Add(Transform.position);
+            foreach (var chest in CollectToolSearchChests())
+            {
+                var chestInv = chest.GetInventory();
+                if (chestInv == null) continue;
+
+                foreach (var item in chestInv.GetAllItems())
+                {
+                    if (ResourceDataHelper.IsToolAppropriate(item, resource.RequiredTool, resource.MinToolTier))
+                    {
+                        if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
+                            Debug.Log($"[ResourceGathering] {Companion?.companionName} found {item.m_shared?.m_name} in nearby chest for {resource.Name}");
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static readonly CompanionInventory.EquipmentSlot[] ToolCarrySlots =
+        {
+            CompanionInventory.EquipmentSlot.RightHand,
+            CompanionInventory.EquipmentSlot.RightBack,
+            CompanionInventory.EquipmentSlot.LeftBack
+        };
+
+        /// <summary>
+        /// Chests within the chest search radius of the companion, the gather target and (when staying) home: a tool in
+        /// reach of any of those places can be fetched.
+        /// </summary>
+        private System.Collections.Generic.HashSet<Container> CollectToolSearchChests()
+        {
+            var searchPositions = new System.Collections.Generic.List<Vector3> { Transform.position };
             if (_targetPosition != Vector3.zero)
                 searchPositions.Add(_targetPosition);
             if (IdleBehavior?.HasHomePosition == true)
                 searchPositions.Add(IdleBehavior.HomePosition);
             
-            // Collect all unique chests from all search positions
-            var allChests = new System.Collections.Generic.HashSet<Container>();
-            foreach (var pos in searchPositions)
+            var chests = new System.Collections.Generic.HashSet<Container>();
+            foreach (var position in searchPositions)
             {
-                var chestsNearPos = ChestHelper.FindNearbyChests(pos, CompanionSettings.ChestSearchRadius);
-                if (chestsNearPos != null)
+                var chestsNearPosition = ChestHelper.FindNearbyChests(position, CompanionSettings.ChestSearchRadius);
+                if (chestsNearPosition == null) continue;
+                foreach (var chest in chestsNearPosition)
                 {
-                    foreach (var chest in chestsNearPos)
-                    {
-                        if (chest != null)
-                            allChests.Add(chest);
-                    }
+                    if (chest != null)
+                        chests.Add(chest);
                 }
             }
+            return chests;
+        }
             
-            if (allChests.Count > 0)
+        private const int NoObtainableTool = ResourceDataHelper.NoToolTier;
+
+        /// <summary>The best axe tier the companion holds, carries, can fetch or can craft now; trees above it are skipped.</summary>
+        private int ReachableAxeTier() => Mathf.Max(GetBestObtainableToolTier(ResourceDataHelper.ToolType.Axe),
+            ResourceDataHelper.BestCraftableToolTier(CraftableAxes, ResourceDataHelper.ToolType.Axe, _inventory?.GetStorageInventory(),
+                Transform.position, WorkbenchSearchRadiusRg));
+
+        /// <summary>Highest m_toolTier of a tool for the job the companion holds, carries or can fetch from a chest.</summary>
+        private int GetBestObtainableToolTier(ResourceDataHelper.ToolType tool)
+        {
+            int bestTier = NoObtainableTool;
+            void Consider(ItemDrop.ItemData item)
             {
-                string searchPattern = resource.RequiredTool == ResourceDataHelper.ToolType.Pickaxe ? "pickaxe" : "axe";
-                
-                foreach (var chest in allChests)
-                {
-                    if (chest == null) continue;
-                    var chestInv = chest.GetInventory();
-                    if (chestInv == null) continue;
+                if (ResourceDataHelper.IsToolAppropriate(item, tool, 0) && item.m_shared.m_toolTier > bestTier)
+                    bestTier = item.m_shared.m_toolTier;
+            }
                     
-                    foreach (var item in chestInv.GetAllItems())
-                    {
-                        if (item == null) continue;
-                        if (ResourceDataHelper.IsToolAppropriate(item, resource.RequiredTool, resource.MinToolTier))
-                        {
-                            if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                                Debug.Log($"[ResourceGathering] {Companion?.companionName} found {item.m_shared?.m_name} in nearby chest for {resource.Name}");
-                            return true;
-                        }
-                    }
+            if (_inventory != null)
+            {
+                foreach (var slot in ToolCarrySlots)
+                    Consider(_inventory.GetEquippedItem(slot));
+                var storage = _inventory.GetStorageInventory();
+                if (storage != null)
+                {
+                    foreach (var item in storage.GetAllItems())
+                        Consider(item);
                 }
             }
+
+            foreach (var chest in CollectToolSearchChests())
+            {
+                var chestInv = chest.GetInventory();
+                if (chestInv == null) continue;
+                foreach (var item in chestInv.GetAllItems())
+                    Consider(item);
+            }
             
-            return false;
+            return bestTier;
         }
         
         /// <summary>
@@ -506,16 +504,9 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_inventory == null) return null;
             
             var rightHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
-            if (rightHand != null)
+            if (rightHand != null && ResourceDataHelper.IsWieldedWeaponOrTool(rightHand))
             {
-                var itemType = rightHand.m_shared.m_itemType;
-                if (itemType == ItemDrop.ItemData.ItemType.Tool ||
-                    itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
-                    itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
-                    itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft)
-                {
-                    return rightHand;
-                }
+                return rightHand;
             }
             
             string prefabName = _inventory.GetEquipmentPrefabNamePublic(CompanionInventory.EquipmentSlot.RightHand);
@@ -537,11 +528,7 @@ namespace FiresCore.Npc.IdleBehaviors
                             
                             _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightHand, itemData);
                             
-                            var itemType = itemData.m_shared.m_itemType;
-                            if (itemType == ItemDrop.ItemData.ItemType.Tool ||
-                                itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
-                                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
-                                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft)
+                            if (ResourceDataHelper.IsWieldedWeaponOrTool(itemData))
                             {
                                 if (VerboseLogging)
                                     Debug.Log($"[ResourceGathering] Reloaded {prefabName} into RightHand");
@@ -565,55 +552,22 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_inventory == null || resource == null) return;
             
             ItemDrop.ItemData bestTool = null;
-            int bestTier = -1;
             CompanionInventory.EquipmentSlot? bestSlot = null;
-            bool bestIsInStorage = false;
             
             if (VerboseLogging)
                 Debug.Log($"[ResourceGathering] {Companion.companionName} searching for {resource.RequiredTool} tier {resource.MinToolTier}...");
             
-            var rightHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
-            if (rightHand != null && VerboseLogging)
-                Debug.Log($"[ResourceGathering] RightHand: {rightHand.m_shared?.m_name}, toolTier={rightHand.m_shared?.m_toolTier}, appropriate={ResourceDataHelper.IsToolAppropriate(rightHand, resource.RequiredTool, resource.MinToolTier)}");
-            
-            if (ResourceDataHelper.IsToolAppropriate(rightHand, resource.RequiredTool, resource.MinToolTier))
+            foreach (var slot in ToolCarrySlots)
             {
-                if (rightHand.m_shared.m_toolTier > bestTier)
+                var equipped = _inventory.GetEquippedItem(slot);
+                if (equipped != null && VerboseLogging)
+                    Debug.Log($"[ResourceGathering] {slot}: {equipped.m_shared?.m_name}, toolTier={equipped.m_shared?.m_toolTier}, appropriate={ResourceDataHelper.IsToolAppropriate(equipped, resource.RequiredTool, resource.MinToolTier)}");
+            
+                if (ResourceDataHelper.IsToolAppropriate(equipped, resource.RequiredTool, resource.MinToolTier) &&
+                    ResourceDataHelper.IsBetterTool(equipped, bestTool, resource.RequiredTool))
                 {
-                    bestTool = rightHand;
-                    bestTier = rightHand.m_shared.m_toolTier;
-                    bestSlot = CompanionInventory.EquipmentSlot.RightHand;
-                    bestIsInStorage = false;
-                }
-            }
-            
-            var rightBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-            if (rightBack != null && VerboseLogging)
-                Debug.Log($"[ResourceGathering] RightBack: {rightBack.m_shared?.m_name}, toolTier={rightBack.m_shared?.m_toolTier}, appropriate={ResourceDataHelper.IsToolAppropriate(rightBack, resource.RequiredTool, resource.MinToolTier)}");
-            
-            if (ResourceDataHelper.IsToolAppropriate(rightBack, resource.RequiredTool, resource.MinToolTier))
-            {
-                if (rightBack.m_shared.m_toolTier > bestTier)
-                {
-                    bestTool = rightBack;
-                    bestTier = rightBack.m_shared.m_toolTier;
-                    bestSlot = CompanionInventory.EquipmentSlot.RightBack;
-                    bestIsInStorage = false;
-                }
-            }
-            
-            var leftBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack);
-            if (leftBack != null && VerboseLogging)
-                Debug.Log($"[ResourceGathering] LeftBack: {leftBack.m_shared?.m_name}, toolTier={leftBack.m_shared?.m_toolTier}, appropriate={ResourceDataHelper.IsToolAppropriate(leftBack, resource.RequiredTool, resource.MinToolTier)}");
-            
-            if (ResourceDataHelper.IsToolAppropriate(leftBack, resource.RequiredTool, resource.MinToolTier))
-            {
-                if (leftBack.m_shared.m_toolTier > bestTier)
-                {
-                    bestTool = leftBack;
-                    bestTier = leftBack.m_shared.m_toolTier;
-                    bestSlot = CompanionInventory.EquipmentSlot.LeftBack;
-                    bestIsInStorage = false;
+                    bestTool = equipped;
+                    bestSlot = slot;
                 }
             }
             
@@ -622,23 +576,14 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 foreach (var item in storage.GetAllItems())
                 {
+                    bool isAppropriate = ResourceDataHelper.IsToolAppropriate(item, resource.RequiredTool, resource.MinToolTier);
                     if (VerboseLogging && item != null)
-                    {
-                        string itemName = item.m_shared?.m_name ?? "null";
-                        int toolTier = item.m_shared?.m_toolTier ?? 0;
-                        bool isAppropriate = ResourceDataHelper.IsToolAppropriate(item, resource.RequiredTool, resource.MinToolTier);
-                        Debug.Log($"[ResourceGathering] Storage: {itemName}, toolTier={toolTier}, appropriate={isAppropriate}");
-                    }
+                        Debug.Log($"[ResourceGathering] Storage: {item.m_shared?.m_name ?? "null"}, toolTier={item.m_shared?.m_toolTier ?? 0}, appropriate={isAppropriate}");
                     
-                    if (ResourceDataHelper.IsToolAppropriate(item, resource.RequiredTool, resource.MinToolTier))
+                    if (isAppropriate && ResourceDataHelper.IsBetterTool(item, bestTool, resource.RequiredTool))
                     {
-                        if (item.m_shared.m_toolTier > bestTier)
-                        {
-                            bestTool = item;
-                            bestTier = item.m_shared.m_toolTier;
-                            bestSlot = null;
-                            bestIsInStorage = true;
-                        }
+                        bestTool = item;
+                        bestSlot = null;
                     }
                 }
             }
@@ -650,60 +595,20 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
             
+            HolsterLeftHandWeapon();
+
             if (bestSlot == CompanionInventory.EquipmentSlot.RightHand)
             {
-                HolsterLeftHandWeapon();
                 if (VerboseLogging)
                     Debug.Log($"[ResourceGathering] {Companion.companionName} already has {bestTool.m_shared.m_name} equipped");
                 return;
             }
             
-            HolsterLeftHandWeapon();
-            
-            var currentRightHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
-            if (currentRightHand != null && currentRightHand.IsWeapon())
+            if (!ResourceDataHelper.TryEquipInRightHand(_inventory, bestTool, bestSlot, holsterWeaponOnBack: true))
             {
-                var currentRightBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-                if (currentRightBack == null)
-                {
-                    _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.RightHand);
-                    _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightBack, currentRightHand);
-                    if (VerboseLogging)
-                        Debug.Log($"[ResourceGathering] Moved {currentRightHand.m_shared?.m_name} to RightBack");
-                }
-                else
-                {
-                    _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.RightHand);
-                    storage?.AddItem(currentRightHand);
-                    if (VerboseLogging)
-                        Debug.Log($"[ResourceGathering] Moved {currentRightHand.m_shared?.m_name} to storage");
-                }
-            }
-            else if (currentRightHand != null)
-            {
-                _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.RightHand);
-            }
-            
-            if (bestIsInStorage)
-            {
-                storage?.RemoveItem(bestTool);
-                _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightHand, bestTool);
                 if (VerboseLogging)
-                    Debug.Log($"[ResourceGathering] Equipped {bestTool.m_shared?.m_name} from storage");
-            }
-            else if (bestSlot == CompanionInventory.EquipmentSlot.RightBack)
-            {
-                _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.RightBack);
-                _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightHand, bestTool);
-                if (VerboseLogging)
-                    Debug.Log($"[ResourceGathering] Equipped {bestTool.m_shared?.m_name} from RightBack");
-            }
-            else if (bestSlot == CompanionInventory.EquipmentSlot.LeftBack)
-            {
-                _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.LeftBack);
-                _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightHand, bestTool);
-                if (VerboseLogging)
-                    Debug.Log($"[ResourceGathering] Equipped {bestTool.m_shared?.m_name} from LeftBack");
+                    Debug.Log($"[ResourceGathering] {Companion.companionName} has no room to put away {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
+                return;
             }
             
             _inventory.RecalculateEquipmentBonusesPublic();
@@ -711,7 +616,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _inventory.SaveToZDO();
             
             if (VerboseLogging)
-                Debug.Log($"[ResourceGathering] {Companion.companionName} equipped {bestTool.m_shared.m_name} (tier {bestTier}) from {(bestIsInStorage ? "storage" : bestSlot.ToString())}");
+                Debug.Log($"[ResourceGathering] {Companion.companionName} equipped {bestTool.m_shared.m_name} (tier {bestTool.m_shared.m_toolTier}) from {(bestSlot.HasValue ? bestSlot.ToString() : "storage")}");
         }
         
         private void HolsterLeftHandWeapon()
@@ -751,38 +656,15 @@ namespace FiresCore.Npc.IdleBehaviors
             
             if (!shouldHolster) return;
             
-            _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.LeftHand);
-            
-            var currentLeftBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack);
-            if (currentLeftBack == null)
+            if (ResourceDataHelper.TryStowEquipped(_inventory, CompanionInventory.EquipmentSlot.LeftHand,
+                    CompanionInventory.EquipmentSlot.LeftBack, CompanionInventory.EquipmentSlot.RightBack))
             {
-                _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.LeftBack, leftHand);
                 if (VerboseLogging)
-                    Debug.Log($"[ResourceGathering] Holstered {leftHand.m_shared?.m_name} to LeftBack");
+                    Debug.Log($"[ResourceGathering] Holstered {leftHand.m_shared?.m_name}");
             }
             else
             {
-                var currentRightBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-                if (currentRightBack == null)
-                {
-                    _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightBack, leftHand);
-                    if (VerboseLogging)
-                        Debug.Log($"[ResourceGathering] Holstered {leftHand.m_shared?.m_name} to RightBack");
-                }
-                else
-                {
-                    var storage = _inventory.GetStorageInventory();
-                    if (storage != null && storage.AddItem(leftHand))
-                    {
-                        if (VerboseLogging)
-                            Debug.Log($"[ResourceGathering] Moved {leftHand.m_shared?.m_name} to storage");
-                    }
-                    else
-                    {
-                        _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.LeftHand, leftHand);
-                        Debug.LogWarning($"[ResourceGathering] Could not holster left hand weapon - no space");
-                    }
-                }
+                Debug.LogWarning($"[ResourceGathering] Could not holster left hand weapon - no space");
             }
             
             _inventory.ApplyVisualEquipment();
@@ -807,7 +689,6 @@ namespace FiresCore.Npc.IdleBehaviors
             Debug.Log($"[ResourceGathering] {Companion?.companionName} searching storage for {requiredTool} tier>={minTier}. Storage has {allItems.Count} items:");
             
             ItemDrop.ItemData bestTool = null;
-            int bestTier = minTier - 1;
             
             foreach (var item in allItems)
             {
@@ -820,13 +701,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 Debug.Log($"  - {itemName} (prefab:{prefabName}, tier:{toolTier}, appropriate:{isAppropriate})");
                 
-                if (isAppropriate)
+                if (isAppropriate && ResourceDataHelper.IsBetterTool(item, bestTool, requiredTool))
                 {
-                    if (toolTier > bestTier)
-                    {
-                        bestTool = item;
-                        bestTier = toolTier;
-                    }
+                    bestTool = item;
                 }
             }
             
@@ -845,24 +722,11 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"[ResourceGathering] {Companion?.companionName} found {bestTool.m_shared?.m_name} in nearby chest!");
             }
             
-            var currentRightHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
-            if (currentRightHand != null)
+            if (!ResourceDataHelper.TryEquipInRightHand(_inventory, bestTool, null, holsterWeaponOnBack: true))
             {
-                _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.RightHand);
-                
-                var rightBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-                if (rightBack == null && currentRightHand.IsWeapon())
-                {
-                    _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightBack, currentRightHand);
-                }
-                else
-                {
-                    storage.AddItem(currentRightHand);
-                }
+                Debug.Log($"[ResourceGathering] {Companion?.companionName} has no room to put away {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
+                return false;
             }
-            
-            storage.RemoveItem(bestTool);
-            _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightHand, bestTool);
             
             _inventory.RecalculateEquipmentBonusesPublic();
             _inventory.ApplyVisualEquipment();
@@ -875,179 +739,41 @@ namespace FiresCore.Npc.IdleBehaviors
         // Tool crafting helpers
         // -----------------------------------------------------------------------
 
-        private const string PickaxePrefabAntler = "PickaxeAntler";
-        private const string AxePrefabStone = "AxeStone";
-        private const string AxePrefabFlint = "AxeFlint";
+        private static readonly string[] CraftablePickaxes = { "PickaxeAntler" };
+        private static readonly string[] CraftableAxes = { "AxeStone", "AxeFlint" };
         private const float WorkbenchSearchRadiusRg = 30f;
 
-        /// <summary>Returns true if we have materials to craft any tool that would work for this resource.</summary>
-        private bool CanCraftToolForResource(ResourceDataHelper.ResourceData resource)
+        /// <summary>
+        /// Picks a tool for the resource that the companion can craft from its vanilla recipe (cheapest first) and sets
+        /// _craftRecipe and _craftWorkbench, the station that recipe needs (null when it needs none).
+        /// </summary>
+        private bool TryPlanToolCraft(ResourceDataHelper.ResourceData resource)
         {
+            _craftRecipe = null;
+            _craftWorkbench = null;
             if (resource == null) return false;
+
+            string[] candidates;
             if (resource.RequiredTool == ResourceDataHelper.ToolType.Pickaxe)
-                return CanCraftPickaxe();
-            if (resource.RequiredTool == ResourceDataHelper.ToolType.Axe)
-                return CanCraftAxe();
-            return false;
-        }
-
-        private bool CanCraftPickaxe()
-        {
-            var storage = _inventory?.GetStorageInventory();
-            if (storage == null) return false;
-            // Antler Pickaxe: 10 Wood + 1 HardAntler
-            return CountItemsByPrefab(storage, "Wood") >= 10 &&
-                   CountItemsByPrefab(storage, "HardAntler") >= 1;
-        }
-
-        private bool CanCraftAxe()
-        {
-            var storage = _inventory?.GetStorageInventory();
-            if (storage == null) return false;
-            // Stone Axe: 4 Stone + 3 Wood (simplest recipe, no workbench required)
-            if (CountItemsByPrefab(storage, "Stone") >= 4 &&
-                CountItemsByPrefab(storage, "Wood") >= 3)
-                return true;
-            // Flint Axe: 6 Flint + 4 Wood + 2 LeatherScraps (workbench level 1)
-            if (CountItemsByPrefab(storage, "Flint") >= 6 &&
-                CountItemsByPrefab(storage, "Wood") >= 4 &&
-                CountItemsByPrefab(storage, "LeatherScraps") >= 2)
-                return true;
-            return false;
-        }
-
-        /// <summary>Tries to craft the most appropriate tool for the given resource.</summary>
-        private bool TryCraftToolForResource(ResourceDataHelper.ResourceData resource)
-        {
-            if (resource == null) return false;
-            if (resource.RequiredTool == ResourceDataHelper.ToolType.Pickaxe)
-                return TryCraftPickaxe();
-            if (resource.RequiredTool == ResourceDataHelper.ToolType.Axe)
-                return TryCraftAxe();
-            return false;
-        }
-
-        private bool TryCraftPickaxe()
-        {
-            var storage = _inventory?.GetStorageInventory();
-            if (storage == null) return false;
-
-            if (CountItemsByPrefab(storage, "Wood") >= 10 &&
-                CountItemsByPrefab(storage, "HardAntler") >= 1)
-            {
-                ConsumeItems(storage, "Wood", 10);
-                ConsumeItems(storage, "HardAntler", 1);
-                return AddCraftedItem(storage, PickaxePrefabAntler);
-            }
-            return false;
-        }
-
-        private bool TryCraftAxe()
-        {
-            var storage = _inventory?.GetStorageInventory();
-            if (storage == null) return false;
-
-            // Try Stone Axe first (cheapest recipe)
-            if (CountItemsByPrefab(storage, "Stone") >= 4 &&
-                CountItemsByPrefab(storage, "Wood") >= 3)
-            {
-                ConsumeItems(storage, "Stone", 4);
-                ConsumeItems(storage, "Wood", 3);
-                return AddCraftedItem(storage, AxePrefabStone);
-            }
-            // Fallback: Flint Axe
-            if (CountItemsByPrefab(storage, "Flint") >= 6 &&
-                CountItemsByPrefab(storage, "Wood") >= 4 &&
-                CountItemsByPrefab(storage, "LeatherScraps") >= 2)
-            {
-                ConsumeItems(storage, "Flint", 6);
-                ConsumeItems(storage, "Wood", 4);
-                ConsumeItems(storage, "LeatherScraps", 2);
-                return AddCraftedItem(storage, AxePrefabFlint);
-            }
-            return false;
-        }
-
-        private CraftingStation FindNearestWorkbench()
-        {
-            var colliders = Physics.OverlapSphere(Transform.position, WorkbenchSearchRadiusRg);
-            CraftingStation nearest = null;
-            float nearestDist = float.MaxValue;
-            var processed = new System.Collections.Generic.HashSet<CraftingStation>();
-
-            foreach (var collider in colliders)
-            {
-                if (collider == null) continue;
-                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
-                if (station == null || processed.Contains(station)) continue;
-                processed.Add(station);
-
-                string stName = (station.m_name ?? "").ToLowerInvariant();
-                string goName = (station.gameObject.name ?? "").ToLowerInvariant();
-                if (!stName.Contains("workbench") && !goName.Contains("workbench")) continue;
-
-                float dist = Vector3.Distance(Transform.position, station.transform.position);
-                if (dist < nearestDist)
-                {
-                    nearestDist = dist;
-                    nearest = station;
-                }
-            }
-
-            return nearest;
-        }
-
-        private int CountItemsByPrefab(Inventory inv, string prefabName)
-        {
-            int count = 0;
-            foreach (var item in inv.GetAllItems())
-            {
-                if (item?.m_dropPrefab?.name == prefabName)
-                    count += item.m_stack;
-            }
-            return count;
-        }
-
-        private void ConsumeItems(Inventory inv, string prefabName, int amount)
-        {
-            int remaining = amount;
-            var items = new System.Collections.Generic.List<ItemDrop.ItemData>(inv.GetAllItems());
-            foreach (var item in items)
-            {
-                if (remaining <= 0) break;
-                if (item?.m_dropPrefab?.name != prefabName) continue;
-                int toRemove = Mathf.Min(remaining, item.m_stack);
-                item.m_stack -= toRemove;
-                remaining -= toRemove;
-                if (item.m_stack <= 0)
-                    inv.RemoveItem(item);
-            }
-        }
-
-        private bool AddCraftedItem(Inventory inv, string prefabName)
-        {
-            if (ZNetScene.instance == null) return false;
-            var prefab = ZNetScene.instance.GetPrefab(prefabName);
-            if (prefab == null)
-            {
-                if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[ResourceGathering] crafted item prefab not found: {prefabName}");
+                candidates = CraftablePickaxes;
+            else if (resource.RequiredTool == ResourceDataHelper.ToolType.Axe)
+                candidates = CraftableAxes;
+            else
                 return false;
-            }
-            var itemDrop = prefab.GetComponent<ItemDrop>();
-            if (itemDrop == null) return false;
 
-            var newItem = itemDrop.m_itemData.Clone();
-            newItem.m_stack = 1;
-            if (!inv.AddItem(newItem))
-            {
-                if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[ResourceGathering] no inventory space for crafted {prefabName}");
+            _craftRecipe = ResourceDataHelper.FindCraftableTool(candidates, resource.RequiredTool, resource.MinToolTier,
+                _inventory?.GetStorageInventory(), Transform.position, WorkbenchSearchRadiusRg, out _craftWorkbench);
+            return _craftRecipe != null;
+        }
+
+        private bool CraftPlannedTool()
+        {
+            var storage = _inventory?.GetStorageInventory();
+            if (_craftRecipe == null || storage == null || !ResourceDataHelper.CraftTool(_craftRecipe, _craftWorkbench, storage))
                 return false;
-            }
 
-            _inventory?.SaveToZDO();
-            Debug.Log($"[ResourceGathering] {Companion?.companionName} crafted {prefabName}");
+            _inventory.SaveToZDO();
+            Debug.Log($"[ResourceGathering] {Companion?.companionName} crafted {_craftRecipe.m_item.name}");
             return true;
         }
 
@@ -1069,10 +795,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (VerboseLogging)
                 Debug.Log($"[ResourceGathering] {Companion?.companionName} searching {nearbyChests.Count} nearby chests for {requiredTool}");
             
-            string searchPattern = requiredTool == ResourceDataHelper.ToolType.Pickaxe ? "pickaxe" : "axe";
-            
             ItemDrop.ItemData bestTool = null;
-            int bestTier = minTier - 1;
             Container bestChest = null;
             
             foreach (var chest in nearbyChests)
@@ -1084,16 +807,10 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 foreach (var item in chestInv.GetAllItems())
                 {
-                    if (item == null) continue;
-                    
-                    if (!ResourceDataHelper.IsToolAppropriate(item, requiredTool, minTier))
-                        continue;
-                    
-                    int toolTier = item.m_shared?.m_toolTier ?? 0;
-                    if (toolTier > bestTier)
+                    if (ResourceDataHelper.IsToolAppropriate(item, requiredTool, minTier) &&
+                        ResourceDataHelper.IsBetterTool(item, bestTool, requiredTool))
                     {
                         bestTool = item;
-                        bestTier = toolTier;
                         bestChest = chest;
                     }
                 }

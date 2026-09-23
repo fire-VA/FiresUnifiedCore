@@ -92,6 +92,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private float _phaseStartTime;
         private float _lastAttackTime;
         private int _resourcesGathered;
+        private readonly ResourceDataHelper.AttackChain _swingChain = new ResourceDataHelper.AttackChain();
         
         // MineRock repositioning
         private int _consecutiveNoColliderHits = 0;
@@ -137,6 +138,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private int _requiredToolTier;
 
         // Crafting state
+        private Recipe _craftRecipe;
         private CraftingStation _craftWorkbench;
         
         #endregion
@@ -306,13 +308,15 @@ namespace FiresCore.Npc.IdleBehaviors
             // Use the stay mode work search radius (50m default, or territory bounds if larger)
             float searchRadius = CompanionSettings.GetStayModeWorkSearchRadius(homePos);
             
-            bool needsOre = CheckIfNearbySmelterNeedsOre(homePos);
+            var neededStationInputs = GetInputsNeededByNearbySmelters(homePos);
             bool needsWood = CheckIfNearbyKilnNeedsWood(homePos);
+            int? obtainablePickaxeTier = null;
+            int ObtainablePickaxeTier() => obtainablePickaxeTier ??= GetBestObtainableToolTier(ResourceDataHelper.ToolType.Pickaxe);
             
             // Priority 1: Station needs - always try these first
-            if (needsOre)
+            if (neededStationInputs.Count > 0)
             {
-                var oreDeposit = FindNearbyOreDeposit(homePos, searchRadius);
+                var oreDeposit = FindNearbyOreDeposit(homePos, searchRadius, neededStationInputs, ObtainablePickaxeTier());
                 if (oreDeposit != null)
                 {
                     var resourceData = ResourceDataHelper.GetResourceData(oreDeposit);
@@ -361,8 +365,8 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Random.value < 0.85f)
             {
                 // Prioritize based on what tools companion has
-                bool hasAxe = HasToolOfType("axe");
-                bool hasPickaxe = HasToolOfType("pickaxe");
+                bool hasAxe = HasToolOfType(ResourceDataHelper.ToolType.Axe);
+                bool hasPickaxe = HasToolOfType(ResourceDataHelper.ToolType.Pickaxe);
                 
                 // If companion has axe, try trees first
                 if (hasAxe)
@@ -386,7 +390,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // If companion has pickaxe, try ore deposits
                 if (hasPickaxe)
                 {
-                    var oreDeposit = FindNearbyOreDeposit(homePos, searchRadius);
+                    var oreDeposit = FindNearbyOreDeposit(homePos, searchRadius, ResourceDataHelper.SmeltableItems, ObtainablePickaxeTier());
                     if (oreDeposit != null)
                     {
                         var resourceData = ResourceDataHelper.GetResourceData(oreDeposit);
@@ -420,7 +424,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 if (!hasPickaxe)
                 {
-                    var oreDeposit = FindNearbyOreDeposit(homePos, searchRadius);
+                    var oreDeposit = FindNearbyOreDeposit(homePos, searchRadius, ResourceDataHelper.SmeltableItems, ObtainablePickaxeTier());
                     if (oreDeposit != null)
                     {
                         var resourceData = ResourceDataHelper.GetResourceData(oreDeposit);
@@ -435,7 +439,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                Debug.Log($"[ResourceGathering] {Companion?.companionName} no resources found near home (needsOre={needsOre}, needsWood={needsWood})");
+                Debug.Log($"[ResourceGathering] {Companion?.companionName} no resources found near home (station inputs needed={neededStationInputs.Count}, needsWood={needsWood})");
             
             return null;
         }
@@ -443,41 +447,33 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <summary>
         /// Checks if companion has a specific tool type in their inventory or equipped.
         /// </summary>
-        private bool HasToolOfType(string toolType)
+        private bool HasToolOfType(ResourceDataHelper.ToolType tool)
         {
             if (_inventory == null) return false;
             
-            string search = toolType.ToLowerInvariant();
+            if (ResourceDataHelper.IsToolAppropriate(GetEquippedWeaponOrTool(), tool, 0)) return true;
             
-            // Check equipped weapon
-            var weapon = GetEquippedWeaponOrTool();
-            if (weapon != null)
-            {
-                string prefab = weapon.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-                string name = weapon.m_shared?.m_name?.ToLowerInvariant() ?? "";
-                if (search == "pickaxe" && (prefab.Contains("pickaxe") || name.Contains("pickaxe"))) return true;
-                if (search == "axe" && (prefab.Contains("axe") || name.Contains("axe")) && !prefab.Contains("pickaxe") && !name.Contains("pickaxe")) return true;
-            }
-            
-            // Check storage inventory
             var storage = _inventory.GetStorageInventory();
             if (storage != null)
             {
                 foreach (var item in storage.GetAllItems())
                 {
-                    if (item == null) continue;
-                    string prefab = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-                    string name = item.m_shared?.m_name?.ToLowerInvariant() ?? "";
-                    if (search == "pickaxe" && (prefab.Contains("pickaxe") || name.Contains("pickaxe"))) return true;
-                    if (search == "axe" && (prefab.Contains("axe") || name.Contains("axe")) && !prefab.Contains("pickaxe") && !name.Contains("pickaxe")) return true;
+                    if (ResourceDataHelper.IsToolAppropriate(item, tool, 0)) return true;
                 }
             }
             
             return false;
         }
         
-        private bool CheckIfNearbySmelterNeedsOre(Vector3 position)
+        /// <summary>
+        /// Inputs of the non-kiln smelting stations nearby that have room for more and nothing to load in the nearby
+        /// chests; gathering for them may only target what they actually convert.
+        /// </summary>
+        private HashSet<string> GetInputsNeededByNearbySmelters(Vector3 position)
         {
+            var neededInputs = new HashSet<string>();
+            var checkedStations = new HashSet<Smelter>();
+
             // Use stay mode work radius for staying companions
             float searchRadius = IdleBehavior != null && IdleBehavior.HasHomePosition && Companion != null && !Companion.ShouldBeFollowing
                 ? CompanionSettings.GetStayModeWorkSearchRadius(position)
@@ -490,10 +486,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (collider == null) continue;
                 
                 var smelter = collider.GetComponent<Smelter>() ?? collider.GetComponentInParent<Smelter>();
-                if (smelter == null) continue;
+                if (smelter == null || !checkedStations.Add(smelter)) continue;
                 
-                string stationType = PieceDataHelper.GetSmelterType(smelter);
-                if (stationType.ToLowerInvariant().Contains("kiln")) continue;
+                if (!PieceDataHelper.IsOperableStation(smelter) || PieceDataHelper.IsCharcoalKiln(smelter)) continue;
                 
                 var nview = smelter.GetComponent<ZNetView>();
                 if (nview == null || !nview.IsValid()) continue;
@@ -507,7 +502,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     
                     foreach (var conversion in smelter.m_conversion)
                     {
-                        if (conversion.m_from != null && ChestHelper.ChestsHaveItem(nearbyChests, conversion.m_from.name))
+                        if (conversion.m_from != null && ChestHelper.GetAvailableItemCount(nearbyChests, conversion.m_from.name) > 0)
                         {
                             hasOreInChests = true;
                             break;
@@ -516,12 +511,12 @@ namespace FiresCore.Npc.IdleBehaviors
                     
                     if (!hasOreInChests)
                     {
-                        return true;
+                        neededInputs.UnionWith(PieceDataHelper.GetStationInputs(smelter));
                     }
                 }
             }
             
-            return false;
+            return neededInputs;
         }
         
         private bool CheckIfNearbyKilnNeedsWood(Vector3 position)
@@ -540,8 +535,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 var smelter = collider.GetComponent<Smelter>() ?? collider.GetComponentInParent<Smelter>();
                 if (smelter == null) continue;
                 
-                string stationType = PieceDataHelper.GetSmelterType(smelter);
-                if (!stationType.ToLowerInvariant().Contains("kiln")) continue;
+                if (!PieceDataHelper.IsCharcoalKiln(smelter)) continue;
                 
                 var nview = smelter.GetComponent<ZNetView>();
                 if (nview == null || !nview.IsValid()) continue;
@@ -552,12 +546,11 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     var nearbyChests = ChestHelper.FindNearbyChests(smelter.transform.position, searchRadius);
                     
-                    string[] woodTypes = { "Wood", "RoundLog", "FineWood", "ElderBark", "YggdrasilWood" };
                     bool hasWoodInChests = false;
-                    
-                    foreach (string woodType in woodTypes)
+
+                    foreach (string woodType in PieceDataHelper.GetStationInputs(smelter))
                     {
-                        if (ChestHelper.ChestsHaveItem(nearbyChests, woodType))
+                        if (ChestHelper.GetAvailableItemCount(nearbyChests, woodType) > 0)
                         {
                             hasWoodInChests = true;
                             break;
@@ -587,17 +580,10 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (currentFuel < fireplace.m_maxFuel * 0.5f)
                 {
                     var nearbyChests = ChestHelper.FindNearbyChests(fireplace.transform.position, searchRadius);
-                    bool hasFuelInChests = false;
-                    
-                    foreach (string fuelName in ChestHelper.FuelItems)
-                    {
-                        if (ChestHelper.ChestsHaveItem(nearbyChests, fuelName))
-                        {
-                            hasFuelInChests = true;
-                            break;
-                        }
-                    }
-                    
+                    // A fire burns exactly its m_fuelItem (Fireplace.UseItem compares against it).
+                    string fuelName = fireplace.m_fuelItem != null ? fireplace.m_fuelItem.gameObject.name : null;
+                    bool hasFuelInChests = fuelName != null && ChestHelper.GetAvailableItemCount(nearbyChests, fuelName) > 0;
+
                     if (!hasFuelInChests)
                     {
                         if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
@@ -612,6 +598,8 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private GameObject FindNearbyPickable(Vector3 position, float radius)
         {
+            if (!CanPickHere()) return null;
+
             var colliders = Physics.OverlapSphere(position, radius);
             float closestDist = float.MaxValue;
             GameObject closest = null;
@@ -635,6 +623,9 @@ namespace FiresCore.Npc.IdleBehaviors
             return closest;
         }
         
+        /// <summary>Pickable.RPC_Pick runs on the pickable's owner and reads Player.m_localPlayer (Pickable.cs:171).</summary>
+        private static bool CanPickHere() => Player.m_localPlayer != null;
+
         public override string GetStatusDescription()
         {
             string resourceName = _targetResource?.Name ?? "resource";

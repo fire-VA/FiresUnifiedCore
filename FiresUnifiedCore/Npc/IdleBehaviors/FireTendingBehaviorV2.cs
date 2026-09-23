@@ -44,6 +44,9 @@ namespace FiresCore.Npc.IdleBehaviors
         private const float InteractionDistance = 2f;
         private const float CookCheckInterval = 2f;
         private const float MaxTendTime = 120f;
+        private const float FuelAddInterval = 1f;
+        private const float RefuelBelowFuelFraction = 0.7f;
+        private const float CookTimeoutMargin = 5f;
         
         #endregion
         
@@ -53,8 +56,10 @@ namespace FiresCore.Npc.IdleBehaviors
         private CookingStation _targetCookingStation;
         private Vector3 _targetPosition;
         private float _lastCookCheck;
+        private float _nextFuelAddTime;
         private int _fuelAdded;
         private int _foodCooked;
+        private readonly CompanionCookingBehavior.FinishedFoodCollector _foodCollector = new CompanionCookingBehavior.FinishedFoodCollector();
         
         // Chest retrieval state
         private Container _fuelChest;
@@ -78,7 +83,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 TendPhase.RetrievingFuel => 10f,
                 TendPhase.MovingToFire => 30f,
                 TendPhase.AddingFuel => 20f,
-                TendPhase.CookingFood => 30f,
+                TendPhase.CookingFood => CompanionCookingBehavior.SlowestCookTime(_targetCookingStation) + CookTimeoutMargin,
                 TendPhase.CollectingFood => 15f,
                 _ => 10f
             };
@@ -135,21 +140,15 @@ namespace FiresCore.Npc.IdleBehaviors
             if (!CompanionBehaviorToggles.IsFiresEnabled(Companion)) return false;
             
             // Find a nearby fire that needs tending
-            var fireplace = FindNearbyFireplace();
-            if (fireplace != null && NeedsFuel(fireplace))
+            var fireplace = FindFireNeedingFuel();
+            if (fireplace != null)
             {
-                // Use the fireplace's actual fuel type (handles torches needing Resin vs Wood)
-                string fuelName = fireplace.m_fuelItem?.gameObject.name ?? "Wood";
-                if (HasFuelItemOfType(fuelName) || HasFuelInChestsOfType(fuelName))
-                {
-                    LogVerbose($"CanStart: TRUE - found fire needing {fuelName}, have fuel available");
-                    return true;
-                }
-                LogVerbose($"CanStart: FALSE - fire needs {fuelName} but none available");
+                LogVerbose($"CanStart: TRUE - found fire needing {fireplace.m_fuelItem.gameObject.name}, have fuel available");
+                return true;
             }
             
             var cookingStation = FindNearbyCookingStation();
-            if (cookingStation != null && HasFoodToCook()) 
+            if (cookingStation != null && HasFoodToCook(cookingStation))
             {
                 LogVerbose($"CanStart: TRUE - found cooking station and have food");
                 return true;
@@ -164,6 +163,8 @@ namespace FiresCore.Npc.IdleBehaviors
             
             _fuelAdded = 0;
             _foodCooked = 0;
+            _nextFuelAddTime = 0f;
+            _foodCollector.Begin();
             _fuelChest = null;
             _fuelItemName = "Wood";
             
@@ -171,13 +172,16 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_commandedTarget != null)
             {
                 _targetFireplace = _commandedTarget.GetComponent<Fireplace>();
-                _targetCookingStation = _commandedTarget.GetComponent<CookingStation>();
+                var commandedStation = _commandedTarget.GetComponent<CookingStation>();
+                _targetCookingStation = commandedStation != null && CompanionCookingBehavior.TakesFoodDirectly(commandedStation)
+                    ? commandedStation
+                    : null;
                 _targetPosition = GroundedPosition(_commandedTarget.transform.position);
                 _commandedTarget = null;
             }
             else
             {
-                _targetFireplace = FindNearbyFireplace();
+                _targetFireplace = FindFireNeedingFuel();
                 _targetCookingStation = FindNearbyCookingStation();
 
                 if (_targetFireplace != null)
@@ -280,7 +284,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // STEP 2: Check chests for fuel
-            _fuelChest = FindChestWithFuel();
+            _fuelChest = FindChestWithFuel(_fuelItemName);
             if (_fuelChest != null)
             {
                 LogVerbose($"Found {_fuelItemName} in chest at {_fuelChest.transform.position} - going to get it");
@@ -398,9 +402,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 else if (_targetCookingStation != null)
                 {
-                    if (HasCookedFood(_targetCookingStation))
+                    if (CompanionCookingBehavior.HasFinishedFood(_targetCookingStation))
                         SetPhase(TendPhase.CollectingFood);
-                    else if (HasFoodToCook())
+                    else if (HasFoodToCook(_targetCookingStation))
                         SetPhase(TendPhase.CookingFood);
                     else
                         SetPhase(TendPhase.Complete);
@@ -427,7 +431,11 @@ namespace FiresCore.Npc.IdleBehaviors
             
             StopMovement();
             FaceTarget(_targetFireplace.transform.position);
-            
+
+            if (Time.time < _nextFuelAddTime)
+                return false;
+            _nextFuelAddTime = Time.time + FuelAddInterval;
+
             if (TryAddFuel())
             {
                 _fuelAdded++;
@@ -443,7 +451,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 else if (!HasFuelItem())
                 {
                     // Need more fuel - check chests again
-                    _fuelChest = FindChestWithFuel();
+                    _fuelChest = FindChestWithFuel(_fuelItemName);
                     if (_fuelChest != null)
                     {
                         SetPhase(TendPhase.MovingToChest);
@@ -482,19 +490,23 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 _lastCookCheck = Time.time;
                 
-                if (HasFoodToCook() && CanAddToStation(_targetCookingStation))
+                if (HasFoodToCook(_targetCookingStation) && CompanionCookingBehavior.HasFreeSlot(_targetCookingStation) && TimeToCookAnother())
                 {
                     TryAddFoodToStation();
                     PlayInteractAnimation();
                 }
-                
-                if (HasCookedFood(_targetCookingStation))
+
+                if (CompanionCookingBehavior.HasFinishedFood(_targetCookingStation))
                     SetPhase(TendPhase.CollectingFood);
             }
             
             return false;
         }
         
+        /// <summary>A batch put on now can cook and be collected before the behaviour's time runs out; one put on later would burn.</summary>
+        private bool TimeToCookAnother() =>
+            Time.time - StartTime + CompanionCookingBehavior.SlowestCookTime(_targetCookingStation) + CookTimeoutMargin <= MaxDuration;
+
         private bool UpdateCollectingFood()
         {
             if (_targetCookingStation == null)
@@ -506,20 +518,27 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
             FaceTarget(_targetCookingStation.transform.position);
             
-            if (TryCollectCookedFood())
+            if (!CompanionCookingBehavior.HasFinishedFood(_targetCookingStation) && !_foodCollector.HasDropsOnGround)
+            {
+                if (HasFoodToCook(_targetCookingStation) && CompanionCookingBehavior.HasFreeSlot(_targetCookingStation) && TimeToCookAnother())
+                    SetPhase(TendPhase.CookingFood);
+                else
+                    SetPhase(TendPhase.Complete);
+                return false;
+            }
+
+            if (!CompanionCookingBehavior.OwnStation(_targetCookingStation))
+                return false;
+
+            if (_foodCollector.PickUpDrops(_targetCookingStation, GetStorageInventory()) > 0)
+                SaveInventory();
+
+            if (_foodCollector.CollectOne(_targetCookingStation, Humanoid))
             {
                 _foodCooked++;
                 PlayInteractAnimation();
             }
-            
-            if (!HasCookedFood(_targetCookingStation))
-            {
-                if (HasFoodToCook() && CanAddToStation(_targetCookingStation))
-                    SetPhase(TendPhase.CookingFood);
-                else
-                    SetPhase(TendPhase.Complete);
-            }
-            
+
             return false;
         }
         
@@ -541,11 +560,6 @@ namespace FiresCore.Npc.IdleBehaviors
             return HasFuelItemOfType(_fuelItemName);
         }
 
-        private bool HasFuelInChests()
-        {
-            return HasFuelInChestsOfType(_fuelItemName);
-        }
-
         private bool HasFuelItemOfType(string fuelName)
         {
             var storage = GetStorageInventory();
@@ -559,36 +573,17 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
 
-        private bool HasFuelInChestsOfType(string fuelName)
+        private bool CanGetFuel(string fuelName)
         {
-            return Resources.HasItemInChests(fuelName) ||
-                   Resources.HasAnyItemInChests(ChestHelper.FuelItems);
+            return HasFuelItemOfType(fuelName) || FindChestWithFuel(fuelName) != null;
         }
-        
-        private Container FindChestWithFuel()
+
+        private Container FindChestWithFuel(string fuelName)
         {
             foreach (var chest in Resources.NearbyChests)
             {
-                if (chest == null) continue;
-                var inv = chest.GetInventory();
-                if (inv == null) continue;
-                
-                foreach (var item in inv.GetAllItems())
-                {
-                    if (item == null) continue;
-                    string prefab = item.m_dropPrefab?.name ?? "";
-                    if (prefab.Equals(_fuelItemName, System.StringComparison.OrdinalIgnoreCase))
-                        return chest;
-                    // Also check common fuel items
-                    foreach (var fuel in ChestHelper.FuelItems)
-                    {
-                        if (prefab.Equals(fuel, System.StringComparison.OrdinalIgnoreCase))
-                        {
-                            _fuelItemName = fuel; // Update to actual fuel type
-                            return chest;
-                        }
-                    }
-                }
+                if (chest != null && ChestHelper.CountPrefabInInventory(chest.GetInventory(), fuelName) > 0)
+                    return chest;
             }
             return null;
         }
@@ -609,22 +604,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (item == null || pulled >= amount) continue;
                 
                 string prefab = item.m_dropPrefab?.name ?? "";
-                bool isFuel = prefab.Equals(_fuelItemName, System.StringComparison.OrdinalIgnoreCase);
-                
-                if (!isFuel)
-                {
-                    foreach (var fuel in ChestHelper.FuelItems)
-                    {
-                        if (prefab.Equals(fuel, System.StringComparison.OrdinalIgnoreCase))
-                        {
-                            isFuel = true;
-                            _fuelItemName = fuel;
-                            break;
-                        }
-                    }
-                }
-                
-                if (!isFuel) continue;
+                if (!prefab.Equals(_fuelItemName, System.StringComparison.OrdinalIgnoreCase)) continue;
                 
                 int toPull = Mathf.Min(item.m_stack, amount - pulled);
                 for (int i = 0; i < toPull; i++)
@@ -671,9 +651,11 @@ namespace FiresCore.Npc.IdleBehaviors
             
             var nview = _targetFireplace.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return false;
-            
+            // RPC_AddFuel only runs on an owner (Fireplace.cs:350); vanilla Interact claims an unowned fire the same way.
+            if (!nview.HasOwner()) nview.ClaimOwnership();
+
             float currentFuel = nview.GetZDO().GetFloat(ZDOVars.s_fuel, 0f);
-            if (currentFuel >= _targetFireplace.m_maxFuel) return false;
+            if (Mathf.CeilToInt(currentFuel) >= _targetFireplace.m_maxFuel) return false;
             
             // Remove from inventory FIRST
             if (!storage.RemoveOneItem(fuelItem)) return false;
@@ -687,12 +669,12 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private bool NeedsFuel(Fireplace fireplace)
         {
-            if (fireplace == null) return false;
+            if (fireplace == null || !fireplace.m_canRefill || fireplace.m_infiniteFuel || fireplace.m_fuelItem == null) return false;
             var nview = fireplace.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return false;
-            
+
             float currentFuel = nview.GetZDO().GetFloat(ZDOVars.s_fuel, 0f);
-            return currentFuel < fireplace.m_maxFuel * 0.7f;
+            return currentFuel < fireplace.m_maxFuel * RefuelBelowFuelFraction;
         }
         
         private void NotifyNoFuelAvailable()
@@ -701,7 +683,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (owner != null && owner == Player.m_localPlayer)
             {
                 MessageHud.instance?.ShowMessage(MessageHud.MessageType.TopLeft, 
-                    $"{Companion.GetDisplayName()}: No wood available to tend fire");
+                    $"{Companion.GetDisplayName()}: No {Localization.instance.Localize(_targetFireplace.m_fuelItem.m_itemData.m_shared.m_name)} available to tend fire");
             }
         }
         
@@ -709,7 +691,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Fire Finding
         
-        private Fireplace FindNearbyFireplace()
+        private Fireplace FindFireNeedingFuel()
         {
             Fireplace nearest = null;
             float nearestDist = float.MaxValue;
@@ -720,21 +702,23 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (collider == null) continue;
                 var fireplace = collider.GetComponent<Fireplace>() ?? collider.GetComponentInParent<Fireplace>();
                 if (fireplace == null) continue;
-                if (!InteractableOccupancyManager.CanUseInteractable(fireplace.gameObject, Character)) continue;
 
                 // XZ-only distance: wall-mounted torches are at various heights
                 float dist = DistanceXZ(fireplace.transform.position);
-                if (dist < nearestDist)
-                {
-                    nearestDist = dist;
-                    nearest = fireplace;
-                }
+                if (dist >= nearestDist || !NeedsFuel(fireplace)) continue;
+                if (!InteractableOccupancyManager.CanUseInteractable(fireplace.gameObject, Character)) continue;
+                if (!CanGetFuel(fireplace.m_fuelItem.gameObject.name)) continue;
+
+                nearestDist = dist;
+                nearest = fireplace;
             }
             return nearest;
         }
 
         private CookingStation FindNearbyCookingStation()
         {
+            if (!CompanionBehaviorToggles.IsCookingEnabled(Companion)) return null;
+
             CookingStation nearest = null;
             float nearestDist = float.MaxValue;
 
@@ -743,7 +727,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 if (collider == null) continue;
                 var station = collider.GetComponent<CookingStation>() ?? collider.GetComponentInParent<CookingStation>();
-                if (station == null) continue;
+                if (station == null || !CompanionCookingBehavior.TakesFoodDirectly(station)) continue;
                 if (!InteractableOccupancyManager.CanUseInteractable(station.gameObject, Character)) continue;
 
                 float dist = DistanceXZ(station.transform.position);
@@ -777,54 +761,15 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Cooking
         
-        private bool HasFoodToCook()
+        private bool HasFoodToCook(CookingStation station)
         {
             var storage = GetStorageInventory();
             if (storage == null) return false;
             foreach (var item in storage.GetAllItems())
-                if (IsCookable(item)) return true;
+                if (CompanionCookingBehavior.IsRawFor(station, item)) return true;
             return false;
         }
-        
-        private bool IsCookable(ItemDrop.ItemData item)
-        {
-            if (item == null || _targetCookingStation == null) return false;
-            string prefab = item.m_dropPrefab?.name ?? "";
-            foreach (var conversion in _targetCookingStation.m_conversion)
-                if (conversion.m_from != null && conversion.m_from.gameObject.name == prefab)
-                    return true;
-            return false;
-        }
-        
-        private bool CanAddToStation(CookingStation station)
-        {
-            if (station == null) return false;
-            var nview = station.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return false;
-            for (int i = 0; i < station.m_slots.Length; i++)
-                if (string.IsNullOrEmpty(nview.GetZDO().GetString("slot" + i)))
-                    return true;
-            return false;
-        }
-        
-        private bool HasCookedFood(CookingStation station)
-        {
-            if (station == null) return false;
-            var nview = station.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return false;
-            try
-            {
-                for (int i = 0; i < station.m_slots.Length; i++)
-                {
-                    if (!string.IsNullOrEmpty(nview.GetZDO().GetString("slot" + i)))
-                        if (nview.GetZDO().GetInt("slotstatus" + i, 0) >= 1)
-                            return true;
-                }
-            }
-            catch { }
-            return false;
-        }
-        
+
         private void TryAddFoodToStation()
         {
             if (_targetCookingStation == null || Humanoid == null) return;
@@ -833,7 +778,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             foreach (var item in storage.GetAllItems())
             {
-                if (IsCookable(item))
+                if (CompanionCookingBehavior.IsRawFor(_targetCookingStation, item))
                 {
                     if (_targetCookingStation.UseItem(Humanoid, item))
                     {
@@ -843,12 +788,6 @@ namespace FiresCore.Npc.IdleBehaviors
                     return;
                 }
             }
-        }
-        
-        private bool TryCollectCookedFood()
-        {
-            if (_targetCookingStation == null || Humanoid == null) return false;
-            return _targetCookingStation.Interact(Humanoid, false, false);
         }
         
         #endregion

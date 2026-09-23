@@ -32,8 +32,8 @@ namespace FiresCore.Npc
             = new Dictionary<long, List<Vector3>>();
 
         // Server-side: positions of EVERY tamed companion in the world, including
-        // those belonging to offline players. Refreshed periodically via a
-        // ZDOMan scan (no client cooperation required). When merged with
+        // those belonging to offline players. Refreshed periodically from the
+        // companion census (no client cooperation required). When merged with
         // _peerCompanionPositions in the keep-alive loop, this is what makes
         // companions persistent participants in the world even when their
         // owner is logged out — the companion's zone stays loaded server-side
@@ -43,21 +43,8 @@ namespace FiresCore.Npc
         private static readonly List<ZDO> _allKnownScanBuf = new List<ZDO>();
         private static float _allKnownScanTimer;
 
-        // Cadence of the offline-companion ZDO scan. Heavier than the per-peer
-        // RPC (it walks ZDOMan over multiple prefab names) but only runs every
-        // 5 s, so amortised cost is small even on servers with hundreds of
-        // tamed companions.
+        // Cadence of the offline-companion refresh from the census.
         private const float AllKnownScanInterval = 5f;
-
-        // Companion prefab names this loader cares about. Mirrors the list in
-        // CompanionPatches; kept local so this module doesn't take a hard
-        // dependency on internal helpers.
-        private static readonly string[] _companionPrefabNamesForScan =
-        {
-            "CompanionNpc",
-            "CompanionNpc_Wild",
-            "BaseNpc",
-        };
 
         // Reusable lists to avoid GC churn — gathered fresh every tick.
         private static readonly List<Vector3> _localCompanionPositions = new List<Vector3>();
@@ -111,6 +98,8 @@ namespace FiresCore.Npc
             ZRoutedRpc.instance.Register<ZPackage>(
                 RPC_TamedCompanionPositions,
                 new System.Action<long, ZPackage>(RPC_OnCompanionPositions));
+
+            Archetypes.AbilityRPCManager.Initialize();
 
             CacheReflection();
         }
@@ -213,36 +202,26 @@ namespace FiresCore.Npc
         }
 
         /// <summary>
-        /// Server-only. Walks ZDOMan for every companion ZDO that's tamed
-        /// and has a real owner-player ID, and stores each one's position
-        /// in <see cref="_allKnownCompanionPositions"/>. Untamed wild
-        /// companion variants are excluded. Skips invalid ZDOs.
+        /// Server-only. Stores the position of every companion ZDO in the census that's tamed and has a real
+        /// owner-player ID in <see cref="_allKnownCompanionPositions"/>. Untamed wild companion variants are excluded.
         /// </summary>
         private static void RefreshAllKnownCompanionPositions()
         {
             _allKnownCompanionPositions.Clear();
-            if (ZDOMan.instance == null) return;
+            Core.CompanionZdoCensus.Collect(_allKnownScanBuf);
 
-            for (int prefabIndex = 0; prefabIndex < _companionPrefabNamesForScan.Length; prefabIndex++)
+            for (int i = 0; i < _allKnownScanBuf.Count; i++)
             {
-                _allKnownScanBuf.Clear();
-                int idx = 0;
-                while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(_companionPrefabNamesForScan[prefabIndex], _allKnownScanBuf, ref idx)) { }
+                var zdo = _allKnownScanBuf[i];
 
-                for (int i = 0; i < _allKnownScanBuf.Count; i++)
-                {
-                    var zdo = _allKnownScanBuf[i];
-                    if (zdo == null || !zdo.IsValid()) continue;
+                // Tamed filter — wild creatures sharing the prefab don't
+                // qualify. Both flags must be set or we'd be keeping zones
+                // alive for half-tamed wild spawns mid-conversion.
+                if (!zdo.GetBool(ZDOVars.s_tamed, false)) continue;
+                long owner = zdo.GetLong("companion_owner", 0);
+                if (owner == 0) continue;
 
-                    // Tamed filter — wild creatures sharing the prefab don't
-                    // qualify. Both flags must be set or we'd be keeping zones
-                    // alive for half-tamed wild spawns mid-conversion.
-                    if (!zdo.GetBool(ZDOVars.s_tamed, false)) continue;
-                    long owner = zdo.GetLong("companion_owner", 0);
-                    if (owner == 0) continue;
-
-                    _allKnownCompanionPositions.Add(zdo.GetPosition());
-                }
+                _allKnownCompanionPositions.Add(zdo.GetPosition());
             }
         }
 

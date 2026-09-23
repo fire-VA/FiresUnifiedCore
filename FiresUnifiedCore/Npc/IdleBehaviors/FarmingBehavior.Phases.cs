@@ -32,7 +32,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             // Refresh chest list then look for one.
             RefreshNearbyChests();
-            _cultivatorChest = FindChestWithCultivator();
+            _cultivatorChest = FindChestWith(IsCultivator);
             if (_cultivatorChest != null && IsReachable(_cultivatorChest.transform.position))
             {
                 _targetPosition = InteractionPointHelper.GetContainerInteractionPoint(
@@ -71,8 +71,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (dist <= ArrivalDistance)
             {
                 StopMovement();
-                TakeFromChestByName(_cultivatorChest, "cultivator", out bool took);
-                if (took)
+                if (TakeOneFromChest(_cultivatorChest, IsCultivator))
                 {
                     _cultivatorReadyThisSession = true;
                     Debug.Log($"[Farming] {Companion?.companionName} retrieved Cultivator from chest");
@@ -126,20 +125,20 @@ namespace FiresCore.Npc.IdleBehaviors
             var storage = _inventory?.GetStorageInventory();
             if (storage != null && CanCraftCultivator())
             {
-                RemoveItems(storage, RecipeCorewood, RecipeCorewoodCount);
-                RemoveItems(storage, RecipeBronze,   RecipeBronzeCount);
-
-                var prefab = ZNetScene.instance?.GetPrefab(CultivatorPrefab);
-                var drop   = prefab?.GetComponent<ItemDrop>();
-                if (drop != null && storage.AddItem(drop.m_itemData.Clone()))
+                // Created from its prefab so m_dropPrefab is set and the tool survives save/load (Inventory.cs:88-96).
+                var cultivator = ObjectDB.instance?.GetItemPrefab(CultivatorPrefab);
+                if (cultivator != null && storage.CanAddItem(cultivator, 1))
                 {
+                    RemoveItems(storage, RecipeCorewood, RecipeCorewoodCount);
+                    RemoveItems(storage, RecipeBronze,   RecipeBronzeCount);
+                    storage.AddItem(cultivator, 1);
                     _cultivatorReadyThisSession = true;
                     _inventory?.SaveToZDO();
                     Debug.Log($"[Farming] {Companion?.companionName} crafted a Cultivator");
                 }
                 else
                 {
-                    Debug.LogWarning($"[Farming] {Companion?.companionName} crafting failed — prefab '{CultivatorPrefab}' not found or no inventory space");
+                    Debug.LogWarning($"[Farming] {Companion?.companionName} crafting failed - prefab '{CultivatorPrefab}' not found or no inventory space");
                 }
             }
 
@@ -148,29 +147,22 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
 
-        // Transfer the first item whose prefab name contains <nameFragment> (case-insensitive)
-        // from a container into the companion's storage inventory.
-        private void TakeFromChestByName(Container chest, string nameFragment, out bool took)
+        // Transfer one of the first matching items from a container into the companion's storage inventory.
+        private bool TakeOneFromChest(Container chest, System.Predicate<ItemDrop.ItemData> match)
         {
-            took = false;
-            var chestInv = chest?.GetInventory();
+            var chestInv = chest != null && ChestHelper.TryClaimForWrite(chest, Companion) ? chest.GetInventory() : null;
             var storage  = _inventory?.GetStorageInventory();
-            if (chestInv == null || storage == null) return;
+            if (chestInv == null || storage == null) return false;
 
             foreach (var item in new List<ItemDrop.ItemData>(chestInv.GetAllItems()))
             {
-                if (item?.m_dropPrefab?.name?.IndexOf(nameFragment, System.StringComparison.OrdinalIgnoreCase) < 0)
-                    continue;
+                if (!match(item)) continue;
 
-                var clone = item.Clone();
-                if (storage.AddItem(clone))
-                {
-                    chestInv.RemoveOneItem(item);
-                    _inventory?.SaveToZDO();
-                    took = true;
-                }
-                return;
+                bool took = ChestHelper.MoveItem(chestInv, storage, item, 1) > 0;
+                if (took) _inventory?.SaveToZDO();
+                return took;
             }
+            return false;
         }
 
         #endregion
@@ -184,10 +176,10 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool UpdateGettingSeeds()
         {
             // Already picked up seeds since we entered this phase.
-            if (HasSeedsToPlant()) { SetPhase(FarmPhase.Idle); return false; }
+            if (StorageHas(IsSeedForPlantSpots)) { SetPhase(FarmPhase.Idle); return false; }
 
             RefreshNearbyChests();
-            _seedChest = FindChestWithSeeds();
+            _seedChest = FindChestWith(IsSeedForPlantSpots);
             if (_seedChest != null && IsReachable(_seedChest.transform.position))
             {
                 _targetPosition = InteractionPointHelper.GetContainerInteractionPoint(
@@ -227,21 +219,18 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
 
-        // Pull every plantable seed from a chest into the companion's storage.
+        // Pull every seed that grows on the current plant spots from a chest into the companion's storage.
         private void TakeAllSeedsFromChest(Container chest)
         {
-            var chestInv = chest?.GetInventory();
+            var chestInv = chest != null && ChestHelper.TryClaimForWrite(chest, Companion) ? chest.GetInventory() : null;
             var storage  = _inventory?.GetStorageInventory();
             if (chestInv == null || storage == null) return;
 
             int taken = 0;
             foreach (var item in new List<ItemDrop.ItemData>(chestInv.GetAllItems()))
             {
-                if (!FarmingDataHelper.CanBePlanted(item)) continue;
-                var clone = item.Clone();
-                if (!storage.AddItem(clone)) continue;
-                chestInv.RemoveItem(item);
-                taken++;
+                if (!IsSeedForPlantSpots(item)) continue;
+                if (ChestHelper.MoveItem(chestInv, storage, item, item.m_stack) > 0) taken++;
             }
 
             if (taken > 0)
@@ -300,11 +289,14 @@ namespace FiresCore.Npc.IdleBehaviors
             if (age < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
             if (age < InteractPauseDuration) return false;
 
-            if (FarmingDataHelper.HasHoneyReady(_targetBeehive) && _humanoid != null)
+            if (FarmingDataHelper.HasProduceReady(_targetBeehive) && _humanoid != null)
             {
+                int stored = FarmingDataHelper.GetStoredProduce(_targetBeehive);
+                // RPC_Extract spawns the produce on the hive's owner (Beehive.cs:104-116); own it so the drops are ours to collect.
+                _targetBeehive.GetComponent<ZNetView>().ClaimOwnership();
                 _targetBeehive.Interact(_humanoid, false, false);
-                _honeyHarvested += FarmingDataHelper.GetHoneyLevel(_targetBeehive);
-                Debug.Log($"[Farming] {Companion?.companionName} harvested honey");
+                _hiveProduceHarvested += stored;
+                Debug.Log($"[Farming] {Companion?.companionName} collected {stored} {FarmingDataHelper.GetProduceName(_targetBeehive)}");
             }
 
             _targetBeehive = null;
@@ -353,11 +345,16 @@ namespace FiresCore.Npc.IdleBehaviors
             if (age < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
             if (age < InteractPauseDuration) return false;
 
-            if (FarmingDataHelper.IsPickableReady(_targetCrop) && _humanoid != null)
+            if (FarmingDataHelper.IsPickableReady(_targetCrop) && _humanoid != null && Player.m_localPlayer != null)
             {
+                // RPC_Pick runs on the pickable's owner and reads Player.m_localPlayer (Pickable.cs:171): own it so it runs here.
+                _targetCrop.GetComponent<ZNetView>().ClaimOwnership();
                 _targetCrop.Interact(_humanoid, false, false);
-                _cropsHarvested++;
-                Debug.Log($"[Farming] {Companion?.companionName} harvested {_targetCrop.name.Replace("(Clone)", "").Trim()}");
+                if (_targetCrop.GetPicked())
+                {
+                    _cropsHarvested++;
+                    Debug.Log($"[Farming] {Companion?.companionName} harvested {_targetCrop.name.Replace("(Clone)", "").Trim()}");
+                }
             }
 
             _targetCrop = null;
@@ -375,7 +372,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool UpdateMovingToPlantSpot()
         {
-            if (string.IsNullOrEmpty(_seedToPlant)) { SetPhase(FarmPhase.Idle); return false; }
+            if (_cropToPlant == null) { SetPhase(FarmPhase.Idle); return false; }
 
             TryMoveToPosition(_targetPosition);
 
@@ -389,7 +386,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (MovementTimedOut())
             {
                 Debug.LogWarning($"[Farming] {Companion?.companionName} timeout moving to plant spot");
-                _seedToPlant = null;
+                _cropToPlant = null;
                 SetPhase(FarmPhase.Idle);
             }
             return false;
@@ -397,7 +394,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool UpdatePlanting()
         {
-            if (string.IsNullOrEmpty(_seedToPlant)) { SetPhase(FarmPhase.Idle); return false; }
+            if (_cropToPlant == null) { SetPhase(FarmPhase.Idle); return false; }
 
             StopMovement();
             FaceTarget(_plantPosition);
@@ -407,35 +404,30 @@ namespace FiresCore.Npc.IdleBehaviors
             if (age < InteractPauseDuration) return false;
 
             // Position may no longer be valid if something else planted there.
-            if (!FarmingDataHelper.IsValidPlantingPosition(_plantPosition, _seedToPlant, PlantSpacing))
+            if (!FarmingDataHelper.IsValidPlantingPosition(_plantPosition, _cropToPlant, PlantSpacing))
             {
                 Debug.Log($"[Farming] {Companion?.companionName} plant position no longer valid — re-scanning");
-                _seedToPlant = null;
+                _cropToPlant = null;
                 SetPhase(FarmPhase.Idle);
                 return false;
             }
 
             var storage = _inventory?.GetStorageInventory();
-            if (storage != null)
+            if (storage != null && HasSeedsFor(storage, _cropToPlant))
             {
-                foreach (var item in new List<ItemDrop.ItemData>(storage.GetAllItems()))
-                {
-                    if (item?.m_dropPrefab?.name != _seedToPlant) continue;
+                foreach (var seed in _cropToPlant.Seeds)
+                    RemoveItems(storage, seed.Item, seed.Amount);
+                _inventory?.SaveToZDO();
 
-                    storage.RemoveOneItem(item);
-                    _inventory?.SaveToZDO();
-
-                    var planted = FarmingDataHelper.TryPlantSeed(_seedToPlant, _plantPosition);
-                    if (planted != null)
-                    {
-                        _seedsPlanted++;
-                        Debug.Log($"[Farming] {Companion?.companionName} planted {_seedToPlant.Replace("Seeds", "").Trim()}");
-                    }
-                    break;
-                }
+                FarmingDataHelper.PlantSapling(_cropToPlant, _plantPosition);
+                string sapling = _cropToPlant.Prefab.name;
+                _plantedCountBySapling.TryGetValue(sapling, out int planted);
+                _plantedCountBySapling[sapling] = planted + 1;
+                _seedsPlanted++;
+                Debug.Log($"[Farming] {Companion?.companionName} planted {sapling}");
             }
 
-            _seedToPlant = null;
+            _cropToPlant = null;
             SetPhase(FarmPhase.Idle);
             return false;
         }
@@ -511,13 +503,15 @@ namespace FiresCore.Npc.IdleBehaviors
             if (storage == null) return;
 
             var data = drop.m_itemData;
-            if (data == null) return;
+            if (data == null || !storage.CanAddItem(data)) return;
 
-            if (storage.AddItem(data.Clone()))
-            {
+            // A partial merge returns false with the rest left in the clone's stack; that rest stays on the ground.
+            var picked = data.Clone();
+            if (storage.AddItem(picked))
                 drop.GetComponent<ZNetView>()?.Destroy();
-                _inventory.SaveToZDO();
-            }
+            else
+                drop.SetStack(picked.m_stack);
+            _inventory.SaveToZDO();
         }
 
         #endregion
@@ -562,7 +556,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (age < InteractPauseDuration) return false;
 
             var storage  = _inventory.GetStorageInventory();
-            var chestInv = _targetChest.GetInventory();
+            var chestInv = ChestHelper.TryClaimForWrite(_targetChest, Companion) ? _targetChest.GetInventory() : null;
 
             if (storage != null && chestInv != null)
             {
@@ -570,10 +564,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     if (item == null) continue;
                     if (IsEquippedItem(item)) continue;
-                    if (!IsFarmingItem(item.m_dropPrefab?.name)) continue;
-                    if (!chestInv.AddItem(item.Clone())) continue;
-                    storage.RemoveItem(item);
-                    _itemsDeposited++;
+                    if (!FarmingDataHelper.IsFarmProduce(item.m_dropPrefab?.name)) continue;
+                    if (ChestHelper.MoveItem(storage, chestInv, item, item.m_stack) > 0) _itemsDeposited++;
                 }
                 _inventory.SaveToZDO();
             }
@@ -591,17 +583,6 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 if (_inventory.GetEquippedItem(slot) == item) return true;
             }
-            return false;
-        }
-
-        private bool IsFarmingItem(string prefab)
-        {
-            if (string.IsNullOrEmpty(prefab)) return false;
-            if (prefab == "Honey")   return true;
-            if (prefab == "Carrot" || prefab == "Turnip" || prefab == "Onion") return true;
-            if (prefab == "Barley" || prefab == "Flax") return true;
-            if (prefab == "JotunPuffs" || prefab == "Magecap") return true;
-            if (prefab.Contains("Seeds")) return true;
             return false;
         }
 

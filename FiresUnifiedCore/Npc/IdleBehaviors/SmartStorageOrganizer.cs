@@ -1,77 +1,44 @@
-﻿using UnityEngine;
-using System.Collections.Generic;
-using System.Linq;
+﻿using System.Collections.Generic;
+using UnityEngine;
 
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Picks which chest an item belongs in by what it is and which crafting stations are nearby, so fuel lands
-    /// by kilns and fireplaces, ore by smelters, bars by forges, food by cooking stations and cauldrons, building
-    /// materials by workbenches, and trophies and valuables together.
+    /// Decides which chest an item belongs in from the game's own data. Station conversions, fuel, recipes and building
+    /// pieces say where each item is used, so ore and coal go by the smelter, bars by the forge, wood and hides by the
+    /// workbench, raw food by the cooking stations, mead bases by the fermenter and seeds by the fields. Items nothing
+    /// consumes group by kind: armour and clothes in a wardrobe or by the beds, food and meads by the kitchen or beds,
+    /// trophies and valuables in chests of their own. Every chest is kept to one kind of item.
+    /// Chests are only written while this client owns them and nobody has them open; callers claim them first
+    /// (<see cref="ChestHelper"/>), and vanilla Container saves every Add/RemoveItem made by the owner.
     /// </summary>
     public static class SmartStorageOrganizer
     {
-        #region Item Categories
-        
-        /// <summary>
-        /// Categories of items for smart sorting.
-        /// </summary>
         public enum ItemCategory
         {
             Unknown,
-            
-            // Fuel types
-            WoodFuel,           // Wood, FineWood, CoreWood, etc.
-            CoalFuel,           // Coal for smelters/forges
-            
-            // Raw materials for processing
-            Ore,                // CopperOre, TinOre, IronScrap, etc.
-            MetalBar,           // Processed metal ingots/bars
-            
-            // Building materials
-            Stone,              // Stone, various stone types
-            BuildingWood,       // Wood for building (same as fuel but different purpose)
-            ProcessedBuilding,  // Cut stone, tar, etc.
-            
-            // Food and cooking
-            RawMeat,            // Raw meat for cooking
-            RawFish,            // Fish for cooking
-            Vegetables,         // Turnips, carrots, onions, etc.
-            Berries,            // Berries, honey, etc.
-            CookedFood,         // Finished food items
-            MeadBase,           // Mead bases for fermenter
-            FinishedMead,       // Finished meads/potions
-            
-            // Crafting materials
-            Leather,            // Deer hide, leather, etc.
-            Cloth,              // Linen thread, etc.
-            Chain,              // Chain for armor
-            Feathers,           // For arrows
-            Resin,              // For various crafting
-            
-            // Valuables
-            Coins,              // Gold coins
-            Gems,               // Rubies, amber, etc.
-            Trophy,             // Boss trophies and creature trophies
-            
-            // Ammunition
-            Arrows,             // All arrow types
-
-            // Equipment stored in chests
-            Weapon,             // Melee weapons, bows (items in chests — companions never deposit equipped weapons)
-            Armor,              // Helmets, chest, legs, shoulder, shields, utility
-
-            // Special
-            DragonTears,        // For artisan table
-            BlackCore,          // For various high-tier
-
-            // Misc materials
-            MiscMaterial        // Everything else
+            WoodFuel,
+            CoalFuel,
+            Ore,
+            MetalBar,
+            BuildingMaterial,
+            RawMeat,
+            RawFish,
+            Vegetables,
+            Berries,
+            CookedFood,
+            MeadBase,
+            FinishedMead,
+            Seeds,
+            Coins,
+            Gems,
+            Trophy,
+            Arrows,
+            Weapon,
+            Armor,
+            MiscMaterial
         }
-        
-        /// <summary>
-        /// Station types that items can be associated with.
-        /// </summary>
+
         public enum StationType
         {
             None,
@@ -87,468 +54,27 @@ namespace FiresCore.Npc.IdleBehaviors
             Stonecutter,
             SpinningWheel,
             Windmill,
-            FireSource      // Campfires, hearths, etc.
+            FireSource,
+            BlackForge,
+            GaldrTable,
+            PrepTable,
+            MeadCauldron,
+            EitrRefinery,
+            UpgradeStation,
+            Farm,
+            Bed,
+            Other
         }
-        
-        #endregion
-        
-        #region Item Classification
-        
-        /// <summary>
-        /// Item prefab name patterns mapped to categories.
-        /// </summary>
-        private static readonly Dictionary<string, ItemCategory> ItemPrefabCategories = new Dictionary<string, ItemCategory>(System.StringComparer.OrdinalIgnoreCase)
-        {
-            // Fuels
-            { "Wood", ItemCategory.WoodFuel },
-            { "FineWood", ItemCategory.WoodFuel },
-            { "RoundLog", ItemCategory.WoodFuel },
-            { "CoreWood", ItemCategory.WoodFuel },
-            { "ElderBark", ItemCategory.WoodFuel },
-            { "YggdrasilWood", ItemCategory.WoodFuel },
-            { "Resin", ItemCategory.WoodFuel },
-            { "Coal", ItemCategory.CoalFuel },
-            
-            // Ores
-            { "CopperOre", ItemCategory.Ore },
-            { "TinOre", ItemCategory.Ore },
-            { "IronOre", ItemCategory.Ore },
-            { "IronScrap", ItemCategory.Ore },
-            { "SilverOre", ItemCategory.Ore },
-            { "BlackMetalScrap", ItemCategory.Ore },
-            { "FlametalOre", ItemCategory.Ore },
-            { "FlametalOreNew", ItemCategory.Ore },
-            
-            // Metal bars
-            { "Copper", ItemCategory.MetalBar },
-            { "CopperBar", ItemCategory.MetalBar },
-            { "Tin", ItemCategory.MetalBar },
-            { "TinBar", ItemCategory.MetalBar },
-            { "Bronze", ItemCategory.MetalBar },
-            { "BronzeBar", ItemCategory.MetalBar },
-            { "Iron", ItemCategory.MetalBar },
-            { "IronBar", ItemCategory.MetalBar },
-            { "Silver", ItemCategory.MetalBar },
-            { "SilverBar", ItemCategory.MetalBar },
-            { "BlackMetal", ItemCategory.MetalBar },
-            { "BlackMetalBar", ItemCategory.MetalBar },
-            { "FlametalNew", ItemCategory.MetalBar },
-            { "Flametal", ItemCategory.MetalBar },
-            
-            // Stone and building
-            { "Stone", ItemCategory.Stone },
-            { "Obsidian", ItemCategory.Stone },
-            { "Flint", ItemCategory.Stone },
-            { "SharpeningStone", ItemCategory.ProcessedBuilding },
-            { "BlackMarble", ItemCategory.ProcessedBuilding },
-            { "Tar", ItemCategory.ProcessedBuilding },
-            { "Crystal", ItemCategory.ProcessedBuilding },
-            
-            // Leather and cloth
-            { "DeerHide", ItemCategory.Leather },
-            { "LeatherScraps", ItemCategory.Leather },
-            { "TrollHide", ItemCategory.Leather },
-            { "WolfPelt", ItemCategory.Leather },
-            { "LoxPelt", ItemCategory.Leather },
-            { "ScaleHide", ItemCategory.Leather },
-            { "LinenThread", ItemCategory.Cloth },
-            { "JuteRed", ItemCategory.Cloth },
-            { "Chain", ItemCategory.Chain },
-            
-            // Food - Raw meats
-            { "RawMeat", ItemCategory.RawMeat },
-            { "DeerMeat", ItemCategory.RawMeat },
-            { "WolfMeat", ItemCategory.RawMeat },
-            { "LoxMeat", ItemCategory.RawMeat },
-            { "ChickenMeat", ItemCategory.RawMeat },
-            { "HareMeat", ItemCategory.RawMeat },
-            { "BugMeat", ItemCategory.RawMeat },
-            { "SerpentMeat", ItemCategory.RawMeat },
-            { "NeckTail", ItemCategory.RawMeat },
-            
-            // Food - Fish
-            { "Fish1", ItemCategory.RawFish },
-            { "Fish2", ItemCategory.RawFish },
-            { "Fish3", ItemCategory.RawFish },
-            { "Fish4_cave", ItemCategory.RawFish },
-            { "Fish5", ItemCategory.RawFish },
-            { "Fish6", ItemCategory.RawFish },
-            { "Fish7", ItemCategory.RawFish },
-            { "Fish8", ItemCategory.RawFish },
-            { "Fish9", ItemCategory.RawFish },
-            { "FishRaw", ItemCategory.RawFish },
-            
-            // Food - Vegetables
-            { "Turnip", ItemCategory.Vegetables },
-            { "Carrot", ItemCategory.Vegetables },
-            { "Onion", ItemCategory.Vegetables },
-            { "Barley", ItemCategory.Vegetables },
-            { "Flax", ItemCategory.Vegetables },
-            { "Mushroom", ItemCategory.Vegetables },
-            { "MushroomBlue", ItemCategory.Vegetables },
-            { "MushroomYellow", ItemCategory.Vegetables },
-            { "Thistle", ItemCategory.Vegetables },
-            { "Bloodbag", ItemCategory.Vegetables },
-            { "Entrails", ItemCategory.Vegetables },
-            
-            // Food - Berries and sweets
-            { "Raspberry", ItemCategory.Berries },
-            { "Blueberries", ItemCategory.Berries },
-            { "Cloudberry", ItemCategory.Berries },
-            { "Honey", ItemCategory.Berries },
-            { "QueenBee", ItemCategory.Berries },
-            
-            // Mead bases
-            { "MeadBaseTasty", ItemCategory.MeadBase },
-            { "MeadBaseMinorHealing", ItemCategory.MeadBase },
-            { "MeadBaseMediumHealing", ItemCategory.MeadBase },
-            { "MeadBaseMinorStamina", ItemCategory.MeadBase },
-            { "MeadBaseMediumStamina", ItemCategory.MeadBase },
-            { "MeadBasePoisonResist", ItemCategory.MeadBase },
-            { "MeadBaseFrostResist", ItemCategory.MeadBase },
-            { "MeadBaseFireResist", ItemCategory.MeadBase },
-            { "BarleyWine", ItemCategory.MeadBase },
-            
-            // Finished meads
-            { "MeadTasty", ItemCategory.FinishedMead },
-            { "MeadHealthMinor", ItemCategory.FinishedMead },
-            { "MeadHealthMedium", ItemCategory.FinishedMead },
-            { "MeadStaminaMinor", ItemCategory.FinishedMead },
-            { "MeadStaminaMedium", ItemCategory.FinishedMead },
-            { "MeadPoisonResist", ItemCategory.FinishedMead },
-            { "MeadFrostResist", ItemCategory.FinishedMead },
-            { "MeadFireResist", ItemCategory.FinishedMead },
-            
-            // Valuables
-            { "Coins", ItemCategory.Coins },
-            { "Ruby", ItemCategory.Gems },
-            { "Amber", ItemCategory.Gems },
-            { "AmberPearl", ItemCategory.Gems },
-            
-            // Arrows
-            { "ArrowWood", ItemCategory.Arrows },
-            { "ArrowFlint", ItemCategory.Arrows },
-            { "ArrowBronze", ItemCategory.Arrows },
-            { "ArrowIron", ItemCategory.Arrows },
-            { "ArrowSilver", ItemCategory.Arrows },
-            { "ArrowObsidian", ItemCategory.Arrows },
-            { "ArrowPoison", ItemCategory.Arrows },
-            { "ArrowFrost", ItemCategory.Arrows },
-            { "ArrowFire", ItemCategory.Arrows },
-            { "ArrowNeedle", ItemCategory.Arrows },
-            { "ArrowCarapace", ItemCategory.Arrows },
-            
-            // Feathers and misc crafting
-            { "Feathers", ItemCategory.Feathers },
-            { "Guck", ItemCategory.MiscMaterial },
-            { "Ooze", ItemCategory.MiscMaterial },
-            { "FreezeGland", ItemCategory.MiscMaterial },
-            { "Needle", ItemCategory.MiscMaterial },
-            { "Chitin", ItemCategory.MiscMaterial },
-            
-            // Special items
-            { "DragonTear", ItemCategory.DragonTears },
-            { "SurtlingCore", ItemCategory.BlackCore },
-            { "BlackCore", ItemCategory.BlackCore },
-        };
-        
-        /// <summary>
-        /// Maps item categories to their preferred station types.
-        /// </summary>
-        private static readonly Dictionary<ItemCategory, StationType[]> CategoryToStations = new Dictionary<ItemCategory, StationType[]>
-        {
-            { ItemCategory.WoodFuel, new[] { StationType.Kiln, StationType.FireSource, StationType.Smelter } },
-            { ItemCategory.CoalFuel, new[] { StationType.Smelter, StationType.BlastFurnace, StationType.Forge } },
-            { ItemCategory.Ore, new[] { StationType.Smelter, StationType.BlastFurnace } },
-            { ItemCategory.MetalBar, new[] { StationType.Forge, StationType.ArtisanTable } },
-            { ItemCategory.Stone, new[] { StationType.Stonecutter, StationType.Workbench } },
-            { ItemCategory.BuildingWood, new[] { StationType.Workbench } },
-            { ItemCategory.ProcessedBuilding, new[] { StationType.Workbench, StationType.Stonecutter } },
-            { ItemCategory.RawMeat, new[] { StationType.CookingStation } },
-            { ItemCategory.RawFish, new[] { StationType.CookingStation } },
-            { ItemCategory.Vegetables, new[] { StationType.Cauldron, StationType.CookingStation } },
-            { ItemCategory.Berries, new[] { StationType.Cauldron } },
-            { ItemCategory.MeadBase, new[] { StationType.Fermenter } },
-            { ItemCategory.FinishedMead, new[] { StationType.None } }, // Store away from stations
-            { ItemCategory.CookedFood, new[] { StationType.None } },
-            { ItemCategory.Leather, new[] { StationType.Workbench, StationType.Forge } },
-            { ItemCategory.Cloth, new[] { StationType.SpinningWheel, StationType.Workbench } },
-            { ItemCategory.Chain, new[] { StationType.Forge } },
-            { ItemCategory.Feathers, new[] { StationType.Workbench } },
-            { ItemCategory.DragonTears, new[] { StationType.ArtisanTable } },
-            { ItemCategory.BlackCore, new[] { StationType.Smelter, StationType.Forge } },
-            { ItemCategory.Arrows, new[] { StationType.Workbench } },
-            { ItemCategory.Weapon, new[] { StationType.Forge } },        // Weapons crafted at forge
-            { ItemCategory.Armor, new[] { StationType.Forge } },         // Armor crafted at forge
-            { ItemCategory.Coins, new[] { StationType.None } }, // Store away
-            { ItemCategory.Gems, new[] { StationType.None } },
-            { ItemCategory.Trophy, new[] { StationType.None } }, // Trophy storage
-            { ItemCategory.MiscMaterial, new[] { StationType.Workbench } },
-        };
-        
-        /// <summary>
-        /// Gets the category of an item based on its prefab name.
-        /// </summary>
-        public static ItemCategory GetItemCategory(ItemDrop.ItemData item)
-        {
-            if (item == null) return ItemCategory.Unknown;
-            
-            string prefabName = item.m_dropPrefab?.name ?? "";
-            
-            // Check direct mapping first
-            if (ItemPrefabCategories.TryGetValue(prefabName, out var category))
-            {
-                return category;
-            }
-            
-            // Check partial matches for common patterns
-            string lowerName = prefabName.ToLowerInvariant();
-            
-            // Trophies
-            if (lowerName.Contains("trophy"))
-                return ItemCategory.Trophy;
-            
-            // Cooked food patterns
-            if (lowerName.Contains("cooked") || lowerName.Contains("grilled") || 
-                lowerName.Contains("sausage") || lowerName.Contains("bread") ||
-                lowerName.Contains("pie") || lowerName.Contains("stew") ||
-                lowerName.Contains("soup") || lowerName.Contains("pudding"))
-                return ItemCategory.CookedFood;
-            
-            // Mead patterns
-            if (lowerName.Contains("meadbase"))
-                return ItemCategory.MeadBase;
-            if (lowerName.Contains("mead") && !lowerName.Contains("base"))
-                return ItemCategory.FinishedMead;
-            
-            // Arrow patterns
-            if (lowerName.Contains("arrow"))
-                return ItemCategory.Arrows;
-            
-            // Ore patterns
-            if (lowerName.Contains("ore") || lowerName.Contains("scrap"))
-                return ItemCategory.Ore;
-            
-            // Bar/ingot patterns
-            if (lowerName.Contains("bar") || lowerName.Contains("ingot"))
-                return ItemCategory.MetalBar;
-            
-            // Wood patterns
-            if (lowerName.Contains("wood") || lowerName.Contains("log"))
-                return ItemCategory.WoodFuel;
-            
-            // Hide/leather patterns
-            if (lowerName.Contains("hide") || lowerName.Contains("pelt") || lowerName.Contains("leather"))
-                return ItemCategory.Leather;
-            
-            // Fish patterns
-            if (lowerName.StartsWith("fish"))
-                return ItemCategory.RawFish;
-            
-            // Meat patterns
-            if (lowerName.Contains("meat") || lowerName.Contains("tail"))
-                return ItemCategory.RawMeat;
 
-            // Weapon/armor detection by ItemType — catches all modded content too
-            if (item.m_shared != null)
-            {
-                switch (item.m_shared.m_itemType)
-                {
-                    case ItemDrop.ItemData.ItemType.OneHandedWeapon:
-                    case ItemDrop.ItemData.ItemType.TwoHandedWeapon:
-                    case ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft:
-                    case ItemDrop.ItemData.ItemType.Bow:
-                    case ItemDrop.ItemData.ItemType.Torch:
-                        return ItemCategory.Weapon;
-
-                    case ItemDrop.ItemData.ItemType.Helmet:
-                    case ItemDrop.ItemData.ItemType.Chest:
-                    case ItemDrop.ItemData.ItemType.Legs:
-                    case ItemDrop.ItemData.ItemType.Shoulder:
-                    case ItemDrop.ItemData.ItemType.Shield:
-                    case ItemDrop.ItemData.ItemType.Utility:
-                        return ItemCategory.Armor;
-                }
-            }
-
-            return ItemCategory.MiscMaterial;
-        }
-        
-        /// <summary>
-        /// Gets the preferred station types for storing an item category.
-        /// </summary>
-        public static StationType[] GetPreferredStations(ItemCategory category)
-        {
-            if (CategoryToStations.TryGetValue(category, out var stations))
-            {
-                return stations;
-            }
-            return new[] { StationType.Workbench }; // Default to workbench
-        }
-        
-        #endregion
-        
-        #region Station Detection
-        
-        /// <summary>
-        /// Cached station info for a location.
-        /// </summary>
         public class StationInfo
         {
             public StationType Type;
+            public string Key;
             public GameObject Object;
             public Vector3 Position;
             public float Distance;
         }
-        
-        /// <summary>
-        /// Finds all crafting stations within a radius.
-        /// </summary>
-        public static List<StationInfo> FindNearbyStations(Vector3 position, float radius)
-        {
-            var stations = new List<StationInfo>();
-            var colliders = Physics.OverlapSphere(position, radius);
-            var processed = new HashSet<GameObject>();
-            
-            foreach (var collider in colliders)
-            {
-                if (collider == null) continue;
-                
-                GameObject obj = collider.gameObject;
-                if (processed.Contains(obj)) continue;
-                
-                // Check for various station types
-                StationType stationType = StationType.None;
-                
-                // Smelter
-                var smelter = obj.GetComponent<Smelter>() ?? obj.GetComponentInParent<Smelter>();
-                if (smelter != null)
-                {
-                    // Distinguish between smelter types
-                    string prefabName = GetPrefabName(obj);
-                    if (prefabName.Contains("blast") || prefabName.Contains("furnace"))
-                        stationType = StationType.BlastFurnace;
-                    else if (prefabName.Contains("charcoal") || prefabName.Contains("kiln"))
-                        stationType = StationType.Kiln;
-                    else
-                        stationType = StationType.Smelter;
-                    
-                    obj = smelter.gameObject;
-                }
-                
-                // Crafting Station (Workbench, Forge, etc.)
-                if (stationType == StationType.None)
-                {
-                    var craftingStation = obj.GetComponent<CraftingStation>() ?? obj.GetComponentInParent<CraftingStation>();
-                    if (craftingStation != null)
-                    {
-                        string prefabName = GetPrefabName(obj);
-                        if (prefabName.Contains("forge"))
-                            stationType = StationType.Forge;
-                        else if (prefabName.Contains("artisan"))
-                            stationType = StationType.ArtisanTable;
-                        else if (prefabName.Contains("stonecutter"))
-                            stationType = StationType.Stonecutter;
-                        else
-                            stationType = StationType.Workbench;
-                        
-                        obj = craftingStation.gameObject;
-                    }
-                }
-                
-                // Cooking Station
-                if (stationType == StationType.None)
-                {
-                    var cookingStation = obj.GetComponent<CookingStation>() ?? obj.GetComponentInParent<CookingStation>();
-                    if (cookingStation != null)
-                    {
-                        stationType = StationType.CookingStation;
-                        obj = cookingStation.gameObject;
-                    }
-                }
-                
-                // Fermenter
-                if (stationType == StationType.None)
-                {
-                    var fermenter = obj.GetComponent<Fermenter>() ?? obj.GetComponentInParent<Fermenter>();
-                    if (fermenter != null)
-                    {
-                        stationType = StationType.Fermenter;
-                        obj = fermenter.gameObject;
-                    }
-                }
-                
-                // Fireplace (for fuel)
-                if (stationType == StationType.None)
-                {
-                    var fireplace = obj.GetComponent<Fireplace>() ?? obj.GetComponentInParent<Fireplace>();
-                    if (fireplace != null)
-                    {
-                        stationType = StationType.FireSource;
-                        obj = fireplace.gameObject;
-                    }
-                }
-                
-                // Spinning Wheel
-                if (stationType == StationType.None)
-                {
-                    string prefabName = GetPrefabName(obj).ToLowerInvariant();
-                    if (prefabName.Contains("spinning"))
-                    {
-                        stationType = StationType.SpinningWheel;
-                    }
-                    else if (prefabName.Contains("windmill"))
-                    {
-                        stationType = StationType.Windmill;
-                    }
-                    else if (prefabName.Contains("cauldron"))
-                    {
-                        stationType = StationType.Cauldron;
-                    }
-                }
-                
-                if (stationType != StationType.None)
-                {
-                    processed.Add(obj);
-                    stations.Add(new StationInfo
-                    {
-                        Type = stationType,
-                        Object = obj,
-                        Position = obj.transform.position,
-                        Distance = Vector3.Distance(position, obj.transform.position)
-                    });
-                }
-            }
-            
-            return stations;
-        }
-        
-        private static string GetPrefabName(GameObject obj)
-        {
-            if (obj == null) return "";
-            
-            var nview = obj.GetComponent<ZNetView>();
-            if (nview != null && nview.IsValid())
-            {
-                int prefabHash = nview.GetZDO()?.GetPrefab() ?? 0;
-                if (prefabHash != 0)
-                {
-                    var prefab = ZNetScene.instance?.GetPrefab(prefabHash);
-                    if (prefab != null)
-                        return prefab.name;
-                }
-            }
-            
-            return obj.name.Replace("(Clone)", "").Trim();
-        }
-        
-        #endregion
-        
-        #region Smart Chest Selection
-        
-        /// <summary>
-        /// Result of finding the best chest for an item.
-        /// </summary>
+
         public class ChestRecommendation
         {
             public Container Chest;
@@ -557,217 +83,7 @@ namespace FiresCore.Npc.IdleBehaviors
             public bool HasMatchingItems;
             public StationInfo NearestRelevantStation;
         }
-        
-        /// <summary>
-        /// Finds the best chest to store an item in, considering nearby stations.
-        /// </summary>
-        public static ChestRecommendation FindBestChestForItem(
-            ItemDrop.ItemData item, 
-            List<Container> chests, 
-            Vector3 searchCenter,
-            float stationSearchRadius = 20f)
-        {
-            if (item == null || chests == null || chests.Count == 0)
-                return null;
-            
-            var category = GetItemCategory(item);
-            var preferredStations = GetPreferredStations(category);
-            
-            // Find relevant stations
-            var nearbyStations = FindNearbyStations(searchCenter, stationSearchRadius);
-            var relevantStations = nearbyStations
-                .Where(s => preferredStations.Contains(s.Type))
-                .OrderBy(s => s.Distance)
-                .ToList();
-            
-            ChestRecommendation best = null;
-            float bestScore = float.MinValue;
-            
-            foreach (var chest in chests)
-            {
-                if (chest == null) continue;
-                
-                var chestInv = chest.GetInventory();
-                if (chestInv == null) continue;
-                
-                // Check if chest has room
-                bool hasRoom = chestInv.GetEmptySlots() > 0;
-                bool hasMatchingStack = HasMatchingStackRoom(chestInv, item);
-                
-                if (!hasRoom && !hasMatchingStack) continue;
-                
-                float score = 0f;
-                string reason = "";
-                StationInfo nearestStation = null;
-                
-                // SCORE 1: Matching items in chest (for stacking) - HIGHEST PRIORITY
-                if (hasMatchingStack)
-                {
-                    score += 1000f;
-                    reason = "Stacking with existing items";
-                }
-                
-                // SCORE 2: Chest already contains same category items
-                int sameCategoryCount = CountItemsOfCategory(chestInv, category);
-                if (sameCategoryCount > 0)
-                {
-                    score += 500f + sameCategoryCount * 10f;
-                    if (string.IsNullOrEmpty(reason))
-                        reason = $"Contains similar items ({sameCategoryCount})";
-                }
-                
-                // SCORE 3: Proximity to relevant station
-                if (relevantStations.Count > 0 && preferredStations[0] != StationType.None)
-                {
-                    float chestToStationDist = float.MaxValue;
-                    StationInfo closestStation = null;
-                    
-                    foreach (var station in relevantStations)
-                    {
-                        float dist = Vector3.Distance(chest.transform.position, station.Position);
-                        if (dist < chestToStationDist)
-                        {
-                            chestToStationDist = dist;
-                            closestStation = station;
-                        }
-                    }
-                    
-                    if (closestStation != null && chestToStationDist < stationSearchRadius)
-                    {
-                        // Higher score for chests closer to relevant stations
-                        float proximityBonus = 300f * (1f - chestToStationDist / stationSearchRadius);
-                        score += proximityBonus;
-                        nearestStation = closestStation;
-                        
-                        if (string.IsNullOrEmpty(reason))
-                            reason = $"Near {closestStation.Type} ({chestToStationDist:F0}m)";
-                    }
-                }
-                
-                // SCORE 4: Trophy chests should only contain trophies
-                if (category == ItemCategory.Trophy)
-                {
-                    int trophyCount = CountItemsOfCategory(chestInv, ItemCategory.Trophy);
-                    int otherCount = chestInv.GetAllItems().Count - trophyCount;
-                    
-                    if (trophyCount > 0 && otherCount == 0)
-                    {
-                        score += 800f; // Prefer dedicated trophy chests
-                        reason = "Dedicated trophy storage";
-                    }
-                }
-                
-                // SCORE 5: Valuables should be stored together
-                if (category == ItemCategory.Coins || category == ItemCategory.Gems)
-                {
-                    int coinCount = CountItemsOfCategory(chestInv, ItemCategory.Coins);
-                    int gemCount = CountItemsOfCategory(chestInv, ItemCategory.Gems);
 
-                    if (coinCount > 0 || gemCount > 0)
-                    {
-                        score += 700f;
-                        reason = "Valuables storage";
-                    }
-                }
-
-                // SCORE 5b: Weapons/armor should be grouped in armory chests
-                if (category == ItemCategory.Weapon || category == ItemCategory.Armor)
-                {
-                    int weaponCount = CountItemsOfCategory(chestInv, ItemCategory.Weapon);
-                    int armorCount  = CountItemsOfCategory(chestInv, ItemCategory.Armor);
-
-                    if (weaponCount > 0 || armorCount > 0)
-                    {
-                        // Strongly prefer a chest that already has weapons/armor
-                        score += 750f + (weaponCount + armorCount) * 10f;
-                        if (string.IsNullOrEmpty(reason))
-                            reason = "Armory storage";
-                    }
-                }
-
-                // SCORE 6: Empty chests get a small bonus (for new categories)
-                if (chestInv.GetAllItems().Count == 0)
-                {
-                    score += 50f;
-                }
-                
-                // SCORE 7: Penalize overly full chests
-                int emptySlots = chestInv.GetEmptySlots();
-                if (emptySlots < 3)
-                {
-                    score -= 100f;
-                }
-                
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    best = new ChestRecommendation
-                    {
-                        Chest = chest,
-                        Score = score,
-                        Reason = reason,
-                        HasMatchingItems = hasMatchingStack || sameCategoryCount > 0,
-                        NearestRelevantStation = nearestStation
-                    };
-                }
-            }
-            
-            return best;
-        }
-        
-        /// <summary>
-        /// Checks if chest has room to stack more of this item.
-        /// </summary>
-        private static bool HasMatchingStackRoom(Inventory inv, ItemDrop.ItemData item)
-        {
-            if (inv == null || item == null) return false;
-            
-            string itemName = item.m_shared?.m_name ?? "";
-            
-            foreach (var existingItem in inv.GetAllItems())
-            {
-                if (existingItem == null) continue;
-                
-                string existingName = existingItem.m_shared?.m_name ?? "";
-                
-                if (itemName.Equals(existingName, System.StringComparison.OrdinalIgnoreCase))
-                {
-                    if (existingItem.m_stack < existingItem.m_shared.m_maxStackSize)
-                    {
-                        return true;
-                    }
-                }
-            }
-            
-            return false;
-        }
-        
-        /// <summary>
-        /// Counts items of a specific category in an inventory.
-        /// </summary>
-        private static int CountItemsOfCategory(Inventory inv, ItemCategory category)
-        {
-            if (inv == null) return 0;
-            
-            int count = 0;
-            foreach (var item in inv.GetAllItems())
-            {
-                if (item == null) continue;
-                if (GetItemCategory(item) == category)
-                {
-                    count++;
-                }
-            }
-            return count;
-        }
-        
-        #endregion
-        
-        #region Organization Operations
-        
-        /// <summary>
-        /// Result of an organization operation.
-        /// </summary>
         public class OrganizationResult
         {
             public int ItemsMoved;
@@ -775,281 +91,744 @@ namespace FiresCore.Npc.IdleBehaviors
             public int ChestsAffected;
             public List<string> Actions = new List<string>();
         }
-        
-        /// <summary>
-        /// Organizes items across multiple chests based on station proximity.
-        /// Moves items to be closer to the stations where they'll be used.
-        /// </summary>
-        public static OrganizationResult OrganizeChestCluster(
-            List<Container> chests, 
-            Vector3 clusterCenter,
-            float stationSearchRadius = 25f)
+
+        private const string FarmKey = "farm";
+        private const string BedKey = "bed";
+        private const string KilnKey = "$piece_charcoalkiln";
+        private const string CoinsPrefab = "Coins";
+        private const string WardrobeName = "$piece_chestwarderobe";
+        private static readonly HashSet<string> OreStationKeys = new HashSet<string> { "$piece_smelter", "$piece_blastfurnace" };
+
+        private static readonly Dictionary<string, StationType> KnownStations = new Dictionary<string, StationType>
         {
-            var result = new OrganizationResult();
-            
-            if (chests == null || chests.Count < 2)
-                return result;
-            
-            // Find all stations near this cluster
-            var nearbyStations = FindNearbyStations(clusterCenter, stationSearchRadius);
-            
-            if (CompanionIdleBehavior.VerboseLogging)
-                Debug.Log($"[SmartStorage] Found {nearbyStations.Count} stations near chest cluster");
-            
-            // Build a map of all items across all chests
-            var allItems = new List<(Container chest, ItemDrop.ItemData item, int index)>();
-            
-            foreach (var chest in chests)
-            {
-                if (chest == null) continue;
-                var inv = chest.GetInventory();
-                if (inv == null) continue;
-                
-                int index = 0;
-                foreach (var item in inv.GetAllItems())
-                {
-                    if (item == null) continue;
-                    allItems.Add((chest, item, index++));
-                }
-            }
-            
-            // For each item, check if it should be moved to a better chest
-            var itemsToMove = new List<(Container source, Container dest, ItemDrop.ItemData item, string reason)>();
-            
-            foreach (var (sourceChest, item, _) in allItems)
-            {
-                var recommendation = FindBestChestForItem(item, chests, clusterCenter, stationSearchRadius);
-                
-                if (recommendation == null) continue;
-                if (recommendation.Chest == sourceChest) continue;
-                if (recommendation.Score <= 0) continue;
-                
-                // Only move if the recommended chest is significantly better
-                // (avoid unnecessary shuffling)
-                var currentScore = ScoreChestForItem(sourceChest, item, nearbyStations);
-                if (recommendation.Score > currentScore + 200f)
-                {
-                    itemsToMove.Add((sourceChest, recommendation.Chest, item, recommendation.Reason));
-                }
-            }
-            
-            // Execute moves, tracking which containers were dirtied
-            var dirtiedChests = new HashSet<Container>();
-            foreach (var (source, dest, item, reason) in itemsToMove)
-            {
-                var sourceInv = source.GetInventory();
-                var destInv = dest.GetInventory();
+            { "$piece_smelter", StationType.Smelter },
+            { "$piece_blastfurnace", StationType.BlastFurnace },
+            { KilnKey, StationType.Kiln },
+            { "$piece_forge", StationType.Forge },
+            { "$piece_workbench", StationType.Workbench },
+            { "$piece_stonecutter", StationType.Stonecutter },
+            { "$piece_artisanstation", StationType.ArtisanTable },
+            { "$piece_cauldron", StationType.Cauldron },
+            { "$piece_meadcauldron", StationType.MeadCauldron },
+            { "$piece_blackforge", StationType.BlackForge },
+            { "$piece_magetable", StationType.GaldrTable },
+            { "$piece_preptable", StationType.PrepTable },
+            { "$piece_upgradestation", StationType.UpgradeStation },
+            { "$piece_windmill", StationType.Windmill },
+            { "$piece_spinningwheel", StationType.SpinningWheel },
+            { "$piece_eitrrefinery", StationType.EitrRefinery },
+            { "$piece_fermenter", StationType.Fermenter },
+        };
 
-                if (sourceInv == null || destInv == null) continue;
-                if (!destInv.CanAddItem(item)) continue;
+        private const float ConversionWeight = 10f;
+        private const float SmelterFuelWeight = 8f;
+        private const float MinorFuelWeight = 4f;
+        private const float RecipeWeightPerUse = 2f;
+        private const float PieceWeightPerUse = 1f;
+        private const float MaxUseWeight = 10f;
 
-                var clone = item.Clone();
-                if (destInv.AddItem(clone))
-                {
-                    sourceInv.RemoveItem(item);
-                    result.ItemsMoved++;
-                    result.Actions.Add($"Moved {item.m_shared?.m_name}: {reason}");
-                    dirtiedChests.Add(source);
-                    dirtiedChests.Add(dest);
+        private const float StackBonus = 1000f;
+        private const float CohesionBonus = 500f;
+        private const float MixPenalty = 300f;
+        private const float EmptyChestBonus = 50f;
+        private const float StationBonus = 400f;
+        private const float WardrobeBonus = 600f;
+        private const float WardrobeMisusePenalty = 300f;
+        private const float HouseBonus = 300f;
+        private const float GearHouseBonus = 150f;
+        private const float KitchenBonus = 300f;
+        private const float DedicatedBonus = 400f;
+        private const float LowSpacePenalty = 100f;
+        private const int LowSpaceSlots = 3;
+        private const float MoveThreshold = 200f;
+        private const float StationReach = 10f;
+        private const float StationCacheSeconds = 5f;
+        private const float StationCacheMaxDrift = 2f;
+        private const int InitialColliderBuffer = 1024;
 
-                    if (CompanionIdleBehavior.VerboseLogging)
-                        Debug.Log($"[SmartStorage] Moved {item.m_shared?.m_name}: {reason}");
-                }
-            }
+        #region Item profiles
 
-            // Consolidate partial stacks (returns the set of chests it modified)
-            result.StacksConsolidated = ConsolidateStacks(chests, dirtiedChests);
-
-            // Persist every chest that was touched
-            foreach (var chest in dirtiedChests)
-                SaveContainer(chest);
-
-            result.ChestsAffected = dirtiedChests.Count;
-            return result;
+        private sealed class ItemProfile
+        {
+            public ItemCategory Category;
+            public readonly Dictionary<string, float> Uses = new Dictionary<string, float>();
+            public string HomeKey;
+            public string Group;
         }
-        
-        /// <summary>
-        /// Scores a chest for a specific item (used to compare current vs recommended).
-        /// </summary>
-        private static float ScoreChestForItem(Container chest, ItemDrop.ItemData item, List<StationInfo> stations)
+
+        /// <summary>Everything the game data says about items, rebuilt when a new ObjectDB loads.</summary>
+        private sealed class GameData
         {
-            if (chest == null || item == null) return 0;
-            
-            var inv = chest.GetInventory();
-            if (inv == null) return 0;
-            
-            var category = GetItemCategory(item);
-            var preferredStations = GetPreferredStations(category);
-            
-            float score = 0;
-            
-            // Check for stacking potential
-            if (HasMatchingStackRoom(inv, item))
-                score += 1000f;
-            
-            // Check category match
-            int sameCategoryCount = CountItemsOfCategory(inv, category);
-            if (sameCategoryCount > 0)
-                score += 500f + sameCategoryCount * 10f;
-            
-            // Check station proximity
-            if (preferredStations[0] != StationType.None)
+            public readonly Dictionary<string, ItemProfile> Profiles = new Dictionary<string, ItemProfile>();
+            public readonly Dictionary<string, string> PrefabByToken = new Dictionary<string, string>();
+            public readonly HashSet<string> KitchenKeys = new HashSet<string>();
+            public readonly HashSet<string> CropPickables = new HashSet<string>();
+            public readonly Dictionary<string, Dictionary<string, float>> Uses = new Dictionary<string, Dictionary<string, float>>();
+            public readonly Dictionary<string, Dictionary<string, int>> RecipeUses = new Dictionary<string, Dictionary<string, int>>();
+            public readonly Dictionary<string, Dictionary<string, int>> PieceUses = new Dictionary<string, Dictionary<string, int>>();
+            public readonly HashSet<string> FermenterInputs = new HashSet<string>();
+            public readonly HashSet<string> FermenterOutputs = new HashSet<string>();
+            public readonly HashSet<string> CookingInputs = new HashSet<string>();
+            public readonly HashSet<string> FoodOutputs = new HashSet<string>();
+            public readonly HashSet<string> Crops = new HashSet<string>();
+            public readonly HashSet<string> Seeds = new HashSet<string>();
+            public readonly HashSet<string> OreInputs = new HashSet<string>();
+            public readonly HashSet<string> OreOutputs = new HashSet<string>();
+            public readonly HashSet<string> SmelterFuels = new HashSet<string>();
+            public readonly HashSet<string> KilnInputs = new HashSet<string>();
+            public readonly HashSet<string> Resources = new HashSet<string>();
+        }
+
+        private static GameData _data;
+        private static ObjectDB _dataBuiltFor;
+
+        private static GameData Data
+        {
+            get
             {
-                foreach (var station in stations)
+                var db = ObjectDB.instance;
+                if (_data != null && _dataBuiltFor == db) return _data;
+                if (db == null || ZNetScene.instance == null) return _data ?? new GameData();
+                _data = Build(db, ZNetScene.instance);
+                _dataBuiltFor = db;
+                return _data;
+            }
+        }
+
+        private static GameData Build(ObjectDB db, ZNetScene scene)
+        {
+            var data = new GameData();
+            foreach (var itemPrefab in db.m_items)
+            {
+                var drop = itemPrefab != null ? itemPrefab.GetComponent<ItemDrop>() : null;
+                if (drop != null) data.PrefabByToken[drop.m_itemData.m_shared.m_name] = itemPrefab.name;
+            }
+
+            foreach (var prefab in scene.m_prefabs)
+            {
+                if (prefab == null) continue;
+                ScanSmelter(data, prefab.GetComponent<Smelter>());
+                ScanCookingStation(data, prefab.GetComponent<CookingStation>());
+                ScanFermenter(data, prefab.GetComponent<Fermenter>());
+                var fireplace = prefab.GetComponent<Fireplace>();
+                if (fireplace != null && fireplace.m_fuelItem != null)
+                    AddUse(data, fireplace.m_fuelItem.name, fireplace.m_name, MinorFuelWeight);
+                var beehive = prefab.GetComponent<Beehive>();
+                if (beehive != null && beehive.m_honeyItem != null) data.Resources.Add(beehive.m_honeyItem.name);
+
+                var piece = prefab.GetComponent<Piece>();
+                var plant = prefab.GetComponent<Plant>();
+                if (plant != null && piece != null)
                 {
-                    if (!preferredStations.Contains(station.Type)) continue;
-                    
-                    float dist = Vector3.Distance(chest.transform.position, station.Position);
-                    if (dist < 20f)
+                    foreach (var req in piece.m_resources)
                     {
-                        score += 300f * (1f - dist / 20f);
-                        break;
+                        if (req.m_resItem == null) continue;
+                        data.Seeds.Add(req.m_resItem.name);
+                        AddUse(data, req.m_resItem.name, FarmKey, ConversionWeight);
+                    }
+                    foreach (var grown in plant.m_grownPrefabs)
+                    {
+                        var pickable = grown != null ? grown.GetComponent<Pickable>() : null;
+                        if (pickable == null || pickable.m_itemPrefab == null) continue;
+                        data.CropPickables.Add(grown.name);
+                        data.Crops.Add(pickable.m_itemPrefab.name);
                     }
                 }
-            }
-            
-            return score;
-        }
-        
-        /// <summary>
-        /// Consolidates partial stacks of the same item across chests so that
-        /// a given item type fills one chest before spreading to the next.
-        /// Uses proper AddItem / RemoveItem so that Valheim's inventory
-        /// management layer stays consistent. Modified containers are added to
-        /// <paramref name="dirtied"/> so the caller can persist them.
-        /// </summary>
-        public static int ConsolidateStacks(List<Container> chests, HashSet<Container> dirtied = null)
-        {
-            if (chests == null || chests.Count < 2) return 0;
-
-            int totalConsolidated = 0;
-
-            // Build map of item shared-name -> all (chest, item) pairs across chests
-            var itemLocations = new Dictionary<string, List<(Container chest, ItemDrop.ItemData item)>>(System.StringComparer.OrdinalIgnoreCase);
-
-            foreach (var chest in chests)
-            {
-                if (chest == null) continue;
-                var inv = chest.GetInventory();
-                if (inv == null) continue;
-
-                foreach (var item in inv.GetAllItems())
+                else if (piece != null && piece.m_craftingStation != null)
                 {
-                    if (item == null) continue;
-                    string key = item.m_shared?.m_name ?? "";
-                    if (string.IsNullOrEmpty(key)) continue;
-
-                    if (!itemLocations.ContainsKey(key))
-                        itemLocations[key] = new List<(Container, ItemDrop.ItemData)>();
-                    itemLocations[key].Add((chest, item));
+                    foreach (var req in piece.m_resources)
+                        if (req.m_resItem != null) Count(data.PieceUses, req.m_resItem.name, piece.m_craftingStation.m_name);
                 }
             }
 
-            foreach (var kvp in itemLocations)
+            foreach (var recipe in db.m_recipes)
             {
-                var locations = kvp.Value;
-                if (locations.Count < 2) continue;
-
-                // Only act when there are at least two partial stacks in different chests
-                var partialStacks = locations
-                    .Where(l => l.item != null && l.item.m_stack < l.item.m_shared.m_maxStackSize)
-                    .OrderByDescending(l => l.item.m_stack) // fill the biggest partial first
-                    .ToList();
-
-                if (partialStacks.Count < 2) continue;
-
-                // Drain smaller stacks into larger ones
-                for (int i = 0; i < partialStacks.Count - 1; i++)
+                if (recipe == null || !recipe.m_enabled || recipe.m_item == null || recipe.m_craftingStation == null) continue;
+                string key = recipe.m_craftingStation.m_name;
+                foreach (var req in recipe.m_resources)
                 {
-                    var (targetChest, targetItem) = partialStacks[i];
-                    if (targetItem == null) continue;
-
-                    int maxStack = targetItem.m_shared.m_maxStackSize;
-
-                    for (int j = partialStacks.Count - 1; j > i; j--)
-                    {
-                        var (sourceChest, sourceItem) = partialStacks[j];
-                        if (sourceItem == null) continue;
-                        if (sourceChest == targetChest) continue;
-
-                        int canAdd = maxStack - targetItem.m_stack;
-                        if (canAdd <= 0) break; // target is full - move to next target
-
-                        int toMove = Mathf.Min(canAdd, sourceItem.m_stack);
-                        if (toMove <= 0) continue;
-
-                        // Transfer using inventory API
-                        targetItem.m_stack += toMove;
-                        sourceItem.m_stack -= toMove;
-                        totalConsolidated += toMove;
-
-                        dirtied?.Add(targetChest);
-                        dirtied?.Add(sourceChest);
-
-                        if (sourceItem.m_stack <= 0)
-                        {
-                            sourceChest.GetInventory()?.RemoveItem(sourceItem);
-                            partialStacks[j] = (sourceChest, null);
-                        }
-                    }
+                    if (req.m_resItem == null) continue;
+                    Count(data.RecipeUses, req.m_resItem.name, key);
+                    data.Resources.Add(req.m_resItem.name);
+                }
+                if (IsEdible(recipe.m_item.m_itemData.m_shared))
+                {
+                    data.FoodOutputs.Add(recipe.m_item.name);
+                    data.KitchenKeys.Add(key);
                 }
             }
 
-            return totalConsolidated;
+            FoldCounts(data, data.RecipeUses, RecipeWeightPerUse);
+            FoldCounts(data, data.PieceUses, PieceWeightPerUse);
+
+            foreach (var itemPrefab in db.m_items)
+            {
+                var drop = itemPrefab != null ? itemPrefab.GetComponent<ItemDrop>() : null;
+                if (drop != null) data.Profiles[itemPrefab.name] = Profile(data, itemPrefab.name, drop.m_itemData.m_shared);
+            }
+            return data;
         }
 
-        /// <summary>
-        /// Persists a container's inventory to its ZDO so all clients see the changes.
-        /// </summary>
-        public static void SaveContainer(Container container)
+        private static void ScanSmelter(GameData data, Smelter smelter)
         {
-            if (container == null) return;
-            try { container.Save(); }
-            catch (System.Exception ex)
+            if (smelter == null) return;
+            string key = smelter.m_name;
+            if (smelter.m_fuelItem != null)
             {
-                Debug.LogWarning($"[SmartStorage] SaveContainer failed for {container.name}: {ex.Message}");
+                data.SmelterFuels.Add(smelter.m_fuelItem.name);
+                AddUse(data, smelter.m_fuelItem.name, key, SmelterFuelWeight);
             }
+            foreach (var conversion in smelter.m_conversion)
+            {
+                if (conversion.m_from != null)
+                {
+                    AddUse(data, conversion.m_from.name, key, ConversionWeight);
+                    data.Resources.Add(conversion.m_from.name);
+                    if (OreStationKeys.Contains(key)) data.OreInputs.Add(conversion.m_from.name);
+                    if (key == KilnKey) data.KilnInputs.Add(conversion.m_from.name);
+                }
+                if (conversion.m_to == null) continue;
+                if (OreStationKeys.Contains(key)) data.OreOutputs.Add(conversion.m_to.name);
+                if (key == KilnKey) data.SmelterFuels.Add(conversion.m_to.name);
+            }
+        }
+
+        private static void ScanCookingStation(GameData data, CookingStation station)
+        {
+            if (station == null) return;
+            string key = station.m_name;
+            if (station.m_useFuel && station.m_fuelItem != null)
+                AddUse(data, station.m_fuelItem.name, key, MinorFuelWeight);
+            foreach (var conversion in station.m_conversion)
+            {
+                if (conversion.m_from == null || conversion.m_to == null) continue;
+                AddUse(data, conversion.m_from.name, key, ConversionWeight);
+                data.Resources.Add(conversion.m_from.name);
+                if (!IsEdible(conversion.m_to.m_itemData.m_shared)) continue;
+                data.CookingInputs.Add(conversion.m_from.name);
+                data.FoodOutputs.Add(conversion.m_to.name);
+                data.KitchenKeys.Add(key);
+            }
+        }
+
+        private static void ScanFermenter(GameData data, Fermenter fermenter)
+        {
+            if (fermenter == null) return;
+            foreach (var conversion in fermenter.m_conversion)
+            {
+                if (conversion.m_from == null) continue;
+                AddUse(data, conversion.m_from.name, fermenter.m_name, ConversionWeight);
+                data.Resources.Add(conversion.m_from.name);
+                data.FermenterInputs.Add(conversion.m_from.name);
+                if (conversion.m_to != null) data.FermenterOutputs.Add(conversion.m_to.name);
+            }
+            data.KitchenKeys.Add(fermenter.m_name);
+        }
+
+        private static void AddUse(GameData data, string item, string key, float weight)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+            if (!data.Uses.TryGetValue(item, out var uses)) data.Uses[item] = uses = new Dictionary<string, float>();
+            uses.TryGetValue(key, out float current);
+            uses[key] = Mathf.Min(MaxUseWeight, current + weight);
+        }
+
+        private static void Count(Dictionary<string, Dictionary<string, int>> counts, string item, string key)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+            if (!counts.TryGetValue(item, out var perStation)) counts[item] = perStation = new Dictionary<string, int>();
+            perStation.TryGetValue(key, out int n);
+            perStation[key] = n + 1;
+        }
+
+        private static void FoldCounts(GameData data, Dictionary<string, Dictionary<string, int>> counts, float weightPerUse)
+        {
+            foreach (var item in counts)
+                foreach (var station in item.Value)
+                    AddUse(data, item.Key, station.Key, station.Value * weightPerUse);
+        }
+
+        private static bool IsEdible(ItemDrop.ItemData.SharedData shared)
+            => shared.m_food > 0f || shared.m_foodStamina > 0f || shared.m_foodEitr > 0f;
+
+        private static ItemProfile Profile(GameData data, string prefab, ItemDrop.ItemData.SharedData shared)
+        {
+            var profile = new ItemProfile();
+            if (data.Uses.TryGetValue(prefab, out var uses))
+            {
+                float best = 0f;
+                foreach (var use in uses)
+                {
+                    profile.Uses[use.Key] = use.Value;
+                    if (use.Value > best) { best = use.Value; profile.HomeKey = use.Key; }
+                }
+            }
+            profile.Category = Classify(data, prefab, shared);
+            profile.Group = GroupOf(profile);
+            return profile;
+        }
+
+        private static ItemCategory Classify(GameData data, string prefab, ItemDrop.ItemData.SharedData shared)
+        {
+            switch (shared.m_itemType)
+            {
+                case ItemDrop.ItemData.ItemType.Trophy:
+                    return ItemCategory.Trophy;
+                case ItemDrop.ItemData.ItemType.Ammo:
+                case ItemDrop.ItemData.ItemType.AmmoNonEquipable:
+                    return ItemCategory.Arrows;
+                case ItemDrop.ItemData.ItemType.Helmet:
+                case ItemDrop.ItemData.ItemType.Chest:
+                case ItemDrop.ItemData.ItemType.Legs:
+                case ItemDrop.ItemData.ItemType.Hands:
+                case ItemDrop.ItemData.ItemType.Shoulder:
+                case ItemDrop.ItemData.ItemType.Shield:
+                case ItemDrop.ItemData.ItemType.Utility:
+                case ItemDrop.ItemData.ItemType.Trinket:
+                case ItemDrop.ItemData.ItemType.Customization:
+                    return ItemCategory.Armor;
+                case ItemDrop.ItemData.ItemType.OneHandedWeapon:
+                case ItemDrop.ItemData.ItemType.TwoHandedWeapon:
+                case ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft:
+                case ItemDrop.ItemData.ItemType.Bow:
+                case ItemDrop.ItemData.ItemType.Tool:
+                case ItemDrop.ItemData.ItemType.Torch:
+                case ItemDrop.ItemData.ItemType.Attach_Atgeir:
+                    return ItemCategory.Weapon;
+                case ItemDrop.ItemData.ItemType.Fish:
+                    return ItemCategory.RawFish;
+            }
+
+            if (prefab == CoinsPrefab) return ItemCategory.Coins;
+            if (shared.m_value > 0) return ItemCategory.Gems;
+            if (data.FermenterInputs.Contains(prefab)) return ItemCategory.MeadBase;
+            if (data.FermenterOutputs.Contains(prefab)) return ItemCategory.FinishedMead;
+            if (data.CookingInputs.Contains(prefab)) return ItemCategory.RawMeat;
+            if (IsEdible(shared))
+            {
+                if (data.FoodOutputs.Contains(prefab)) return ItemCategory.CookedFood;
+                if (data.Crops.Contains(prefab)) return ItemCategory.Vegetables;
+                return data.Resources.Contains(prefab) ? ItemCategory.Berries : ItemCategory.CookedFood;
+            }
+            if (shared.m_itemType == ItemDrop.ItemData.ItemType.Consumable) return ItemCategory.FinishedMead;
+            if (data.Seeds.Contains(prefab)) return ItemCategory.Seeds;
+            if (data.OreInputs.Contains(prefab)) return ItemCategory.Ore;
+            if (data.OreOutputs.Contains(prefab)) return ItemCategory.MetalBar;
+            if (data.SmelterFuels.Contains(prefab)) return ItemCategory.CoalFuel;
+            if (data.KilnInputs.Contains(prefab)) return ItemCategory.WoodFuel;
+            if (MostlyBuilding(data, prefab)) return ItemCategory.BuildingMaterial;
+            return ItemCategory.MiscMaterial;
+        }
+
+        private static bool MostlyBuilding(GameData data, string prefab)
+        {
+            if (!data.PieceUses.TryGetValue(prefab, out var pieces)) return false;
+            int pieceCount = 0, recipeCount = 0;
+            foreach (var n in pieces.Values) pieceCount += n;
+            if (data.RecipeUses.TryGetValue(prefab, out var recipes))
+                foreach (var n in recipes.Values) recipeCount += n;
+            return pieceCount >= recipeCount;
+        }
+
+        /// <summary>Items sharing a group belong in the same chest. Generic materials group by the station that uses
+        /// them most, everything else by kind.</summary>
+        private static string GroupOf(ItemProfile profile)
+        {
+            switch (profile.Category)
+            {
+                case ItemCategory.Coins:
+                case ItemCategory.Gems:
+                    return "valuables";
+                case ItemCategory.Weapon:
+                case ItemCategory.Arrows:
+                    return "gear";
+                case ItemCategory.CookedFood:
+                case ItemCategory.FinishedMead:
+                    return "provisions";
+                case ItemCategory.MiscMaterial:
+                    return profile.HomeKey != null ? "use:" + profile.HomeKey : "misc";
+                default:
+                    return profile.Category.ToString();
+            }
+        }
+
+        private static ItemProfile ProfileOf(ItemDrop.ItemData item)
+        {
+            var data = Data;
+            string prefab = item.m_dropPrefab != null ? item.m_dropPrefab.name
+                : data.PrefabByToken.TryGetValue(item.m_shared.m_name, out var byToken) ? byToken : item.m_shared.m_name;
+            if (data.Profiles.TryGetValue(prefab, out var profile)) return profile;
+            profile = Profile(data, prefab, item.m_shared);
+            data.Profiles[prefab] = profile;
+            return profile;
+        }
+
+        public static ItemCategory GetItemCategory(ItemDrop.ItemData item)
+            => item == null || item.m_shared == null ? ItemCategory.Unknown : ProfileOf(item).Category;
+
+        #endregion
+
+        #region Station detection
+
+        private static Collider[] _colliders = new Collider[InitialColliderBuffer];
+        private static List<StationInfo> _cachedStations;
+        private static Vector3 _cachedCenter;
+        private static float _cachedRadius;
+        private static float _cachedTime = float.NegativeInfinity;
+
+        /// <summary>Every station, bed and crop within <paramref name="radius"/>; reused for a few seconds per spot
+        /// because deposit loops ask once per item.</summary>
+        public static List<StationInfo> FindNearbyStations(Vector3 position, float radius)
+        {
+            if (_cachedStations != null && Time.time - _cachedTime < StationCacheSeconds
+                && Mathf.Approximately(radius, _cachedRadius)
+                && (position - _cachedCenter).sqrMagnitude < StationCacheMaxDrift * StationCacheMaxDrift)
+                return Refreshed(_cachedStations, position);
+
+            var data = Data;
+            int count;
+            while ((count = Physics.OverlapSphereNonAlloc(position, radius, _colliders)) == _colliders.Length)
+                _colliders = new Collider[_colliders.Length * 2];
+
+            var stations = new List<StationInfo>();
+            var seen = new HashSet<ZNetView>();
+            for (int i = 0; i < count; i++)
+            {
+                var nview = _colliders[i] != null ? _colliders[i].GetComponentInParent<ZNetView>() : null;
+                if (nview == null || !seen.Add(nview)) continue;
+                if (!Describe(data, nview.gameObject, out string key, out StationType type)) continue;
+                var pos = nview.transform.position;
+                stations.Add(new StationInfo { Type = type, Key = key, Object = nview.gameObject, Position = pos, Distance = Vector3.Distance(position, pos) });
+            }
+            System.Array.Clear(_colliders, 0, count);
+
+            _cachedStations = stations;
+            _cachedCenter = position;
+            _cachedRadius = radius;
+            _cachedTime = Time.time;
+            return stations;
+        }
+
+        private static List<StationInfo> Refreshed(List<StationInfo> cached, Vector3 position)
+        {
+            var stations = new List<StationInfo>(cached.Count);
+            foreach (var s in cached)
+                if (s.Object != null)
+                    stations.Add(new StationInfo { Type = s.Type, Key = s.Key, Object = s.Object, Position = s.Position, Distance = Vector3.Distance(position, s.Position) });
+            return stations;
+        }
+
+        private static bool Describe(GameData data, GameObject root, out string key, out StationType type)
+        {
+            var smelter = root.GetComponent<Smelter>();
+            if (smelter != null) return Station(smelter.m_name, StationType.Smelter, out key, out type);
+            var crafting = root.GetComponent<CraftingStation>();
+            if (crafting != null) return Station(crafting.m_name, StationType.Other, out key, out type);
+            var cooking = root.GetComponent<CookingStation>();
+            if (cooking != null) return Station(cooking.m_name, StationType.CookingStation, out key, out type);
+            var fermenter = root.GetComponent<Fermenter>();
+            if (fermenter != null) return Station(fermenter.m_name, StationType.Fermenter, out key, out type);
+            var fireplace = root.GetComponent<Fireplace>();
+            if (fireplace != null) return Station(fireplace.m_name, StationType.FireSource, out key, out type);
+            if (root.GetComponent<Bed>() != null) return Station(BedKey, StationType.Bed, out key, out type);
+            if (root.GetComponent<Plant>() != null || data.CropPickables.Contains(Utils.GetPrefabName(root)))
+                return Station(FarmKey, StationType.Farm, out key, out type);
+            key = null;
+            type = StationType.None;
+            return false;
+        }
+
+        private static bool Station(string name, StationType fallback, out string key, out StationType type)
+        {
+            key = name;
+            type = KnownStations.TryGetValue(name, out var known) ? known : fallback;
+            return true;
         }
 
         #endregion
 
-        #region Public Utilities
-        
-        /// <summary>
-        /// Gets a human-readable description of where an item should be stored.
-        /// </summary>
-        public static string GetStorageRecommendation(ItemDrop.ItemData item)
+        #region Scoring
+
+        private sealed class ChestContext
         {
-            if (item == null) return "Unknown";
-            
-            var category = GetItemCategory(item);
-            var stations = GetPreferredStations(category);
-            
-            if (stations.Length == 0 || stations[0] == StationType.None)
+            public Container Chest;
+            public Inventory Inventory;
+            public bool IsWardrobe;
+            public float Kitchen;
+            public float House;
+            public int Total;
+            public readonly Dictionary<string, int> Groups = new Dictionary<string, int>();
+            public readonly Dictionary<string, int> OpenStacks = new Dictionary<string, int>();
+            public readonly Dictionary<string, float> Proximity = new Dictionary<string, float>();
+            public readonly Dictionary<string, StationInfo> StationByKey = new Dictionary<string, StationInfo>();
+        }
+
+        private struct Placement
+        {
+            public float Score;
+            public string Reason;
+            public StationInfo Station;
+            public bool Matches;
+        }
+
+        private static ChestContext Context(Container chest, List<StationInfo> stations, GameData data)
+        {
+            var ctx = new ChestContext { Chest = chest, Inventory = chest.GetInventory(), IsWardrobe = chest.m_name == WardrobeName };
+            foreach (var item in ctx.Inventory.GetAllItems())
             {
-                return category switch
+                ctx.Total++;
+                Increment(ctx.Groups, ProfileOf(item).Group);
+                if (IsPartial(item)) Increment(ctx.OpenStacks, StackKey(item));
+            }
+            var chestPos = chest.transform.position;
+            foreach (var station in stations)
+            {
+                float distance = Vector3.Distance(chestPos, station.Position);
+                if (distance > StationReach) continue;
+                float closeness = 1f - distance / StationReach;
+                if (!ctx.Proximity.TryGetValue(station.Key, out float old) || closeness > old)
                 {
-                    ItemCategory.Trophy => "Trophy storage",
-                    ItemCategory.Coins => "Valuables chest",
-                    ItemCategory.Gems => "Valuables chest",
-                    ItemCategory.CookedFood => "Food storage",
-                    ItemCategory.FinishedMead => "Mead/potion storage",
-                    _ => "General storage"
+                    ctx.Proximity[station.Key] = closeness;
+                    ctx.StationByKey[station.Key] = station;
+                }
+                if (data.KitchenKeys.Contains(station.Key)) ctx.Kitchen = Mathf.Max(ctx.Kitchen, closeness);
+                if (station.Key == BedKey) ctx.House = Mathf.Max(ctx.House, closeness);
+            }
+            return ctx;
+        }
+
+        private static List<ChestContext> Contexts(List<Container> chests, List<StationInfo> stations, bool writableOnly)
+        {
+            var data = Data;
+            var contexts = new List<ChestContext>();
+            foreach (var chest in chests)
+            {
+                if (chest == null || chest.GetInventory() == null || InUse(chest)) continue;
+                if (writableOnly && !IsWritable(chest)) continue;
+                contexts.Add(Context(chest, stations, data));
+            }
+            return contexts;
+        }
+
+        private static void Increment(Dictionary<string, int> counts, string key)
+        {
+            counts.TryGetValue(key, out int n);
+            counts[key] = n + 1;
+        }
+
+        private static bool IsPartial(ItemDrop.ItemData item) => item.m_stack < item.m_shared.m_maxStackSize;
+
+        private static string StackKey(ItemDrop.ItemData item) => item.m_shared.m_name + "|" + item.m_quality;
+
+        /// <summary>How well <paramref name="item"/> fits a chest. For the chest it already sits in
+        /// (<paramref name="isCurrentChest"/>) the item does not count toward its own chest.</summary>
+        private static Placement Score(ItemProfile profile, ItemDrop.ItemData item, ChestContext ctx, bool isCurrentChest)
+        {
+            var placement = new Placement();
+            ctx.Groups.TryGetValue(profile.Group, out int same);
+            ctx.OpenStacks.TryGetValue(StackKey(item), out int openStacks);
+            int total = ctx.Total;
+            if (isCurrentChest)
+            {
+                total--;
+                same--;
+                if (IsPartial(item)) openStacks--;
+            }
+            int other = total - same;
+            bool stackRoom = openStacks > 0;
+
+            if (stackRoom) Add(ref placement, StackBonus, "stacks with the same item");
+            if (total == 0) placement.Score += EmptyChestBonus;
+            else
+            {
+                if (same > 0) Add(ref placement, CohesionBonus * same / total, "holds the same kind of item");
+                placement.Score -= MixPenalty * other / total;
+            }
+            placement.Matches = stackRoom || same > 0;
+
+            float bestUse = 0f;
+            foreach (var use in profile.Uses)
+            {
+                if (!ctx.Proximity.TryGetValue(use.Key, out float closeness)) continue;
+                float fit = use.Value / MaxUseWeight * closeness;
+                if (fit <= bestUse) continue;
+                bestUse = fit;
+                placement.Station = ctx.StationByKey[use.Key];
+            }
+            if (bestUse > 0f) Add(ref placement, StationBonus * bestUse, "next to " + Localize(placement.Station.Key));
+
+            switch (profile.Category)
+            {
+                case ItemCategory.Armor:
+                    if (ctx.IsWardrobe) Add(ref placement, WardrobeBonus, "wardrobe");
+                    else if (ctx.House > 0f) Add(ref placement, HouseBonus * ctx.House, "by the beds");
+                    break;
+                case ItemCategory.Weapon:
+                case ItemCategory.Arrows:
+                    if (ctx.House > 0f) Add(ref placement, GearHouseBonus * ctx.House, "by the beds");
+                    break;
+                case ItemCategory.CookedFood:
+                case ItemCategory.FinishedMead:
+                    float provisions = Mathf.Max(ctx.Kitchen, ctx.House);
+                    if (provisions > 0f) Add(ref placement, KitchenBonus * provisions, "kitchen and beds");
+                    break;
+                case ItemCategory.Trophy:
+                case ItemCategory.Coins:
+                case ItemCategory.Gems:
+                    if (same > 0 && other == 0) Add(ref placement, DedicatedBonus, "its own chest");
+                    break;
+            }
+            if (ctx.IsWardrobe && profile.Category != ItemCategory.Armor) placement.Score -= WardrobeMisusePenalty;
+            if (ctx.Inventory.GetEmptySlots() < LowSpaceSlots) placement.Score -= LowSpacePenalty;
+            return placement;
+        }
+
+        private static void Add(ref Placement placement, float amount, string reason)
+        {
+            placement.Score += amount;
+            if (placement.Reason == null) placement.Reason = reason;
+        }
+
+        private static string Localize(string key) => Localization.instance != null ? Localization.instance.Localize(key) : key;
+
+        private static bool HasRoom(Inventory inv, ItemDrop.ItemData item)
+            => inv.HaveEmptySlot() || inv.FindFreeStackSpace(item.m_shared.m_name, item.m_worldLevel) > 0;
+
+        /// <summary>Picks the chest an item should go into. <paramref name="chests"/> must already be ones the companion
+        /// may use (ChestHelper checks privacy and wards); chests someone has open are skipped here.</summary>
+        public static ChestRecommendation FindBestChestForItem(
+            ItemDrop.ItemData item,
+            List<Container> chests,
+            Vector3 searchCenter,
+            float stationSearchRadius = 20f)
+        {
+            if (item == null || item.m_shared == null || chests == null || chests.Count == 0) return null;
+            var profile = ProfileOf(item);
+            var contexts = Contexts(chests, FindNearbyStations(searchCenter, stationSearchRadius), writableOnly: false);
+
+            ChestRecommendation best = null;
+            foreach (var ctx in contexts)
+            {
+                if (!HasRoom(ctx.Inventory, item)) continue;
+                var placement = Score(profile, item, ctx, false);
+                if (best != null && placement.Score <= best.Score) continue;
+                best = new ChestRecommendation
+                {
+                    Chest = ctx.Chest,
+                    Score = placement.Score,
+                    Reason = placement.Reason ?? "free space",
+                    HasMatchingItems = placement.Matches,
+                    NearestRelevantStation = placement.Station
                 };
             }
-            
-            return $"Near {stations[0]}";
+            return best;
         }
-        
+
+        #endregion
+
+        #region Organizing
+
         /// <summary>
-        /// Checks if an item category should be stored near a specific station type.
+        /// Moves items between chests of a cluster until each sits in the chest that fits it best, then merges partial
+        /// stacks. Only chests this client owns and nobody has open are touched.
         /// </summary>
-        public static bool ShouldStoreNear(ItemCategory category, StationType station)
+        public static OrganizationResult OrganizeChestCluster(
+            List<Container> chests,
+            Vector3 clusterCenter,
+            float stationSearchRadius = 25f)
         {
-            var preferred = GetPreferredStations(category);
-            return preferred.Contains(station);
+            var result = new OrganizationResult();
+            if (chests == null || chests.Count < 2) return result;
+
+            var contexts = Contexts(chests, FindNearbyStations(clusterCenter, stationSearchRadius), writableOnly: true);
+            if (contexts.Count < 2) return result;
+
+            var moves = new List<(ChestContext from, ItemDrop.ItemData item, ChestContext to, string reason)>();
+            foreach (var from in contexts)
+            {
+                foreach (var item in from.Inventory.GetAllItems())
+                {
+                    var profile = ProfileOf(item);
+                    float current = Score(profile, item, from, true).Score;
+                    ChestContext target = null;
+                    Placement best = default;
+                    foreach (var to in contexts)
+                    {
+                        if (to == from || !to.Inventory.CanAddItem(item)) continue;
+                        var placement = Score(profile, item, to, false);
+                        if (target != null && placement.Score <= best.Score) continue;
+                        target = to;
+                        best = placement;
+                    }
+                    if (target != null && best.Score > current + MoveThreshold)
+                        moves.Add((from, item, target, best.Reason));
+                }
+            }
+
+            var dirtied = new HashSet<Container>();
+            foreach (var (from, item, to, reason) in moves)
+            {
+                if (!from.Inventory.ContainsItem(item)) continue;
+                string name = item.m_shared.m_name;
+                if (ChestHelper.MoveItem(from.Inventory, to.Inventory, item, item.m_stack) <= 0) continue;
+                result.ItemsMoved++;
+                result.Actions.Add($"Moved {name}: {reason}");
+                dirtied.Add(from.Chest);
+                dirtied.Add(to.Chest);
+                if (CompanionIdleBehavior.VerboseLogging)
+                    Debug.Log($"[SmartStorage] Moved {name}: {reason}");
+            }
+
+            result.StacksConsolidated = ConsolidateStacks(contexts, dirtied);
+            result.ChestsAffected = dirtied.Count;
+            return result;
         }
-        
+
+        /// <summary>Drains partial stacks of the same item into the chest holding the biggest one.</summary>
+        private static int ConsolidateStacks(List<ChestContext> contexts, HashSet<Container> dirtied)
+        {
+            var partials = new Dictionary<string, List<(ChestContext ctx, ItemDrop.ItemData item)>>();
+            foreach (var ctx in contexts)
+            {
+                foreach (var item in ctx.Inventory.GetAllItems())
+                {
+                    if (item.m_shared.m_maxStackSize <= 1 || item.m_stack >= item.m_shared.m_maxStackSize) continue;
+                    string key = $"{item.m_shared.m_name}|{item.m_quality}|{item.m_worldLevel}";
+                    if (!partials.TryGetValue(key, out var list)) partials[key] = list = new List<(ChestContext, ItemDrop.ItemData)>();
+                    list.Add((ctx, item));
+                }
+            }
+
+            int consolidated = 0;
+            foreach (var list in partials.Values)
+            {
+                if (list.Count < 2) continue;
+                list.Sort((a, b) => b.item.m_stack.CompareTo(a.item.m_stack));
+                var target = list[0].ctx;
+                for (int i = list.Count - 1; i > 0; i--)
+                {
+                    var (ctx, item) = list[i];
+                    if (ctx == target) continue;
+                    int space = target.Inventory.FindFreeStackSpace(item.m_shared.m_name, item.m_worldLevel);
+                    int moved = ChestHelper.MoveItem(ctx.Inventory, target.Inventory, item, Mathf.Min(space, item.m_stack));
+                    if (moved <= 0) continue;
+                    consolidated += moved;
+                    dirtied.Add(ctx.Chest);
+                    dirtied.Add(target.Chest);
+                }
+            }
+            return consolidated;
+        }
+
+        private static bool InUse(Container chest)
+        {
+            var zdo = chest.m_nview != null ? chest.m_nview.GetZDO() : null;
+            return zdo == null || zdo.GetInt(ZDOVars.s_inUse) == 1;
+        }
+
+        private static bool IsWritable(Container chest)
+            => chest.m_nview != null && chest.m_nview.IsValid() && chest.m_nview.IsOwner();
+
         #endregion
     }
 }

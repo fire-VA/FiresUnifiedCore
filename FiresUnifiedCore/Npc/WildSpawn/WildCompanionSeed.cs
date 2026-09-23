@@ -6,8 +6,9 @@ namespace FiresCore.Npc.WildSpawn
 {
     /// <summary>
     /// Per-prefab configuration for wild-companion rolls (faction, archetype
-    /// mask, gear tiers, star weights, squad cohesion). Read-only data block
-    /// consumed by <see cref="WildCompanionDresser"/>; never mutated at runtime.
+    /// mask, star weights, squad cohesion). Read-only data block consumed by
+    /// <see cref="WildCompanionDresser"/>; never mutated at runtime. Gear comes
+    /// from <see cref="CompanionGearTable"/>.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class WildCompanionSeed : MonoBehaviour
@@ -16,9 +17,6 @@ namespace FiresCore.Npc.WildSpawn
 
         /// <summary>Bitmask over <see cref="ArchetypeClass"/> values; ~0 = all allowed.</summary>
         public int AllowedArchetypesMask = ~0;
-
-        /// <summary>Gear tier indices consumed by <see cref="CompanionRandomLoadout"/> when rolling wild gear.</summary>
-        public int[] AllowedGearTiers = new[] { 0 };
 
         /// <summary>Weights for 0/1/2 stars (sum need not be 100).</summary>
         public int[] StarWeights = new[] { 85, 12, 3 };

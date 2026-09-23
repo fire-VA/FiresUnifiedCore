@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using static FiresCore.Npc.CompanionInventory;
+using FiresCore.Npc.Archetypes;
 
 // NpcVisEquipment provides player-like model switching and color support
 
@@ -34,14 +35,6 @@ namespace FiresCore.Npc
         [Tooltip("Chance to spawn with a cape (0-1)")]
         [Range(0f, 1f)]
         public float capeChance = 0.3f;
-        
-        [Tooltip("Chance to spawn with shoulder armor (0-1)")]
-        [Range(0f, 1f)]
-        public float shoulderChance = 0.25f;
-        
-        [Tooltip("Chance to spawn with a shield (0-1)")]
-        [Range(0f, 1f)]
-        public float shieldChance = 0.4f;
         
         [Tooltip("Chance to have a secondary weapon in back slot (0-1)")]
         [Range(0f, 1f)]
@@ -78,6 +71,9 @@ namespace FiresCore.Npc
         private CompanionEquipmentData _equipmentData;
         private NpcVisEquipment _npcVisEquipment;
         private bool _hasGeneratedLoadout;
+        private int _lookRestoreRetries;
+        private const int MaxLookRestoreRetries = 5;
+        private const float LookRestoreRetrySeconds = 2f;
         private Vector3 _spawnPosition;
         private bool _isFemale;
         
@@ -200,27 +196,22 @@ namespace FiresCore.Npc
             if (_inventory == null || _companion == null) return;
             if (_companion.isTamed) return; // Tamed companions use vault
             if (IsAuthoredNpcBody()) return; // authored statics/migrated NPCs never regen gear
-            
+            if (!IsOwner()) return;
+
             // Check if we have equipment - if not, we need to regenerate it
             if (!_inventory.HasAnyEquipment())
             {
                 Debug.Log($"[CompanionRandomLoadout] Wild companion has appearance but no equipment, regenerating equipment only");
-                
+
                 // Cache the appearance data so we don't regenerate it
                 _hasGeneratedLoadout = false; // Allow equipment generation
-                
-                // Ensure item lists are cached
-                CacheItemLists();
-                
-                // Scale loadout based on current biome
-                var biome = Heightmap.FindBiome(transform.position);
-                _currentBiome = biome;
-                
-                // Regenerate equipment only (not appearance)
-                GenerateRandomArmor();
-                GenerateRandomWeapons();
-                GenerateRandomFood();
-                
+
+                // The kit is seeded by the ZDO, so the spawn biome and the same chances give back the original loadout.
+                var spawnBiome = GetSpawnBiome(GetComponent<ZNetView>());
+                _currentBiome = spawnBiome != Heightmap.Biome.None ? spawnBiome : Heightmap.FindBiome(transform.position);
+                ApplyBiomeChances(_currentBiome);
+                GenerateKit();
+
                 _hasGeneratedLoadout = true;
                 
                 // Save the loadout
@@ -270,8 +261,8 @@ namespace FiresCore.Npc
             _isFemale = wasFemale || modelIndex == 1;
             
             // Restore hair and beard
-            string savedHair = zdo.GetString("companion_hair", "");
-            string savedBeard = zdo.GetString("companion_beard", "");
+            string savedHair = ValidSavedStyle(zdo, "companion_hair", zdo.GetString("companion_hair", ""), GetAvailableHairStyles(), "HairNone");
+            string savedBeard = ValidSavedStyle(zdo, "companion_beard", zdo.GetString("companion_beard", ""), GetAvailableBeardStyles(), "BeardNone");
             
             // Restore colors
             Vector3 hairColorVec = zdo.GetVec3(ZDOVars.s_hairColor, Vector3.one);
@@ -315,6 +306,13 @@ namespace FiresCore.Npc
             // system existed). Generate appearance now so they aren't permanently bald.
             if (string.IsNullOrEmpty(savedHair) && _npcVisEquipment != null)
             {
+                // Only the owner invents a look; everyone else reads it back once the owner has written it.
+                if (!IsOwner())
+                {
+                    if (_lookRestoreRetries++ < MaxLookRestoreRetries) Invoke(nameof(RestoreModelStateFromZDO), LookRestoreRetrySeconds);
+                    return;
+                }
+
                 Debug.Log($"[CompanionRandomLoadout] No hair data in ZDO for {_companion?.companionName} - generating fresh appearance");
 
                 // Derive gender from name if not already known
@@ -398,7 +396,8 @@ namespace FiresCore.Npc
         {
             if (_hasGeneratedLoadout) return;
             if (_companion == null || _inventory == null) return;
-            
+            if (!IsOwner()) return;
+
             _hasGeneratedLoadout = true;
             
             // Generate random scale FIRST (before naming, so name can match size)
@@ -412,7 +411,7 @@ namespace FiresCore.Npc
             // never evaluated from the actual name. Derive it now so model and hair are correct.
             if (!_isFemale && _companion != null && !string.IsNullOrEmpty(_companion.companionName))
             {
-                bool derivedFemale = IsFemaleVikingName(_companion.companionName, _isGiant, _isDwarf);
+                bool derivedFemale = IsFemaleVikingName(_companion.companionName);
                 if (derivedFemale)
                 {
                     _isFemale = true;
@@ -429,29 +428,15 @@ namespace FiresCore.Npc
                 Invoke(nameof(ApplyRandomHairAndBeard), isWildHair ? 0.5f : 0.15f);
             }
 
-            // Ensure item lists are cached
-            CacheItemLists();
-            
             // Scale loadout based on current biome
             var biome = Heightmap.FindBiome(transform.position);
             ScaleForBiome(biome);
-            
-            // Only log loadout generation when verbose logging is enabled to reduce spam
-            if (VerboseLogging)
-                Debug.Log($"[CompanionRandomLoadout] Generating random loadout for {_companion.companionName} in biome {biome}");
-            
+
             // Clear existing equipment first
             _inventory.ClearAllEquipment();
-            
-            // Generate armor
-            GenerateRandomArmor();
-            
-            // Generate weapons (always at least one)
-            GenerateRandomWeapons();
-            
-            // Generate food in storage
-            GenerateRandomFood();
-            
+
+            GenerateKit();
+
             // Save the loadout
             _inventory.SaveToZDO();
             
@@ -778,12 +763,17 @@ namespace FiresCore.Npc
             // to Cultists. Falls back to the generic Viking pool when no faction
             // info is present (e.g. dresser hasn't run yet, or this is a non-wild
             // CompanionNpc / Companion that hit one of the legacy default names).
-            string vikingName = TryGetFactionAwareName() ?? GetRandomVikingName(_isGiant, _isDwarf);
+            // The gender is rolled with the name and the name drawn from that gender's pool, so body and name agree.
+            string vikingName = TryGetFactionAwareName(out bool isFemale);
+            if (vikingName == null)
+            {
+                isFemale = UnityEngine.Random.value < 0.5f;
+                vikingName = GetRandomVikingName(_isGiant, _isDwarf, isFemale);
+            }
             _companion.companionName = vikingName;
             _companion.UpdateCharacterName(vikingName);
-            
-            // Check if this is a female name and swap model if needed
-            _isFemale = IsFemaleVikingName(vikingName, _isGiant, _isDwarf);
+
+            _isFemale = isFemale;
             if (_isFemale)
             {
                 // Delay model swap to ensure all components are initialized.
@@ -823,8 +813,9 @@ namespace FiresCore.Npc
         /// RNG is seeded from the ZDO UID so a given wild companion keeps the same
         /// name across zone reloads, matching the dresser's deterministic contract.
         /// </summary>
-        private string TryGetFactionAwareName()
+        private string TryGetFactionAwareName(out bool isFemale)
         {
+            isFemale = false;
             try
             {
                 var nview = _companion?.GetComponent<ZNetView>();
@@ -838,7 +829,8 @@ namespace FiresCore.Npc
                 var faction = (WildSpawn.CompanionFaction)factionInt;
                 int seed = unchecked(zdo.m_uid.GetHashCode() ^ 0x4E5F_27A1);
                 var rng = new System.Random(seed);
-                return WildSpawn.CompanionNamePool.Roll(faction, rng);
+                isFemale = rng.Next(2) == 1;
+                return WildSpawn.CompanionNamePool.RollFaction(faction, isFemale, rng);
             }
             catch (Exception ex)
             {
@@ -854,242 +846,23 @@ namespace FiresCore.Npc
         /// If isGiant is true, uses giant-appropriate names/epithets.
         /// If isDwarf is true, uses dwarf-appropriate names/epithets.
         /// </summary>
-        private string GetRandomVikingName(bool isGiant, bool isDwarf)
-        {
-            // Traditional Norse/Viking male names
-            string[] maleNames = {
-                "Bjorn", "Erik", "Ragnar", "Leif", "Harald", "Olaf", "Gunnar", "Ivar",
-                "Sigurd", "Thorsten", "Ulf", "Vidar", "Knut", "Sven", "Magnus", "Haldor",
-                "Asmund", "Torbjorn", "Hakon", "Rolf", "Eirik", "Fenrir", "Odin", "Baldr",
-                "Freyr", "Tyr", "Bragi", "Njord", "Heimdall", "Hodr", "Vali", "Vidir",
-                "Agnar", "Arnfinn", "Birger", "Dag", "Egil", "Finn", "Gorm", "Halfdan",
-                "Ingvar", "Jarl", "Ketil", "Leifr", "Magni", "Njal", "Orm", "Peder"
-            };
-            
-            // Traditional Norse/Viking female names
-            string[] femaleNames = {
-                "Astrid", "Freya", "Ingrid", "Sigrid", "Helga", "Thora", "Brynhild", "Gudrun",
-                "Ragnhild", "Solveig", "Eira", "Liv", "Saga", "Ylva", "Asa", "Hilda",
-                "Sif", "Frigg", "Idunn", "Skuld", "Verdandi", "Urd", "Ran", "Skadi",
-                "Gerd", "Sigyn", "Nanna", "Eir", "Var", "Vor", "Snotra", "Fulla",
-                "Alfhild", "Bothild", "Dagny", "Embla", "Gunnhild", "Hervor", "Jorunn", "Kara"
-            };
-            
-            // Giant-specific names (male)
-            string[] giantMaleNames = {
-                "Thrym", "Skrymir", "Utgard", "Hrungnir", "Thiazi", "Ymir", "Surtr", "Mimir",
-                "Geirrod", "Vafthrudnir", "Hymir", "Bergelmir", "Angrboda", "Farbauti", "Gymir",
-                "Bolthorn", "Hrimthurs", "Hraudung", "Gilling", "Baugi", "Suttung", "Thjazi",
-                "Fjalar", "Galar", "Mokkurkalfi", "Grimnir"
-            };
-            
-            // Giant-specific names (female)
-            string[] giantFemaleNames = {
-                "Angrboda", "Gunnlod", "Gerdr", "Grid", "Jarnsaxa", "Gjalp", "Greip", "Hyrrokkin",
-                "Bestla", "Rind", "Skadi", "Gefjon", "Elli", "Fenja", "Menja", "Sinmara"
-            };
-            
-            // Dwarf-specific names (traditionally male in Norse myth, but we'll include females)
-            string[] dwarfMaleNames = {
-                "Brokk", "Sindri", "Eitri", "Dvalin", "Durin", "Nyi", "Nordri", "Sudri",
-                "Austri", "Vestri", "Alvis", "Andvari", "Fafnir", "Hreidmar", "Regin", "Otr",
-                "Litr", "Nain", "Nidi", "Nori", "Ori", "Bifur", "Bofur", "Bombur",
-                "Fili", "Kili", "Dori", "Gloin", "Thrain", "Thror", "Thorin", "Balin"
-            };
-            
-            // Dwarf-specific names (female - adapted from Norse/fantasy traditions)
-            string[] dwarfFemaleNames = {
-                "Disa", "Dufa", "Nott", "Dagrun", "Gullveig", "Hlif", "Hrund", "Svanhild",
-                "Thorvi", "Vigdis", "Asny", "Bergdis", "Grimhild", "Oddny", "Steinunn", "Thorunn"
-            };
-            
-            // Standard epithets
-            string[] standardEpithets = {
-                "", "", "", "", "", // Empty entries for no epithet (more common)
-                "the Bold", "the Brave", "the Swift", "the Strong", "the Wise",
-                "the Fearless", "the Wanderer", "the Hunter", "the Shield", "the Axe",
-                "Ironside", "Bloodaxe", "Fairhair", "Bluetooth", "Forkbeard",
-                "the Red", "the Black", "the White", "the Grey", "the Silent"
-            };
-            
-            // Giant-specific epithets
-            string[] giantEpithets = {
-                "the Colossal", "the Mighty", "the Towering", "the Thunderous", "Mountain-Born",
-                "the Enormous", "the Titanic", "Stone-Crusher", "the Immense", "World-Shaker",
-                "the Vast", "Cliff-Strider", "the Hulking", "the Tremendous", "Giant-Blood"
-            };
-            
-            // Dwarf-specific epithets
-            string[] dwarfEpithets = {
-                "the Stout", "Iron-Forger", "Stone-Carver", "the Crafty", "Gold-Finder",
-                "the Cunning", "Gem-Seeker", "the Delver", "Deep-Walker", "the Artificer",
-                "Anvil-Born", "the Stubborn", "Ore-Master", "the Ingenious", "Cave-Dweller"
-            };
-            
-            // Select name pool and epithet pool based on size
-            string[] namePool;
-            string[] epithetPool;
-            
-            // Randomly choose gender (50/50)
-            bool isMale = UnityEngine.Random.value > 0.5f;
-            
-            if (isGiant)
-            {
-                namePool = isMale ? giantMaleNames : giantFemaleNames;
-                epithetPool = giantEpithets;
-            }
-            else if (isDwarf)
-            {
-                namePool = isMale ? dwarfMaleNames : dwarfFemaleNames;
-                epithetPool = dwarfEpithets;
-            }
-            else
-            {
-                namePool = isMale ? maleNames : femaleNames;
-                epithetPool = standardEpithets;
-            }
-            
-            string name = namePool[UnityEngine.Random.Range(0, namePool.Length)];
-            string epithet = epithetPool[UnityEngine.Random.Range(0, epithetPool.Length)];
-            
-            if (!string.IsNullOrEmpty(epithet))
-            {
-                return $"{name} {epithet}";
-            }
-            
-            return name;
-        }
+        private static string GetRandomVikingName(bool isGiant, bool isDwarf, bool isFemale) =>
+            WildSpawn.CompanionNamePool.RollViking(isGiant, isDwarf, isFemale, n => UnityEngine.Random.Range(0, n));
         
         /// <summary>
         /// Gets a random Viking-sounding name (standard version for non-scaled companions).
         /// </summary>
-        public static string GetRandomVikingName()
-        {
-            // Traditional Norse/Viking male names
-            string[] maleNames = {
-                "Bjorn", "Erik", "Ragnar", "Leif", "Harald", "Olaf", "Gunnar", "Ivar",
-                "Sigurd", "Thorsten", "Ulf", "Vidar", "Knut", "Sven", "Magnus", "Haldor",
-                "Asmund", "Torbjorn", "Hakon", "Rolf", "Eirik", "Fenrir", "Odin", "Baldr",
-                "Freyr", "Tyr", "Bragi", "Njord", "Heimdall", "Hodr", "Vali", "Vidir",
-                "Agnar", "Arnfinn", "Birger", "Dag", "Egil", "Finn", "Gorm", "Halfdan",
-                "Ingvar", "Jarl", "Ketil", "Leifr", "Magni", "Njal", "Orm", "Peder"
-            };
-            
-            // Traditional Norse/Viking female names
-            string[] femaleNames = {
-                "Astrid", "Freya", "Ingrid", "Sigrid", "Helga", "Thora", "Brynhild", "Gudrun",
-                "Ragnhild", "Solveig", "Eira", "Liv", "Saga", "Ylva", "Asa", "Hilda",
-                "Sif", "Frigg", "Idunn", "Skuld", "Verdandi", "Urd", "Ran", "Skadi",
-                "Gerd", "Sigyn", "Nanna", "Eir", "Var", "Vor", "Snotra", "Fulla",
-                "Alfhild", "Bothild", "Dagny", "Embla", "Gunnhild", "Hervor", "Jorunn", "Kara"
-            };
-            
-            // Optional epithets/titles
-            string[] epithets = {
-                "", "", "", "", "", // Empty entries for no epithet (more common)
-                "the Bold", "the Brave", "the Swift", "the Strong", "the Wise",
-                "the Fearless", "the Wanderer", "the Hunter", "the Shield", "the Axe",
-                "Ironside", "Bloodaxe", "Fairhair", "Bluetooth", "Forkbeard",
-                "the Red", "the Black", "the White", "the Grey", "the Silent"
-            };
-            
-            // Randomly choose gender (50/50)
-            bool isMale = UnityEngine.Random.value > 0.5f;
-            string[] namePool = isMale ? maleNames : femaleNames;
-            
-            string name = namePool[UnityEngine.Random.Range(0, namePool.Length)];
-            string epithet = epithets[UnityEngine.Random.Range(0, epithets.Length)];
-            
-            if (!string.IsNullOrEmpty(epithet))
-            {
-                return $"{name} {epithet}";
-            }
-            
-            return name;
-        }
+        public static string GetRandomVikingName() =>
+            GetRandomVikingName(false, false, UnityEngine.Random.value < 0.5f);
         
         /// <summary>
         /// Checks if a name is from a female name pool.
         /// Considers giant and dwarf name pools as well.
         /// </summary>
-        private static bool IsFemaleVikingName(string name, bool isGiant = false, bool isDwarf = false)
-        {
-            if (string.IsNullOrEmpty(name)) return false;
-            
-            // Extract first name (before any epithet)
-            string firstName = name.Split(' ')[0];
-            
-            // Standard female names
-            string[] femaleNames = {
-                "Astrid", "Freya", "Ingrid", "Sigrid", "Helga", "Thora", "Brynhild", "Gudrun",
-                "Ragnhild", "Solveig", "Eira", "Liv", "Saga", "Ylva", "Asa", "Hilda",
-                "Sif", "Frigg", "Idunn", "Skuld", "Verdandi", "Urd", "Ran", "Skadi",
-                "Gerd", "Sigyn", "Nanna", "Eir", "Var", "Vor", "Snotra", "Fulla",
-                "Alfhild", "Bothild", "Dagny", "Embla", "Gunnhild", "Hervor", "Jorunn", "Kara"
-            };
-            
-            // Giant female names
-            string[] giantFemaleNames = {
-                "Angrboda", "Gunnlod", "Gerdr", "Grid", "Jarnsaxa", "Gjalp", "Greip", "Hyrrokkin",
-                "Bestla", "Rind", "Skadi", "Gefjon", "Elli", "Fenja", "Menja", "Sinmara"
-            };
-            
-            // Dwarf female names
-            string[] dwarfFemaleNames = {
-                "Disa", "Dufa", "Nott", "Dagrun", "Gullveig", "Hlif", "Hrund", "Svanhild",
-                "Thorvi", "Vigdis", "Asny", "Bergdis", "Grimhild", "Oddny", "Steinunn", "Thorunn"
-            };
-            
-            // Check all pools
-            foreach (var femaleName in femaleNames)
-            {
-                if (firstName.Equals(femaleName, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            
-            foreach (var femaleName in giantFemaleNames)
-            {
-                if (firstName.Equals(femaleName, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            
-            foreach (var femaleName in dwarfFemaleNames)
-            {
-                if (firstName.Equals(femaleName, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            
-            return false;
-        }
-        
         /// <summary>
         /// Legacy overload for backwards compatibility.
         /// </summary>
-        public static bool IsFemaleVikingName(string name)
-        {
-            if (string.IsNullOrEmpty(name)) return false;
-
-            // Extract first name (before any epithet)
-            string firstName = name.Split(' ')[0];
-
-            string[] femaleNames = {
-                "Astrid", "Freya", "Ingrid", "Sigrid", "Helga", "Thora", "Brynhild", "Gudrun",
-                "Ragnhild", "Solveig", "Eira", "Liv", "Saga", "Ylva", "Asa", "Hilda",
-                "Sif", "Frigg", "Idunn", "Skuld", "Verdandi", "Urd", "Ran", "Skadi",
-                "Gerd", "Sigyn", "Nanna", "Eir", "Var", "Vor", "Snotra", "Fulla",
-                "Alfhild", "Bothild", "Dagny", "Embla", "Gunnhild", "Hervor", "Jorunn", "Kara"
-            };
-            
-            foreach (var femaleName in femaleNames)
-            {
-                if (firstName.Equals(femaleName, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-            
-            return false;
-        }
+        public static bool IsFemaleVikingName(string name) => WildSpawn.CompanionNamePool.IsFemaleName(name);
         
         /// <summary>
         /// Applies the female player model to this companion.
@@ -1354,6 +1127,28 @@ namespace FiresCore.Npc
             "Beard25","Beard26"
         };
         
+        /// <summary>
+        /// Vanilla's barber (PlayerCustomizaton, 1.0 :65-66) drops every style whose name contains '_'. Those are NPC
+        /// variants skinned to a different skeleton (Hair4_3: 55 bones, none of them the player rig's), which cannot bind
+        /// to our bodies and hang in the air while the body moves.
+        /// </summary>
+        public static bool IsBarberStyle(string styleName) => !string.IsNullOrEmpty(styleName) && !styleName.Contains("_");
+
+        /// <summary>
+        /// A saved style from before the barber filter is swapped for a valid one, picked from the companion's ZDO id so
+        /// every client lands on the same style; the owner saves it.
+        /// </summary>
+        private string ValidSavedStyle(ZDO zdo, string zdoKey, string saved, List<string> styles, string none)
+        {
+            if (string.IsNullOrEmpty(saved) || IsBarberStyle(saved)) return saved;
+            var pool = styles.Where(s => s != none).ToList();
+            if (pool.Count == 0) return saved;
+            string replacement = pool[(int)((uint)zdo.m_uid.GetHashCode() % (uint)pool.Count)];
+            if (IsOwner()) zdo.Set(zdoKey, replacement);
+            Debug.Log($"[CompanionRandomLoadout] {_companion?.companionName}: saved style '{saved}' is not a barber style, using '{replacement}'");
+            return replacement;
+        }
+
         /// <summary>The one source of which hair styles exist, shared by the loadout roller, the static-NPC
         /// randomiser and the dressing room. Mirrors the vanilla barber exactly.</summary>
         public static List<string> GetAvailableHairStyles()
@@ -1369,6 +1164,7 @@ namespace FiresCore.Npc
                 var names = objectDb.GetAllItems(ItemDrop.ItemData.ItemType.Customization, "Hair")
                               .Select(d => d.gameObject != null ? d.gameObject.name : null)
                               .Where(n => !string.IsNullOrEmpty(n))
+                              .Where(IsBarberStyle)
                               .Distinct()
                               .ToList();
                 if (names.Count > 0) return names;
@@ -1385,6 +1181,7 @@ namespace FiresCore.Npc
                 var names = objectDb.GetAllItems(ItemDrop.ItemData.ItemType.Customization, "Beard")
                               .Select(d => d.gameObject != null ? d.gameObject.name : null)
                               .Where(n => !string.IsNullOrEmpty(n))
+                              .Where(IsBarberStyle)
                               .Distinct()
                               .ToList();
                 if (names.Count > 0) return names;
@@ -1501,811 +1298,150 @@ namespace FiresCore.Npc
         }
         
         private Heightmap.Biome _currentBiome = Heightmap.Biome.Meadows;
-        
-        private void GenerateRandomArmor()
-        {
-            int quality = UnityEngine.Random.Range(minQuality, maxQuality + 1);
-            
-            // Get tier-appropriate items
-            var helmets = GetTierFilteredItems(_allHelmets, _currentBiome);
-            var chests = GetTierFilteredItems(_allChestArmor, _currentBiome);
-            var legs = GetTierFilteredItems(_allLegArmor, _currentBiome);
-            var capes = GetTierFilteredItems(_allCapes, _currentBiome);
-            var shoulders = GetTierFilteredItems(_allShoulders, _currentBiome);
-            
-            // Helmet
-            if (UnityEngine.Random.value < helmetChance && helmets.Count > 0)
-            {
-                string helmet = helmets[UnityEngine.Random.Range(0, helmets.Count)];
-                TryEquipItem(EquipmentSlot.Helmet, helmet, quality);
-            }
-            
-            // Chest
-            if (UnityEngine.Random.value < chestChance && chests.Count > 0)
-            {
-                string chest = chests[UnityEngine.Random.Range(0, chests.Count)];
-                TryEquipItem(EquipmentSlot.Chest, chest, quality);
-            }
-            
-            // Legs
-            if (UnityEngine.Random.value < legsChance && legs.Count > 0)
-            {
-                string leg = legs[UnityEngine.Random.Range(0, legs.Count)];
-                TryEquipItem(EquipmentSlot.Legs, leg, quality);
-            }
-            
-            // Cape/Shoulder
-            if (UnityEngine.Random.value < capeChance && capes.Count > 0)
-            {
-                string cape = capes[UnityEngine.Random.Range(0, capes.Count)];
-                TryEquipItem(EquipmentSlot.Shoulder, cape, quality);
-            }
-            else if (UnityEngine.Random.value < shoulderChance && shoulders.Count > 0)
-            {
-                string shoulder = shoulders[UnityEngine.Random.Range(0, shoulders.Count)];
-                TryEquipItem(EquipmentSlot.Shoulder, shoulder, quality);
-            }
-        }
-        
-        private void GenerateRandomWeapons()
-        {
-            // Get tier-appropriate items
-            var weapons = GetTierFilteredItems(_allWeapons, _currentBiome);
-            var bows = GetTierFilteredItems(_allBows, _currentBiome);
-            var shields = GetTierFilteredItems(_allShields, _currentBiome);
-            
-            if (weapons.Count == 0 && bows.Count == 0) return;
-            
-            int quality = UnityEngine.Random.Range(minQuality, maxQuality + 1);
-            
-            // Primary weapon (always) - check if it's a bow/crossbow to equip correctly
-            string primaryWeapon;
-            bool primaryIsBow = false;
-            
-            // Combine weapons and bows for selection, but track which type was selected
-            var allPrimaryOptions = new List<string>(weapons);
-            allPrimaryOptions.AddRange(bows);
-            
-            if (allPrimaryOptions.Count == 0) return;
-            
-            primaryWeapon = allPrimaryOptions[UnityEngine.Random.Range(0, allPrimaryOptions.Count)];
-            primaryIsBow = IsBowOrCrossbow(primaryWeapon);
-            
-            // CRITICAL: Bows go in LeftHand (they are TwoHandedWeaponLeft), melee goes in RightHand
-            if (primaryIsBow)
-            {
-                TryEquipItem(EquipmentSlot.LeftHand, primaryWeapon, quality);
-                
-                // Add biome-appropriate arrows to storage for bow users
-                AddBiomeArrowsToStorage();
-            }
-            else
-            {
-                TryEquipItem(EquipmentSlot.RightHand, primaryWeapon, quality);
-            }
-            
-            // Determine weapon type for shield compatibility
-            bool primaryIsTwoHanded = IsWeaponTwoHanded(primaryWeapon);
-            
-            // Shield (only if primary is one-handed melee)
-            if (!primaryIsTwoHanded && !primaryIsBow && UnityEngine.Random.value < shieldChance && shields.Count > 0)
-            {
-                string shield = shields[UnityEngine.Random.Range(0, shields.Count)];
-                TryEquipItem(EquipmentSlot.LeftHand, shield, quality);
-            }
-            
-            // Secondary weapon in back slot - prefer ranged if primary is melee, melee if primary is ranged
-            if (UnityEngine.Random.value < secondaryWeaponChance)
-            {
-                string secondaryWeapon = null;
-                bool secondaryIsBow = false;
-                
-                // If primary is melee, prefer a bow as secondary
-                if (!primaryIsBow && bows.Count > 0 && UnityEngine.Random.value < 0.6f)
-                {
-                    secondaryWeapon = bows[UnityEngine.Random.Range(0, bows.Count)];
-                    secondaryIsBow = true;
-                }
-                // Otherwise pick from regular weapons
-                else if (weapons.Count > 0)
-                {
-                    secondaryWeapon = weapons[UnityEngine.Random.Range(0, weapons.Count)];
-                }
-                
-                // Avoid duplicates and equip to correct back slot
-                if (!string.IsNullOrEmpty(secondaryWeapon) && secondaryWeapon != primaryWeapon)
-                {
-                    // Bows go to LeftBack, melee to RightBack
-                    if (secondaryIsBow || IsBowOrCrossbow(secondaryWeapon))
-                    {
-                        TryEquipItem(EquipmentSlot.LeftBack, secondaryWeapon, quality);
-                        
-                        // If we added a bow as secondary, also add arrows
-                        if (!primaryIsBow)
-                        {
-                            AddBiomeArrowsToStorage();
-                        }
-                    }
-                    else
-                    {
-                        TryEquipItem(EquipmentSlot.RightBack, secondaryWeapon, quality);
-                    }
-                }
-            }
-            
-            // Tertiary weapon in remaining back slot
-            if (UnityEngine.Random.value < tertiaryWeaponChance && weapons.Count > 0)
-            {
-                string tertiaryWeapon = weapons[UnityEngine.Random.Range(0, weapons.Count)];
-                if (tertiaryWeapon != primaryWeapon)
-                {
-                    // Use whichever back slot is still free
-                    if (primaryIsBow)
-                    {
-                        TryEquipItem(EquipmentSlot.RightBack, tertiaryWeapon, quality);
-                    }
-                    else
-                    {
-                        TryEquipItem(EquipmentSlot.LeftBack, tertiaryWeapon, quality);
-                    }
-                }
-            }
-        }
-        
+
+        private const int LoadoutSeedSalt = 0x2C9E_41B7;
+
         /// <summary>
-        /// Checks if a weapon is a bow or crossbow.
+        /// Rolls this companion's kit from the gear table and equips it. Seeded by the ZDO, so a regenerated loadout is
+        /// the same loadout. Owner only: every other peer reads the result back from the ZDO.
         /// </summary>
-        private bool IsBowOrCrossbow(string prefabName)
+        private void GenerateKit()
         {
-            try
+            if (!CompanionGearTable.Prepare()) return;
+            var zdo = GetComponent<ZNetView>()?.GetZDO();
+            if (zdo == null) return;
+
+            var rng = new System.Random(unchecked(zdo.m_uid.GetHashCode() ^ LoadoutSeedSalt));
+            int biomeTier = CompanionGearTable.BiomeTier(_currentBiome);
+            ArchetypeClass archetype = ResolveKitArchetype(zdo, biomeTier, rng);
+            int kitTier = CompanionGearTable.RollKitTier(biomeTier, rng);
+            var kit = CompanionGearTable.BuildKit(archetype, kitTier, rng, new CompanionKitChances
             {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab == null) return false;
-                
-                var itemDrop = prefab.GetComponent<ItemDrop>();
-                if (itemDrop?.m_itemData?.m_shared == null) return false;
-                
-                var shared = itemDrop.m_itemData.m_shared;
-                return shared.m_itemType == ItemDrop.ItemData.ItemType.Bow ||
-                       shared.m_itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
-                       shared.m_skillType == Skills.SkillType.Bows ||
-                       shared.m_skillType == Skills.SkillType.Crossbows;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-        
-        /// <summary>
-        /// Adds biome-appropriate arrows to the companion's storage.
-        /// </summary>
-        private void AddBiomeArrowsToStorage()
-        {
-            string arrowType = GetBiomeArrowType(_currentBiome);
-            if (string.IsNullOrEmpty(arrowType)) return;
-            
-            // Add 20-50 arrows
-            int arrowCount = UnityEngine.Random.Range(20, 51);
-            TryAddToStorage(arrowType, arrowCount);
-            
-            // Only log arrow additions when verbose logging is enabled to reduce spam
+                Helmet = helmetChance,
+                Chest = chestChance,
+                Legs = legsChance,
+                Cape = capeChance,
+                Secondary = secondaryWeaponChance,
+                Tertiary = tertiaryWeaponChance,
+                MinFood = minFoodItems,
+                MaxFood = maxFoodItems,
+            });
+            int quality = rng.Next(minQuality, maxQuality + 1);
+
+            TryEquipItem(EquipmentSlot.RightHand, kit.RightHand, quality);
+            TryEquipItem(EquipmentSlot.LeftHand, kit.LeftHand, quality);
+            TryEquipItem(EquipmentSlot.RightBack, kit.RightBack, quality);
+            TryEquipItem(EquipmentSlot.LeftBack, kit.LeftBack, quality);
+            TryEquipItem(EquipmentSlot.Helmet, kit.Helmet, quality);
+            TryEquipItem(EquipmentSlot.Chest, kit.Chest, quality);
+            TryEquipItem(EquipmentSlot.Legs, kit.Legs, quality);
+            TryEquipItem(EquipmentSlot.Shoulder, kit.Shoulder, quality);
+            if (kit.Ammo != null) TryAddToStorage(kit.Ammo, kit.AmmoCount);
+            foreach (var food in kit.Food) TryAddToStorage(food.Key, food.Value);
+
             if (VerboseLogging)
-                Debug.Log($"[CompanionRandomLoadout] Added {arrowCount}x {arrowType} for bow user");
+                Debug.Log($"[CompanionRandomLoadout] {_companion?.companionName}: {archetype} kit, tier {kitTier} (biome {_currentBiome} = {biomeTier}), q{quality}: "
+                    + string.Join(", ", new[] { kit.RightHand, kit.LeftHand, kit.RightBack, kit.LeftBack, kit.Helmet, kit.Chest, kit.Legs, kit.Shoulder, kit.Ammo }
+                        .Where(name => name != null)));
         }
-        
-        /// <summary>
-        /// Gets the appropriate arrow type for a biome.
-        /// </summary>
-        private string GetBiomeArrowType(Heightmap.Biome biome)
+
+        /// <summary>A wild companion wears the archetype its dresser rolled; a hammer-placed one rolls from the kits its tier offers.</summary>
+        private static ArchetypeClass ResolveKitArchetype(ZDO zdo, int biomeTier, System.Random rng)
         {
-            switch (biome)
-            {
-                case Heightmap.Biome.Meadows:
-                    return "ArrowWood";
-                case Heightmap.Biome.BlackForest:
-                    return UnityEngine.Random.value < 0.5f ? "ArrowFlint" : "ArrowBronze";
-                case Heightmap.Biome.Swamp:
-                    return UnityEngine.Random.value < 0.5f ? "ArrowIron" : "ArrowPoison";
-                case Heightmap.Biome.Mountain:
-                    return UnityEngine.Random.value < 0.5f ? "ArrowObsidian" : "ArrowFrost";
-                case Heightmap.Biome.Plains:
-                    return UnityEngine.Random.value < 0.5f ? "ArrowNeedle" : "ArrowFire";
-                case Heightmap.Biome.Mistlands:
-                    return "ArrowCarapace";
-                case Heightmap.Biome.AshLands:
-                case Heightmap.Biome.DeepNorth:
-                    return "ArrowCarapace"; // Best available
-                default:
-                    return "ArrowWood";
-            }
+            var rolled = (ArchetypeClass)zdo.GetInt(WildSpawn.WildCompanionDresser.ZDO_ROLLED_ARCHETYPE, (int)ArchetypeClass.None);
+            return rolled != ArchetypeClass.None ? rolled : CompanionGearTable.RollArchetype(biomeTier, rng);
         }
-        
-        private void GenerateRandomFood()
+
+        private bool IsOwner()
         {
-            var food = GetTierFilteredItems(_allFood, _currentBiome);
-            if (food.Count == 0) return;
-            
-            int foodCount = UnityEngine.Random.Range(minFoodItems, maxFoodItems + 1);
-            
-            var storageInventory = _inventory?.GetStorageInventory();
-            if (storageInventory == null) return;
-            
-            for (int i = 0; i < foodCount; i++)
-            {
-                string foodPrefab = food[UnityEngine.Random.Range(0, food.Count)];
-                TryAddToStorage(foodPrefab, UnityEngine.Random.Range(1, 5));
-            }
+            var nview = GetComponent<ZNetView>();
+            return nview != null && nview.IsValid() && nview.IsOwner();
         }
-        
+
         private void TryEquipItem(EquipmentSlot slot, string prefabName, int quality)
         {
-            if (string.IsNullOrEmpty(prefabName)) return;
-            if (_inventory == null) return;
-            
-            // Validate the item is a proper equippable item
-            if (!IsValidEquippableItem(prefabName))
-            {
-                Debug.LogWarning($"[CompanionRandomLoadout] Skipping invalid item {prefabName} for slot {slot}");
-                return;
-            }
-            
+            if (string.IsNullOrEmpty(prefabName) || _inventory == null) return;
             try
             {
                 _inventory.EquipItem(slot, prefabName, quality);
-                // Only log equipment when verbose logging is enabled to reduce spam
-                if (VerboseLogging)
-                    Debug.Log($"[CompanionRandomLoadout] Equipped {prefabName} (quality {quality}) to {slot}");
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"[CompanionRandomLoadout] Failed to equip {prefabName} to {slot}: {ex.Message}");
             }
         }
-        
+
         private void TryAddToStorage(string prefabName, int amount)
         {
             if (string.IsNullOrEmpty(prefabName)) return;
-            
+
             try
             {
                 var storageInventory = _inventory?.GetStorageInventory();
                 if (storageInventory == null) return;
-                
+
                 var prefab = ZNetScene.instance?.GetPrefab(prefabName);
                 if (prefab == null) return;
-                
+
                 var itemDrop = prefab.GetComponent<ItemDrop>();
                 if (itemDrop?.m_itemData == null) return;
-                
-                // Clone the item data
+
                 var itemData = itemDrop.m_itemData.Clone();
                 itemData.m_stack = Mathf.Min(amount, itemData.m_shared.m_maxStackSize);
-                
-                // CRITICAL: Set m_dropPrefab so Inventory.Save() uses the correct prefab name
-                // Without this, Clone() may not preserve the prefab reference, causing
-                // Inventory.Save() to fall back to m_shared.m_name (the localization key like $item_xxx)
-                // which then fails to load because ObjectDB.GetItemPrefab() doesn't find localized names.
+
+                // Clone() does not keep the prefab reference, and Inventory.Save() falls back to the localization key
+                // without it, which ObjectDB.GetItemPrefab() cannot load back.
                 itemData.m_dropPrefab = prefab;
-                
+
                 storageInventory.AddItem(itemData);
-                // Only log storage additions when verbose logging is enabled to reduce spam
-                if (VerboseLogging)
-                    Debug.Log($"[CompanionRandomLoadout] Added {amount}x {prefabName} to storage");
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"[CompanionRandomLoadout] Failed to add {prefabName} to storage: {ex.Message}");
             }
         }
-        
-        private bool IsWeaponTwoHanded(string prefabName)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab == null) return false;
-                
-                var itemDrop = prefab.GetComponent<ItemDrop>();
-                if (itemDrop?.m_itemData?.m_shared == null) return false;
-                
-                // Check item type and properties
-                var shared = itemDrop.m_itemData.m_shared;
-                
-                // Two-handed weapons
-                if (shared.m_itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
-                    shared.m_itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
-                    shared.m_itemType == ItemDrop.ItemData.ItemType.Bow)
-                {
-                    return true;
-                }
-                
-                return false;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-        
+
         #endregion
-        
-        #region Item List Caching
-        
+
+        #region Item Lists
+
+        // These predate the gear table. Compiled FiresRPGmaker and FiresCompanions builds still call them, so they read
+        // the table now.
+
         public static void CacheItemLists()
         {
-            if (_itemListsCached) return;
+            if (_itemListsCached || !CompanionGearTable.Prepare()) return;
 
-            _allHelmets = new List<string>();
-            _allChestArmor = new List<string>();
-            _allLegArmor = new List<string>();
-            _allCapes = new List<string>();
+            _allHelmets = CompanionGearTable.AllOfType(ItemDrop.ItemData.ItemType.Helmet);
+            _allChestArmor = CompanionGearTable.AllOfType(ItemDrop.ItemData.ItemType.Chest);
+            _allLegArmor = CompanionGearTable.AllOfType(ItemDrop.ItemData.ItemType.Legs);
+            _allCapes = CompanionGearTable.AllOfType(ItemDrop.ItemData.ItemType.Shoulder);
             _allShoulders = new List<string>();
-            _allShields = new List<string>();
-            _allWeapons = new List<string>();
-            _allBows = new List<string>();
-            _allArrows = new List<string>();
+            _allShields = CompanionGearTable.AllOfType(ItemDrop.ItemData.ItemType.Shield);
+            _allWeapons = CompanionGearTable.AllOfType(ItemDrop.ItemData.ItemType.OneHandedWeapon)
+                .Concat(CompanionGearTable.AllOfType(ItemDrop.ItemData.ItemType.TwoHandedWeapon)).ToList();
+            _allBows = CompanionGearTable.AllOfType(ItemDrop.ItemData.ItemType.Bow)
+                .Concat(CompanionGearTable.AllOfType(ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft)).ToList();
+            _allArrows = CompanionGearTable.AllOfType(ItemDrop.ItemData.ItemType.Ammo);
             _allFood = new List<string>();
-
-            try
-            {
-                // Get all prefabs from ObjectDB
-                var objectDB = ObjectDB.instance;
-                if (objectDB == null)
-                {
-                    Debug.LogWarning("[CompanionRandomLoadout] ObjectDB not available for item caching");
-                    return;
-                }
-
-                // ObjectDB.Awake fires once for the start-scene's stub item list
-                // (only a handful of menu items) and then again with the real
-                // item set once the world scene loads. Refuse to cache against
-                // the stub - otherwise _itemListsCached latches as empty and
-                // every wild companion spawns naked forever.
-                if (objectDB.m_items == null || objectDB.m_items.Count < 50)
-                {
-                    Debug.Log($"[CompanionRandomLoadout] ObjectDB only has " +
-                        $"{objectDB.m_items?.Count ?? 0} items - too few to cache, " +
-                        $"will retry on next call (likely start-scene stub).");
-                    return;
-                }
-                
-                int skippedInvalid = 0;
-                int skippedFiltered = 0;
-                
-                foreach (var prefab in objectDB.m_items)
-                {
-                    if (prefab == null) continue;
-                    
-                    var itemDrop = prefab.GetComponent<ItemDrop>();
-                    if (itemDrop?.m_itemData?.m_shared == null) continue;
-                    
-                    var shared = itemDrop.m_itemData.m_shared;
-                    string prefabName = prefab.name;
-                    
-                    // Skip certain items based on name/properties
-                    if (ShouldSkipItem(shared, prefabName))
-                    {
-                        skippedFiltered++;
-                        continue;
-                    }
-                    
-                    // Validate the item is a proper equippable (has attach points, animations, etc.)
-                    // Skip validation for consumables and ammo as they don't need visual attachment
-                    if (shared.m_itemType != ItemDrop.ItemData.ItemType.Consumable &&
-                        shared.m_itemType != ItemDrop.ItemData.ItemType.Ammo)
-                    {
-                        if (!IsValidEquippableItem(prefabName))
-                        {
-                            skippedInvalid++;
-                            continue;
-                        }
-                    }
-                    
-                    // Categorize by item type
-                    switch (shared.m_itemType)
-                    {
-                        case ItemDrop.ItemData.ItemType.Helmet:
-                            _allHelmets.Add(prefabName);
-                            break;
-                            
-                        case ItemDrop.ItemData.ItemType.Chest:
-                            _allChestArmor.Add(prefabName);
-                            break;
-                            
-                        case ItemDrop.ItemData.ItemType.Legs:
-                            _allLegArmor.Add(prefabName);
-                            break;
-                            
-                        case ItemDrop.ItemData.ItemType.Shoulder:
-                            // Distinguish between capes and shoulder armor
-                            if (IsCape(shared, prefabName))
-                                _allCapes.Add(prefabName);
-                            else
-                                _allShoulders.Add(prefabName);
-                            break;
-                            
-                        case ItemDrop.ItemData.ItemType.Shield:
-                            _allShields.Add(prefabName);
-                            break;
-                            
-                        case ItemDrop.ItemData.ItemType.OneHandedWeapon:
-                        case ItemDrop.ItemData.ItemType.TwoHandedWeapon:
-                            _allWeapons.Add(prefabName);
-                            break;
-                            
-                        case ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft:
-                        case ItemDrop.ItemData.ItemType.Bow:
-                            _allBows.Add(prefabName);
-                            break;
-                            
-                        case ItemDrop.ItemData.ItemType.Ammo:
-                            // Only cache arrows (not bolts for now)
-                            if (prefabName.ToLowerInvariant().Contains("arrow"))
-                            {
-                                _allArrows.Add(prefabName);
-                            }
-                            break;
-                            
-                        case ItemDrop.ItemData.ItemType.Consumable:
-                            if (IsFood(shared))
-                                _allFood.Add(prefabName);
-                            break;
-                    }
-                }
-                
-                int totalCached =
-                    _allHelmets.Count + _allChestArmor.Count + _allLegArmor.Count +
-                    _allCapes.Count + _allShoulders.Count + _allShields.Count +
-                    _allWeapons.Count + _allBows.Count + _allArrows.Count + _allFood.Count;
-
-                // Only latch the cache if we actually produced something. If
-                // everything got filtered out the ObjectDB was almost certainly
-                // not fully populated yet - leave the flag false so the next
-                // caller (e.g. wild companion spawn) re-runs the scan once a
-                // real item set is available.
-                if (totalCached > 0)
-                    _itemListsCached = true;
-
-                Debug.Log($"[CompanionRandomLoadout] Cached items: " +
-                    $"{_allHelmets.Count} helmets, " +
-                    $"{_allChestArmor.Count} chest, " +
-                    $"{_allLegArmor.Count} legs, " +
-                    $"{_allCapes.Count} capes, " +
-                    $"{_allShoulders.Count} shoulders, " +
-                    $"{_allShields.Count} shields, " +
-                    $"{_allWeapons.Count} melee weapons, " +
-                    $"{_allBows.Count} bows/crossbows, " +
-                    $"{_allArrows.Count} arrow types, " +
-                    $"{_allFood.Count} food " +
-                    $"(skipped {skippedFiltered} filtered, {skippedInvalid} invalid)" +
-                    (totalCached > 0 ? "" : " [NOT LATCHED - will retry]"));
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[CompanionRandomLoadout] Failed to cache item lists: {ex.Message}");
-            }
+            _itemListsCached = true;
         }
-        
-        /// <summary>
-        /// Gets items appropriate for a given biome tier.
-        /// </summary>
+
+        /// <summary>Items from the list at the biome's tier or one below.</summary>
         public static List<string> GetTierFilteredItems(List<string> allItems, Heightmap.Biome biome)
         {
-            int maxTier = GetBiomeTier(biome);
-            
-            return allItems.Where(prefabName => 
-            {
-                int itemTier = GetItemTier(prefabName);
-                return itemTier <= maxTier;
-            }).ToList();
+            int biomeTier = GetBiomeTier(biome);
+            return allItems.Where(name => CompanionGearTable.TryGetTier(name, out int tier) && tier <= biomeTier && tier >= biomeTier - 1).ToList();
         }
-        
-        public static int GetBiomeTier(Heightmap.Biome biome)
-        {
-            switch (biome)
-            {
-                case Heightmap.Biome.Meadows:
-                    return 1;
-                case Heightmap.Biome.BlackForest:
-                    return 2;
-                case Heightmap.Biome.Swamp:
-                    return 3;
-                case Heightmap.Biome.Mountain:
-                    return 4;
-                case Heightmap.Biome.Plains:
-                    return 5;
-                case Heightmap.Biome.Mistlands:
-                    return 6;
-                case Heightmap.Biome.AshLands:
-                case Heightmap.Biome.DeepNorth:
-                    return 7;
-                default:
-                    return 3; // Default to mid-tier
-            }
-        }
-        
+
+        public static int GetBiomeTier(Heightmap.Biome biome) => CompanionGearTable.BiomeTier(biome);
+
+        /// <summary>The item's gear-table tier; anything outside the table reports one past the top tier, so tier filters drop it.</summary>
         public static int GetItemTier(string prefabName)
         {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab == null) return 1;
-                
-                var itemDrop = prefab.GetComponent<ItemDrop>();
-                if (itemDrop?.m_itemData?.m_shared == null) return 1;
-                
-                var shared = itemDrop.m_itemData.m_shared;
-                string nameLower = prefabName.ToLowerInvariant();
-                
-                // Tier based on material/name keywords
-                if (nameLower.Contains("dvergr") || nameLower.Contains("carapace") || 
-                    nameLower.Contains("fenring") || nameLower.Contains("staff"))
-                    return 6; // Mistlands
-                    
-                if (nameLower.Contains("black") || nameLower.Contains("padded") || 
-                    nameLower.Contains("needle") || nameLower.Contains("fang"))
-                    return 5; // Plains
-                    
-                if (nameLower.Contains("wolf") || nameLower.Contains("silver") || 
-                    nameLower.Contains("obsidian") || nameLower.Contains("draugr"))
-                    return 4; // Mountain
-                    
-                if (nameLower.Contains("iron") || nameLower.Contains("ancient") || 
-                    nameLower.Contains("root"))
-                    return 3; // Swamp
-                    
-                if (nameLower.Contains("bronze") || nameLower.Contains("troll"))
-                    return 2; // Black Forest
-                    
-                if (nameLower.Contains("leather") || nameLower.Contains("rag") || 
-                    nameLower.Contains("wood") || nameLower.Contains("flint") ||
-                    nameLower.Contains("club") || nameLower.Contains("torch"))
-                    return 1; // Meadows
-                
-                // Fallback: estimate by armor/damage values
-                float armorValue = shared.m_armor;
-                float damageValue = shared.m_damages.GetTotalDamage();
-                float combinedValue = armorValue + damageValue;
-                
-                if (combinedValue > 100) return 6;
-                if (combinedValue > 70) return 5;
-                if (combinedValue > 50) return 4;
-                if (combinedValue > 30) return 3;
-                if (combinedValue > 15) return 2;
-                return 1;
-            }
-            catch
-            {
-                return 1;
-            }
+            return CompanionGearTable.TryGetTier(prefabName, out int tier) ? tier : CompanionGearTable.MaxTier + 1;
         }
-        
-        private static bool ShouldSkipItem(ItemDrop.ItemData.SharedData shared, string prefabName)
-        {
-            // Skip items that aren't meant to be equipped
-            if (shared == null) return true;
-            
-            // Skip items with no icons or invalid icons (prevents IndexOutOfRangeException in GetIcon)
-            if (shared.m_icons == null || shared.m_icons.Length == 0)
-            {
-                return true;
-            }
-            
-            // Skip items with empty or default names (likely internal/debug items)
-            if (string.IsNullOrEmpty(shared.m_name) || shared.m_name.StartsWith("$item_"))
-            {
-                // Items with localization keys that don't resolve are usually internal
-                var localizedName = Localization.instance?.Localize(shared.m_name);
-                if (string.IsNullOrEmpty(localizedName) || localizedName == shared.m_name)
-                {
-                    // Allow it if it has a valid m_name that's just a localization key
-                    // but skip if the name is truly empty or generic
-                }
-            }
-            
-            // Skip boss items or special items
-            string nameLower = prefabName.ToLowerInvariant();
-            if (nameLower.Contains("boss") || 
-                nameLower.Contains("trophy") || 
-                nameLower.Contains("torn") ||
-                nameLower.Contains("broken") ||
-                nameLower.Contains("wishbone") ||
-                nameLower.Contains("megingjord") ||
-                nameLower.Contains("belt"))
-            {
-                return true;
-            }
-            
-            // Skip monster/creature weapons that players can't use
-            // These are internal game items not meant for humanoid NPCs
-            if (nameLower.Contains("troll") ||
-                nameLower.Contains("twitcher") ||
-                nameLower.Contains("goblin") && !nameLower.Contains("totem") ||
-                nameLower.Contains("draugr") && nameLower.Contains("bow") ||
-                nameLower.Contains("skeleton") ||
-                nameLower.Contains("greydwarf") ||
-                nameLower.Contains("blob") ||
-                nameLower.Contains("wraith") ||
-                nameLower.Contains("fenring") && nameLower.Contains("claw") ||
-                nameLower.Contains("ulv") ||
-                nameLower.Contains("hatchling") ||
-                nameLower.Contains("drake") ||
-                nameLower.Contains("seeker") && !nameLower.Contains("aspic") ||
-                nameLower.Contains("gjall") ||
-                nameLower.Contains("tick") ||
-                nameLower.Contains("dvergr") && (nameLower.Contains("sting") || nameLower.Contains("throw")))
-            {
-                return true;
-            }
-            
-            // Skip creature-specific attack prefabs (these have attack_ prefix or _attack suffix)
-            if (nameLower.StartsWith("attack_") || nameLower.EndsWith("_attack") ||
-                nameLower.Contains("_projectile") || nameLower.Contains("projectile_"))
-            {
-                return true;
-            }
-            
-            // Skip items with no armor value and no damage (likely decorative)
-            if (shared.m_armor <= 0 && shared.m_damages.GetTotalDamage() <= 0 && 
-                shared.m_itemType != ItemDrop.ItemData.ItemType.Consumable)
-            {
-                // Exception for capes which may have other effects
-                if (shared.m_itemType != ItemDrop.ItemData.ItemType.Shoulder)
-                {
-                    return true;
-                }
-            }
-            
-            return false;
-        }
-        
-        /// <summary>
-        /// Validates that a prefab is a proper equippable item for humanoid NPCs.
-        /// Checks for ItemDrop, valid shared data, proper item type, and visual attachments.
-        /// </summary>
-        private static bool IsValidEquippableItem(string prefabName)
-        {
-            if (string.IsNullOrEmpty(prefabName)) return false;
-            
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab == null) return false;
-                
-                // Must have ItemDrop component
-                var itemDrop = prefab.GetComponent<ItemDrop>();
-                if (itemDrop == null) return false;
-                
-                // Must have valid item data
-                var itemData = itemDrop.m_itemData;
-                if (itemData == null) return false;
-                
-                // Must have shared data
-                var shared = itemData.m_shared;
-                if (shared == null) return false;
-                
-                // Must have valid icons (player-usable items always have icons)
-                if (shared.m_icons == null || shared.m_icons.Length == 0) return false;
-                
-                // For weapons, check for proper attack animations
-                if (shared.m_itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
-                    shared.m_itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
-                    shared.m_itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
-                    shared.m_itemType == ItemDrop.ItemData.ItemType.Bow)
-                {
-                    // Player weapons have attack animations defined
-                    if (shared.m_attack == null && shared.m_secondaryAttack == null)
-                    {
-                        return false;
-                    }
-                    
-                    // Check that at least primary attack has animation
-                    if (shared.m_attack != null && string.IsNullOrEmpty(shared.m_attack.m_attackAnimation))
-                    {
-                        // Some weapons only have secondary attacks, that's okay
-                        if (shared.m_secondaryAttack == null || 
-                            string.IsNullOrEmpty(shared.m_secondaryAttack.m_attackAnimation))
-                        {
-                            return false;
-                        }
-                    }
-                }
-                
-                // Check for visual attachment point (player items have attach or attach_skin children)
-                bool hasAttachPoint = false;
-                foreach (Transform child in prefab.transform)
-                {
-                    string childName = child.name.ToLowerInvariant();
-                    if (childName.StartsWith("attach"))
-                    {
-                        hasAttachPoint = true;
-                        break;
-                    }
-                }
-                
-                // For armor/equipment, must have attach point
-                if (!hasAttachPoint)
-                {
-                    // Consumables don't need attach points
-                    if (shared.m_itemType != ItemDrop.ItemData.ItemType.Consumable &&
-                        shared.m_itemType != ItemDrop.ItemData.ItemType.Ammo &&
-                        shared.m_itemType != ItemDrop.ItemData.ItemType.Material)
-                    {
-                        // Check for attach_skin specifically for armor
-                        bool hasAttachSkin = false;
-                        foreach (Transform child in prefab.transform)
-                        {
-                            if (child.name == "attach_skin")
-                            {
-                                hasAttachSkin = true;
-                                break;
-                            }
-                        }
-                        
-                        if (!hasAttachSkin && !hasAttachPoint)
-                        {
-                            // Some items might still be valid without attach points
-                            // Only reject if it's clearly meant to be equipped
-                            if (shared.m_itemType == ItemDrop.ItemData.ItemType.Helmet ||
-                                shared.m_itemType == ItemDrop.ItemData.ItemType.Chest ||
-                                shared.m_itemType == ItemDrop.ItemData.ItemType.Legs ||
-                                shared.m_itemType == ItemDrop.ItemData.ItemType.Shoulder)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                
-                // Additional monster weapon check - these often have specific skill types
-                // that aren't player skills
-                if (shared.m_skillType == Skills.SkillType.None && 
-                    shared.m_damages.GetTotalDamage() > 0 &&
-                    shared.m_itemType != ItemDrop.ItemData.ItemType.Consumable)
-                {
-                    // Weapons with damage but no skill type are suspicious
-                    // Player weapons always have a skill type
-                    string nameLower = prefabName.ToLowerInvariant();
-                    
-                    // Exception for some special items
-                    if (!nameLower.Contains("torch") && 
-                        !nameLower.Contains("lantern"))
-                    {
-                        return false;
-                    }
-                }
-                
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[CompanionRandomLoadout] Error validating item {prefabName}: {ex.Message}");
-                return false;
-            }
-        }
-        
-        private static bool IsCape(ItemDrop.ItemData.SharedData shared, string prefabName)
-        {
-            string nameLower = prefabName.ToLowerInvariant();
-            return nameLower.Contains("cape") || 
-                   nameLower.Contains("cloak") || 
-                   nameLower.Contains("lox") ||
-                   nameLower.Contains("wolf") ||
-                   nameLower.Contains("deer") ||
-                   nameLower.Contains("linen") ||
-                   nameLower.Contains("feather");
-        }
-        
-        private static bool IsFood(ItemDrop.ItemData.SharedData shared)
-        {
-            // Check if it's consumable food (has health/stamina regen)
-            return shared.m_food > 0 || shared.m_foodStamina > 0 || shared.m_foodEitr > 0;
-        }
-        
-        /// <summary>
-        /// Clears the cached item lists (call when items might have changed).
-        /// </summary>
+
         public static void ClearItemCache()
         {
             _itemListsCached = false;
@@ -2319,8 +1455,9 @@ namespace FiresCore.Npc
             _allBows = null;
             _allArrows = null;
             _allFood = null;
+            CompanionGearTable.Reset();
         }
-        
+
         #endregion
         
         #region Biome-Based Scaling (Optional)
@@ -2330,6 +1467,12 @@ namespace FiresCore.Npc
         /// </summary>
         public void ScaleForBiome(Heightmap.Biome biome)
         {
+            ApplyBiomeChances(biome);
+            ScaleHealthForBiome(biome);
+        }
+
+        private void ApplyBiomeChances(Heightmap.Biome biome)
+        {
             _currentBiome = biome;
             float multiplier = GetBiomeMultiplier(biome);
             
@@ -2338,9 +1481,7 @@ namespace FiresCore.Npc
             chestChance *= multiplier;
             legsChance *= multiplier;
             capeChance *= multiplier;
-            shoulderChance *= multiplier;
-            shieldChance *= multiplier;
-            
+
             // Scale quality
             minQuality = Mathf.Max(1, Mathf.RoundToInt(minQuality * multiplier));
             maxQuality = Mathf.Max(minQuality, Mathf.RoundToInt(maxQuality * multiplier));
@@ -2350,12 +1491,7 @@ namespace FiresCore.Npc
             chestChance = Mathf.Clamp01(chestChance);
             legsChance = Mathf.Clamp01(legsChance);
             capeChance = Mathf.Clamp01(capeChance);
-            shoulderChance = Mathf.Clamp01(shoulderChance);
-            shieldChance = Mathf.Clamp01(shieldChance);
             maxQuality = Mathf.Min(maxQuality, 4);
-            
-            // Scale health based on biome
-            ScaleHealthForBiome(biome);
         }
         
         /// <summary>

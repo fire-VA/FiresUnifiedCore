@@ -141,6 +141,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _lastOreAddTime = 0f;
             _lastFuelAddTime = 0f;
             _lastAnyAddTime = 0f;
+            _lastEmptyTime = 0f;
             
             // Reset circuit breaker for pull attempts
             _consecutiveFailedPulls = 0;
@@ -194,11 +195,10 @@ namespace FiresCore.Npc.IdleBehaviors
                 // Check if this IS a kiln (kilns are also Smelter components)
                 if (_targetSmelter != null)
                 {
-                    string stationType = GetStationTypeFromSmelter(_targetSmelter);
-                    _isKilnOperation = stationType.ToLowerInvariant().Contains("kiln");
+                    _isKilnOperation = PieceDataHelper.IsCharcoalKiln(_targetSmelter);
                     
                     if (CompanionIdleBehavior.VerboseLogging)
-                        Debug.Log($"[SmelterOperator] Target is {stationType}, isKiln={_isKilnOperation}");
+                        Debug.Log($"[SmelterOperator] Target is {GetStationName()}, isKiln={_isKilnOperation}");
                 }
                 
                 _commandedTarget = null;
@@ -370,6 +370,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             // Clear the status display
             CompanionChatHelper.ClearWorkingStatus(Companion);
+            ReleaseStationVisuals();
             
             // Release occupancy when cancelled
             if (_targetSmelter != null)
@@ -395,6 +396,18 @@ namespace FiresCore.Npc.IdleBehaviors
             
             NotifyOwner();
             base.Cancel();
+        }
+        
+        protected override void Complete()
+        {
+            ReleaseStationVisuals();
+            base.Complete();
+        }
+        
+        public override void InterruptForCombat()
+        {
+            ReleaseStationVisuals();
+            base.InterruptForCombat();
         }
         
         #endregion

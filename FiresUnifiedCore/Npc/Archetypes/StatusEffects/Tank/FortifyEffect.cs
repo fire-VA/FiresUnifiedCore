@@ -75,12 +75,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Tank
         }
         
         /// <summary>
-        /// Modifies armor value while active.
+        /// Adds the bonus armor to the body armor vanilla applies to incoming hits, the same hook SE_Stats uses.
         /// </summary>
-        public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
+        public override void ModifyArmorMods(ref float armor)
         {
-            // This is called for outgoing attacks, not what we need
-            base.ModifyAttack(skill, ref hitData);
+            armor += BonusArmor;
         }
         
         protected override void OnEffectRemoved()

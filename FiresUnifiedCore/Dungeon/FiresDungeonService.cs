@@ -65,15 +65,20 @@ namespace FiresCore.Dungeon
                 yield return new WaitForSeconds(ReadinessPollIntervalSeconds);
             if (generator == null) yield break;
 
-            // re-check: another path may have generated it in the meantime.
+            // Only regenerate a live DG this peer still owns. ZNetScene unloading an out-of-area object first clears
+            // its ZDO, then destroys the GameObject at end of frame; a generator caught in that window reads as "no
+            // saved rooms", and Generate(Full) then dies in vanilla Save() on the null ZDO after rebuilding every room.
             var netView = generator.GetComponent<ZNetView>();
             ZDO zdo = (netView != null && netView.IsValid()) ? netView.GetZDO() : null;
-            if (zdo != null && zdo.GetByteArray(ZDOVars.s_roomData, out byte[] data) && data != null && data.Length >= MinRoomDataLength)
+            if (zdo == null || !zdo.IsOwner()) yield break;
+
+            // re-check: another path may have generated it in the meantime.
+            if (zdo.GetByteArray(ZDOVars.s_roomData, out byte[] data) && data != null && data.Length >= MinRoomDataLength)
                 yield break;
 
             bool ok = false;
             try { generator.Generate(ZoneSystem.SpawnMode.Full); ok = true; }
-            catch (Exception ex) { Debug.LogError($"{spec.LogTag} stale-dungeon regenerate threw: {ex.Message}"); }
+            catch (Exception ex) { Debug.LogError($"{spec.LogTag} stale-dungeon regenerate threw: {ex}"); }
             if (ok) Debug.Log($"{spec.LogTag} regenerated stale dungeon DG at {generator.transform.position}.");
 
             spec.OnDungeonGenerated?.Invoke();
@@ -102,13 +107,16 @@ namespace FiresCore.Dungeon
             for (int i = 0; i < MaxReadinessPolls && (ZoneSystem.instance == null || DungeonDB.instance == null); i++)
                 yield return new WaitForSeconds(ReadinessPollIntervalSeconds);
             if (generator == null) yield break;
+            var netView = generator.GetComponent<ZNetView>();
+            ZDO zdo = (netView != null && netView.IsValid()) ? netView.GetZDO() : null;
+            if (zdo == null || !zdo.IsOwner()) yield break;
 
             generator.m_maxRooms = maxRooms;
             if (generator.m_minRooms > maxRooms) generator.m_minRooms = maxRooms; // vanilla defaults have min > max; keep min <= max
 
             bool ok = false;
             try { generator.Generate(ZoneSystem.SpawnMode.Full); ok = true; }
-            catch (Exception ex) { Debug.LogError($"{spec.LogTag} resize-regenerate threw: {ex.Message}"); }
+            catch (Exception ex) { Debug.LogError($"{spec.LogTag} resize-regenerate threw: {ex}"); }
             if (ok) Debug.Log($"{spec.LogTag} resized to maxRooms={generator.m_maxRooms} and regenerated at {generator.transform.position}.");
 
             spec.OnDungeonGenerated?.Invoke();

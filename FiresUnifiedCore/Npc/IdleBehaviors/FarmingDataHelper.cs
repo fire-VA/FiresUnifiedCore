@@ -5,157 +5,122 @@ using FiresCore.Npc;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Helper class for farming-related data and detection.
-    /// Provides seed-to-plant mappings, crop detection, and beehive utilities.
+    /// Farming data read from the live game: the crops the Cultivator plants (sapling piece, the items it consumes,
+    /// the pickables it grows into) and what every hive produces, plus crop/hive detection and planting checks.
     /// </summary>
     public static class FarmingDataHelper
     {
-        #region Seed to Plant Mappings
-        
-        /// <summary>
-        /// Maps seed item prefab names to their corresponding plant prefab names.
-        /// </summary>
-        private static readonly Dictionary<string, string> SeedToPlantMap = new Dictionary<string, string>
+        /// <summary>A Cultivator piece that grows into a harvestable crop on open cultivated ground.</summary>
+        public sealed class CropSapling
         {
-            // Vegetables
-            { "CarrotSeeds", "sapling_carrot" },
-            { "TurnipSeeds", "sapling_turnip" },
-            { "OnionSeeds", "sapling_onion" },
+            public readonly GameObject Prefab;
+            public readonly Plant Plant;
+            public readonly (string Item, int Amount)[] Seeds;
             
-            // Grains (require Plains biome)
-            { "BarleySeeds", "sapling_barley" },
-            { "FlaxSeeds", "sapling_flax" },
+            public CropSapling(GameObject prefab, Plant plant, (string Item, int Amount)[] seeds)
+            {
+                Prefab = prefab;
+                Plant = plant;
+                Seeds = seeds;
+            }
+        }
             
-            // Jotun Puffs (Mistlands)
-            { "JotunPuffs", "Pickable_JotunPuffs" },
+        private const string CultivatorItemPrefab = "Cultivator";
+        private static readonly IReadOnlyList<CropSapling> NoSaplings = new CropSapling[0];
             
-            // Magecap (Mistlands)
-            { "Magecap", "Pickable_Magecap" },
+        private static ObjectDB s_tablesSource;
+        private static readonly Dictionary<string, List<CropSapling>> SaplingsBySeed = new Dictionary<string, List<CropSapling>>();
+        private static readonly HashSet<string> CropPickablePrefabs = new HashSet<string>();
+        private static readonly HashSet<string> FarmProducePrefabs = new HashSet<string>();
+
+        #region Live Game Tables
+
+        /// <summary>Builds the tables once per ObjectDB from the Cultivator's piece table and every Beehive prefab.</summary>
+        private static bool EnsureTables()
+        {
+            var objectDB = ObjectDB.instance;
+            if (objectDB == null || ZNetScene.instance == null) return false;
+            if (s_tablesSource == objectDB) return true;
+
+            var cultivatorPieces = objectDB.GetItemPrefab(CultivatorItemPrefab)?.GetComponent<ItemDrop>()?.m_itemData.m_shared.m_buildPieces;
+            if (cultivatorPieces == null) return false;
+
+            SaplingsBySeed.Clear();
+            CropPickablePrefabs.Clear();
+            FarmProducePrefabs.Clear();
+            foreach (var piecePrefab in cultivatorPieces.m_pieces)
+                AddCultivatorPiece(piecePrefab);
+            foreach (var prefab in ZNetScene.instance.m_prefabs)
+                AddHiveProduce(prefab);
             
-            // Smoky Puffs (Ashlands)
-            { "SmokerPuff", "sapling_smokepuff" },
-        };
+            s_tablesSource = objectDB;
+            return true;
+        }
         
-        /// <summary>
-        /// Maps plant prefab names to the seeds they drop when harvested.
-        /// Used to determine what seeds to replant.
-        /// </summary>
-        private static readonly Dictionary<string, string> PlantToSeedMap = new Dictionary<string, string>
+        private static void AddCultivatorPiece(GameObject piecePrefab)
         {
-            // Seed pickables drop seeds
-            { "Pickable_SeedCarrot", "CarrotSeeds" },
-            { "Pickable_SeedTurnip", "TurnipSeeds" },
-            { "Pickable_SeedOnion", "OnionSeeds" },
-            
-            // Regular crops drop their respective items
-            { "Pickable_Carrot", "Carrot" },
-            { "Pickable_Turnip", "Turnip" },
-            { "Pickable_Onion", "Onion" },
-            { "Pickable_Barley", "Barley" },
-            { "Pickable_Flax", "Flax" },
-        };
+            var piece = piecePrefab != null ? piecePrefab.GetComponent<Piece>() : null;
+            if (piece == null || !piece.m_enabled) return;
         
-        /// <summary>
-        /// Crop items that can be used to grow seed variants.
-        /// E.g., planting a Carrot grows Pickable_SeedCarrot which drops CarrotSeeds.
-        /// </summary>
-        private static readonly Dictionary<string, string> CropToSeedPlantMap = new Dictionary<string, string>
+            var seeds = new List<(string Item, int Amount)>();
+            foreach (var requirement in piece.m_resources)
+            {
+                if (requirement?.m_resItem == null) continue;
+                seeds.Add((requirement.m_resItem.name, requirement.m_amount));
+                FarmProducePrefabs.Add(requirement.m_resItem.name);
+            }
+        
+            var plant = piecePrefab.GetComponent<Plant>();
+            if (plant == null || !GrowsOnOpenCultivatedGround(plant) || seeds.Count == 0) return;
+        
+            var grownCrops = new List<Pickable>();
+            foreach (var grownPrefab in plant.m_grownPrefabs)
+            {
+                var pickable = grownPrefab != null ? grownPrefab.GetComponent<Pickable>() : null;
+                if (pickable != null) grownCrops.Add(pickable);
+            }
+            if (grownCrops.Count == 0) return;
+        
+            var crop = new CropSapling(piecePrefab, plant, seeds.ToArray());
+            foreach (var seed in seeds)
+            {
+                if (!SaplingsBySeed.TryGetValue(seed.Item, out var saplings))
+                    SaplingsBySeed[seed.Item] = saplings = new List<CropSapling>();
+                saplings.Add(crop);
+            }
+            foreach (var pickable in grownCrops)
+            {
+                CropPickablePrefabs.Add(pickable.name);
+                AddPickableDrops(pickable);
+            }
+        }
+        
+        /// <summary>Trees need no soil and vines (m_attachDistance) need a wall; only field crops qualify.</summary>
+        private static bool GrowsOnOpenCultivatedGround(Plant plant)
+            => plant.m_needCultivatedGround && plant.m_attachDistance <= 0f;
+        
+        private static void AddPickableDrops(Pickable pickable)
         {
-            { "Carrot", "sapling_seedcarrot" },
-            { "Turnip", "sapling_seedturnip" },
-            { "Onion", "sapling_seedonion" },
-        };
+            if (pickable.m_itemPrefab != null) FarmProducePrefabs.Add(pickable.m_itemPrefab.name);
+            foreach (var drop in pickable.m_extraDrops.m_drops)
+                if (drop.m_item != null) FarmProducePrefabs.Add(drop.m_item.name);
+        }
         
-        #endregion
-        
-        #region Biome Requirements
-        
-        /// <summary>
-        /// Seeds that require Plains biome to grow.
-        /// </summary>
-        private static readonly HashSet<string> PlainsOnlySeeds = new HashSet<string>
+        private static void AddHiveProduce(GameObject prefab)
         {
-            "BarleySeeds",
-            "FlaxSeeds"
-        };
-        
-        /// <summary>
-        /// Seeds that require Mistlands biome to grow.
-        /// </summary>
-        private static readonly HashSet<string> MistlandsOnlySeeds = new HashSet<string>
-        {
-            "JotunPuffs",
-            "Magecap"
-        };
-        
-        /// <summary>
-        /// Seeds that require Ashlands biome to grow.
-        /// </summary>
-        private static readonly HashSet<string> AshlandsOnlySeeds = new HashSet<string>
-        {
-            "SmokerPuff"
-        };
-        
-        #endregion
-        
-        #region Crop Data
-        
-        /// <summary>
-        /// All pickable prefab names that are harvestable crops.
-        /// </summary>
-        public static readonly HashSet<string> HarvestableCropPrefabs = new HashSet<string>
-        {
-            "Pickable_Carrot",
-            "Pickable_Turnip",
-            "Pickable_Onion",
-            "Pickable_Barley",
-            "Pickable_Flax",
-            "Pickable_SeedCarrot",
-            "Pickable_SeedTurnip",
-            "Pickable_SeedOnion",
-            "Pickable_JotunPuffs",
-            "Pickable_Magecap",
-            "Pickable_SmokePuff",
-        };
-        
-        /// <summary>
-        /// All seed item prefab names that can be planted.
-        /// </summary>
-        public static readonly HashSet<string> PlantableSeedPrefabs = new HashSet<string>
-        {
-            "CarrotSeeds",
-            "TurnipSeeds",
-            "OnionSeeds",
-            "BarleySeeds",
-            "FlaxSeeds",
-            "JotunPuffs",
-            "Magecap",
-            "SmokerPuff",
-            // Crops that grow into seed plants
-            "Carrot",
-            "Turnip",
-            "Onion",
-        };
+            var hive = prefab != null ? prefab.GetComponent<Beehive>() : null;
+            if (hive != null && hive.m_honeyItem != null) FarmProducePrefabs.Add(hive.m_honeyItem.name);
+        }
         
         #endregion
         
         #region Public API - Seeds
         
-        /// <summary>
-        /// Gets the plant prefab name for a given seed item.
-        /// </summary>
-        public static string GetPlantPrefabForSeed(string seedPrefabName)
+        /// <summary>The crop saplings this item plants (1.0 KaleSeeds plant either sapling_Kale or sapling_seedkale).</summary>
+        public static IReadOnlyList<CropSapling> SaplingsForSeed(string seedPrefabName)
         {
-            if (string.IsNullOrEmpty(seedPrefabName)) return null;
-            
-            if (SeedToPlantMap.TryGetValue(seedPrefabName, out string plantPrefab))
-                return plantPrefab;
-            
-            // Check if it's a crop that grows seed plants
-            if (CropToSeedPlantMap.TryGetValue(seedPrefabName, out plantPrefab))
-                return plantPrefab;
-            
-            return null;
+            if (string.IsNullOrEmpty(seedPrefabName) || !EnsureTables()) return NoSaplings;
+            return SaplingsBySeed.TryGetValue(seedPrefabName, out var saplings) ? saplings : NoSaplings;
         }
         
         /// <summary>
@@ -163,52 +128,24 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         public static bool CanBePlanted(ItemDrop.ItemData item)
         {
-            if (item?.m_dropPrefab == null) return false;
-            return PlantableSeedPrefabs.Contains(item.m_dropPrefab.name);
+            return SaplingsForSeed(item?.m_dropPrefab?.name).Count > 0;
         }
         
-        /// <summary>
-        /// Checks if a seed can grow in the given biome.
-        /// </summary>
-        public static bool CanGrowInBiome(string seedPrefabName, Heightmap.Biome biome)
+        /// <summary>The biome, heat and cold rules of vanilla Plant.UpdateHealth (Plant.cs:197-217).</summary>
+        public static bool CanGrowAt(CropSapling crop, Vector3 position)
         {
-            if (string.IsNullOrEmpty(seedPrefabName)) return false;
-            
-            // Plains-only crops
-            if (PlainsOnlySeeds.Contains(seedPrefabName))
-            {
-                return biome == Heightmap.Biome.Plains;
-            }
-            
-            // Mistlands-only crops
-            if (MistlandsOnlySeeds.Contains(seedPrefabName))
-            {
-                return biome == Heightmap.Biome.Mistlands;
-            }
-            
-            // Ashlands-only crops
-            if (AshlandsOnlySeeds.Contains(seedPrefabName))
-            {
-                return biome == Heightmap.Biome.AshLands;
-            }
-            
-            // Regular crops can grow in Meadows, Black Forest, or Swamp
-            return biome == Heightmap.Biome.Meadows || 
-                   biome == Heightmap.Biome.BlackForest || 
-                   biome == Heightmap.Biome.Swamp ||
-                   biome == Heightmap.Biome.Plains;
+            var biome = Heightmap.FindBiome(position);
+            if ((biome & crop.Plant.m_biome) == Heightmap.Biome.None) return false;
+            if (!crop.Plant.m_tolerateHeat && biome == Heightmap.Biome.AshLands && !ShieldGenerator.IsInsideShield(position))
+                return false;
+            bool coldBiome = biome == Heightmap.Biome.DeepNorth || biome == Heightmap.Biome.Mountain;
+            return crop.Plant.m_tolerateCold || !coldBiome || ShieldGenerator.IsInsideShield(position);
         }
         
-        /// <summary>
-        /// Gets the minimum tool tier required to plant a seed (always 0 for basic cultivator).
-        /// </summary>
-        public static int GetRequiredCultivatorTier(string seedPrefabName)
+        /// <summary>Anything the Cultivator plants, a crop drops, or a hive produces.</summary>
+        public static bool IsFarmProduce(string prefabName)
         {
-            // Ashlands crops might need higher tier cultivator
-            if (AshlandsOnlySeeds.Contains(seedPrefabName))
-                return 2; // Assume black metal cultivator or similar
-            
-            return 0; // Basic cultivator works for most
+            return !string.IsNullOrEmpty(prefabName) && EnsureTables() && FarmProducePrefabs.Contains(prefabName);
         }
         
         #endregion
@@ -220,10 +157,10 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         public static bool IsHarvestableCrop(Pickable pickable)
         {
-            if (pickable == null) return false;
+            if (pickable == null || !EnsureTables()) return false;
             
             string prefabName = GetPrefabName(pickable.gameObject);
-            return HarvestableCropPrefabs.Contains(prefabName);
+            return CropPickablePrefabs.Contains(prefabName);
         }
         
         /// <summary>
@@ -240,40 +177,24 @@ namespace FiresCore.Npc.IdleBehaviors
             return !nview.GetZDO().GetBool(ZDOVars.s_picked, false);
         }
         
-        /// <summary>
-        /// Gets the seed that corresponds to this crop (for replanting).
-        /// Returns null if no seed mapping exists.
-        /// </summary>
-        public static string GetSeedForCrop(Pickable pickable)
-        {
-            if (pickable == null) return null;
-            
-            string prefabName = GetPrefabName(pickable.gameObject);
-            
-            if (PlantToSeedMap.TryGetValue(prefabName, out string seedName))
-                return seedName;
-            
-            return null;
-        }
-        
         #endregion
         
         #region Public API - Beehives
         
         /// <summary>
-        /// Checks if a beehive has honey ready for harvest.
+        /// Checks if a hive (beehive, bird nest) has produce ready for harvest.
         /// </summary>
-        public static bool HasHoneyReady(Beehive beehive)
+        public static bool HasProduceReady(Beehive beehive)
         {
             if (beehive == null) return false;
-            return GetHoneyLevel(beehive) > 0;
+            return GetStoredProduce(beehive) > 0;
         }
         
         /// <summary>
-        /// Gets the honey level of a beehive (0-4).
+        /// Gets how many items the hive holds (0-4).
         /// Uses ZDO since GetHoneyLevel() is private in Valheim.
         /// </summary>
-        public static int GetHoneyLevel(Beehive beehive)
+        public static int GetStoredProduce(Beehive beehive)
         {
             if (beehive == null) return 0;
             
@@ -283,21 +204,14 @@ namespace FiresCore.Npc.IdleBehaviors
             return nview.GetZDO().GetInt(ZDOVars.s_level, 0);
         }
         
-        /// <summary>
-        /// Checks if a beehive is in a valid biome and location.
-        /// </summary>
-        public static bool IsBeehiveHealthy(Beehive beehive)
+        public static string GetProduceName(Beehive beehive)
         {
-            if (beehive == null) return false;
+            return Localization.instance.Localize(beehive.m_honeyItem.m_itemData.m_shared.m_name);
+        }
             
-            // Check biome
-            Heightmap.Biome biome = Heightmap.FindBiome(beehive.transform.position);
-            if ((biome & beehive.m_biome) == 0)
-                return false;
-            
-            // Beehives check for cover in their own update
-            // We just verify the component is valid
-            return true;
+        public static string GetHiveName(Beehive beehive)
+        {
+            return Localization.instance.Localize(beehive.m_name);
         }
         
         #endregion
@@ -317,7 +231,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (collider == null) continue;
                 
                 var beehive = collider.GetComponent<Beehive>() ?? collider.GetComponentInParent<Beehive>();
-                if (beehive != null && HasHoneyReady(beehive))
+                if (beehive != null && HasProduceReady(beehive))
                 {
                     if (!result.Contains(beehive))
                         result.Add(beehive);
@@ -428,30 +342,14 @@ namespace FiresCore.Npc.IdleBehaviors
         #region Public API - Planting
         
         /// <summary>
-        /// Attempts to place a plant at the specified position.
-        /// Returns the spawned GameObject if successful.
+        /// Spawns the crop's sapling piece at the specified position.
         /// </summary>
-        public static GameObject TryPlantSeed(string seedPrefabName, Vector3 position)
+        public static GameObject PlantSapling(CropSapling crop, Vector3 position)
         {
-            string plantPrefab = GetPlantPrefabForSeed(seedPrefabName);
-            if (string.IsNullOrEmpty(plantPrefab))
-            {
-                Debug.LogWarning($"[FarmingDataHelper] No plant prefab found for seed: {seedPrefabName}");
-                return null;
-            }
-            
-            // Get the plant prefab from ZNetScene
-            var prefab = ZNetScene.instance?.GetPrefab(plantPrefab);
-            if (prefab == null)
-            {
-                Debug.LogWarning($"[FarmingDataHelper] Plant prefab not found: {plantPrefab}");
-                return null;
-            }
-            
             // Spawn the plant via ZNetScene for proper network registration
-            var spawned = CompanionNetworkHelper.Spawn(prefab, position, Quaternion.identity);
+            var spawned = CompanionNetworkHelper.Spawn(crop.Prefab, position, Quaternion.identity);
             
-            Debug.Log($"[FarmingDataHelper] Planted {plantPrefab} at {position}");
+            Debug.Log($"[FarmingDataHelper] Planted {crop.Prefab.name} at {position}");
             
             return spawned;
         }
@@ -459,11 +357,9 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <summary>
         /// Checks if a position is valid for planting.
         /// </summary>
-        public static bool IsValidPlantingPosition(Vector3 position, string seedPrefabName, float plantSpacing = 1f)
+        public static bool IsValidPlantingPosition(Vector3 position, CropSapling crop, float plantSpacing = 1f)
         {
-            // Check biome compatibility
-            var biome = Heightmap.FindBiome(position);
-            if (!CanGrowInBiome(seedPrefabName, biome))
+            if (!CanGrowAt(crop, position))
                 return false;
             
             // Check if cultivated
@@ -503,15 +399,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             return name.Trim();
         }
-        
-        /// <summary>
-        /// Checks if private area access is granted at position.
-        /// </summary>
-        public static bool HasPrivateAreaAccess(Vector3 position)
-        {
-            return PrivateArea.CheckAccess(position, flash: false);
-        }
-        
+
         #endregion
     }
 }

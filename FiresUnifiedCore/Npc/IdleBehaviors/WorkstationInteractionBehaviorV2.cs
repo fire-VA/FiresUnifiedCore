@@ -2,6 +2,7 @@
 using UnityEngine;
 using FiresCore.Npc.Core;
 using FiresCore.Npc.Events;
+using FiresCore.Npc.Animation;
 
 namespace FiresCore.Npc.IdleBehaviors
 {
@@ -146,7 +147,12 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Companion == null) return false;
             
             // If commanded to go to a specific station, skip cooldown check
-            if (_commandedStation != null) return true;
+            if (_commandedStation != null)
+            {
+                if (!_commandedStation.m_upgrader) return true;
+                _commandedStation = null;
+                return false;
+            }
             
             // Check cooldown - don't interact with workbenches too often
             string companionId = Companion.companionId ?? Companion.GetInstanceID().ToString();
@@ -473,10 +479,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private void StartCraftingAnimation()
         {
             if (ZAnim != null)
-            {
-                ZAnim.SetBool("crafting", true);
-                ZAnim.SetBool("Working", true);
-            }
+                PlayerAnimationCatalog.SetCrafting(ZAnim, null, PlayerAnimationCatalog.CraftingFor(_targetStation));
             _isCraftingAnimationActive = true;
             LogVerbose("Started crafting animation");
         }
@@ -487,10 +490,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private void StopCraftingAnimation()
         {
             if (ZAnim != null)
-            {
-                ZAnim.SetBool("crafting", false);
-                ZAnim.SetBool("Working", false);
-            }
+                PlayerAnimationCatalog.SetCrafting(ZAnim, null, PlayerAnimationCatalog.NoCrafting);
             _isCraftingAnimationActive = false;
             LogVerbose("Stopped crafting animation");
         }
@@ -752,9 +752,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private void StopWorkAnimation()
         {
             if (ZAnim != null)
-            {
-                ZAnim.SetBool("crafting", false);
-            }
+                PlayerAnimationCatalog.SetCrafting(ZAnim, null, PlayerAnimationCatalog.NoCrafting);
             LogVerbose("Stopped work animation");
         }
         
@@ -783,8 +781,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (collider == null) continue;
                 
                 var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
-                if (station == null) continue;
-                
+                if (station == null || station.m_upgrader) continue;
+
                 if (!InteractableOccupancyManager.CanUseInteractable(station.gameObject, Character))
                     continue;
                 

@@ -8,33 +8,16 @@ using FiresCore.Npc.Core;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Companion movement in combat and while following, coordinating the flee, command, player-idle, stuck-detection
-    /// and combat movement handlers. Split across partial files: combat, following, movement modes, jumping and
+    /// Companion movement in combat and while following, coordinating the flee, command, stuck-detection and
+    /// combat movement handlers. Split across partial files: combat, following, movement modes, jumping and
     /// commands.
     /// </summary>
     public partial class CompanionCombatMovement : MonoBehaviour
     {
         #region Settings
 
-        [Header("Follow Distance Thresholds - Buffer Zones")]
-        public float followStopDistanceInner = 2f;
-        public float followStopDistanceOuter = 3.5f;
-        public float followWalkDistanceInner = 3.5f;
-        public float followWalkDistanceOuter = 5f;
-        public float followJogDistanceInner = 6f;
-        public float followJogDistanceOuter = 10f;
-        public float followRunDistanceInner = 12f;
-        public float followRunDistanceOuter = 18f;
-        public float followSprintDistance = 30f;
-        
-        [Header("Player Idle Settings")]
-        public float playerIdleTime = 3f;
-        public float idleStopDistance = 6f;
-        public float idleLookAroundChance = 0.15f;
-        public float idleWanderChance = 0.05f;
-        public float idleMaxWanderDistance = 6f;
-        public float idleStopTimeMin = 2f;
-        public float idleStopTimeMax = 10f;
+        // Follow distances and owner-AFK detection live in CompanionAI, which owns following outright. This class
+        // used to carry its own copies of both; they disagreed with the AI's and clamped the companion to a stop.
 
         [Header("Combat Movement Settings")]
         public float meleeStafeDistance = 3f;
@@ -119,17 +102,15 @@ namespace FiresCore.Npc
 
         // Extracted helper classes for cleaner code organization
         private MovementModeController _movementModeController;
-        private FollowBehavior _followBehavior;
+        private CompanionTraversal _traversal;
         
         // Refactored handlers - moving logic out of this monolithic class
         private FleeMovementHandler _fleeHandler;
         private CommandMovementHandler _commandHandler;
-        private PlayerIdleHandler _playerIdleHandler;
         private StuckDetectionHandler _stuckHandler;
         private CombatMovementHandler _combatHandler;
         private StateTransitionHandler _stateTransitionHandler;
         private RangedMovementHandler _rangedHandler;
-        private FollowIntentController _followIntentController;
         
         // State machine for cleaner Update() logic
         private MovementStateMachine _stateMachine;
@@ -177,10 +158,6 @@ namespace FiresCore.Npc
         private float _lastEnemyKillTime = -100f;
         private bool _isInCombatCooldown = false;
         
-        // PLAYER IDLE DETECTION
-        private bool _isPlayerIdle = false;
-        private bool _isRelaxedFollowing = false;
-
         // STUCK DETECTION
         private bool _isGrounded;
         private bool _shouldCheckStuck = false;
@@ -329,32 +306,21 @@ namespace FiresCore.Npc
  
             if (_character != null)
             {
-                _followBehavior = new FollowBehavior(transform, _character, _rigidbody, _zanim, _animator);
-                
-                // Sync buffer zone thresholds
-                _followBehavior.StopDistanceInner = followStopDistanceInner;
-                _followBehavior.StopDistanceOuter = followStopDistanceOuter;
-                _followBehavior.WalkDistanceInner = followWalkDistanceInner;
-                _followBehavior.WalkDistanceOuter = followWalkDistanceOuter;
-                _followBehavior.JogDistanceInner = followJogDistanceInner;
-                _followBehavior.JogDistanceOuter = followJogDistanceOuter;
-                _followBehavior.RunDistanceInner = followRunDistanceInner;
-                _followBehavior.RunDistanceOuter = followRunDistanceOuter;
-                _followBehavior.SprintDistance = followSprintDistance;
-                
+                _traversal = new CompanionTraversal(transform, _character, _rigidbody, _zanim, _animator);
+
                 // Stuck detection settings
-                _followBehavior.StuckDetectionTime = stuckDetectionTime;
-                _followBehavior.StuckMovementThreshold = stuckMovementThreshold;
-                _followBehavior.StuckChecksBeforeJump = stuckChecksBeforeJump;
+                _traversal.StuckDetectionTime = stuckDetectionTime;
+                _traversal.StuckMovementThreshold = stuckMovementThreshold;
+                _traversal.StuckChecksBeforeJump = stuckChecksBeforeJump;
                 
                 // Jump settings
-                _followBehavior.JumpCooldown = jumpCooldown;
-                _followBehavior.JumpForce = jumpForce;
-                _followBehavior.JumpForwardBoost = jumpForwardBoost;
-                _followBehavior.MaxJumpableHeight = maxJumpableHeight;
-                _followBehavior.ObstacleCheckDistance = obstacleCheckDistance;
-                _followBehavior.MinOwnerHeightDiffForJump = minOwnerHeightDiffForJump;
-                _followBehavior.JumpAnimationDuration = jumpAnimationDuration;
+                _traversal.JumpCooldown = jumpCooldown;
+                _traversal.JumpForce = jumpForce;
+                _traversal.JumpForwardBoost = jumpForwardBoost;
+                _traversal.MaxJumpableHeight = maxJumpableHeight;
+                _traversal.ObstacleCheckDistance = obstacleCheckDistance;
+                _traversal.MinOwnerHeightDiffForJump = minOwnerHeightDiffForJump;
+                _traversal.JumpAnimationDuration = jumpAnimationDuration;
             }
             
             InitializeMovementHandlers();
@@ -382,27 +348,13 @@ namespace FiresCore.Npc
                 _idleBehavior);
             CommandMovementHandler.VerboseLogging = VerboseLogging;
             
-            // Player idle handler - manages relaxed following behavior  
-            _playerIdleHandler = new PlayerIdleHandler(
-                transform,
-                _character,
-                _companion);
-            _playerIdleHandler.PlayerIdleTime = playerIdleTime;
-            _playerIdleHandler.IdleStopDistance = idleStopDistance;
-            _playerIdleHandler.IdleLookAroundChance = idleLookAroundChance;
-            _playerIdleHandler.IdleWanderChance = idleWanderChance;
-            _playerIdleHandler.IdleMaxWanderDistance = idleMaxWanderDistance;
-            _playerIdleHandler.IdleStopTimeMin = idleStopTimeMin;
-            _playerIdleHandler.IdleStopTimeMax = idleStopTimeMax;
-            PlayerIdleHandler.VerboseLogging = VerboseLogging;
-            
             // Stuck detection handler - manages stuck detection and jumping
             _stuckHandler = new StuckDetectionHandler(
                 transform,
                 _character,
                 _rigidbody,
                 _companion,
-                _followBehavior);
+                _traversal);
             _stuckHandler.StuckDetectionTime = stuckDetectionTime;
             _stuckHandler.StuckMovementThreshold = stuckMovementThreshold;
             _stuckHandler.StuckChecksBeforeJump = stuckChecksBeforeJump;
@@ -451,19 +403,6 @@ namespace FiresCore.Npc
             _rangedHandler.ApproachCommitmentDuration = approachCommitmentDuration;
             _rangedHandler.StrafeCommitmentDuration = strafeCommitmentDuration;
             RangedMovementHandler.VerboseLogging = VerboseLogging;
-            
-            // Follow intent controller - handles follow speed hysteresis
-            _followIntentController = new FollowIntentController();
-            _followIntentController.StopDistanceInner = followStopDistanceInner;
-            _followIntentController.StopDistanceOuter = followStopDistanceOuter;
-            _followIntentController.WalkDistanceInner = followWalkDistanceInner;
-            _followIntentController.WalkDistanceOuter = followWalkDistanceOuter;
-            _followIntentController.JogDistanceInner = followJogDistanceInner;
-            _followIntentController.JogDistanceOuter = followJogDistanceOuter;
-            _followIntentController.RunDistanceInner = followRunDistanceInner;
-            _followIntentController.RunDistanceOuter = followRunDistanceOuter;
-            _followIntentController.SprintDistance = followSprintDistance;
-            FollowIntentController.VerboseLogging = VerboseLogging;
             
             // State machine for cleaner Update() logic
             _stateMachine = new MovementStateMachine();
@@ -578,9 +517,7 @@ namespace FiresCore.Npc
                 _localMovementLocked = false;
                 _localMovementLockReason = "";
             }
-            
-            UpdatePlayerIdleState();
-            
+
             if (_hasRangedMovementRequest && Time.time - _rangedRequestTime > RangedRequestTimeout)
                 _hasRangedMovementRequest = false;
             

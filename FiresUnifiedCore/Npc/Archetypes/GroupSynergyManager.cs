@@ -455,8 +455,8 @@ namespace FiresCore.Npc.Archetypes
                 }
             }
             
-            AbilityFXManager.SpawnEffect("vfx_fireball_explosion", source.transform.position, null, 1.5f);
-            AbilityFXManager.SpawnEffect("vfx_thunderbolt_explosion", source.transform.position, null, 1.2f);
+            AbilityFXManager.SpawnEffect("fx_fireball_staff_explosion", source.transform.position, null, 1.5f);
+            AbilityFXManager.SpawnEffect("fx_JotunWitch_LightningBolt_Explosion", source.transform.position, null, 1.2f);
         }
         
         /// <summary>

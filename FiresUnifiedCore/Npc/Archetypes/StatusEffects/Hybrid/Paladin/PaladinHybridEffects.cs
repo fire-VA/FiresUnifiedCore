@@ -105,8 +105,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Paladin
         protected override void OnEffectApplied()
         {
             m_character?.Message(MessageHud.MessageType.Center, "HOLY FURY!");
-            AbilityFXManager.SpawnEffect("vfx_spray_fire", m_character?.transform.position ?? Vector3.zero, null, 0.7f);
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character?.transform.position ?? Vector3.zero, null, 1f);
+            AbilityFXManager.SpawnEffect("vfx_FireballHit", m_character?.transform.position ?? Vector3.zero, null, 0.7f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character?.transform.position ?? Vector3.zero, null, 1f);
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
@@ -172,7 +172,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Paladin
             _remainingCharges = JudgmentCharges;
             m_character?.Message(MessageHud.MessageType.TopLeft, "Divine Judgment ready...");
             
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character?.transform.position ?? Vector3.zero, null, 0.6f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character?.transform.position ?? Vector3.zero, null, 0.6f);
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
@@ -240,7 +240,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Paladin
         {
             m_character?.Message(MessageHud.MessageType.TopLeft, "Radiant Arrows blessed!");
             
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character?.transform.position ?? Vector3.zero, null, 0.5f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character?.transform.position ?? Vector3.zero, null, 0.5f);
             AbilityFXManager.SpawnEffect("fx_Lightning", m_character?.transform.position ?? Vector3.zero, null, 0.4f);
         }
         
@@ -472,7 +472,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Paladin
         {
             m_character?.Message(MessageHud.MessageType.TopLeft, "Enlightened Strike!");
             
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character?.transform.position ?? Vector3.zero, null, 0.5f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character?.transform.position ?? Vector3.zero, null, 0.5f);
             AbilityFXManager.SpawnEffect("vfx_Cold", m_character?.transform.position ?? Vector3.zero, null, 0.3f);
         }
         

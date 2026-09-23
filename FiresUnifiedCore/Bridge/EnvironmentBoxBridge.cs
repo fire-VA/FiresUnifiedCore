@@ -132,7 +132,7 @@ namespace FiresCore.Bridge
                 box.ApplyConfiguredState();
 
                 float half = size.x * 0.5f;
-                Debug.Log($"[ENVBOX-DBG] SpawnBox: prefab='{prefabName}' spawnPos={pos} size={size} " +
+                if (FiresCore.Logging.FiresLogger.VerboseEnabled) Debug.Log($"[ENVBOX-DBG] SpawnBox: prefab='{prefabName}' spawnPos={pos} size={size} " +
                           $"env='{environment}' skybox={skybox} force={force} biome={biome} " +
                           $"worldMin={pos - size * 0.5f} worldMax={pos + size * 0.5f} (half={half:F1}m each axis).");
                 return box;

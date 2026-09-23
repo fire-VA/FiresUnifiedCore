@@ -29,10 +29,6 @@ namespace FiresCore.Npc
         public bool seekTombstoneOnRespawn = true;
         public float tombstoneSeekRange = 100f;
 
-        [Header("Effects")]
-        public GameObject deathEffectPrefab;
-        public GameObject respawnEffectPrefab;
-
         // References
         private CompanionController _companion;
         private CompanionInventory _inventory;
@@ -718,19 +714,12 @@ namespace FiresCore.Npc
                 SpawnPlayerRagdoll();
             }
 
-            if (deathEffectPrefab != null)
-            {
-                UnityEngine.Object.Instantiate(deathEffectPrefab, transform.position, Quaternion.identity);
-            }
-            else
-            {
-                var effectPrefab = ZNetScene.instance?.GetPrefab("fx_creature_tamed_death");
-                if (effectPrefab != null)
-                {
-                    UnityEngine.Object.Instantiate(effectPrefab, transform.position, Quaternion.identity);
-                }
-            }
+            // Every client plays this (owner directly, the rest through RPC_CompanionDeath), so each makes a local copy.
+            using (Archetypes.AbilityFXManager.LocalCopies())
+                Archetypes.AbilityFXManager.SpawnEffect(DeathEffect, transform.position);
         }
+
+        private const string DeathEffect = "vfx_player_death";
 
         /// <summary>
         /// Returns true if vanilla <see cref="Character.OnDeath"/> will already

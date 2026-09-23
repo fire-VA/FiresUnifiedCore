@@ -246,11 +246,7 @@ namespace FiresCore.Npc.Commands
             // Show feedback
             ShowMessage($"{companion.GetDisplayName()}: Coming!");
             CompanionChatHelper.QuickMessages.MovingToPosition(companion);
-            
-            // Play alert animation
-            var zanim = companion.GetComponent<ZSyncAnimation>();
-            zanim?.SetTrigger("alert");
-            
+
             if (VerboseLogging)
                 Debug.Log($"[CompanionCommandCoordinator] Whistled {companion.companionName} to {standPosition}, staying for {whistleStayDuration}s");
         }

@@ -20,30 +20,38 @@ namespace FiresCore.Npc.Archetypes
         private const string RpcApplySelfBuff = "RPC_CompanionSelfBuff";
         private const string RpcApplyAoeEffect = "RPC_CompanionAoEEffect";
         private const string RpcSpawnFX = "RPC_CompanionSpawnFX";
-        
-        private static bool _initialized = false;
-        
+        private const string RpcRemoveSelfBuff = "RPC_CompanionRemoveSelfBuff";
+
+        private static ZRoutedRpc _registeredOn;
+
         /// <summary>
-        /// Initializes the RPC handlers. Call this during game startup.
+        /// Registers the RPC handlers on the current session's ZRoutedRpc. ZNet rebuilds ZRoutedRpc every session, so
+        /// this runs from the ZNet.Start postfix (TamedCompanionZoneLoader); repeat calls within a session are no-ops.
         /// </summary>
         public static void Initialize()
         {
-            if (_initialized) return;
-            if (ZRoutedRpc.instance == null) return;
-            
-            // Register RPC handlers
-            ZRoutedRpc.instance.Register<ZDOID, string, float, float>(RpcApplyGroupBuff, RPC_HandleGroupBuff);
-            ZRoutedRpc.instance.Register<ZDOID, ZDOID, string, float>(RpcApplySingleEffect, RPC_HandleSingleEffect);
-            ZRoutedRpc.instance.Register<ZDOID, string, float>(RpcApplySelfBuff, RPC_HandleSelfBuff);
-            ZRoutedRpc.instance.Register<ZDOID, string, float, float>(RpcApplyAoeEffect, RPC_HandleAoEEffect);
-            ZRoutedRpc.instance.Register<Vector3, string, float>(RpcSpawnFX, RPC_HandleSpawnFX);
-            
-            _initialized = true;
-            
+            var rpc = ZRoutedRpc.instance;
+            if (rpc == null || ReferenceEquals(_registeredOn, rpc)) return;
+
+            TryRegister(() => rpc.Register<ZDOID, string, float, float>(RpcApplyGroupBuff, RPC_HandleGroupBuff), RpcApplyGroupBuff);
+            TryRegister(() => rpc.Register<ZDOID, ZDOID, string, float>(RpcApplySingleEffect, RPC_HandleSingleEffect), RpcApplySingleEffect);
+            TryRegister(() => rpc.Register<ZDOID, string, float>(RpcApplySelfBuff, RPC_HandleSelfBuff), RpcApplySelfBuff);
+            TryRegister(() => rpc.Register<ZDOID, string, float, float>(RpcApplyAoeEffect, RPC_HandleAoEEffect), RpcApplyAoeEffect);
+            TryRegister(() => rpc.Register<Vector3, string, float>(RpcSpawnFX, RPC_HandleSpawnFX), RpcSpawnFX);
+            TryRegister(() => rpc.Register<ZDOID, string>(RpcRemoveSelfBuff, RPC_HandleRemoveSelfBuff), RpcRemoveSelfBuff);
+
+            _registeredOn = rpc;
+
             if (VerboseLogging)
             {
                 Debug.Log("[AbilityRPCManager] Initialized RPC handlers for companion abilities");
             }
+        }
+
+        private static void TryRegister(System.Action register, string rpcName)
+        {
+            try { register(); }
+            catch (System.Exception ex) { Debug.LogWarning($"[AbilityRPCManager] Could not register {rpcName}: {ex.Message}"); }
         }
         
         #region Public API - Send RPCs
@@ -80,7 +88,7 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Apply locally and return count
-            return ApplyGroupBuffLocal(source, effectName, range, duration);
+            using (AbilityFXManager.LocalCopies()) return ApplyGroupBuffLocal(source, effectName, range, duration);
         }
         
         /// <summary>
@@ -114,7 +122,7 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Apply locally
-            return ApplySingleEffectLocal(source, target, effectName, duration);
+            using (AbilityFXManager.LocalCopies()) return ApplySingleEffectLocal(source, target, effectName, duration);
         }
         
         /// <summary>
@@ -144,9 +152,20 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Apply locally
-            return ApplySelfBuffLocal(target, effectName, duration);
+            using (AbilityFXManager.LocalCopies()) return ApplySelfBuffLocal(target, effectName, duration);
         }
         
+        /// <summary>Removes a self-buff (for example a passive the companion's new archetype does not have) on every client.</summary>
+        public static void RemoveSelfBuff(Character target, string effectName)
+        {
+            if (target == null) return;
+            var nview = target.GetComponent<ZNetView>();
+            if (nview == null || !nview.IsValid()) return;
+
+            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RpcRemoveSelfBuff, nview.GetZDO().m_uid, effectName);
+            StatusEffectManager.RemoveEffect(target, effectName);
+        }
+
         /// <summary>
         /// Applies an AoE effect to enemies in range. Synced via RPC.
         /// </summary>
@@ -175,7 +194,7 @@ namespace FiresCore.Npc.Archetypes
             }
             
             // Apply locally and return count
-            return ApplyAoEEffectLocal(source, effectName, range, duration);
+            using (AbilityFXManager.LocalCopies()) return ApplyAoEEffectLocal(source, effectName, range, duration);
         }
         
         /// <summary>
@@ -192,7 +211,7 @@ namespace FiresCore.Npc.Archetypes
                 position, effectName, scale);
 
             // Spawn locally
-            AbilityFXManager.SpawnEffect(effectName, position, null, scale);
+            using (AbilityFXManager.LocalCopies()) AbilityFXManager.SpawnEffect(effectName, position, null, scale);
         }
         
         #endregion
@@ -207,7 +226,7 @@ namespace FiresCore.Npc.Archetypes
             // Check if we're the sender - if so, we already applied locally
             if (ZNet.instance != null && ZNet.GetUID() == sender) return;
             
-            ApplyGroupBuffLocal(source, effectName, range, duration);
+            using (AbilityFXManager.LocalCopies()) ApplyGroupBuffLocal(source, effectName, range, duration);
             
             if (VerboseLogging)
             {
@@ -224,7 +243,7 @@ namespace FiresCore.Npc.Archetypes
             // Check if we're the sender
             if (ZNet.instance != null && ZNet.GetUID() == sender) return;
             
-            ApplySingleEffectLocal(source, target, effectName, duration);
+            using (AbilityFXManager.LocalCopies()) ApplySingleEffectLocal(source, target, effectName, duration);
             
             if (VerboseLogging)
             {
@@ -240,7 +259,7 @@ namespace FiresCore.Npc.Archetypes
             // Check if we're the sender
             if (ZNet.instance != null && ZNet.GetUID() == sender) return;
             
-            ApplySelfBuffLocal(target, effectName, duration);
+            using (AbilityFXManager.LocalCopies()) ApplySelfBuffLocal(target, effectName, duration);
             
             if (VerboseLogging)
             {
@@ -248,6 +267,14 @@ namespace FiresCore.Npc.Archetypes
             }
         }
         
+        private static void RPC_HandleRemoveSelfBuff(long sender, ZDOID targetId, string effectName)
+        {
+            if (ZNet.instance != null && ZNet.GetUID() == sender) return;
+            var target = FindCharacterByZDOID(targetId);
+            if (target == null) return;
+            StatusEffectManager.RemoveEffect(target, effectName);
+        }
+
         private static void RPC_HandleAoEEffect(long sender, ZDOID sourceId, string effectName, float range, float duration)
         {
             var source = FindCharacterByZDOID(sourceId);
@@ -256,7 +283,7 @@ namespace FiresCore.Npc.Archetypes
             // Check if we're the sender
             if (ZNet.instance != null && ZNet.GetUID() == sender) return;
             
-            ApplyAoEEffectLocal(source, effectName, range, duration);
+            using (AbilityFXManager.LocalCopies()) ApplyAoEEffectLocal(source, effectName, range, duration);
             
             if (VerboseLogging)
             {
@@ -269,7 +296,7 @@ namespace FiresCore.Npc.Archetypes
             // Check if we're the sender
             if (ZNet.instance != null && ZNet.GetUID() == sender) return;
             
-            AbilityFXManager.SpawnEffect(effectName, position, null, scale);
+            using (AbilityFXManager.LocalCopies()) AbilityFXManager.SpawnEffect(effectName, position, null, scale);
         }
         
         #endregion
@@ -609,7 +636,27 @@ namespace FiresCore.Npc.Archetypes
                 case StatusEffectManager.EFFECT_SLOWDOWN:
                     success = StatusEffectManager.ApplySlowdown(target, duration, 0.5f, source);
                     break;
-                    
+
+                // Permanent passives (duration 0)
+                case StatusEffectManager.EFFECT_IRON_WALL:
+                    success = ApplyEffectDirect<StatusEffects.Expert.IronWallEffect>(target, effectName, duration, source);
+                    break;
+                case StatusEffectManager.EFFECT_UNYIELDING:
+                    success = ApplyEffectDirect<StatusEffects.Master.UnyieldingEffect>(target, effectName, duration, source);
+                    break;
+                case StatusEffectManager.EFFECT_EXECUTE:
+                    success = ApplyEffectDirect<StatusEffects.Expert.ExecuteEffect>(target, effectName, duration, source);
+                    break;
+                case StatusEffectManager.EFFECT_RAMPAGE:
+                    success = ApplyEffectDirect<StatusEffects.Expert.RampageEffect>(target, effectName, duration, source);
+                    break;
+                case StatusEffectManager.EFFECT_DEATH_WISH:
+                    success = ApplyEffectDirect<StatusEffects.Master.DeathWishEffect>(target, effectName, duration, source);
+                    break;
+                case StatusEffectManager.EFFECT_CHAIN_CASTING:
+                    success = ApplyEffectDirect<StatusEffects.Expert.ChainCastingEffect>(target, effectName, duration, source);
+                    break;
+
                 default:
                     if (VerboseLogging)
                     {

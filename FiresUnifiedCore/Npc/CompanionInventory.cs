@@ -60,6 +60,10 @@ namespace FiresCore.Npc
         // Stack counts for equipped items (throwables/bombs deplete per attack). Absent slot = 1.
         private readonly Dictionary<EquipmentSlot, int> _equipStacks = new Dictionary<EquipmentSlot, int>();
 
+        // Durability read back from the ZDO, applied when the slot's item is rebuilt from its prefab.
+        private readonly Dictionary<EquipmentSlot, float> _loadedDurability = new Dictionary<EquipmentSlot, float>();
+        private const float DurabilityUnset = -1f;
+
         private ZNetView _nview;
         private Inventory _inventory; // General storage inventory
   private CompanionController _companion;
@@ -344,6 +348,17 @@ namespace FiresCore.Npc
         {
 EnsureInitialized();
             return _inventory;
+        }
+
+        /// <summary>The first carried ammo that fits the weapon (arrows for bows, bolts for crossbows), like vanilla's ammo pick.</summary>
+        public ItemDrop.ItemData FindAmmoFor(ItemDrop.ItemData weapon)
+        {
+            string ammoType = weapon?.m_shared?.m_ammoType;
+            if (string.IsNullOrEmpty(ammoType)) return null;
+            return GetStorageInventory()?.GetAllItems().FirstOrDefault(item =>
+                item.m_shared.m_ammoType == ammoType
+                && (item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Ammo || item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.AmmoNonEquipable)
+                && item.m_shared.m_attack?.m_attackProjectile != null);
         }
 
 /// <summary>
@@ -897,6 +912,14 @@ case ItemDrop.ItemData.ItemType.Utility:
             return _equipStacks.TryGetValue(slot, out var stack) ? Mathf.Max(1, stack) : 1;
         }
 
+        /// <summary>The equipped item's durability, or <see cref="DurabilityUnset"/> when the slot is empty or the
+        /// item doesn't wear. Gear wears in combat (CompanionStatHooks) and is repaired at a workbench, so it persists.</summary>
+        private float GetEquipmentDurability(EquipmentSlot slot)
+        {
+            var item = GetEquippedItem(slot);
+            return item != null && item.m_shared != null && item.m_shared.m_useDurability ? item.m_durability : DurabilityUnset;
+        }
+
         /// <summary>
         /// Updates the persisted stack count for an equipped slot (consumable throwables deplete per
         /// attack). Clamps to 1 — depleting the last one goes through UnequipSlot, not a zero stack.
@@ -1320,23 +1343,25 @@ string inventoryData = zdo.GetString("companion_inventory", "");
                     try
                     {
                         var equipmentPackage = new ZPackage(packedEquip);
-                        int version = equipmentPackage.ReadInt(); // 1 = name+quality, 2 = +stack
+                        int version = equipmentPackage.ReadInt(); // 1 = name+quality, 2 = +stack, 3 = +durability
                         _equipStacks.Clear();
-                        int ReadStack(EquipmentSlot slot)
+                        _loadedDurability.Clear();
+                        void ReadSlot(EquipmentSlot slot)
                         {
                             int stack = version >= 2 ? equipmentPackage.ReadInt() : 1;
                             if (stack > 1) _equipStacks[slot] = stack;
-                            return stack;
+                            float durability = version >= 3 ? equipmentPackage.ReadSingle() : DurabilityUnset;
+                            if (durability >= 0f) _loadedDurability[slot] = durability;
                         }
-                        _equipHelmet     = equipmentPackage.ReadString(); _equipHelmetQuality     = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.Helmet);
-                        _equipChest      = equipmentPackage.ReadString(); _equipChestQuality      = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.Chest);
-                        _equipLegs       = equipmentPackage.ReadString(); _equipLegsQuality       = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.Legs);
-                        _equipShoulder   = equipmentPackage.ReadString(); _equipShoulderQuality   = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.Shoulder);
-                        _equipUtility    = equipmentPackage.ReadString(); _equipUtilityQuality    = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.Utility);
-                        _equipRightHand  = equipmentPackage.ReadString(); _equipRightHandQuality  = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.RightHand);
-                        _equipLeftHand   = equipmentPackage.ReadString(); _equipLeftHandQuality   = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.LeftHand);
-                        _equipRightBack  = equipmentPackage.ReadString(); _equipRightBackQuality  = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.RightBack);
-                        _equipLeftBack   = equipmentPackage.ReadString(); _equipLeftBackQuality   = equipmentPackage.ReadInt(); ReadStack(EquipmentSlot.LeftBack);
+                        _equipHelmet     = equipmentPackage.ReadString(); _equipHelmetQuality     = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.Helmet);
+                        _equipChest      = equipmentPackage.ReadString(); _equipChestQuality      = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.Chest);
+                        _equipLegs       = equipmentPackage.ReadString(); _equipLegsQuality       = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.Legs);
+                        _equipShoulder   = equipmentPackage.ReadString(); _equipShoulderQuality   = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.Shoulder);
+                        _equipUtility    = equipmentPackage.ReadString(); _equipUtilityQuality    = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.Utility);
+                        _equipRightHand  = equipmentPackage.ReadString(); _equipRightHandQuality  = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.RightHand);
+                        _equipLeftHand   = equipmentPackage.ReadString(); _equipLeftHandQuality   = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.LeftHand);
+                        _equipRightBack  = equipmentPackage.ReadString(); _equipRightBackQuality  = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.RightBack);
+                        _equipLeftBack   = equipmentPackage.ReadString(); _equipLeftBackQuality   = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.LeftBack);
                         loadedFromPacked = true;
                     }
                     catch (Exception ex)
@@ -1460,6 +1485,7 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
            itemData.m_quality = quality;
            itemData.m_stack = Mathf.Max(1, stack);
           itemData.m_dropPrefab = itemPrefab; // Important for visual equipment
+          if (_loadedDurability.TryGetValue(slot, out float savedDurability)) itemData.m_durability = savedDurability;
           
      // CRITICAL: Clamp m_variant to prevent IndexOutOfRangeException in GetIcon()
      if (itemData.m_shared?.m_icons != null && itemData.m_shared.m_icons.Length > 0)
@@ -1605,9 +1631,6 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
 
             var visualEquipment = GetEquipmentDataForVisuals();
             _visEquipment.ApplyEquipment(visualEquipment);
-
-            var weaponScaler = GetComponent<CompanionWeaponScaler>();
-            weaponScaler?.ClearTrackedInstances();
         }
         
         /// <summary>
@@ -1844,16 +1867,16 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
                 // N items" warning threshold during world saves).
                 {
                     var equipmentPackage = new ZPackage();
-                    equipmentPackage.Write(2); // version, for future schema changes (2 = +stack per slot)
-                    equipmentPackage.Write(_equipHelmet ?? "");      equipmentPackage.Write(_equipHelmetQuality);    equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Helmet));
-                    equipmentPackage.Write(_equipChest ?? "");       equipmentPackage.Write(_equipChestQuality);     equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Chest));
-                    equipmentPackage.Write(_equipLegs ?? "");        equipmentPackage.Write(_equipLegsQuality);      equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Legs));
-                    equipmentPackage.Write(_equipShoulder ?? "");    equipmentPackage.Write(_equipShoulderQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Shoulder));
-                    equipmentPackage.Write(_equipUtility ?? "");     equipmentPackage.Write(_equipUtilityQuality);   equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Utility));
-                    equipmentPackage.Write(_equipRightHand ?? "");   equipmentPackage.Write(_equipRightHandQuality); equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.RightHand));
-                    equipmentPackage.Write(_equipLeftHand ?? "");    equipmentPackage.Write(_equipLeftHandQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.LeftHand));
-                    equipmentPackage.Write(_equipRightBack ?? "");   equipmentPackage.Write(_equipRightBackQuality); equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.RightBack));
-                    equipmentPackage.Write(_equipLeftBack ?? "");    equipmentPackage.Write(_equipLeftBackQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.LeftBack));
+                    equipmentPackage.Write(3); // version (2 = +stack per slot, 3 = +durability per slot)
+                    equipmentPackage.Write(_equipHelmet ?? "");      equipmentPackage.Write(_equipHelmetQuality);    equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Helmet));    equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.Helmet));
+                    equipmentPackage.Write(_equipChest ?? "");       equipmentPackage.Write(_equipChestQuality);     equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Chest));     equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.Chest));
+                    equipmentPackage.Write(_equipLegs ?? "");        equipmentPackage.Write(_equipLegsQuality);      equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Legs));      equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.Legs));
+                    equipmentPackage.Write(_equipShoulder ?? "");    equipmentPackage.Write(_equipShoulderQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Shoulder));  equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.Shoulder));
+                    equipmentPackage.Write(_equipUtility ?? "");     equipmentPackage.Write(_equipUtilityQuality);   equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Utility));   equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.Utility));
+                    equipmentPackage.Write(_equipRightHand ?? "");   equipmentPackage.Write(_equipRightHandQuality); equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.RightHand)); equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.RightHand));
+                    equipmentPackage.Write(_equipLeftHand ?? "");    equipmentPackage.Write(_equipLeftHandQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.LeftHand));  equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.LeftHand));
+                    equipmentPackage.Write(_equipRightBack ?? "");   equipmentPackage.Write(_equipRightBackQuality); equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.RightBack)); equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.RightBack));
+                    equipmentPackage.Write(_equipLeftBack ?? "");    equipmentPackage.Write(_equipLeftBackQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.LeftBack));  equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.LeftBack));
                     zdo.Set("companion_equipment", equipmentPackage.GetBase64());
                 }
 

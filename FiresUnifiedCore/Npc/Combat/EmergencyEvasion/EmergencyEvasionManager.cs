@@ -34,6 +34,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         // Damage/healing values (scaled by level)
         private const float BaseAoeDamage = 30f;
         private const float BaseHealing = 25f;
+        private const float FireEvasionGroundSeconds = 3f;
         
         #endregion
         
@@ -447,13 +448,13 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             TeleportTo(destination);
             
             // VFX at destination
-            SpawnVFX("vfx_spiritbolt_explosion", destination);
+            SpawnVFX("vfx_ghost_hit", destination);
             
             // Deal AoE damage at origin (enemies only)
             DealAoEDamage(origin, 4f, GetScaledDamage(BaseAoeDamage), false);
             
             // Spawn damage VFX at origin
-            SpawnVFX("vfx_fireball_explosion", origin);
+            SpawnVFX("fx_fireball_staff_explosion", origin);
             
             yield return new WaitForSeconds(0.3f);
         }
@@ -469,7 +470,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             
             // VFX at origin (demonic teleport out)
             SpawnVFX("vfx_ghost_death", origin);
-            SpawnVFX("vfx_spray_fire", origin);
+            SpawnVFX("vfx_FireballHit", origin);
             
             // Brief delay
             yield return new WaitForSeconds(0.1f);
@@ -764,7 +765,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private IEnumerator ExecuteDivineRetreat(Vector3 origin)
         {
             // Blinding flash
-            SpawnVFX("vfx_spiritbolt_explosion", origin);
+            SpawnVFX("vfx_ghost_hit", origin);
             SpawnVFX("fx_shield_start", origin);
             
             // Apply blind/stagger to nearby enemies
@@ -790,7 +791,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             transform.position = destination;
             
             // Arrival VFX
-            SpawnVFX("vfx_spiritbolt_explosion", destination);
+            SpawnVFX("vfx_ghost_hit", destination);
             
             yield return new WaitForSeconds(0.1f);
         }
@@ -1092,76 +1093,19 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// <summary>
         /// Spawns VFX at position.
         /// </summary>
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    UnityEngine.Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch (Exception ex)
-            {
-                if (VerboseLogging)
-                    Debug.LogWarning($"[EmergencyEvasion] Failed to spawn VFX {prefabName}: {ex.Message}");
-            }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
         
         /// <summary>
-        /// Spawns the Fader Fire AOE (continuous fire damage zone).
+        /// Burning ground left behind by the fire evasion. The damage runs here on the owner: vanilla's fire Aoe prefabs
+        /// (Fader_DroppedFire_AOE) are trigger AoEs that damage on every client and have no owner on remote ones, so
+        /// they would burn other players.
         /// </summary>
         private void SpawnFaderFireAOE(Vector3 position)
         {
-            try
-            {
-                // Try to spawn the Fader's fire AOE effect
-                string[] fireAoePrefabs = { "Fader_fire_aoe", "vfx_fire_aoe", "fx_Fader_fire", "Fader_fireball_projectile" };
-                
-                foreach (var prefabName in fireAoePrefabs)
-                {
-                    var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                    if (prefab != null)
-                    {
-                        var fireObj = UnityEngine.Object.Instantiate(prefab, position, Quaternion.identity);
-                        
-                        // Configure the AOE to not hit friendlies
-                        var aoe = fireObj.GetComponent<Aoe>();
-                        if (aoe != null)
-                        {
-                            aoe.m_hitFriendly = false;
-                            aoe.m_hitOwner = false;
-                            aoe.m_hitSame = false;
-                            aoe.m_hitEnemy = true;
-                            
-                            // Scale damage
-                            float damageMultiplier = GetLevelScaling();
-                            aoe.m_damage.m_fire *= damageMultiplier;
-                        }
-                        
-                        if (VerboseLogging)
-                            Debug.Log($"[EmergencyEvasion] Spawned Fader Fire AOE: {prefabName}");
-                        return;
-                    }
-                }
-                
-                // Fallback: spawn multiple fire VFX to simulate the effect
-                SpawnVFX("vfx_spray_fire", position);
-                SpawnVFX("vfx_fireball_explosion", position);
-                
-                // Deal fire damage over time manually
-                StartCoroutine(SimulateFaderFireAOE(position, 3f));
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[EmergencyEvasion] Failed to spawn Fader Fire AOE: {ex.Message}");
-            }
+            SpawnVFX("fx_fireball_staff_explosion", position);
+            StartCoroutine(SimulateFaderFireAOE(position, FireEvasionGroundSeconds));
         }
-        
-        /// <summary>
-        /// Simulates the Fader Fire AOE if prefab not found.
-        /// </summary>
+
         private IEnumerator SimulateFaderFireAOE(Vector3 position, float duration)
         {
             float elapsed = 0f;
@@ -1174,7 +1118,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 DealAoEDamage(position, 4f, damagePerTick, false, HitData.DamageType.Fire);
                 
                 // Fire VFX
-                SpawnVFX("vfx_spray_fire", position + UnityEngine.Random.insideUnitSphere * 1.5f);
+                SpawnVFX("vfx_FireballHit", position + UnityEngine.Random.insideUnitSphere * 1.5f);
                 
                 elapsed += tickInterval;
                 yield return new WaitForSeconds(tickInterval);
@@ -1343,7 +1287,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             target.Damage(hitData);
             
             // Arrow hit VFX
-            SpawnVFX("fx_arrow_hit", target.transform.position);
+            SpawnVFX("vfx_arrowhit", target.transform.position);
         }
         
         /// <summary>

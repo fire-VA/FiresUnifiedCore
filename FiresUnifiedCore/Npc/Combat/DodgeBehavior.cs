@@ -185,8 +185,9 @@ private float _strafeTimer;
                 float skillFactor = skills.GetSkillFactor(Skills.SkillType.Jump);
                 baseCost *= (1f - skillFactor * 0.25f); // Up to 25% reduction at max skill
             }
-            
-            return baseCost;
+
+            var stats = _context?.Companion?.GetStats();
+            return stats != null ? stats.ModifyDodgeStaminaCost(baseCost) : baseCost;
         }
 
     /// <summary>
@@ -705,8 +706,6 @@ FaceTarget(target);
             PlayDodgeAnimation();
             ApplyDodgeForce(dodgeDir, 3f);
 
-            _context.BroadcastRPC("RPC_CompanionDodge");
-
             if (CompanionCombat.VerboseLogging)
                 Debug.Log($"[DodgeBehavior] Melee dodge from {threat.m_name}, direction: {dodgeDir}");
 
@@ -765,8 +764,6 @@ FaceTarget(target);
 
         PlayDodgeAnimation();
             ApplyDodgeForce(dodgeDir, 5f);
-
-        _context.BroadcastRPC("RPC_CompanionDodge");
 
             if (CompanionCombat.VerboseLogging)
             Debug.Log($"[DodgeBehavior] Ranged retreat dodge from {threat.m_name}, direction: {dodgeDir}");
@@ -830,20 +827,6 @@ FaceTarget(target);
       if (CompanionCombat.VerboseLogging)
      Debug.Log("[DodgeBehavior] Dodge complete - entering MUST SHOOT state");
         }
-
-        public void HandleDodgeRPC()
-        {
-     if (_context.NView != null && _context.NView.IsOwner()) return;
-
-            if (_context.ZAnim != null)
-            {
- _context.ZAnim.SetTrigger("dodge");
-   }
-            else if (_context.Animator != null && _context.HasAnimatorParameter("dodge"))
-            {
- _context.Animator.SetTrigger("dodge");
-    }
-    }
 
         public bool IsInMustShootState()
         {
@@ -966,9 +949,7 @@ FaceTarget(target);
             
             PlayDodgeAnimation();
             ApplyDodgeForce(perpendicular, 4f);
-            
-            _context.BroadcastRPC("RPC_CompanionDodge");
-            
+
             if (CompanionCombat.VerboseLogging)
             {
                 Debug.Log($"[DodgeBehavior] Dodging projectile! TimeToImpact: {_projectileTimeToImpact:F2}s, Direction: {perpendicular}");

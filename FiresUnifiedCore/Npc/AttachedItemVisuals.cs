@@ -40,7 +40,9 @@ namespace FiresCore.Npc
         private static void HandleAttached(VisEquipment visEquipment, int itemHash, GameObject instance)
         {
             if (visEquipment == null) return;
-            if (visEquipment.GetComponent<NpcVisEquipment>() == null) return;
+            var npcVisEquipment = visEquipment.GetComponent<NpcVisEquipment>();
+            if (npcVisEquipment == null) return;
+            npcVisEquipment.ScheduleHeadAttachmentCheck();
 
             GameObject itemPrefab = ObjectDB.instance != null ? ObjectDB.instance.GetItemPrefab(itemHash) : null;
             string itemName = itemPrefab != null ? itemPrefab.name : itemHash.ToString();

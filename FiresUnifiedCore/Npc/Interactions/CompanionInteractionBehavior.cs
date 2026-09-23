@@ -3,6 +3,8 @@ using System;
 using System.Collections.Generic;
 using FiresCore.Npc.Movement;
 using FiresCore.Npc.IdleBehaviors;
+using FiresCore.Npc.Animation;
+using FiresCore.Npc.Core;
 
 namespace FiresCore.Npc.Interactions
 {
@@ -77,6 +79,11 @@ namespace FiresCore.Npc.Interactions
         // Whether this attachment was commanded by the player (should not auto-detach when owner moves)
         private bool _isCommandedAttachment;
 
+        // Where the owner stood when this attachment began — CompanionLeash.ShouldBreakForFollow measures their
+        // displacement from it to decide when a follower has to get up.
+        private Vector3 _ownerAnchor;
+        private float _lastFollowBreakCheck;
+
         // Kinematic state before attachment — restored on Detach so normal movement resumes
         private RigidbodyConstraints _preAttachConstraints;
 
@@ -91,10 +98,12 @@ namespace FiresCore.Npc.Interactions
         private float _boardedShipTime;
         private bool _isOnShip;
 
-        // Mecanim trigger the looping-emote state machine watches for to
-        // exit; required for the reflection fallback path below where
-        // _stateController is null and ForceStopEmote can't run.
-        private static readonly int EmoteStopTriggerHash = Animator.StringToHash("emote_stop");
+        // The pose bool AttachTo set; Detach clears exactly this one, as vanilla Player.AttachStop does.
+        private string _currentAttachAnimation;
+
+        private const string MastAttachAnimation = "attach_mast";
+        private const string BedAttachAnimation = "attach_bed";
+        private static readonly Vector3 BedDetachOffset = new Vector3(0f, 0.5f, 0f);
 
         public static bool VerboseLogging = false;
 
@@ -301,11 +310,11 @@ namespace FiresCore.Npc.Interactions
             // Try mast first if preferred
             if (preferMast)
             {
-                var mastAttach = FindShipMastAttach(_currentShip);
-                if (mastAttach != null && !IsAttachPointOccupied(mastAttach))
+                var holdfast = FindShipHoldfast(_currentShip, owner);
+                if (holdfast != null)
                 {
                     // Ship attachments are auto-behavior, not commanded
-                    return AttachTo(mastAttach, "attach_mast", Vector3.zero, AttachType.ShipMast, _currentShip.gameObject, isCommanded: false);
+                    return AttachTo(holdfast.m_attachPoint, holdfast.m_attachAnimation, holdfast.m_detachOffset, AttachType.ShipMast, _currentShip.gameObject, isCommanded: false);
                 }
             }
 
@@ -320,32 +329,27 @@ namespace FiresCore.Npc.Interactions
             // If no mast preference, try mast as fallback
             if (!preferMast)
             {
-                var mastAttach = FindShipMastAttach(_currentShip);
-                if (mastAttach != null && !IsAttachPointOccupied(mastAttach))
+                var holdfast = FindShipHoldfast(_currentShip, owner);
+                if (holdfast != null)
                 {
-                    return AttachTo(mastAttach, "attach_mast", Vector3.zero, AttachType.ShipMast, _currentShip.gameObject, isCommanded: false);
+                    return AttachTo(holdfast.m_attachPoint, holdfast.m_attachAnimation, holdfast.m_detachOffset, AttachType.ShipMast, _currentShip.gameObject, isCommanded: false);
                 }
             }
 
             return false;
         }
 
-        private Transform FindShipMastAttach(Ship ship)
+        /// <summary>The mast holdfast is a Chair on the ship whose pose is attach_mast ($ship_holdfast); Ship.m_mastObject
+        /// has no attach point of its own, so its root pinned companions inside the mast.</summary>
+        private Chair FindShipHoldfast(Ship ship, Player owner)
         {
-            if (ship.m_mastObject == null) return null;
-
-            // Look for attach point on or near mast
-            var mastTransform = ship.m_mastObject.transform;
-            
-            // Check for explicit attach point
-            var attachPoint = mastTransform.Find("attach_point") ?? 
-                              mastTransform.Find("Attach") ??
-                              mastTransform.Find("MastAttach");
-
-            if (attachPoint != null) return attachPoint;
-
-            // Use mast base as fallback
-            return mastTransform;
+            foreach (var chair in ship.GetComponentsInChildren<Chair>(true))
+            {
+                if (chair.m_attachPoint == null || chair.m_attachAnimation != MastAttachAnimation) continue;
+                if (owner != null && IsPlayerAttachedTo(owner, chair.m_attachPoint)) continue;
+                if (!IsAttachPointOccupied(chair.m_attachPoint)) return chair;
+            }
+            return null;
         }
 
         private (Transform attachPoint, string animation, Vector3 detachOffset)? FindAvailableShipSeat(Ship ship, Player owner)
@@ -366,41 +370,9 @@ namespace FiresCore.Npc.Interactions
                 }
             }
 
-            // Look for generic attach points
-            var attachPoints = new List<Transform>();
-            FindAttachPointsRecursive(ship.transform, attachPoints);
-
-            foreach (var attachPoint in attachPoints)
-            {
-                // Skip ship controls
-                if (attachPoint.name.ToLowerInvariant().Contains("control")) continue;
-                if (attachPoint.name.ToLowerInvariant().Contains("rudder")) continue;
-                
-                // Skip if owner is here
-                if (owner != null && IsPlayerNearPoint(owner, attachPoint.position, 0.5f))
-                    continue;
-
-                if (!IsAttachPointOccupied(attachPoint))
-                {
-                    string anim = attachPoint.name.ToLowerInvariant().Contains("stool") ? "attach_stool" : "attach_chair";
-                    return (attachPoint, anim, Vector3.zero);
-                }
-            }
-
+            // Vanilla ships seat through Chair components only (benches: attach_sitship, holdfasts: attach_mast and
+            // attach_dragon); name-matched children picked rope anchors metres up the mast.
             return null;
-        }
-
-        private void FindAttachPointsRecursive(Transform parent, List<Transform> results)
-        {
-            foreach (Transform child in parent)
-            {
-                string name = child.name.ToLowerInvariant();
-                if (name.Contains("attach") || name.Contains("seat"))
-                {
-                    results.Add(child);
-                }
-                FindAttachPointsRecursive(child, results);
-            }
         }
 
         #endregion
@@ -442,31 +414,8 @@ namespace FiresCore.Npc.Interactions
             _ownerWasSitting = ownerSitting;
         }
 
-        private bool IsCharacterAttached(Character character)
-        {
-            if (character == null) return false;
-            
-            // Check if character is attached (sitting/lying)
-            try
-            {
-                var attachedField = typeof(Character).GetField("m_attached", 
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (attachedField != null)
-                {
-                    return (bool)attachedField.GetValue(character);
-                }
-            }
-            catch { }
-
-            // Fallback: check animator state
-            var animator = character.GetComponentInChildren<Animator>();
-            if (animator != null)
-            {
-                return animator.GetBool("sitting");
-            }
-
-            return false;
-        }
+        // m_attached lives on Player, not Character; Player.IsAttached is public.
+        private static bool IsCharacterAttached(Character character) => character is Player player && player.IsAttached();
 
         private bool TryFindAndSitNearOwner(Player owner)
         {
@@ -621,50 +570,24 @@ namespace FiresCore.Npc.Interactions
                 }
 
                 // Beds are the only non-chair attach target. Accepting any interactable with an "attach" or "seat" child
-                // sat companions on item stands, cooking and crafting stations, and fireplaces.
-                if (chair == null && collider.GetComponentInParent<Bed>() != null)
+                // sat companions on item stands, cooking and crafting stations, and fireplaces. Vanilla Bed.Interact
+                // lies the sleeper on m_spawnPoint with a (0, 0.5, 0) detach offset.
+                var bed = chair == null ? collider.GetComponentInParent<Bed>() : null;
+                if (bed != null && bed.m_spawnPoint != null && !IsAttachPointOccupied(bed.m_spawnPoint))
                 {
-                    var attachPoint = FindAttachPointInObject(collider.gameObject);
-                    if (attachPoint != null && !IsAttachPointOccupied(attachPoint))
-                    {
-                        if (excludeOwnerSeat != null && IsPlayerNearPoint(excludeOwnerSeat, attachPoint.position, 0.5f))
-                            continue;
+                    if (excludeOwnerSeat != null && IsPlayerAttachedTo(excludeOwnerSeat, bed.m_spawnPoint))
+                        continue;
 
-                        float dist = Vector3.Distance(searchCenter, attachPoint.position);
-                        if (dist < nearestDist)
-                        {
-                            nearestDist = dist;
-                            nearest = (attachPoint, "attach_bed", Vector3.zero, AttachType.Bed, collider.gameObject);
-                        }
+                    float dist = Vector3.Distance(searchCenter, bed.m_spawnPoint.position);
+                    if (dist < nearestDist)
+                    {
+                        nearestDist = dist;
+                        nearest = (bed.m_spawnPoint, BedAttachAnimation, BedDetachOffset, AttachType.Bed, bed.gameObject);
                     }
                 }
             }
 
             return nearest;
-        }
-
-        private Transform FindAttachPointInObject(GameObject obj)
-        {
-            // Look for common attach point names
-            string[] attachNames = { "attach_point", "attach", "Attach", "AttachPoint", "seat", "Seat" };
-            
-            foreach (var name in attachNames)
-            {
-                var found = obj.transform.Find(name);
-                if (found != null) return found;
-            }
-
-            // Search recursively
-            foreach (Transform child in obj.transform)
-            {
-                string childName = child.name.ToLowerInvariant();
-                if (childName.Contains("attach") || childName.Contains("seat"))
-                {
-                    return child;
-                }
-            }
-
-            return null;
         }
 
         private AttachType DetermineChairType(Chair chair)
@@ -840,6 +763,7 @@ namespace FiresCore.Npc.Interactions
 
             // 6. Record state
             _isAttached            = true;
+            _currentAttachAnimation = animation;
             _isCommandedAttachment = isCommanded;
             _currentAttachObject   = sourceObject;
             _currentAttachType     = attachType;
@@ -848,6 +772,7 @@ namespace FiresCore.Npc.Interactions
             _attachHardTimeoutTime = Time.time + attachHardTimeout;
             _targetSitPosition     = attachPoint.position;
             _targetSitRotation     = attachPoint.rotation;
+            _ownerAnchor           = _companion?.GetOwner()?.transform.position ?? transform.position;
 
             LockMovementForDuration(duration);
 
@@ -918,19 +843,13 @@ namespace FiresCore.Npc.Interactions
                     _combatMovement.UnlockMovement();
                 }
 
-                // Character.AttachStop is also an EMPTY virtual on the base class
-                // (Player overrides it; Humanoid doesn't). Restore physics state
-                // ourselves before calling so movement resumes after standing.
-                // Must restore constraints BEFORE AttachStop so the character
-                // physics system can apply forces on the next FixedUpdate.
+                // Character.AttachStop is an EMPTY virtual on Humanoid, so restore physics here and release the pose
+                // the way Player.AttachStop does: the seated states (SitChair, SitThrone, SitShip, HoldDragon, SitDivan,
+                // RideLox...) exit only when their own bool goes false, so a fixed list left thrones and benches posed.
                 if (_rigidbody != null)
                 {
                     _rigidbody.constraints = _preAttachConstraints;
                     _rigidbody.useGravity  = true;
-                }
-                if (_character != null)
-                {
-                    _character.AttachStop();
                 }
 
                 // Zero out residual velocity so the companion doesn't drift after standing
@@ -940,10 +859,10 @@ namespace FiresCore.Npc.Interactions
                     _rigidbody.angularVelocity = Vector3.zero;
                 }
 
-                // Belt-and-suspenders: reset all attach animation bools in case
-                // the companion's ZSyncAnimation wasn't the one AttachStop used.
-                ResetAllAttachAnimations();
-                
+                ReleaseAttachPose();
+                if (_stateController != null)
+                    _stateController.ForceStopEmote();
+
                 // Trigger idle animation to ensure clean transition
                 StartCoroutine(TransitionToIdleCoroutine());
 
@@ -957,6 +876,7 @@ namespace FiresCore.Npc.Interactions
             finally
             {
                 _isAttached            = false;
+                _currentAttachAnimation = null;
                 _isCommandedAttachment = false;
                 _currentAttachObject   = null;
                 _currentAttachType     = AttachType.None;
@@ -970,145 +890,56 @@ namespace FiresCore.Npc.Interactions
             }
         }
         
-        /// <summary>
-        /// Resets all attach-related animation bools to ensure clean state.
-        /// CRITICAL: This must clear ALL sitting/laying/resting bools to prevent sliding.
-        /// </summary>
-        private void ResetAllAttachAnimations()
+        /// <summary>Clears exactly the pose bool AttachTo set, as vanilla Player.AttachStop does.</summary>
+        private void ReleaseAttachPose()
         {
-            // Vanilla StopEmote clears m_emoteID and the current emote bool.
-            // Call it first so the Mecanim state machine exits any active emote.
-            if (_stateController != null)
-                _stateController.ForceStopEmote();
-            else if (_character != null)
-            {
-                var method = _character.GetType().GetMethod("StopEmote",
-                    System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.Public |
-                    System.Reflection.BindingFlags.NonPublic);
-                method?.Invoke(_character, null);
-            }
-
-            // Vanilla StopEmote only knows about the tracked emote; the chair-attach
-            // bools are a separate system and must be cleared manually.
-            var zanim = GetComponent<ZSyncAnimation>();
-            if (zanim != null)
-            {
-                zanim.SetBool("attach_chair", false);
-                zanim.SetBool("attach_stool", false);
-                zanim.SetBool("attach_bed",   false);
-                zanim.SetBool("attach_mast",  false);
-                zanim.SetBool("sitting",  false);
-                zanim.SetBool("resting",  false);
-                zanim.SetBool("sleeping", false);
-            }
-
-            if (_animator != null)
-            {
-                foreach (var attachBool in new[]{"attach_chair","attach_stool","attach_bed","attach_mast",
-                                        "sitting","resting","sleeping"})
-                    if (HasAnimatorParameter(attachBool)) _animator.SetBool(attachBool, false);
-            }
+            if (string.IsNullOrEmpty(_currentAttachAnimation)) return;
+            if (_zanim != null) _zanim.SetBool(_currentAttachAnimation, false);
+            else if (_animator != null) _animator.SetBool(_currentAttachAnimation, false);
         }
-        
+
         /// <summary>
-        /// Coroutine to smoothly transition back to idle state after detaching.
+        /// Settles the body after standing up; the pose itself is already released by Detach.
         /// </summary>
         private System.Collections.IEnumerator TransitionToIdleCoroutine()
         {
-            // Wait a frame for attach stop to complete
             yield return null;
-            
-            // Reset animations again to ensure clean state
-            ResetAllAttachAnimations();
-            
-            // Wait for animation system to process
-            yield return new WaitForSeconds(0.1f);
-            
+
             // DON'T call Character.SetMoveDir() if rigidbody is kinematic
             // Character.SetMoveDir() internally sets velocity which causes Unity 6 warnings
             if (_rigidbody != null && !_rigidbody.isKinematic)
             {
-                // Safe to call SetMoveDir - rigidbody is not kinematic
                 if (_character != null)
                 {
                     _character.SetMoveDir(Vector3.zero);
                     _character.SetWalk(false);
                     _character.SetRun(false);
                 }
-                
-                // Zero velocity directly
+
                 _rigidbody.linearVelocity = Vector3.zero;
                 _rigidbody.angularVelocity = Vector3.zero;
             }
-            
-            // CRITICAL: Force full animation state reset to fix sliding/stuck legs
+
             ForceAnimationStateReset();
-            
-            // Wait a bit more then force reset again to ensure it takes
-            yield return new WaitForSeconds(0.2f);
-            ForceAnimationStateReset();
-            
+
             if (VerboseLogging)
             {
                 Debug.Log($"[CompanionInteractionBehavior] {_companion?.companionName} transitioned to idle state");
             }
         }
-        
+
         /// <summary>
-        /// Forces a complete animation state reset to fix stuck/sliding animations.
-        /// This ensures the character returns to proper idle/movement states.
-        /// CRITICAL: This MUST clear ALL possible emote/sit bools to prevent sliding.
+        /// Releases every emote and seat pose (PlayerAnimationCatalog.StopAll) and stops the body. The weapon pose
+        /// (statef/statei) and the locomotion floats belong to vanilla Humanoid and Character and are left alone.
         /// </summary>
         private void ForceAnimationStateReset()
         {
-            // Vanilla StopEmote clears m_emoteID and the active emote bool so the
-            // Mecanim state machine exits the looping emote state.
             if (_stateController != null)
                 _stateController.ForceStopEmote();
-            else if (_character != null)
-            {
-                var method = _character.GetType().GetMethod("StopEmote",
-                    System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.Public |
-                    System.Reflection.BindingFlags.NonPublic);
-                method?.Invoke(_character, null);
-            }
+            PlayerAnimationCatalog.StopAll(_zanim, _animator);
 
-            // Attach-system bools are separate from the emote system and must be
-            // cleared manually - vanilla StopEmote does not touch them.
-            string[] attachBools = {
-                "attach_chair", "attach_stool", "attach_bed", "attach_mast",
-                "sitting", "resting", "sleeping"
-            };
-
-            if (_zanim != null)
-            {
-                foreach (var attachBool in attachBools) _zanim.SetBool(attachBool, false);
-                _zanim.SetFloat("statef", 0f);
-                _zanim.SetFloat("statei", 0f);
-                _zanim.SetTrigger("idle");
-                // Required for looping-emote exit transitions; covers the
-                // _stateController == null fallback above where
-                // ForceStopEmote couldn't fire it for us.
-                _zanim.SetTrigger("emote_stop");
-            }
-
-            if (_animator != null)
-            {
-                foreach (var attachBool in attachBools)
-                    if (HasAnimatorParameter(attachBool)) _animator.SetBool(attachBool, false);
-                if (HasAnimatorParameter("forward_speed"))  _animator.SetFloat("forward_speed",  0f);
-                if (HasAnimatorParameter("sideways_speed")) _animator.SetFloat("sideways_speed", 0f);
-                if (HasAnimatorParameter("turn_speed"))     _animator.SetFloat("turn_speed",     0f);
-                if (HasAnimatorParameter("moving"))         _animator.SetBool("moving", false);
-                _animator.SetTrigger(EmoteStopTriggerHash);
-                _animator.Update(0f);
-            }
-            
             // DON'T call Character.SetMoveDir() if rigidbody is kinematic
             // Character.SetMoveDir() internally sets velocity which causes Unity 6 warnings
-            // Only call these methods when the rigidbody is NOT kinematic
             if (_rigidbody == null || !_rigidbody.isKinematic)
             {
                 if (_character != null)
@@ -1118,22 +949,6 @@ namespace FiresCore.Npc.Interactions
                     _character.SetRun(false);
                 }
             }
-            
-            // Also tell state controller to reset if available
-            if (_stateController != null)
-            {
-                _stateController.ForceStopEmote();
-            }
-        }
-        
-        private bool HasAnimatorParameter(string paramName)
-        {
-            if (_animator == null) return false;
-            foreach (var param in _animator.parameters)
-            {
-                if (param.name == paramName) return true;
-            }
-            return false;
         }
 
         private void UpdateAttachment()
@@ -1221,8 +1036,20 @@ namespace FiresCore.Npc.Interactions
                 }
             }
 
-            // A seated companion ignores follow distance; it only stands for a player command, combat, its sit
-            // timeout, or its chair unloading with the zone. Stay-mode companions are meant to keep sitting.
+            // A follower stands up when its owner walks off. While attached, CompanionAI.UpdateAI returns before the
+            // FSM and CompanionController.CheckFollowTeleport bails on IsInAnimationThatBlocksTeleport, so nothing
+            // else can end this: a companion that sat down while the owner was AFK stayed seated no matter how far
+            // they went. A player-commanded sit and a stay-mode companion both keep their seat.
+            if (!_isCommandedAttachment && Time.time - _lastFollowBreakCheck >= CompanionLeash.BusyBreakCheckInterval)
+            {
+                _lastFollowBreakCheck = Time.time;
+                if (CompanionLeash.ShouldBreakForFollow(_companion, _ownerAnchor))
+                {
+                    if (VerboseLogging || Config.ConfigManager.Instance?.configCompanionFollowDiag?.Value == true)
+                        Debug.Log($"[CompanionFollowDiag] {_companion?.companionName} standing up — owner is past the follow break distance");
+                    Detach();
+                }
+            }
         }
 
         #endregion
@@ -1260,17 +1087,8 @@ namespace FiresCore.Npc.Interactions
             return false;
         }
 
-        private bool IsPlayerAttachedTo(Player player, Transform attachPoint)
-        {
-            if (player == null || attachPoint == null) return false;
-            return Vector3.Distance(player.transform.position, attachPoint.position) < 0.5f && IsCharacterAttached(player);
-        }
-
-        private bool IsPlayerNearPoint(Player player, Vector3 point, float radius)
-        {
-            if (player == null) return false;
-            return Vector3.Distance(player.transform.position, point) < radius;
-        }
+        private static bool IsPlayerAttachedTo(Player player, Transform attachPoint)
+            => player != null && attachPoint != null && player.IsAttached() && player.GetAttachPoint() == attachPoint;
 
         #endregion
     }

@@ -21,6 +21,7 @@ namespace FiresCore.Dungeon
         private static FieldInfo _roomByHashField;
         private static FieldInfo _locationsByHashField;
         private static MethodInfo _spawnLocationMethod;
+        private static int _manualSpawnDepth;
 
         // The held RoomData per spec (keyed by DG-name prefix), so SetupAvailableRooms can re-inject even after EWD
         // rebuilds DungeonDB.m_rooms. Order irrelevant; one room carries m_entrance=true.
@@ -265,6 +266,9 @@ namespace FiresCore.Dungeon
             // ZDO-owner early-return so the env box is created on every server even when regeneration is skipped.
             EnsureEnvBox(generator, spec);
 
+            // Inside our own SpawnDungeonAt the pipeline calls Generate right after this Awake — not stale.
+            if (_manualSpawnDepth > 0) return;
+
             var netView = generator.GetComponent<ZNetView>();
             ZDO zdo = (netView != null && netView.IsValid()) ? netView.GetZDO() : null;
             if (zdo == null || !zdo.IsOwner()) return;
@@ -288,7 +292,7 @@ namespace FiresCore.Dungeon
             Vector3 center = generator.transform.position; // already at surface pos + (0,5000,0), i.e. the zone centre
             Vector3 boxSize = VanillaEnvBoxSize;    // 64 x 64 x 500 immediately — vanilla parity, no math
 
-            Debug.Log($"[ENVBOX-DBG] EnsureEnvBox: {spec.LogTag} DG='{generator.gameObject.name}' dgPos={center} " +
+            if (FiresCore.Logging.FiresLogger.VerboseEnabled) Debug.Log($"[ENVBOX-DBG] EnsureEnvBox: {spec.LogTag} DG='{generator.gameObject.name}' dgPos={center} " +
                       $"boxSize={boxSize} (vanilla 64x64x500 minimum) env='{spec.EnvName}' skybox={spec.SkyboxMode}. " +
                       $"ScaleEnvBoxToRooms grows this SAME box up if rooms sprawl past the zone.");
 
@@ -302,7 +306,7 @@ namespace FiresCore.Dungeon
                     // could shrink a box already scaled up), but assert the spec's ATMOSPHERE config once per revision
                     // so boxes persisted under older builds get corrected (Hidden shell + DungeonBlack interior).
                     AssertSpecConfigOnce(existing, spec);
-                    Debug.Log($"[ENVBOX-DBG] EnsureEnvBox: {spec.LogTag} DEDUPED — existing box '{existing.gameObject.name}' " +
+                    if (FiresCore.Logging.FiresLogger.VerboseEnabled) Debug.Log($"[ENVBOX-DBG] EnsureEnvBox: {spec.LogTag} DEDUPED — existing box '{existing.gameObject.name}' " +
                               $"at {existing.transform.position} size={existing.BoxSize} within {spec.EnvBoxDedupeRadius}m of dgPos={center}.");
                     return;
                 }
@@ -321,7 +325,7 @@ namespace FiresCore.Dungeon
             if (box != null)
             {
                 StampSpecConfigRev(box); // fresh spawn is spec-correct by construction — stamp so the assert never re-runs
-                Debug.Log($"[ENVBOX-DBG] {spec.LogTag} spawned env box '{box.gameObject.name}' at {box.transform.position} " +
+                if (FiresCore.Logging.FiresLogger.VerboseEnabled) Debug.Log($"[ENVBOX-DBG] {spec.LogTag} spawned env box '{box.gameObject.name}' at {box.transform.position} " +
                           $"BoxSize={box.BoxSize} ({spec.EnvName} env, {spec.SkyboxMode} skybox, {spec.EnvBoxVisibility} shell).");
             }
             else
@@ -381,7 +385,7 @@ namespace FiresCore.Dungeon
             var box = FindWrappingBox(generator, spec);
             if (box == null)
             {
-                Debug.Log($"[ENVBOX-DBG] ScaleEnvBoxToRooms: {spec.LogTag} DG='{generator.gameObject.name}' — no env box found " +
+                if (FiresCore.Logging.FiresLogger.VerboseEnabled) Debug.Log($"[ENVBOX-DBG] ScaleEnvBoxToRooms: {spec.LogTag} DG='{generator.gameObject.name}' — no env box found " +
                           $"near {generator.transform.position} within {spec.EnvBoxDedupeRadius}m; skipping.");
                 return;
             }
@@ -405,7 +409,7 @@ namespace FiresCore.Dungeon
             Vector3 newCenter = bounds.center;
             Vector3 newSize = Vector3.Max(bounds.size, VanillaEnvBoxSize); // never below the vanilla minimum
 
-            Debug.Log($"[ENVBOX-DBG] ScaleEnvBoxToRooms: {spec.LogTag} DG='{generator.gameObject.name}' rooms={rooms.Length} " +
+            if (FiresCore.Logging.FiresLogger.VerboseEnabled) Debug.Log($"[ENVBOX-DBG] ScaleEnvBoxToRooms: {spec.LogTag} DG='{generator.gameObject.name}' rooms={rooms.Length} " +
                       $"colliders={colliderCount} roomAABB[center={bounds.center} size={bounds.size}] -> box center={newCenter} " +
                       $"size={newSize} (min 64x64x500; was center={box.transform.position} size={box.BoxSize}).");
 
@@ -814,7 +818,9 @@ namespace FiresCore.Dungeon
                     args[4] = ZoneSystem.SpawnMode.Full; args[5] = new List<GameObject>();
                     for (int i = 6; i < pars.Length; i++)
                         args[i] = pars[i].HasDefaultValue ? pars[i].DefaultValue : null;
-                    _spawnLocationMethod.Invoke(zoneSystem, args);
+                    _manualSpawnDepth++;
+                    try { _spawnLocationMethod.Invoke(zoneSystem, args); }
+                    finally { _manualSpawnDepth--; }
                     int rooms = LogGeneratedRooms(spec, pos);
                     Debug.Log($"{spec.LogTag} spawn: generated, placed {rooms} rooms (full pipeline).");
                     spec.OnDungeonGenerated?.Invoke();
@@ -831,9 +837,14 @@ namespace FiresCore.Dungeon
             {
                 GameObject prefab = spec.Assets?.Get(spec.CryptLocationPrefabName);
                 if (prefab == null) return "dungeon prefab not loaded.";
-                GameObject go = UnityEngine.Object.Instantiate(prefab, pos, rot);
-                var generator = go.GetComponentInChildren<DungeonGenerator>();
-                if (generator != null) generator.Generate(ZoneSystem.SpawnMode.Full);
+                _manualSpawnDepth++;
+                try
+                {
+                    GameObject go = UnityEngine.Object.Instantiate(prefab, pos, rot);
+                    var generator = go.GetComponentInChildren<DungeonGenerator>();
+                    if (generator != null) generator.Generate(ZoneSystem.SpawnMode.Full);
+                }
+                finally { _manualSpawnDepth--; }
                 int rooms = LogGeneratedRooms(spec, pos);
                 Debug.Log($"{spec.LogTag} spawn: generated, placed {rooms} rooms (fallback instantiate).");
                 spec.OnDungeonGenerated?.Invoke();

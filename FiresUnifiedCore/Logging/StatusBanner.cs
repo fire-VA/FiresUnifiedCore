@@ -13,9 +13,19 @@ namespace FiresCore.Logging
     {
         internal const string TitleEmoji = "\U0001F4CA";
         private const string TitlePrefix = TitleEmoji + " STATUS";
-        private const string Tag = "[FiresUnifiedCore] [LoadSummary]";
+        // BepInEx already prints "[Info   :FiresUnifiedCore] " in front of every line, so repeating the mod name
+        // here cost 19 columns for nothing.
+        private const string Tag = "[LoadSummary]";
         private const string SourceGap = "  ";
-        private const int MaxInnerWidth = 110;
+        // The BepInEx console is 100 columns wide. It spends 27 of them on its own source prefix before this box
+        // prints anything, the Tag above spends its own length plus a space, and the box borders take 4 - so this is
+        // the widest inner line that still fits on one console row. It was a flat 110, which rendered at 157 columns
+        // and wrapped every row of every box.
+        private const int ConsoleColumns = 100;
+        private const int BepInExPrefixColumns = 27;
+        private const int BoxBorderColumns = 4;
+        private static readonly int MaxInnerWidth =
+            ConsoleColumns - BepInExPrefixColumns - (Tag.Length + 1) - BoxBorderColumns;
         private const int TitleMargin = 8;
 
         private const string ConfigSection = "General";
@@ -81,7 +91,7 @@ namespace FiresCore.Logging
                 try { text = provider.Value(); }
                 catch (Exception ex) { text = $"status line failed: {ex.Message}"; }
                 if (string.IsNullOrEmpty(text)) continue;
-                Lines.Add(provider.Key.PadRight(sourceWidth) + SourceGap + text);
+                AddWrapped(provider.Key.PadRight(sourceWidth) + SourceGap, text);
             }
             if (Lines.Count == 0) return;
 
@@ -93,6 +103,25 @@ namespace FiresCore.Logging
             int innerWidth = title.Length + TitleMargin;
             foreach (string line in Lines) innerWidth = Math.Max(innerWidth, line.Length);
             LoadSummary.EmitBox(title, Lines.ToArray(), Tag, Math.Min(innerWidth, MaxInnerWidth));
+        }
+
+        // A line wider than the box continues on the next rows, indented under its text, instead of being cut off at the edge.
+        private static void AddWrapped(string prefix, string text)
+        {
+            // A provider name long enough to eat the whole row would leave room at zero or negative, and LastIndexOf
+            // would throw on that. Keep at least this much text per row so a status box can never become an exception.
+            const int MinRoom = 12;
+            int room = Math.Max(MinRoom, MaxInnerWidth - prefix.Length);
+            string indent = new string(' ', prefix.Length);
+            while (text.Length > room)
+            {
+                int cut = text.LastIndexOf(' ', room);
+                if (cut <= 0) cut = room;
+                Lines.Add(prefix + text.Substring(0, cut).TrimEnd());
+                text = text.Substring(cut).TrimStart();
+                prefix = indent;
+            }
+            Lines.Add(prefix + text);
         }
 
         private static string FormatUptime(float seconds)

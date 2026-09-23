@@ -15,7 +15,7 @@ namespace FiresCore.World
     /// When a mod that added prefabs to the world is removed, the ZDOs for those
     /// prefabs remain in the world save. Their prefab hash no longer resolves to
     /// any registered prefab in ZNetScene.m_namedPrefabs, so they are invisible
-    /// and non-functional � but still consume save space and will reappear if
+    /// and non-functional - but still consume save space and will reappear if
     /// the mod is reinstalled.
     ///
     /// Architecture:
@@ -26,9 +26,9 @@ namespace FiresCore.World
     ///     results back via a response RPC.
     ///
     /// Commands:
-    ///   zdo_scan_orphans              � Dry run: report orphaned ZDOs
-    ///   zdo_clean_orphans             � Destroy all orphaned ZDOs
-    ///   zdo_clean_orphans_hash &lt;hash&gt; � Destroy orphans with a specific prefab hash
+    ///   zdo_scan_orphans              - Dry run: report orphaned ZDOs
+    ///   zdo_clean_orphans             - Destroy all orphaned ZDOs
+    ///   zdo_clean_orphans_hash &lt;hash&gt; - Destroy orphans with a specific prefab hash
     /// </summary>
     public static class ZdoOrphanService
     {
@@ -304,7 +304,7 @@ namespace FiresCore.World
             SendResult(sender, "[ZDO Cleanup] Server accepted the request — scanning now. " +
                                "A multi-million-ZDO world takes a while; results follow when it finishes.");
 
-            // Run on server � results collected as strings, sent back to client
+            // Run on server - results collected as strings, sent back to client
             var host = FiresCore.FiresUnifiedCore.Instance;
             if (host != null && host.gameObject.activeInHierarchy)
             {

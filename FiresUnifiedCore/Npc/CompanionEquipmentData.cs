@@ -159,8 +159,8 @@ namespace FiresCore.Npc
         public float TotalSneakStaminaModifier { get; private set; } = 0f;
         public float TotalRunStaminaModifier { get; private set; } = 0f;
         
-    // Aggregated Damage Modifiers (resistances/weaknesses)
-     public Dictionary<HitData.DamageType, HitData.DamageModifier> DamageModifiers { get; private set; } = new Dictionary<HitData.DamageType, HitData.DamageModifier>();
+        // The armor pieces' resistances and weaknesses, combined with vanilla precedence (for display).
+        private HitData.DamageModifiers _armorDamageMods;
  
         #endregion
         
@@ -488,30 +488,8 @@ if (ActiveFoods.Count > 0)
             return Mathf.Max(0f, food.Duration - elapsed);
         }
         
-        /// <summary>
-        /// Calculates damage reduction from armor.
-        /// Uses the same formula as players.
-        /// </summary>
-    public float CalculateDamageReduction(float incomingDamage)
-        {
-      if (TotalArmor <= 0) return incomingDamage;
-       
-    // Valheim armor formula
- float armorFactor = TotalArmor / (TotalArmor + incomingDamage);
-          return incomingDamage * (1f - armorFactor * 0.75f);
-        }
-        
- /// <summary>
-        /// Gets the damage modifier for a specific damage type.
-        /// </summary>
-   public HitData.DamageModifier GetDamageModifier(HitData.DamageType damageType)
-        {
-     if (DamageModifiers.TryGetValue(damageType, out var modifier))
-            {
-            return modifier;
-   }
-return HitData.DamageModifier.Normal;
-     }
+        /// <summary>The armor's combined modifier for one damage type.</summary>
+        public HitData.DamageModifier GetDamageModifier(HitData.DamageType damageType) => _armorDamageMods.GetModifier(damageType);
         
         /// <summary>
         /// Gets the estimated hit delay for current weapon.
@@ -650,52 +628,15 @@ return HitData.DamageModifier.Normal;
     
       if (WeaponShared != null)
      {
-          hit.m_damage = WeaponDamage.Clone();
-        
-  // Apply quality bonus (same formula as vanilla)
-  if (WeaponItem != null && WeaponItem.m_quality > 1)
-      {
-                    // Add per-level damage for each quality level above 1
-                    hit.m_damage.Add(WeaponDamagePerLevel, WeaponItem.m_quality - 1);
-  }
+                // Vanilla ItemData.GetDamage: base, per quality level, and the item's world-level bonus.
+                hit.m_damage = WeaponItem != null ? WeaponItem.GetDamage() : WeaponDamage.Clone();
 
-                // Apply world-level gear damage bonus, matching vanilla ItemDrop.GetDamage
-                // (IncreaseEqually(worldLevel * m_worldLevelGearBaseDamage)); no-op at worldLevel 0.
-                if (Game.instance != null && Game.m_worldLevel > 0)
-                    hit.m_damage.IncreaseEqually(Game.m_worldLevel * (float)Game.instance.m_worldLevelGearBaseDamage, true);
-
-    // Apply skill bonus (same formula as vanilla: 1 + skill * 0.005)
-         if (_skills != null)
-                {
-           float skillLevel = _skills.GetSkillLevel(hit.m_skill);
-             float skillBonus = 1f + (skillLevel * 0.005f);
-   hit.m_damage.Modify(skillBonus);
-       }
-
-                // Vanilla-style level/star damage scaling, then the per-archetype damage multiplier ON TOP
-                // of stars (two independent multiplicative terms, each applied exactly once - companions
-                // never run vanilla Attack.GetLevelDamageFactor, so there is no double count).
+                // What a native attack gets from Character.GetRandomSkillFactor and Attack.GetLevelDamageFactor, which
+                // this path never runs (CompanionStatHooks and SyncCharacterLevel give native attacks the same values).
+                if (_skills != null) hit.m_damage.Modify(_skills.GetDamageSkillFactor(hit.m_skill));
                 int effLevel = _companion != null ? _companion.GetEffectiveLevel() : 1;
                 hit.m_damage.Modify(1f + Mathf.Max(0, effLevel - 1) * 0.5f);
-                if (_archetypeDamageMultiplier != 1f)
-                    hit.m_damage.Modify(_archetypeDamageMultiplier);
 
-                // Archetype critical hit: roll once, amplify on success (never reduces). Server rolls
-                // outgoing damage so UnityEngine.Random is fine here.
-                if (_archetypeCritChance > 0f && _archetypeCritDamageMultiplier > 1f
-                    && UnityEngine.Random.value < _archetypeCritChance)
-                {
-                    hit.m_damage.Modify(_archetypeCritDamageMultiplier);
-                }
-
-                // Apply progression attribute bonuses (Strength for melee, Intelligence for magic)
-                var progression = _companion?.GetProgression();
-                if (progression != null)
-                {
-                    float attrMultiplier = progression.GetCombinedDamageMultiplier(hit.m_skill, IsWeaponMagic());
-                    hit.m_damage.Modify(attrMultiplier);
-                }
-                
                 // Apply blood magic damage multipliers if applicable
                 if (DamageMultiplierByTotalHealthMissing > 0 && attacker != null)
                 {
@@ -971,12 +912,9 @@ SneakStaminaModifier = shared.m_sneakStaminaModifier,
                 EquipStatusEffect = shared.m_equipStatusEffect
  };
    
-            // Calculate actual armor with quality
-            if (item.m_quality > 1)
-   {
-      armorData.Armor += armorData.ArmorPerLevel * (item.m_quality - 1);
-     }
-            
+            // Vanilla ItemData.GetArmor: base, per quality level, and the item's world-level bonus.
+            armorData.Armor = item.GetArmor();
+
  ArmorPieces[armorSlot] = armorData;
     }
         
@@ -1084,8 +1022,9 @@ ShieldBlockPowerPerLevel = 0f;
             TotalSwimStaminaModifier = 0f;
    TotalSneakStaminaModifier = 0f;
             TotalRunStaminaModifier = 0f;
-    DamageModifiers.Clear();
-  
+            _armorDamageMods = new HitData.DamageModifiers();
+            ApplyArmorDamageMods(ref _armorDamageMods);
+
             // Aggregate from armor pieces
         foreach (var armor in ArmorPieces.Values)
             {
@@ -1099,64 +1038,56 @@ ShieldBlockPowerPerLevel = 0f;
          TotalSwimStaminaModifier += armor.SwimStaminaModifier;
        TotalSneakStaminaModifier += armor.SneakStaminaModifier;
         TotalRunStaminaModifier += armor.RunStaminaModifier;
-          
-            // Aggregate damage modifiers
-          foreach (var mod in armor.DamageModifiers)
-   {
-          if (DamageModifiers.ContainsKey(mod.m_type))
-     {
-         // Take the better modifier
-            if (mod.m_modifier < DamageModifiers[mod.m_type])
-{
-             DamageModifiers[mod.m_type] = mod.m_modifier;
- }
             }
-  else
-    {
-            DamageModifiers[mod.m_type] = mod.m_modifier;
-          }
-          }
-            }
-   
-            // Add shield damage modifiers
-  foreach (var mod in ShieldDamageModifiers)
-        {
-    if (DamageModifiers.ContainsKey(mod.m_type))
-    {
-          if (mod.m_modifier < DamageModifiers[mod.m_type])
-  {
- DamageModifiers[mod.m_type] = mod.m_modifier;
- }
-      }
-    else
-            {
-     DamageModifiers[mod.m_type] = mod.m_modifier;
-           }
-            }
-
-            // Armor mitigation is applied in the companion damage prefix (CompanionPatches), NOT here.
-            // Character.m_armorSkin does not exist in vanilla, so the old reflection write silently
-            // no-op'd and companions took FULL physical damage regardless of gear. TotalArmor and
-            // DamageModifiers are now read straight off this component by the prefix and fed to
-            // hit.ApplyArmor / hit.ApplyResistance, the same math vanilla uses for players.
         }
 
-        /// <summary>Total armor after the per-archetype armor multiplier (read by the damage prefix).</summary>
+        /// <summary>Total armor after the per-archetype armor multiplier (CompanionStatHooks applies it where vanilla armors a player).</summary>
         public float GetEffectiveArmor() => Mathf.Max(0f, TotalArmor * _archetypeArmorMultiplier);
 
-        /// <summary>
-        /// Builds a vanilla HitData.DamageModifiers from this companion's equipped-gear damage-type
-        /// resistances so the damage prefix can call hit.ApplyResistance before armor reduction.
-        /// </summary>
-        public HitData.DamageModifiers BuildDamageModifiers()
+        /// <summary>Vanilla Player.DamageArmorDurability: one random equipped piece takes the hit's physical and
+        /// elemental damage. Companions repair their own gear at a workbench below 75 % (WorkstationInteractionBehaviorV2).</summary>
+        public void DamageArmorDurability(HitData hit)
         {
-            var mods = new HitData.DamageModifiers();
-            if (DamageModifiers.Count == 0) return mods;
-            var list = new System.Collections.Generic.List<HitData.DamageModPair>(DamageModifiers.Count);
-            foreach (var kv in DamageModifiers)
-                list.Add(new HitData.DamageModPair { m_type = kv.Key, m_modifier = kv.Value });
-            mods.Apply(list);
-            return mods;
+            if (ArmorPieces.Count == 0) return;
+            float wear = hit.GetTotalPhysicalDamage() + hit.GetTotalElementalDamage();
+            if (wear <= 0f) return;
+
+            int index = UnityEngine.Random.Range(0, ArmorPieces.Count);
+            foreach (var armor in ArmorPieces.Values)
+            {
+                if (index-- > 0) continue;
+                var item = armor.Item;
+                if (item?.m_shared != null && item.m_shared.m_useDurability)
+                    item.m_durability = Mathf.Max(0f, item.m_durability - wear);
+                return;
+            }
+        }
+
+        /// <summary>Vanilla Player.ApplyArmorDamageMods: each armor piece's resistances applied with vanilla precedence (shields excluded).</summary>
+        public void ApplyArmorDamageMods(ref HitData.DamageModifiers mods)
+        {
+            foreach (var armor in ArmorPieces.Values)
+            {
+                if (armor.DamageModifiers != null) mods.Apply(armor.DamageModifiers);
+            }
+        }
+
+        /// <summary>
+        /// The companion's own damage terms, on every hit it deals (from SEMan.ModifyAttack, which both native attacks
+        /// and the fallback path call once): the archetype multiplier and crit, then Strength or Intelligence.
+        /// </summary>
+        public void ApplyOutgoingModifiers(Skills.SkillType skill, HitData hit)
+        {
+            if (_archetypeDamageMultiplier != 1f)
+                hit.m_damage.Modify(_archetypeDamageMultiplier);
+
+            // Archetype critical hit: roll once, amplify on success (never reduces).
+            if (_archetypeCritChance > 0f && _archetypeCritDamageMultiplier > 1f && UnityEngine.Random.value < _archetypeCritChance)
+                hit.m_damage.Modify(_archetypeCritDamageMultiplier);
+
+            var progression = _companion?.GetProgression();
+            if (progression != null)
+                hit.m_damage.Modify(progression.GetCombinedDamageMultiplier(skill, skill == Skills.SkillType.ElementalMagic || skill == Skills.SkillType.BloodMagic));
         }
 
         // Set + per-piece equipment status effects we've pushed onto SEMan, tracked so we can diff/remove.

@@ -297,7 +297,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 _smelterIsFullWaitingForOutput = false;
             }
             
-            // Also interact with smelter to collect any remaining output
+            // Empty output the station holds (windmill stack)
             if (TryCollectOutput())
             {
                 _itemsCollected++;
@@ -305,8 +305,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 PlayInteractAnimation();
             }
             
-            // Check for more output
-            if (!HasOutput())
+            // Move on once the held output is out, or if the station's owner never answers the empty request
+            if (!HasOutput() || Time.time - _phaseStartTime > OutputWaitTime)
             {
                 // Check for more ground items one more time
                 PickupNearbyGroundItems(outputPos);
@@ -609,39 +609,30 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         /// <summary>
-        /// Tries to deposit a single item to nearby chests.
+        /// Deposits one carried stack into a nearby chest the companion may write, preferring one that already holds it.
         /// </summary>
         private bool TryDepositItem(ItemDrop.ItemData item, Inventory fromInventory)
         {
             if (item == null || fromInventory == null) return false;
-            
-            // Try to find a chest that already has this item type
-            var targetChest = ChestHelper.FindChestWithItem(_nearbyChests, item);
-            if (targetChest != null)
-            {
-                var containerInv = targetChest.GetInventory();
-                if (containerInv != null && containerInv.CanAddItem(item))
-                {
-                    containerInv.AddItem(item.Clone());
-                    fromInventory.RemoveItem(item);
-                    return true;
-                }
-            }
-            
-            // Try any chest with room
+
+            var preferred = ChestHelper.FindChestWithItem(_nearbyChests, item);
+            if (preferred != null && TryDepositInto(preferred, item, fromInventory)) return true;
+
             foreach (var container in _nearbyChests)
             {
-                if (container == null) continue;
-                var containerInv = container.GetInventory();
-                if (containerInv != null && containerInv.CanAddItem(item))
-                {
-                    containerInv.AddItem(item.Clone());
-                    fromInventory.RemoveItem(item);
+                if (container != null && container != preferred && TryDepositInto(container, item, fromInventory))
                     return true;
-                }
             }
-            
             return false;
+        }
+
+        private bool TryDepositInto(Container chest, ItemDrop.ItemData item, Inventory fromInventory)
+        {
+            if (!ChestHelper.TryClaimForWrite(chest, Companion)) return false;
+            var containerInv = chest.GetInventory();
+            if (containerInv == null || !containerInv.CanAddItem(item)) return false;
+            int stack = item.m_stack;
+            return ChestHelper.MoveItem(fromInventory, containerInv, item, stack) == stack;
         }
         
         #endregion

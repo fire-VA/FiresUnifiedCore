@@ -40,7 +40,8 @@ namespace FiresCore.Npc.Archetypes
         private ArchetypeController _archetypeController;
         private AI.CompanionAI _ai;
         private Character _character;
-        
+        private ZNetView _nview;
+
         // State
         private float _lastHybridAbilityTime = -100f;
         private bool _hasHybrid;
@@ -54,6 +55,7 @@ namespace FiresCore.Npc.Archetypes
             _archetypeController = GetComponent<ArchetypeController>();
             _ai = GetComponent<AI.CompanionAI>();
             _character = GetComponent<Character>();
+            _nview = GetComponent<ZNetView>();
         }
         
         private void Start()
@@ -104,6 +106,7 @@ namespace FiresCore.Npc.Archetypes
             if (!_hasHybrid || _hybridDef == null) return;
             if (_companion == null || !_companion.isTamed) return;
             if (_character == null || _character.IsDead()) return;
+            if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
             if (_ai == null || !_ai.IsInCombat) return;
             // Suppress during local player respawn / loading screen.
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;

@@ -24,7 +24,7 @@ namespace FiresCore.Npc
             "CompanionAI", "CompanionController", "CompanionCombat", "CompanionAttackBridge",
             "CompanionSkills", "CompanionStats", "CompanionProgression", "CompanionLuck",
             "CompanionAutoPickup", "CompanionDoorHandler", "CompanionRandomLoadout",
-            "CompanionWeaponScaler", "CompanionInventory",
+            "CompanionInventory",
             "ArchetypeController", "ArchetypeAbilitySystem", "ArchetypeSkillSystem", "SkillDecisionSystem",
             "EnemyAttackRecognition", "ThreatAnalyzer", "CombatMemory", "CombatExperience",
             "Tameable", "MonsterAI", "BaseAI", "AnimalAI", "FootStep", "Ragdoll",
@@ -230,24 +230,23 @@ namespace FiresCore.Npc
             }
 
             if (vis.m_leftHand == null)
-                vis.m_leftHand = FindRecursive(visual, "LeftHand_Attach") ?? FindRecursive(visual, "LeftHand");
+                vis.m_leftHand = FindRecursive(visual, NpcVisEquipment.VanillaJointName(v => v.m_leftHand, "LeftHand_Attach")) ?? FindRecursive(visual, "LeftHand");
             if (vis.m_rightHand == null)
-                vis.m_rightHand = FindRecursive(visual, "RightHand_Attach") ?? FindRecursive(visual, "RightHand");
+                vis.m_rightHand = FindRecursive(visual, NpcVisEquipment.VanillaJointName(v => v.m_rightHand, "RightHand_Attach")) ?? FindRecursive(visual, "RightHand");
             if (vis.m_helmet == null)
-                vis.m_helmet = FindRecursive(visual, "Helmet_attach") ?? FindRecursive(visual, "Head");
+                vis.m_helmet = FindRecursive(visual, NpcVisEquipment.VanillaJointName(v => v.m_helmet, "Helmet_attach")) ?? FindRecursive(visual, "Head");
             if (vis.m_backShield == null)
-                vis.m_backShield = FindRecursive(visual, "BackShield_attach");
+                vis.m_backShield = FindRecursive(visual, NpcVisEquipment.VanillaJointName(v => v.m_backShield, "BackShield_attach"));
             if (vis.m_backMelee == null)
-                vis.m_backMelee = FindRecursive(visual, "BackMelee_attach");
+                vis.m_backMelee = FindRecursive(visual, NpcVisEquipment.VanillaJointName(v => v.m_backMelee, "BackOneHanded_attach"));
             if (vis.m_backTwohandedMelee == null)
-                vis.m_backTwohandedMelee = FindRecursive(visual, "BackTwohandedMelee_attach")
-                    ?? FindRecursive(visual, "BackTwoHanded_attach");
+                vis.m_backTwohandedMelee = FindRecursive(visual, NpcVisEquipment.VanillaJointName(v => v.m_backTwohandedMelee, "BackTwohanded_attach"));
             if (vis.m_backBow == null)
-                vis.m_backBow = FindRecursive(visual, "BackBow_attach");
+                vis.m_backBow = FindRecursive(visual, NpcVisEquipment.VanillaJointName(v => v.m_backBow, "BackBow_attach"));
             if (vis.m_backTool == null)
-                vis.m_backTool = FindRecursive(visual, "BackTool_attach");
+                vis.m_backTool = FindRecursive(visual, NpcVisEquipment.VanillaJointName(v => v.m_backTool, "BackTool_attach"));
             if (vis.m_backAtgeir == null)
-                vis.m_backAtgeir = FindRecursive(visual, "BackAtgeir_attach");
+                vis.m_backAtgeir = FindRecursive(visual, NpcVisEquipment.VanillaJointName(v => v.m_backAtgeir, "BackAtgeir_attach"));
 
             if (vis.m_clothColliders == null)
                 vis.m_clothColliders = new List<MagicaCloth2.ColliderComponent>();

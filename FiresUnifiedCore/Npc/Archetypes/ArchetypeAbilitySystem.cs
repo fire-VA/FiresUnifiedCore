@@ -135,7 +135,8 @@ namespace FiresCore.Npc.Archetypes
         private CompanionCombat _combat;
         private Character _character;
         private ArchetypeSkillSystem _skillSystem;
-        
+        private ZNetView _nview;
+
         // Cooldown tracking
         private float _lastSelfBuffTime = -100f;
         private float _lastGroupAbilityTime = -100f;
@@ -162,6 +163,7 @@ namespace FiresCore.Npc.Archetypes
             _combat = GetComponent<CompanionCombat>();
             _character = GetComponent<Character>();
             _skillSystem = GetComponent<ArchetypeSkillSystem>();
+            _nview = GetComponent<ZNetView>();
         }
         
         private void Update()
@@ -174,6 +176,12 @@ namespace FiresCore.Npc.Archetypes
             // to deadlock the zone stream (see CompanionPatches.cs). Cooldowns aren't
             // consumed while suppressed — abilities resume cleanly post-respawn.
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
+            // Only the owner decides: CompanionAI.ForceTarget can put a non-owner copy into combat.
+            if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
+
+            var currentArchetype = _archetypeController.CurrentArchetypeClass;
+            if (currentArchetype != _passiveArchetype)
+                DropOtherArchetypePassives(currentArchetype);
 
             // Check if we're in combat
             bool wasInCombat = _inCombat;
@@ -271,24 +279,11 @@ namespace FiresCore.Npc.Archetypes
                 }
             }
             
-            // MASTER (L75): Unyielding - passive that triggers automatically via status effect
-            // Applied once and stays active - check if we need to reapply
             if (AbilityUnlockSystem.IsAbilityUnlocked("tank_unyielding", archetype, level))
-            {
-                if (!StatusEffectManager.HasEffect(_character, StatusEffectManager.EFFECT_UNYIELDING))
-                {
-                    ApplyUnyieldingPassive();
-                }
-            }
-            
-            // EXPERT (L40): Iron Wall - passive enhanced blocking
+                EnsurePassive(StatusEffectManager.EFFECT_UNYIELDING, "unyielding");
+
             if (AbilityUnlockSystem.IsAbilityUnlocked("tank_iron_wall", archetype, level))
-            {
-                if (!StatusEffectManager.HasEffect(_character, StatusEffectManager.EFFECT_IRON_WALL))
-                {
-                    ApplyIronWallPassive();
-                }
-            }
+                EnsurePassive(StatusEffectManager.EFFECT_IRON_WALL, "ironwall");
             
             // Self buff: Fortify when taking heavy damage (unlocks at level 10)
             if (AbilityUnlockSystem.IsAbilityUnlocked("tank_fortify", archetype, level))
@@ -339,28 +334,6 @@ namespace FiresCore.Npc.Archetypes
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "ImmortalStance");
             
             Debug.Log($"[ArchetypeAbility] {_companion.companionName} activated IMMORTAL STANCE!");
-        }
-        
-        private void ApplyUnyieldingPassive()
-        {
-            // Unyielding is a permanent passive - duration 0 means infinite
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_UNYIELDING, 0f);
-            
-            // Grant skill XP for applying passive
-            _skillSystem?.OnAbilityUsed("unyielding");
-            
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} gained UNYIELDING passive!");
-        }
-        
-        private void ApplyIronWallPassive()
-        {
-            // Iron Wall is a permanent passive
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_IRON_WALL, 0f);
-            
-            // Grant skill XP for applying passive
-            _skillSystem?.OnAbilityUsed("ironwall");
-            
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} gained IRON WALL passive!");
         }
         
         #endregion
@@ -572,32 +545,14 @@ namespace FiresCore.Npc.Archetypes
                 }
             }
             
-            // MASTER (L75): Death Wish - passive that activates when below 10% HP
             if (AbilityUnlockSystem.IsAbilityUnlocked("berserker_deathwish", archetype, level))
-            {
-                if (healthPercent < 0.10f && !StatusEffectManager.HasEffect(_character, StatusEffectManager.EFFECT_DEATH_WISH))
-                {
-                    UseDeathWish();
-                }
-            }
-            
-            // EXPERT (L50): Rampage - passive kill stacking buff
+                EnsurePassive(StatusEffectManager.EFFECT_DEATH_WISH, "deathwish");
+
             if (AbilityUnlockSystem.IsAbilityUnlocked("berserker_rampage", archetype, level))
-            {
-                if (!StatusEffectManager.HasEffect(_character, StatusEffectManager.EFFECT_RAMPAGE))
-                {
-                    ApplyRampagePassive();
-                }
-            }
-            
-            // EXPERT (L35): Execute - passive bonus damage to low HP enemies
+                EnsurePassive(StatusEffectManager.EFFECT_RAMPAGE, "rampage");
+
             if (AbilityUnlockSystem.IsAbilityUnlocked("berserker_execute", archetype, level))
-            {
-                if (!StatusEffectManager.HasEffect(_character, StatusEffectManager.EFFECT_EXECUTE))
-                {
-                    ApplyExecutePassive();
-                }
-            }
+                EnsurePassive(StatusEffectManager.EFFECT_EXECUTE, "execute");
             
             // Self buff: Berserk Rage when low health (unlocks at level 10)
             if (AbilityUnlockSystem.IsAbilityUnlocked("berserker_rage", archetype, level))
@@ -673,39 +628,6 @@ namespace FiresCore.Npc.Archetypes
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "AvatarOfWar");
             
             Debug.Log($"[ArchetypeAbility] {_companion.companionName} became AVATAR OF WAR!");
-        }
-        
-        private void UseDeathWish()
-        {
-            // Death Wish triggers automatically at low HP, lasts until health goes above 10%
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_DEATH_WISH, 60f);
-            
-            // Grant skill XP
-            _skillSystem?.OnAbilityUsed("deathwish");
-            
-            ArchetypeChatManager.AnnounceAbilityUsed(_companion, "DeathWish");
-            
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} entered DEATH WISH!");
-        }
-        
-        private void ApplyRampagePassive()
-        {
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_RAMPAGE, 0f);
-            
-            // Grant skill XP for applying passive
-            _skillSystem?.OnAbilityUsed("rampage");
-            
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} gained RAMPAGE passive!");
-        }
-        
-        private void ApplyExecutePassive()
-        {
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_EXECUTE, 0f);
-            
-            // Grant skill XP for applying passive
-            _skillSystem?.OnAbilityUsed("execute");
-            
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} gained EXECUTE passive!");
         }
         
         #endregion
@@ -1221,14 +1143,8 @@ namespace FiresCore.Npc.Archetypes
                 }
             }
             
-            // EXPERT (L50): Chain Casting - passive free cast chance
             if (AbilityUnlockSystem.IsAbilityUnlocked("mage_chain", archetype, level))
-            {
-                if (!StatusEffectManager.HasEffect(_character, StatusEffectManager.EFFECT_CHAIN_CASTING))
-                {
-                    ApplyChainCastingPassive();
-                }
-            }
+                EnsurePassive(StatusEffectManager.EFFECT_CHAIN_CASTING, "chaincasting");
             
             // EXPERT (L35): Overcharge - when engaging enemies
             if (AbilityUnlockSystem.IsAbilityUnlocked("mage_overcharge", archetype, level))
@@ -1345,16 +1261,6 @@ namespace FiresCore.Npc.Archetypes
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Overcharge");
             
             Debug.Log($"[ArchetypeAbility] {_companion.companionName} activated OVERCHARGE!");
-        }
-        
-        private void ApplyChainCastingPassive()
-        {
-            AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_CHAIN_CASTING, 0f);
-            
-            // Grant skill XP for applying passive
-            _skillSystem?.OnAbilityUsed("chaincasting");
-            
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} gained CHAIN CASTING passive!");
         }
         
         #endregion
@@ -1830,8 +1736,49 @@ namespace FiresCore.Npc.Archetypes
         
         #endregion
         
+        #region Passives
+
+        private const float PassiveRetrySeconds = 5f;
+
+        private static readonly Dictionary<string, ArchetypeClass> PassiveOwners = new Dictionary<string, ArchetypeClass>
+        {
+            { StatusEffectManager.EFFECT_UNYIELDING, ArchetypeClass.Tank },
+            { StatusEffectManager.EFFECT_IRON_WALL, ArchetypeClass.Tank },
+            { StatusEffectManager.EFFECT_DEATH_WISH, ArchetypeClass.Berserker },
+            { StatusEffectManager.EFFECT_RAMPAGE, ArchetypeClass.Berserker },
+            { StatusEffectManager.EFFECT_EXECUTE, ArchetypeClass.Berserker },
+            { StatusEffectManager.EFFECT_CHAIN_CASTING, ArchetypeClass.Mage },
+        };
+
+        private readonly Dictionary<string, float> _passiveRetryAt = new Dictionary<string, float>();
+        private ArchetypeClass _passiveArchetype = ArchetypeClass.None;
+
+        /// <summary>Applies a permanent passive once; a failed apply waits PassiveRetrySeconds instead of retrying every frame.</summary>
+        private void EnsurePassive(string effectName, string skillId)
+        {
+            if (StatusEffectManager.HasEffect(_character, effectName)) return;
+            if (_passiveRetryAt.TryGetValue(effectName, out float retryAt) && Time.time < retryAt) return;
+            _passiveRetryAt[effectName] = Time.time + PassiveRetrySeconds;
+            if (!AbilityRPCManager.ApplySelfBuff(_character, effectName, 0f)) return;
+
+            _skillSystem?.OnAbilityUsed(skillId);
+            Debug.Log($"[ArchetypeAbility] {_companion.companionName} gained passive {effectName}");
+        }
+
+        private void DropOtherArchetypePassives(ArchetypeClass archetype)
+        {
+            _passiveArchetype = archetype;
+            foreach (var passive in PassiveOwners)
+            {
+                if (passive.Value != archetype && StatusEffectManager.HasEffect(_character, passive.Key))
+                    AbilityRPCManager.RemoveSelfBuff(_character, passive.Key);
+            }
+        }
+
+        #endregion
+
         #region Helper Methods
-        
+
         private bool CanUseSelfBuff()
         {
             return Time.time - _lastSelfBuffTime >= selfBuffCooldown;

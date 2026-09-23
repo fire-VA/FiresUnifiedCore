@@ -37,7 +37,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             // Massive VFX - use AbilityFXManager for consistent scaling
             // The shaman protect bubble is the main visual, scaled appropriately for the companion
             AbilityFXManager.SpawnEffect("fx_shaman_protect", m_character.transform.position, null, 1.2f);
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character.transform.position, null, 1.0f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character.transform.position, null, 1.0f);
             AbilityFXManager.SpawnEffect("fx_shield_start", m_character.transform.position, null, 1.0f);
             
             m_character.Message(MessageHud.MessageType.Center, "<color=gold>IMMORTAL STANCE</color>");
@@ -116,22 +116,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             if (m_character != null)
             {
                 m_character.Message(MessageHud.MessageType.TopLeft, "Immortal Stance ended");
-                SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
+                SpawnVFX("vfx_ghost_hit", m_character.transform.position);
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -174,7 +163,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             _lastAuraTick = Time.time;
             
             // Transformation VFX
-            SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
+            SpawnVFX("vfx_ghost_hit", m_character.transform.position);
             SpawnVFX("fx_shield_start", m_character.transform.position);
             SpawnVFX("fx_DvergerMage_Support_start", m_character.transform.position);
             
@@ -212,7 +201,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             // Continuous holy VFX
             if (Random.value < 0.2f)
             {
-                SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position + Vector3.up);
+                SpawnVFX("vfx_ghost_hit", m_character.transform.position + Vector3.up);
             }
         }
         
@@ -255,22 +244,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             if (m_character != null)
             {
                 m_character.Message(MessageHud.MessageType.TopLeft, "Avatar of Light fades...");
-                SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
+                SpawnVFX("vfx_ghost_hit", m_character.transform.position);
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -308,7 +286,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             
             // Transformation VFX
             SpawnVFX("vfx_MeadBzerker", m_character.transform.position);
-            SpawnVFX("vfx_spray_fire", m_character.transform.position);
+            SpawnVFX("vfx_FireballHit", m_character.transform.position);
             SpawnVFX("vfx_sledge_hit", m_character.transform.position);
             
             m_character.Message(MessageHud.MessageType.Center, "<color=red>AVATAR OF WAR</color>");
@@ -352,18 +330,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -693,18 +660,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -787,18 +743,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -833,9 +778,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             if (m_character == null) return;
             
             // Arcane transformation VFX
-            SpawnVFX("vfx_fireball_explosion", m_character.transform.position);
+            SpawnVFX("fx_fireball_staff_explosion", m_character.transform.position);
             SpawnVFX("vfx_StaffShield", m_character.transform.position);
-            SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
+            SpawnVFX("vfx_ghost_hit", m_character.transform.position);
             
             m_character.Message(MessageHud.MessageType.Center, "<color=magenta>ARCANE FORM</color>");
             
@@ -874,22 +819,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             if (m_character != null)
             {
                 m_character.Message(MessageHud.MessageType.TopLeft, "Arcane Form dissipates...");
-                SpawnVFX("vfx_fireball_explosion", m_character.transform.position);
+                SpawnVFX("fx_fireball_staff_explosion", m_character.transform.position);
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -926,7 +860,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             // Life transformation VFX
             SpawnVFX("fx_DvergerMage_Support_start", m_character.transform.position);
             SpawnVFX("fx_creature_tamed", m_character.transform.position);
-            SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
+            SpawnVFX("vfx_ghost_hit", m_character.transform.position);
             
             m_character.Message(MessageHud.MessageType.Center, "<color=green>AVATAR OF LIFE</color>");
             
@@ -981,18 +915,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -1027,7 +950,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             // Perfection VFX
             SpawnVFX("fx_fenring_frost", m_character.transform.position);
             SpawnVFX("vfx_Cold", m_character.transform.position);
-            SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
+            SpawnVFX("vfx_ghost_hit", m_character.transform.position);
             
             m_character.Message(MessageHud.MessageType.Center, "<color=gold>WAY OF PERFECTION</color>");
             
@@ -1063,18 +986,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion

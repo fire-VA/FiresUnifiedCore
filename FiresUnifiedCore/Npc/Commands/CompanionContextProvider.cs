@@ -72,8 +72,11 @@ namespace FiresCore.Npc.Commands
         {
             try
             {
+                var player = Player.m_localPlayer;
+                if (player == null) return;
                 var chests = ChestHelper.FindNearbyChests(center, CompanionSettings.ChestAutoSortRadius);
-                if (chests == null || chests.Count < 2)
+                chests.RemoveAll(chest => !ChestHelper.TryClaimForWrite(chest, player.GetPlayerID()));
+                if (chests.Count < 2)
                 {
                     MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center, "No chest cluster to organize here");
                     return;

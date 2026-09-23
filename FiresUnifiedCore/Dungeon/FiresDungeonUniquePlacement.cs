@@ -55,7 +55,11 @@ namespace FiresCore.Dungeon
         /// instance it is marked placed in place; a foreign location in the zone fails loudly (vanilla allows one
         /// instance per zone).
         /// </summary>
-        public static bool RegisterPlacedInstance(DungeonSpec spec, Vector3 pos)
+        public static bool RegisterPlacedInstance(DungeonSpec spec, Vector3 pos) => RegisterInstance(spec, pos, placed: true);
+
+        /// <summary>Record an instance at <paramref name="pos"/>; placed=false leaves it PENDING, so vanilla builds
+        /// the dungeon there the first time the zone populates (the world-gen path).</summary>
+        public static bool RegisterInstance(DungeonSpec spec, Vector3 pos, bool placed)
         {
             var zoneSystem = ZoneSystem.instance;
             if (zoneSystem == null || spec == null) return false;
@@ -78,7 +82,7 @@ namespace FiresCore.Dungeon
                                    $"'{existing.m_location?.m_prefabName}' — cannot record ours there.");
                     return false;
                 }
-                existing.m_placed = true;
+                existing.m_placed = placed || existing.m_placed;
                 existing.m_position = pos;
                 zoneSystem.m_locationInstances[zone] = existing;
                 return true;
@@ -91,7 +95,7 @@ namespace FiresCore.Dungeon
                 Debug.LogError($"{spec.LogTag} RegisterPlacedInstance: ZoneSystem.RegisterLocation not found.");
                 return false;
             }
-            _registerLocationMethod.Invoke(zoneSystem, new object[] { loc, pos, true });
+            _registerLocationMethod.Invoke(zoneSystem, new object[] { loc, pos, placed });
             return zoneSystem.m_locationInstances.ContainsKey(zone);
         }
 
@@ -207,13 +211,53 @@ namespace FiresCore.Dungeon
                                      "scan missed it). Verify, then use the manual spawn command after removing the record.");
                     return $"mismatch: placed record at {instPos} but no structure found — manual review.";
                 }
-                return $"pending: world-gen instance at {instPos} (zone {instZone}) will build when its zone first loads.";
+                // Zone-mode world: the pending zone must be OPEN for vanilla to ever populate it. Opening is idempotent,
+                // so a zone that could not open last boot (world not seeded yet, open refused) is simply asked again.
+                // A PARKED zone is different: opening restores the original world's objects and marks it generated,
+                // so vanilla would never build the dungeon there — drop that reservation and pick a fresh zone below.
+                bool dropped = false;
+                if (Bridge.FiresZoneModeBridge.Active && !Bridge.FiresZoneModeBridge.IsZoneOpen(instZone))
+                {
+                    if (Bridge.FiresZoneModeBridge.IsZoneParked(instZone))
+                    {
+                        int removed = RemoveInstances(spec);
+                        Debug.LogWarning($"{spec.LogTag} ONE-PER-WORLD: the pending reservation in zone {instZone} sits in a PARKED " +
+                                         $"zone (a converted world's explored land) — dropped {removed} record(s); picking a fresh zone.");
+                        dropped = true;
+                    }
+                    else
+                    {
+                        if (!Bridge.FiresZoneModeBridge.OpenZoneForLocation(instZone, ZoneLabel(spec)))
+                            return $"pending: own zone {instZone} reserved but not open yet — asking again.";
+                        return $"pending: opened own zone {instZone}; the dungeon will build when that zone populates.";
+                    }
+                }
+                if (!dropped)
+                    return $"pending: world-gen instance at {instPos} (zone {instZone}) will build when its zone first loads.";
             }
 
-            // Nothing recorded, nothing built: this world's location generation predates the spec. Place it now,
-            // once, through the same vanilla SpawnLocation pipeline, and record it so it stays the only one.
-            if (!TryPickAutoSpot(spec, out Vector3 pos, out Quaternion rot, out string why))
-                return $"auto-place failed: {why}";
+            // Nothing recorded, nothing built: this world's location generation predates the spec.
+            bool zoneMode = Bridge.FiresZoneModeBridge.Active;
+            if (!TryPickAutoSpot(spec, zoneMode, out Vector3 pos, out Quaternion rot, out string why))
+                return $"auto-place failed{(zoneMode ? " (zone-mode world)" : "")}: {why}";
+
+            if (zoneMode)
+            {
+                // Its own zone: record a PENDING instance in a closed zone beside the open land and have zone mode open
+                // it — the location-island path. Vanilla builds the dungeon on the zone's real ground once every peer
+                // shows the new terrain, and the record keeps it the only one.
+                Vector2s zone = ZoneSystem.GetZone(pos);
+                if (!RegisterInstance(spec, pos, placed: false))
+                    return $"auto-place failed: could not record the instance in zone {zone}.";
+                bool opened = Bridge.FiresZoneModeBridge.OpenZoneForLocation(zone, ZoneLabel(spec));
+                Debug.LogWarning($"{spec.LogTag} ONE-PER-WORLD OWN ZONE: zone-mode world — reserved zone {zone} for the dungeon " +
+                                 $"at {pos} ({new Vector2(pos.x, pos.z).magnitude:F0}m from centre, beside the open land) and " +
+                                 (opened ? "opened it; vanilla builds the dungeon when the zone populates."
+                                         : "asked to open it (not open yet; asked again on the next pass)."));
+                return opened
+                    ? $"pending: opened own zone {zone} for the dungeon; it will build when that zone populates."
+                    : $"pending: own zone {zone} reserved but not open yet — asking again.";
+            }
 
             string spawn = FiresDungeonCore.SpawnDungeonAt(spec, pos, rot);
             bool spawned = spawn != null && spawn.StartsWith("dungeon spawned", StringComparison.Ordinal);
@@ -226,13 +270,27 @@ namespace FiresCore.Dungeon
             return $"auto-placed at {pos}. {spawn}";
         }
 
+        private static string ZoneLabel(DungeonSpec spec) => spec.CryptLocationPrefabName ?? "dungeon";
+
+        private sealed class PickStats
+        {
+            public int Checked, Instance, Builds, Water, River, Slope, Biome, Open, Detached, Parked;
+            public override string ToString() =>
+                $"checked {Checked} zone(s): {Instance} already hold a location, {Builds} have player builds, " +
+                $"{Water} water/shoreline, {River} river or lake, {Slope} too steep, {Biome} wrong biome" +
+                (Open + Detached + Parked > 0 ? $", {Open} already open, {Detached} not beside the open land, {Parked} parked (explored land of a converted world)" : "");
+        }
+
         /// <summary>
-        /// Pick a placement spot near the world centre from pure worldgen math (WorldGenerator height/biome — no
-        /// zones need to be loaded, this runs on a headless dedi at boot). Candidates are ZONE CENTRES in the
-        /// descriptor's centre ring, skipping any zone that already holds a location instance (StartTemple included),
-        /// scored flattest-first. The entrance is rotated to face the world centre.
+        /// Pick a placement spot from worldgen math alone (no zones need to be loaded — this runs on a headless dedi
+        /// at boot). Candidates are ZONE CENTRES searched outward in rings (the descriptor's radius, then 2x, 3.5x,
+        /// 5x) so a crowded or wet centre pushes the dungeon further out instead of failing; the first ring with a
+        /// valid zone wins, flattest first, closer breaking ties. Skipped: zones holding any location instance (the
+        /// spawn temple included) and, on normal worlds, zones with player builds (the dungeon and its ground
+        /// leveler must never land on a base). On a zone-mode world only CLOSED zones beside the open land qualify
+        /// and their ground comes from the world's own plan — the dungeon gets a zone of its own.
         /// </summary>
-        private static bool TryPickAutoSpot(DungeonSpec spec, out Vector3 pos, out Quaternion rot, out string why)
+        private static bool TryPickAutoSpot(DungeonSpec spec, bool zoneMode, out Vector3 pos, out Quaternion rot, out string why)
         {
             pos = Vector3.zero; rot = Quaternion.identity;
             var worldGen = WorldGenerator.instance;
@@ -240,56 +298,116 @@ namespace FiresCore.Dungeon
             if (worldGen == null || zoneSystem == null) { why = "WorldGenerator/ZoneSystem not ready."; return false; }
 
             var d = spec.NearSpawnLocation;
-            float minR = Mathf.Max(128f, d.MinDistanceFromCenter);           // never on top of the spawn temple
-            float maxR = Mathf.Max(minR + 64f, d.MaxDistanceFromCenter);
+            float minR = Mathf.Max(0f, d.MinDistanceFromCenter);
+            float baseR = Mathf.Max(minR + 64f, d.MaxDistanceFromCenter);
+            float[] rings = { baseR, baseR * 2f, baseR * 3.5f, baseR * 5f };
+            var stats = new PickStats();
+            float inner = minR;
+            foreach (float outer in rings)
+            {
+                if (TryRing(spec, zoneMode, worldGen, zoneSystem, inner, outer, stats, out pos))
+                {
+                    Vector3 outward = new Vector3(pos.x, 0f, pos.z);
+                    rot = outward.sqrMagnitude > 0.01f ? Quaternion.LookRotation(-outward.normalized, Vector3.up) : Quaternion.identity;
+                    why = null;
+                    return true;
+                }
+                inner = outer;
+            }
+            why = $"no spot within {rings[rings.Length - 1]:F0}m of the centre — {stats}.";
+            return false;
+        }
+
+        private static bool TryRing(DungeonSpec spec, bool zoneMode, WorldGenerator worldGen, ZoneSystem zoneSystem,
+            float inner, float outer, PickStats stats, out Vector3 best)
+        {
+            best = Vector3.zero;
+            var d = spec.NearSpawnLocation;
             float water = zoneSystem.m_waterLevel;
             float minAlt = Mathf.Max(1f, d.MinAltitude);
             float pad = Mathf.Max(8f, d.ExteriorRadius);
-
-            int zoneRange = Mathf.CeilToInt(maxR / 64f);
+            int range = Mathf.CeilToInt(outer / 64f);
             float bestScore = float.MaxValue;
-            Vector3 bestPos = Vector3.zero;
 
-            for (int zx = -zoneRange; zx <= zoneRange; zx++)
-            for (int zy = -zoneRange; zy <= zoneRange; zy++)
+            for (int zx = -range; zx <= range; zx++)
+            for (int zy = -range; zy <= range; zy++)
             {
                 var zone = new Vector2s(zx, zy);
                 Vector3 c = ZoneSystem.GetZonePos(zone);
                 float dist = new Vector2(c.x, c.z).magnitude;
-                if (dist < minR || dist > maxR) continue;
-                if (zoneSystem.m_locationInstances.ContainsKey(zone)) continue;
+                if (dist < inner || dist >= outer) continue;
+                stats.Checked++;
+                if (zoneSystem.m_locationInstances.ContainsKey(zone)) { stats.Instance++; continue; }
 
-                float h0 = worldGen.GetHeight(c.x, c.z);
-                if (h0 - water < minAlt || h0 - water > 250f) continue;
-                if (d.Biome != Heightmap.Biome.All && (worldGen.GetBiome(c.x, c.z) & d.Biome) == 0) continue;
+                if (zoneMode)
+                {
+                    if (Bridge.FiresZoneModeBridge.IsZoneOpen(zone)) { stats.Open++; continue; }
+                    if (!Bridge.FiresZoneModeBridge.HasOpenEdgeNeighbour(zone)) { stats.Detached++; continue; }
+                    if (Bridge.FiresZoneModeBridge.IsZoneParked(zone)) { stats.Parked++; continue; }
+                }
+                else
+                {
+                    if (d.Biome != Heightmap.Biome.All && (worldGen.GetBiome(c.x, c.z) & d.Biome) == 0) { stats.Biome++; continue; }
+                    if (ZoneHasPlayerBuilds(zone)) { stats.Builds++; continue; }
+                }
 
+                if (!SampleHeight(worldGen, zoneMode, c.x, c.z, out float h0)) { stats.Water++; continue; }
+                if (h0 - water < minAlt || h0 - water > 250f) { stats.Water++; continue; }
                 float hMin = h0, hMax = h0;
-                for (int i = 0; i < 4; i++)
+                bool ok = true;
+                for (int i = 0; i < 4 && ok; i++)
                 {
                     float ox = (i % 2 == 0 ? pad : -pad), oz = (i < 2 ? pad : -pad);
-                    float h = worldGen.GetHeight(c.x + ox, c.z + oz);
+                    if (!SampleHeight(worldGen, zoneMode, c.x + ox, c.z + oz, out float h)) { ok = false; break; }
                     if (h < hMin) hMin = h;
                     if (h > hMax) hMax = h;
                 }
-                if (hMin - water < minAlt) continue;                          // a corner in the water = shoreline
-
+                if (!ok || hMin - water < minAlt) { stats.Water++; continue; }   // a corner in the water = shoreline
                 float slope = hMax - hMin;
-                if (slope > 10f) continue;
-                float score = slope + dist * 0.005f;                          // flattest wins, closer breaks ties
-                if (score < bestScore) { bestScore = score; bestPos = new Vector3(c.x, h0, c.z); }
-            }
+                if (slope > 10f) { stats.Slope++; continue; }
+                if (TouchesGeneratedWater(c.x, c.z, pad)) { stats.River++; continue; }
 
-            if (bestScore == float.MaxValue)
-            {
-                why = $"no flat dry zone centre in the {minR:F0}–{maxR:F0}m centre ring (checked altitude {minAlt}+, slope ≤10m).";
-                return false;
+                float score = slope + dist * 0.005f;
+                if (score < bestScore) { bestScore = score; best = new Vector3(c.x, h0, c.z); }
             }
+            return bestScore < float.MaxValue;
+        }
 
-            pos = bestPos;
-            Vector3 outward = new Vector3(bestPos.x, 0f, bestPos.z).normalized;
-            rot = Quaternion.LookRotation(-outward, Vector3.up);              // entrance faces the world centre
-            why = null;
+        // Zone-mode worlds read a closed zone's ground from the world's own plan (what it becomes once opened); the
+        // live WorldGenerator answer there is sea floor.
+        private static bool SampleHeight(WorldGenerator worldGen, bool zoneMode, float x, float z, out float height)
+        {
+            if (zoneMode) return Bridge.FiresZoneModeBridge.TryPlanningHeight(x, z, out height);
+            height = worldGen.GetHeight(x, z);
             return true;
+        }
+
+        // Generated rivers/lakes carve channels the height samples above can miss; test the centre, the four
+        // footprint corners and the four edge midpoints.
+        private static bool TouchesGeneratedWater(float cx, float cz, float pad)
+        {
+            for (int ix = -1; ix <= 1; ix++)
+            for (int iz = -1; iz <= 1; iz++)
+                if (Bridge.FiresZoneModeBridge.IsGeneratedWater(cx + ix * pad, cz + iz * pad)) return true;
+            return false;
+        }
+
+        private static readonly List<ZDO> s_sectorScratch = new List<ZDO>();
+        private static readonly List<ZDO> s_distantScratch = new List<ZDO>();
+
+        // Any player-built object (a ZDO with a creator) in the zone.
+        private static bool ZoneHasPlayerBuilds(Vector2s zone)
+        {
+            var zdoMan = ZDOMan.instance;
+            if (zdoMan == null) return false;
+            s_sectorScratch.Clear();
+            s_distantScratch.Clear();
+            zdoMan.FindSectorObjects(zone, new SimulationDistance(0, 0), s_sectorScratch, s_distantScratch);
+            foreach (var z in s_sectorScratch)
+                if (z != null && z.GetLong(ZDOVars.s_creator, 0L) != 0L) return true;
+            foreach (var z in s_distantScratch)
+                if (z != null && z.GetLong(ZDOVars.s_creator, 0L) != 0L) return true;
+            return false;
         }
     }
 }

@@ -1,8 +1,9 @@
 ﻿using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.Archetypes.StatusEffects;
+using FiresCore.Npc.Archetypes.StatusEffects.Base;
+using FiresCore.Npc.Archetypes.StatusEffects.Berserker;
 using FiresCore.Npc.Archetypes.StatusEffects.Tank;
-using FiresCore.Npc.Archetypes.StatusEffects.Healer;
 
 namespace FiresCore.Npc
 {
@@ -14,13 +15,7 @@ namespace FiresCore.Npc
     {
         #region Fields
         
-        private const float DivineProtectionDamageTakenMultiplier = 0.8f;
-        private const float BerserkRageDamageMultiplier = 1.5f;
-        private const float WarcryDamageMultiplier = 1.15f;
-        private const float ElementalInfusionDamageMultiplier = 1.25f;
-        private const float ChiStrikeDamageMultiplier = 1.3f;
-        private const float HolySmiteDamageMultiplier = 1.2f;
-        private const float InnerPeaceHealthRegen = 5f;
+        private const string DefaultEffectDescription = "Companion ability effect.";
 
         private readonly CompanionController _companion;
         private readonly CompanionStats _stats;
@@ -200,7 +195,7 @@ namespace FiresCore.Npc
         /// <summary>
         /// Health regeneration per second from food.
         /// </summary>
-        public float FoodHealthRegen => _consumables?.GetFoodHealthRegen() ?? 0f;
+        public float FoodHealthRegen => _consumables?.GetFoodHealthRegenPerSecond() ?? 0f;
         
         /// <summary>
         /// Number of active food effects.
@@ -254,132 +249,55 @@ namespace FiresCore.Npc
         }
         
         /// <summary>
-        /// Damage reduction multiplier from active status effects (1.0 = no reduction).
+        /// Incoming-damage multiplier from active ability effects (1.0 = none), read from the effects themselves:
+        /// Fortify's reduction, Berserk Rage's extra damage taken, and every buff's defense multiplier.
         /// </summary>
         public float StatusEffectDamageReduction
         {
             get
             {
-                if (_character == null) return 1f;
-                
-                var seman = _character.GetSEMan();
+                var seman = _character != null ? _character.GetSEMan() : null;
                 if (seman == null) return 1f;
-                
                 float multiplier = 1f;
-                
-                // Check for Fortify effect
-                var fortify = seman.GetStatusEffect(StatusEffectManager.EFFECT_FORTIFY.GetStableHashCode()) as FortifyEffect;
-                if (fortify != null)
+                foreach (var effect in seman.GetStatusEffects())
                 {
-                    multiplier *= fortify.DamageReduction;
+                    if (effect is FortifyEffect fortify) multiplier *= fortify.DamageReduction;
+                    else if (effect is BerserkRageEffect berserk) multiplier *= berserk.IncomingDamageMultiplier;
+                    else if (effect is BuffEffect buff) multiplier *= buff.DefenseMultiplier;
                 }
-                
-                // Check for Sanctuary effect (uses DefenseMultiplier from BuffEffect base class)
-                var sanctuary = seman.GetStatusEffect(StatusEffectManager.EFFECT_SANCTUARY.GetStableHashCode()) as SanctuaryEffect;
-                if (sanctuary != null)
-                {
-                    multiplier *= sanctuary.DefenseMultiplier;
-                }
-                
-                // Check for Divine Protection effect
-                var divineProtection = seman.GetStatusEffect(StatusEffectManager.EFFECT_DIVINE_PROTECTION.GetStableHashCode());
-                if (divineProtection != null)
-                {
-                    // Divine Protection gives 20% damage reduction
-                    multiplier *= DivineProtectionDamageTakenMultiplier;
-                }
-                
                 return multiplier;
             }
         }
-        
-        /// <summary>
-        /// Attack damage multiplier from active status effects (1.0 = no bonus).
-        /// </summary>
+
+        /// <summary>Outgoing-damage multiplier from active ability effects (1.0 = none), read from the effects themselves.</summary>
         public float StatusEffectDamageBonus
         {
             get
             {
-                if (_character == null) return 1f;
-                
-                var seman = _character.GetSEMan();
+                var seman = _character != null ? _character.GetSEMan() : null;
                 if (seman == null) return 1f;
-                
                 float multiplier = 1f;
-                
-                // Check for Berserk Rage effect
-                var berserk = seman.GetStatusEffect(StatusEffectManager.EFFECT_BERSERK_RAGE.GetStableHashCode());
-                if (berserk != null)
+                foreach (var effect in seman.GetStatusEffects())
                 {
-                    // Berserk gives 50% damage bonus
-                    multiplier *= BerserkRageDamageMultiplier;
+                    if (effect is BerserkRageEffect berserk) multiplier *= berserk.DamageMultiplier;
+                    else if (effect is BuffEffect buff) multiplier *= buff.DamageMultiplier;
                 }
-                
-                // Check for Warcry effect
-                var warcry = seman.GetStatusEffect(StatusEffectManager.EFFECT_WARCRY.GetStableHashCode());
-                if (warcry != null)
-                {
-                    // Warcry gives 15% damage bonus
-                    multiplier *= WarcryDamageMultiplier;
-                }
-                
-                // Check for Elemental Infusion effect
-                var elementalInfusion = seman.GetStatusEffect(StatusEffectManager.EFFECT_ELEMENTAL_INFUSION.GetStableHashCode());
-                if (elementalInfusion != null)
-                {
-                    // Elemental Infusion gives 25% magic damage bonus
-                    multiplier *= ElementalInfusionDamageMultiplier;
-                }
-                
-                // Check for Chi Strike effect
-                var chiStrike = seman.GetStatusEffect(StatusEffectManager.EFFECT_CHI_STRIKE.GetStableHashCode());
-                if (chiStrike != null)
-                {
-                    // Chi Strike gives 30% unarmed damage bonus
-                    multiplier *= ChiStrikeDamageMultiplier;
-                }
-                
-                // Check for Holy Smite effect
-                var holySmite = seman.GetStatusEffect(StatusEffectManager.EFFECT_HOLY_SMITE.GetStableHashCode());
-                if (holySmite != null)
-                {
-                    // Holy Smite gives 20% spirit damage bonus
-                    multiplier *= HolySmiteDamageMultiplier;
-                }
-                
                 return multiplier;
             }
         }
-        
-        /// <summary>
-        /// Health regeneration bonus from active status effects (per second).
-        /// </summary>
+
+        /// <summary>Health regeneration per second from active buffs.</summary>
         public float StatusEffectHealthRegen
         {
             get
             {
-                if (_character == null) return 0f;
-                
-                var seman = _character.GetSEMan();
+                var seman = _character != null ? _character.GetSEMan() : null;
                 if (seman == null) return 0f;
-                
                 float regen = 0f;
-                
-                // Check for Sanctuary effect
-                var sanctuary = seman.GetStatusEffect(StatusEffectManager.EFFECT_SANCTUARY.GetStableHashCode()) as SanctuaryEffect;
-                if (sanctuary != null)
+                foreach (var effect in seman.GetStatusEffects())
                 {
-                    regen += sanctuary.HealthRegenBonus;
+                    if (effect is BuffEffect buff) regen += buff.HealthRegenBonus;
                 }
-                
-                // Check for Inner Peace effect
-                var innerPeace = seman.GetStatusEffect(StatusEffectManager.EFFECT_INNER_PEACE.GetStableHashCode());
-                if (innerPeace != null)
-                {
-                    // Inner Peace gives 5 HP/s regen
-                    regen += InnerPeaceHealthRegen;
-                }
-                
                 return regen;
             }
         }
@@ -407,7 +325,9 @@ namespace FiresCore.Npc
                     float remaining = effect.GetRemaningTime();
                     Color effectColor = GetEffectColor(effect.name);
                     string displayName = GetEffectDisplayName(effect.name);
-                    string description = GetEffectDescription(effect.name);
+                    string ownDescription = (effect as CompanionStatusEffectBase)?.Description;
+                    string description = !string.IsNullOrEmpty(ownDescription) && ownDescription != DefaultEffectDescription
+                        ? ownDescription : GetEffectDescription(effect.name);
                     
                     effects.Add((displayName, remaining, effectColor, description));
                 }
@@ -500,8 +420,8 @@ namespace FiresCore.Npc
                 case StatusEffectManager.EFFECT_FORTIFY: return "-30% damage taken, +armor";
                 
                 // Paladin
-                case StatusEffectManager.EFFECT_DIVINE_PROTECTION: return "-20% damage taken for group";
-                case StatusEffectManager.EFFECT_HOLY_SMITE: return "+20% spirit damage on attacks";
+                case StatusEffectManager.EFFECT_DIVINE_PROTECTION: return "-25% damage taken for group";
+                case StatusEffectManager.EFFECT_HOLY_SMITE: return "+15% damage and bonus spirit damage";
                 
                 // Berserker
                 case StatusEffectManager.EFFECT_BERSERK_RAGE: return "+50% damage, brief immunity";
@@ -517,17 +437,17 @@ namespace FiresCore.Npc
                 case StatusEffectManager.EFFECT_EAGLE_EYE: return "+crit chance, +ranged damage";
                 
                 // Mage
-                case StatusEffectManager.EFFECT_ELEMENTAL_INFUSION: return "+25% elemental damage";
+                case StatusEffectManager.EFFECT_ELEMENTAL_INFUSION: return "+30% fire, frost and lightning damage";
                 case StatusEffectManager.EFFECT_ARCANE_SHIELD: return "Damage absorption barrier";
                 
                 // Healer
                 case StatusEffectManager.EFFECT_PURIFY: return "Cleanses debuffs, heals";
                 case StatusEffectManager.EFFECT_PURIFYING_CIRCLE: return "Area heal + cleanse";
-                case StatusEffectManager.EFFECT_SANCTUARY: return "-15% damage, +HP regen";
+                case StatusEffectManager.EFFECT_SANCTUARY: return "-30% damage taken, +HP regen";
                 
                 // Monk
                 case StatusEffectManager.EFFECT_CHI_STRIKE: return "+30% unarmed damage";
-                case StatusEffectManager.EFFECT_INNER_PEACE: return "Meditation aura, +5 HP/s";
+                case StatusEffectManager.EFFECT_INNER_PEACE: return "Meditation aura: heals nearby allies, -50% damage taken";
                 
                 // Expert
                 case StatusEffectManager.EFFECT_IRON_WALL: return "Cannot be staggered";

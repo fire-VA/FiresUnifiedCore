@@ -711,6 +711,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
             // Check if we have enough stamina to start blocking via CompanionStats (fallback)
             var stats = _context?.Companion?.GetStats();
             float blockStartCost = 5f; // Base stamina cost to raise block
+            if (stats != null) blockStartCost = stats.ModifyBlockStaminaCost(blockStartCost);
             if (stats != null && !stats.HasStamina(blockStartCost))
             {
                 if (CompanionCombat.VerboseLogging)
@@ -934,6 +935,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
             // Consume stamina based on blocked damage (like players)
             float staminaCost = blockedDamage * 0.5f; // Half of blocked damage as stamina cost
             var stats = _context.Companion?.GetStats();
+            if (stats != null) staminaCost = stats.ModifyBlockStaminaCost(staminaCost);
             if (stats != null)
             {
                 // If we don't have enough stamina, block breaks and we take more damage
@@ -965,7 +967,10 @@ weaponType == CompanionCombat.WeaponType.Staff)
 
             // Apply damage reduction
             float damageReduction = isPerfectParry ? _context.ParryDamageReduction : _context.BlockDamageReduction;
-     finalDamage *= (1f - damageReduction);
+            var ironWall = _context.Character?.GetSEMan()?.GetStatusEffect(Archetypes.StatusEffects.StatusEffectManager.EFFECT_IRON_WALL.GetStableHashCode())
+                as Archetypes.StatusEffects.Expert.IronWallEffect;
+            if (ironWall != null) damageReduction = Mathf.Max(damageReduction, ironWall.BlockDamageReduction);
+            finalDamage *= (1f - damageReduction);
 
             OnDamageTaken(totalDamage, true);
 

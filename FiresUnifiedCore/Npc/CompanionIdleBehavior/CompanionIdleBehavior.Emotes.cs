@@ -1,5 +1,6 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
+using FiresCore.Npc.Animation;
 using FiresCore.Npc.Movement;
 
 namespace FiresCore.Npc
@@ -8,65 +9,37 @@ namespace FiresCore.Npc
     public partial class CompanionIdleBehavior
     {
         #region Emote Data
-        
-        // Available emotes
-        private static readonly string[] QuickEmotes = new string[]
-        {
-            "emote_point", "emote_wave", "emote_challenge",
-            "emote_cheer", "emote_nonono", "emote_thumbsup", "emote_flex",
-            "emote_laugh", "emote_shrug", "emote_blowkiss", "emote_bow",
-            "emote_cry", "emote_comehere",
-            "emote_roar", "emote_toast", "emote_loveyou"
-        };
-        
-        // Longer quick emotes
-        private static readonly string[] LongerQuickEmotes = new string[]
-        {
-            // Currently empty - headbang and dance moved to persistent
-        };
-        private const float LongerEmoteDuration = 10f;
 
-        // Persistent emotes that hold a pose/animation for extended periods
-        // NOTE: emote_relax was removed because it doesn't reset correctly
-        private static readonly string[] PersistentEmotes = new string[]
+        // Idle emotes come from the player-rig catalog: one-shots end on their own, loops and holds are ended by
+        // StopCurrentEmoteAnimation (emote_stop or the Bool back to false) when their time is up.
+        private static List<PlayerAnimation> _quickEmotes;
+        private static List<PlayerAnimation> _persistentEmotes;
+
+        private static List<PlayerAnimation> QuickEmotes
         {
-            "emote_sit", "emote_despair", "emote_rest", "emote_vibe",
-            "emote_kneel", "emote_headbang", "emote_dance"
-        };
-        
-        /// <summary>
-        /// Accurate emote durations based on actual Valheim animation clip lengths.
-        /// </summary>
-        private static readonly Dictionary<string, float> EmoteDurations = new Dictionary<string, float>
+            get
+            {
+                if (_quickEmotes == null) SplitIdleEmotes();
+                return _quickEmotes;
+            }
+        }
+
+        private static List<PlayerAnimation> PersistentEmotes
         {
-            // Quick one-shot emotes
-            { "emote_blowkiss", 2.0f },
-            { "emote_bow", 3.5f },
-            { "emote_challenge", 3.2f },
-            { "emote_cheer", 2.5f },
-            { "emote_cower", 2.7f },
-            { "emote_cry", 4.0f },
-            { "emote_flex", 2.9f },
-            { "emote_laugh", 3.1f },
-            { "emote_nonono", 2.1f },
-            { "emote_point", 2.5f },
-            { "emote_roar", 2.2f },
-            { "emote_shrug", 2.7f },
-            { "emote_thumbsup", 1.3f },
-            { "emote_wave", 2.5f },
-            { "emote_toast", 2.7f },
-            { "emote_loveyou", 2.7f },
-            { "emote_comehere", 2.4f },
-            
-            // Persistent/looping emotes
-            { "emote_sit", 10.87f },
-            { "emote_despair", 6.7f },
-            { "emote_kneel", 2.0f },
-            { "emote_headbang", 1.4f },
-            { "emote_dance", 5.2f },
-            { "emote_rest", 10.0f },
-            { "emote_vibe", 5.0f },
-        };
+            get
+            {
+                if (_persistentEmotes == null) SplitIdleEmotes();
+                return _persistentEmotes;
+            }
+        }
+
+        private static void SplitIdleEmotes()
+        {
+            _quickEmotes = new List<PlayerAnimation>();
+            _persistentEmotes = new List<PlayerAnimation>();
+            foreach (var anim in PlayerAnimationCatalog.For(PlayerAnimUse.CompanionIdle))
+                (anim.Kind == PlayerAnimKind.OneShot ? _quickEmotes : _persistentEmotes).Add(anim);
+        }
 
         #endregion
 
@@ -78,44 +51,31 @@ namespace FiresCore.Npc
             bool useQuickEmote = Time.time - _lastCombatTime < combatCooldownForIdle * 3f ||
                 UnityEngine.Random.value > 0.3f;
 
-            string emote;
-            float duration;
-            string emoteType;
-            bool isPersistent;
-
-            if (useQuickEmote)
+            var pool = useQuickEmote ? QuickEmotes : PersistentEmotes;
+            if (pool.Count == 0) return;
+            var anim = pool[UnityEngine.Random.Range(0, pool.Count)];
+            if (!PlayerAnimationCatalog.Has(_animator, anim))
             {
-                emote = QuickEmotes[UnityEngine.Random.Range(0, QuickEmotes.Length)];
-                
-                if (EmoteDurations.TryGetValue(emote, out float animDuration))
-                {
-                    duration = animDuration;
-                }
-                else
-                {
-                    duration = quickEmoteDuration;
-                }
-                
-                emoteType = "quick";
-                isPersistent = false;
+                if (VerboseLogging)
+                    Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} model cannot play {anim.Parameter} - skipping emote");
+                _nextEmoteTime = Time.time + UnityEngine.Random.Range(idleEmoteMinInterval, idleEmoteMaxInterval);
+                return;
+            }
+
+            string emote = anim.Parameter;
+            bool isPersistent = anim.Kind != PlayerAnimKind.OneShot;
+            string emoteType = isPersistent ? "persistent" : "quick";
+            float duration;
+            if (isPersistent)
+            {
+                float minDuration = Mathf.Max(persistentEmoteDurationMin, Mathf.Min(anim.Seconds, persistentEmoteDurationMax));
+                duration = UnityEngine.Random.Range(minDuration, persistentEmoteDurationMax);
             }
             else
             {
-                emote = PersistentEmotes[UnityEngine.Random.Range(0, PersistentEmotes.Length)];
-                
-                float baseCycleDuration = 10f;
-                if (EmoteDurations.TryGetValue(emote, out float cycleDuration))
-                {
-                    baseCycleDuration = cycleDuration;
-                }
-                
-                float minDuration = Mathf.Max(persistentEmoteDurationMin, baseCycleDuration);
-                duration = UnityEngine.Random.Range(minDuration, persistentEmoteDurationMax);
-                
-                emoteType = "persistent";
-                isPersistent = true;
+                duration = anim.Seconds > 0f ? anim.Seconds : quickEmoteDuration;
             }
-            
+
             // Try to enter emote state in state controller
             if (_stateController != null)
             {
@@ -127,21 +87,7 @@ namespace FiresCore.Npc
                 }
             }
 
-            // For persistent emotes, use SetBool; for quick emotes, use SetTrigger
-            if (isPersistent)
-            {
-                if (_zanim != null)
-                    _zanim.SetBool(emote, true);
-                else if (_animator != null && HasAnimatorParameter(emote))
-                    _animator.SetBool(emote, true);
-            }
-            else
-            {
-                if (_zanim != null)
-                    _zanim.SetTrigger(emote);
-                else if (_animator != null)
-                    _animator.SetTrigger(emote);
-            }
+            PlayerAnimationCatalog.Play(_zanim, _animator, anim);
 
             _isPlayingEmote = true;
             _currentEmote = emote;

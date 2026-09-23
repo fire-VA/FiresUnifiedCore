@@ -81,9 +81,8 @@ namespace FiresCore.Npc
         private float _cachedXpForNextLevel;
         private bool _initialized;
         
-        // Level up effect
-        private static GameObject _levelUpEffectPrefab;
-        
+        private const string LevelUpEffect = "fx_GP_Activation";
+
         public static bool VerboseLogging = false;
         
         /// <summary>
@@ -166,12 +165,6 @@ namespace FiresCore.Npc
             if (!_vaultDataRestored)
             {
                 LoadFromZDO();
-            }
-            
-            // Cache level up effect
-            if (_levelUpEffectPrefab == null)
-            {
-                _levelUpEffectPrefab = ZNetScene.instance?.GetPrefab("fx_GP_Activation");
             }
             
             _initialized = true;
@@ -280,13 +273,10 @@ namespace FiresCore.Npc
             AddXp(xpPerSkillLevelUp, $"{skill} skill level {newLevel}");
         }
         
+        /// <summary>Level-ups happen on the owner (XP is saved to its ZDO), so one networked copy, near a player only.</summary>
         private void PlayLevelUpEffect()
         {
-            if (_levelUpEffectPrefab != null)
-            {
-                var pos = transform.position + Vector3.up * 1f;
-                UnityEngine.Object.Instantiate(_levelUpEffectPrefab, pos, Quaternion.identity);
-            }
+            Archetypes.AbilityFXManager.SpawnEffect(LevelUpEffect, transform.position + Vector3.up * 1f);
         }
         
         private void NotifyLevelUp()

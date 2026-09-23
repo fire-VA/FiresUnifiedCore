@@ -21,17 +21,23 @@ namespace FiresCore.Logging
 
         public bool VerboseEnabled => ReadVerboseSafely();
 
-        public void Info(string message) => Debug.Log($"{_prefix} {message}");
+        public void Info(string message) => Debug.Log(Compose(message));
 
         public void Verbose(string message)
         {
             if (!ReadVerboseSafely()) return;
-            Debug.Log($"{_prefix} {message}");
+            Debug.Log(Compose(message));
         }
 
-        public void Warning(string message) => Debug.LogWarning($"{_prefix} {message}");
+        public void Warning(string message) => Debug.LogWarning(Compose(message));
 
-        public void Error(string message) => Debug.LogError($"{_prefix} {message}");
+        public void Error(string message) => Debug.LogError(Compose(message));
+
+        // Folded to the console's width here rather than at each call site, so every mod on this logger gets it and
+        // no summary line has to be written short by hand. The tag stays on the first row for the colour patch, the
+        // suppression patches and grep.
+        private string Compose(string message)
+            => _prefix + " " + ConsoleWrap.Fit(message, ConsoleWrap.UnityLogPrefixColumns + _prefix.Length + 1);
 
         private bool ReadVerboseSafely()
         {

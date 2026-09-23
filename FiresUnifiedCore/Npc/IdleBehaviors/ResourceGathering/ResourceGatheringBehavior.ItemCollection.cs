@@ -35,6 +35,15 @@ namespace FiresCore.Npc.IdleBehaviors
                     return false;
                 }
                 
+                var pickableView = pickable.GetComponent<ZNetView>();
+                if (!CanPickHere() || pickableView == null || !pickableView.IsValid())
+                {
+                    if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
+                        Debug.Log($"[ResourceGathering] {Companion.companionName} - {_targetResource.Name} can't be picked on this machine, skipping");
+                    TryFindNextResource();
+                    return false;
+                }
+
                 FaceTarget(_targetResource.InteractionPosition);
                 
                 if (_zanim != null)
@@ -42,6 +51,8 @@ namespace FiresCore.Npc.IdleBehaviors
                     _zanim.SetTrigger("interact");
                 }
                 
+                // Owning it makes Interact's RPC_Pick run here, where Player.m_localPlayer exists.
+                pickableView.ClaimOwnership();
                 bool success = pickable.Interact(_humanoid, false, false);
                 
                 if (success)
@@ -136,7 +147,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 
                 // Second priority: Find stump to clear (and plant sapling)
-                var stump = FindNearbyStump(_lastTreePosition, StumpSearchRadius);
+                var stump = ResourceDataHelper.FindNearestTreeStump(_lastTreePosition, StumpSearchRadius);
                 if (stump != null)
                 {
                     var stumpData = ResourceDataHelper.GetResourceData(stump);
@@ -302,6 +313,22 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
         
+        private static readonly string[] GatheredResourceNameParts =
+        {
+            "wood", "stone", "ore", "flint", "coal", "resin", "leather", "trophy", "feather", "bone",
+            "guck", "surtling", "copper", "tin", "iron", "silver", "blackmetal", "flametal"
+        };
+
+        private static bool IsGatheredResource(string prefabName)
+        {
+            string lowerName = prefabName.ToLowerInvariant();
+            foreach (string part in GatheredResourceNameParts)
+            {
+                if (lowerName.Contains(part)) return true;
+            }
+            return false;
+        }
+
         private void DepositToChests()
         {
             if (_inventory == null || _nearbyChests.Count == 0) return;
@@ -310,39 +337,17 @@ namespace FiresCore.Npc.IdleBehaviors
             if (storageInv == null) return;
             
             int totalDeposited = 0;
+            var depositedPrefabs = new HashSet<string>();
             
-            var itemsToDeposit = new List<ItemDrop.ItemData>(storageInv.GetAllItems());
-            
-            foreach (var item in itemsToDeposit)
+            // Weapons, tools and armor never qualify (GetDepositableItems), and each deposit moves exactly one prefab.
+            foreach (var item in ChestHelper.GetDepositableItems(storageInv))
             {
-                if (item == null) continue;
+                string prefabName = item.m_dropPrefab?.name;
+                if (string.IsNullOrEmpty(prefabName) || !IsGatheredResource(prefabName) || !depositedPrefabs.Add(prefabName)) continue;
                 
-                string prefabName = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-                
-                bool isResource = prefabName.Contains("wood") || 
-                                  prefabName.Contains("stone") || 
-                                  prefabName.Contains("ore") ||
-                                  prefabName.Contains("flint") ||
-                                  prefabName.Contains("coal") ||
-                                  prefabName.Contains("resin") ||
-                                  prefabName.Contains("leather") ||
-                                  prefabName.Contains("trophy") ||
-                                  prefabName.Contains("feather") ||
-                                  prefabName.Contains("bone") ||
-                                  prefabName.Contains("guck") ||
-                                  prefabName.Contains("surtling") ||
-                                  prefabName.Contains("copper") ||
-                                  prefabName.Contains("tin") ||
-                                  prefabName.Contains("iron") ||
-                                  prefabName.Contains("silver") ||
-                                  prefabName.Contains("blackmetal") ||
-                                  prefabName.Contains("flametal");
-                
-                if (isResource)
-                {
-                    int deposited = ChestHelper.DepositItemType(_nearbyChests, storageInv, prefabName);
-                    totalDeposited += deposited;
-                }
+                var result = Core.InventoryTransferService.DepositItemSmart(storageInv, _nearbyChests, prefabName);
+                if (result.Success)
+                    totalDeposited += result.AmountTransferred;
             }
             
             if (totalDeposited > 0)
@@ -365,18 +370,11 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_inventory == null) return;
             
             var rightHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
-            if (rightHand != null && rightHand.IsWeapon())
+            if (rightHand != null && rightHand.IsWeapon() &&
+                !ResourceDataHelper.TryStowEquipped(_inventory, CompanionInventory.EquipmentSlot.RightHand, CompanionInventory.EquipmentSlot.RightBack))
             {
-                _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.RightHand);
-                var rightBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-                if (rightBack == null)
-                {
-                    _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightBack, rightHand);
-                }
-                else
-                {
-                    _inventory.GetStorageInventory()?.AddItem(rightHand);
-                }
+                if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
+                    Debug.Log($"[ResourceGathering] {Companion.companionName} has no room to holster {rightHand.m_shared?.m_name} - keeping it in hand");
             }
             
             var leftHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftHand);
@@ -388,18 +386,11 @@ namespace FiresCore.Npc.IdleBehaviors
                                      itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
                                      itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon;
                 
-                if (shouldHolster)
+                if (shouldHolster &&
+                    !ResourceDataHelper.TryStowEquipped(_inventory, CompanionInventory.EquipmentSlot.LeftHand, CompanionInventory.EquipmentSlot.LeftBack))
                 {
-                    _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.LeftHand);
-                    var leftBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack);
-                    if (leftBack == null)
-                    {
-                        _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.LeftBack, leftHand);
-                    }
-                    else
-                    {
-                        _inventory.GetStorageInventory()?.AddItem(leftHand);
-                    }
+                    if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
+                        Debug.Log($"[ResourceGathering] {Companion.companionName} has no room to holster {leftHand.m_shared?.m_name} - keeping it in hand");
                 }
             }
             

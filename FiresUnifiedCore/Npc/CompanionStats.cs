@@ -602,7 +602,10 @@ namespace FiresCore.Npc
             // level-scaled (vanilla creatures do not grow stamina with level).
             _maxStamina = (baseMaxStamina + staminaBonus + foodStaminaBonus) * _archetypeStaminaMultiplier;
             _maxEitr = baseMaxEitr + eitrBonus + foodEitrBonus;
-            
+
+            // Vanilla SetLevel resets max health, so the level follows the effective level before ours is applied.
+            _companion?.SyncCharacterLevel();
+
             // Apply max health to character (for damage calculations)
             ApplyMaxHealthToCharacter();
             
@@ -822,6 +825,50 @@ namespace FiresCore.Npc
             return false;
         }
         
+        /// <summary>Restores stamina from vanilla sources (status effects, meads), routed from Character.AddStamina.</summary>
+        public void AddStamina(float amount)
+        {
+            if (amount > 0f) _currentStamina = Mathf.Min(_currentStamina + amount, _maxStamina);
+        }
+
+        /// <summary>Restores eitr from vanilla sources (status effects, meads), routed from Character.AddEitr.</summary>
+        public void AddEitr(float amount)
+        {
+            if (amount > 0f) _currentEitr = Mathf.Min(_currentEitr + amount, _maxEitr);
+        }
+
+        /// <summary>
+        /// Vanilla Attack.GetAttackStamina for a companion: the weapon's cost with the gear attack-stamina modifier and
+        /// status effects, less up to 33 % from the weapon skill.
+        /// </summary>
+        public float GetAttackStaminaCost(float baseCost, Skills.SkillType skillType)
+        {
+            float cost = baseCost * (1f + (EquipmentData != null ? EquipmentData.TotalAttackStaminaModifier : 0f));
+            _character?.GetSEMan()?.ModifyAttackStaminaUsage(cost, ref cost);
+            var skills = GetComponent<CompanionSkills>();
+            float skillFactor = skills != null ? skills.GetSkillFactor(skillType) : 0f;
+            return cost - cost * StaminaSkillMaxReduction * skillFactor;
+        }
+
+        /// <summary>Vanilla Humanoid.BlockAttack's stamina modifiers: the gear block-stamina modifier, then status effects.</summary>
+        public float ModifyBlockStaminaCost(float cost)
+        {
+            cost += cost * (EquipmentData != null ? EquipmentData.TotalBlockStaminaModifier : 0f);
+            _character?.GetSEMan()?.ModifyBlockStaminaUsage(cost, ref cost, false);
+            return cost;
+        }
+
+        /// <summary>Vanilla Player.GetDodgeStaminaUse's modifiers: heavy armor and the gear dodge modifier, then status effects.</summary>
+        public float ModifyDodgeStaminaCost(float cost)
+        {
+            var equipment = EquipmentData;
+            if (equipment != null) cost = cost - cost * equipment.TotalMovementModifier + cost * equipment.TotalDodgeStaminaModifier;
+            _character?.GetSEMan()?.ModifyDodgeStaminaUsage(cost, ref cost);
+            return cost;
+        }
+
+        private CompanionEquipmentData EquipmentData => _companion != null ? _companion.EquipmentData : null;
+
         /// <summary>
         /// Checks if there's enough stamina for an action without consuming it.
         /// </summary>
@@ -844,25 +891,7 @@ namespace FiresCore.Npc
                 Debug.Log($"[CompanionStats] {_companion?.companionName} stamina set to {_currentStamina:F1}/{_maxStamina:F1}");
             }
         }
-        
-        /// <summary>
-        /// Gets the stamina cost for an action, modified by skills.
-        /// </summary>
-        public float GetStaminaCost(float baseCost, Skills.SkillType skillType)
-        {
-            float skillReduction = 0f;
-            
-            var skills = GetComponent<CompanionSkills>();
-            if (skills != null)
-            {
-                // Higher skill = lower stamina cost (up to 33% reduction at level 100)
-                float skillFactor = skills.GetSkillFactor(skillType);
-                skillReduction = baseCost * skillFactor * StaminaSkillMaxReduction;
-            }
-            
-            return Mathf.Max(baseCost - skillReduction, baseCost * 0.5f);
-        }
-        
+
         #endregion
         
         #region Eitr Management
@@ -946,7 +975,7 @@ namespace FiresCore.Npc
                 
                 // Base health regen + food regen bonus, scaled by world buffs/debuffs (Rested, etc.)
                 // through the vanilla SEMan hook - the same modifier Player health regen uses.
-                float foodRegen = _consumables?.GetFoodHealthRegen() ?? 0f;
+                float foodRegen = _consumables?.GetFoodHealthRegenPerSecond() ?? 0f;
                 float semanRegenMult = 1f;
                 _character?.GetSEMan()?.ModifyHealthRegen(ref semanRegenMult);
                 float totalHealthRegen = (healthRegenPerSecond + foodRegen) * combatMult * semanRegenMult * dt;
@@ -999,7 +1028,11 @@ namespace FiresCore.Npc
             if (Time.time - _lastEitrUseTime >= eitrRegenDelay)
             {
                 combatMult = inCombat ? combatEitrRegenMultiplier : 1f;
-                float eitrRegen = eitrRegenPerSecond * combatMult * dt;
+                // Vanilla Player.UpdateStats: the status-effect multiplier plus the gear eitr-regen modifier.
+                float eitrMultiplier = 1f;
+                _character?.GetSEMan()?.ModifyEitrRegen(ref eitrMultiplier);
+                eitrMultiplier += EquipmentData != null ? EquipmentData.TotalEitrRegenModifier : 0f;
+                float eitrRegen = eitrRegenPerSecond * combatMult * eitrMultiplier * dt;
                 _currentEitr = Mathf.Min(_currentEitr + eitrRegen, _maxEitr);
             }
         }

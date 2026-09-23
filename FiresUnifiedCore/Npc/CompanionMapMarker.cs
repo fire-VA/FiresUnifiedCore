@@ -25,6 +25,10 @@ namespace FiresCore.Npc
         private static readonly Color DpsColor     = new Color(0.95f, 0.35f, 0.20f, 1f); // red-orange
         private static readonly Color DefaultColor = new Color(0.30f, 0.60f, 1.00f, 1f); // blue
 
+        // The instance overload of FieldRefAccess looks the field up and builds an accessor on every call.
+        private static readonly AccessTools.FieldRef<Minimap, bool> PinUpdateRequired =
+            AccessTools.FieldRefAccess<Minimap, bool>("m_pinUpdateRequired");
+
         // (companion, its live PinData in Minimap.m_pins)
         private readonly List<(CompanionController companion, Minimap.PinData pin)> _pins =
             new List<(CompanionController, Minimap.PinData)>();
@@ -57,8 +61,10 @@ namespace FiresCore.Npc
         {
             _followingBuffer.Clear();
             long pid = player.GetPlayerID();
-            foreach (var companion in CompanionController.AllCompanions)
+            var all = CompanionController.AllCompanions;
+            for (int i = 0; i < all.Count; i++)
             {
+                var companion = all[i];
                 if (companion == null || companion.isDefeated || !companion.isTamed) continue;
                 if (companion.ownerPlayerId != pid) continue;
                 if (companion.ShouldBeFollowing) _followingBuffer.Add(companion);
@@ -120,7 +126,7 @@ namespace FiresCore.Npc
             }
 
             if (moved && Minimap.instance != null)
-                AccessTools.FieldRefAccess<Minimap, bool>(Minimap.instance, "m_pinUpdateRequired") = true;
+                PinUpdateRequired(Minimap.instance) = true;
         }
 
         // ── Role colour ───────────────────────────────────────────────────────

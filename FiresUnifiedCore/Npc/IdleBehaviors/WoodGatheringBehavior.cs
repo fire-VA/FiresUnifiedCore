@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using FiresCore.Npc;
 using FiresCore.Npc.Core;
+using FiresCore.Npc.Animation;
 using FiresCore.Npc.Movement;
 using FiresCore.Npc.Events;
 
@@ -35,9 +36,8 @@ namespace FiresCore.Npc.IdleBehaviors
         // Consecutive hits where the tool tier is too low before we act.
         private const int IneffectiveHitThreshold = 3;
 
-        // Tool crafting
-        private const string AxePrefabStone = "AxeStone";
-        private const string AxePrefabFlint = "AxeFlint";
+        // Tool crafting: best axe first
+        private static readonly string[] CraftableAxes = { "AxeFlint", "AxeStone" };
         private const float WorkbenchSearchRadius = 30f;
         private const float WorkbenchInteractionDistance = 2f;
         private const float CraftDuration = 3f;
@@ -89,7 +89,10 @@ namespace FiresCore.Npc.IdleBehaviors
         private ItemDrop.ItemData _toolToPull;
 
         // Crafting state
+        private Recipe _craftRecipe;
         private CraftingStation _craftWorkbench;
+
+        private readonly ResourceDataHelper.AttackChain _swingChain = new ResourceDataHelper.AttackChain();
 
         // Components
         private Character _character;
@@ -236,22 +239,11 @@ namespace FiresCore.Npc.IdleBehaviors
                             CompanionChatHelper.ShowWorkingStatus(Companion, "Getting axe from chest...");
                             LogVerbose($"Need to get axe from chest first");
                         }
-                        else if (CanCraftBasicAxe())
+                        else if (TryPlanAxeCraft(_targetResource.MinToolTier))
                         {
-                            _craftWorkbench = FindNearestWorkbench();
-                            if (_craftWorkbench != null)
-                            {
-                                SetPhase(GatherPhase.MovingToWorkbench);
-                                MoveToPosition(_craftWorkbench.transform.position);
-                                CompanionChatHelper.ShowWorkingStatus(Companion, "Crafting an axe...");
-                                LogVerbose("No axe in chests - will craft one at workbench");
-                            }
-                            else
-                            {
-                                Debug.LogWarning($"[WoodGathering] {Companion?.companionName} cannot gather - no axe or workbench");
-                                CompanionChatHelper.QuickMessages.CantDoTask(Companion, "I need an axe");
-                                SetPhase(GatherPhase.Complete);
-                            }
+                            BeginAxeCraft();
+                            CompanionChatHelper.ShowWorkingStatus(Companion, "Crafting an axe...");
+                            LogVerbose($"No axe in chests - will craft {_craftRecipe.m_item.name}");
                         }
                         else
                         {
@@ -341,11 +333,36 @@ namespace FiresCore.Npc.IdleBehaviors
 
         public override void Cancel()
         {
+            StopCraftingPose();
             CompanionChatHelper.ClearWorkingStatus(Companion);
             _combatMovement?.UnlockMovement();
             _combatMovement?.ClearCommandPriority();
             NotifyOwner();
             base.Cancel();
+        }
+
+        protected override void Complete()
+        {
+            StopCraftingPose();
+            base.Complete();
+        }
+
+        protected override void SaveState()
+        {
+            StopCraftingPose();
+        }
+
+        protected override void RestoreState()
+        {
+            if (_currentPhase == GatherPhase.CraftingTool && _craftWorkbench != null)
+                PlayerAnimationCatalog.SetCrafting(_zanim, null, PlayerAnimationCatalog.CraftingFor(_craftWorkbench));
+        }
+
+        /// <summary>The station work pose is only held during CraftingTool; any exit from it has to end the pose.</summary>
+        private void StopCraftingPose()
+        {
+            if (_currentPhase == GatherPhase.CraftingTool)
+                PlayerAnimationCatalog.SetCrafting(_zanim, null, PlayerAnimationCatalog.NoCrafting);
         }
 
         public override string GetStatusDescription()
@@ -470,8 +487,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 StopMovement();
                 FaceTarget(_craftWorkbench.transform.position);
-                _zanim?.SetBool("crafting", true);
-                _zanim?.SetBool("Working", true);
+                PlayerAnimationCatalog.SetCrafting(_zanim, null, PlayerAnimationCatalog.CraftingFor(_craftWorkbench));
                 SetPhase(GatherPhase.CraftingTool);
                 return false;
             }
@@ -495,10 +511,10 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Time.time - _phaseStartTime < CraftDuration)
                 return false;
 
-            _zanim?.SetBool("crafting", false);
-            _zanim?.SetBool("Working", false);
+            StopCraftingPose();
 
-            bool crafted = TryCraftBestAxe();
+            bool crafted = CraftPlannedAxe();
+            _craftRecipe = null;
             _craftWorkbench = null;
 
             if (crafted)
@@ -560,10 +576,10 @@ namespace FiresCore.Npc.IdleBehaviors
             // Track stump info before it's destroyed
             if (_targetResource != null && _targetResource.GameObject != null && !_wasTargetingStump)
             {
-                if (IsStump(_targetResource))
+                if (ResourceDataHelper.IsTreeStump(_targetResource.GameObject))
                 {
                     _wasTargetingStump = true;
-                    _targetStumpName = _targetResource.GameObject.name;
+                    _targetStumpName = Utils.GetPrefabName(_targetResource.GameObject);
                     _targetStumpPosition = _targetResource.InteractionPosition;
                     LogVerbose($"Targeting stump: {_targetStumpName}");
                 }
@@ -713,7 +729,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // Check for stumps
-            var stump = FindNearbyStump(_lastTreePosition, LogSearchRadius);
+            var stump = ResourceDataHelper.FindNearestTreeStump(_lastTreePosition, LogSearchRadius);
             if (stump != null)
             {
                 var stumpData = ResourceDataHelper.GetResourceData(stump);
@@ -791,7 +807,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             _ineffectiveHitCount = 0;
-            PlayAxeSwingAnimation();
+            PlaySwingAnimation(weapon);
             Companion.StartCoroutine(ApplyDamageDelayed(weapon, DamageDelay));
         }
 
@@ -888,39 +904,11 @@ namespace FiresCore.Npc.IdleBehaviors
             LogVerbose($"Hit {_targetResource.Name} with {weapon?.m_shared?.m_name ?? "axe"}");
         }
 
-        private void PlayAxeSwingAnimation()
+        private void PlaySwingAnimation(ItemDrop.ItemData weapon)
         {
-            // Use random axe combo animation (swing_axe0, swing_axe1, swing_axe2)
-            int comboIndex = Random.Range(0, 3);
-            string trigger = $"swing_axe{comboIndex}";
-
+            var targetType = _targetResource?.Destructible?.GetDestructibleType() ?? DestructibleType.Default;
+            string trigger = _swingChain.Swing(_zanim, _animator, weapon, _character.GetTimeSinceLastAttack(), targetType);
             LogVerbose($"Playing animation: {trigger}");
-
-            if (_zanim != null)
-            {
-                _zanim.SetTrigger(trigger);
-            }
-            else if (_animator != null)
-            {
-                bool hasParam = false;
-                foreach (var param in _animator.parameters)
-                {
-                    if (param.name == trigger)
-                    {
-                        hasParam = true;
-                        break;
-                    }
-                }
-
-                if (hasParam)
-                {
-                    _animator.SetTrigger(trigger);
-                }
-                else
-                {
-                    _animator.SetTrigger("swing_axe");
-                }
-            }
         }
 
         private void PlayInteractAnimation()
@@ -988,17 +976,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            // 2. Try to craft a better axe at a nearby workbench.
-            if (CanCraftBasicAxe())
+            // 2. Try to craft an axe good enough for this tree.
+            if (TryPlanAxeCraft(requiredTier))
             {
-                _craftWorkbench = FindNearestWorkbench();
-                if (_craftWorkbench != null)
-                {
-                    SetPhase(GatherPhase.MovingToWorkbench);
-                    MoveToPosition(_craftWorkbench.transform.position);
-                    CompanionChatHelper.ShowWorkingStatus(Companion, "Crafting an axe...");
-                    return;
-                }
+                BeginAxeCraft();
+                CompanionChatHelper.ShowWorkingStatus(Companion, "Crafting an axe...");
+                return;
             }
 
             // 3. Find a nearby tree we can chop with the axe we have.
@@ -1026,16 +1009,15 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private bool TryFindBetterAxeInChests(int requiredTier)
         {
-            int currentTier = GetEquippedAxe()?.m_shared?.m_toolTier ?? 0;
             Vector3 position = Transform.position;
             float searchRadius = CompanionSettings.ChestSearchRadius;
 
             var nearbyChests = ChestHelper.FindNearbyChests(position, searchRadius);
             if (nearbyChests == null || nearbyChests.Count == 0) return false;
 
-            ItemDrop.ItemData bestAxe  = null;
-            int               bestTier = currentTier; // must beat what we have AND meet requirement
-            Container         bestChest = null;
+            // Must meet the requirement and beat what we hold.
+            ItemDrop.ItemData bestAxe = GetEquippedAxe();
+            Container bestChest = null;
 
             foreach (var chest in nearbyChests)
             {
@@ -1045,22 +1027,20 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 foreach (var item in inv.GetAllItems())
                 {
-                    if (item == null || !IsAxe(item)) continue;
-                    int tier = item.m_shared?.m_toolTier ?? 0;
-                    if (tier >= requiredTier && tier > bestTier)
+                    if (ResourceDataHelper.IsToolAppropriate(item, ResourceDataHelper.ToolType.Axe, requiredTier) &&
+                        ResourceDataHelper.IsBetterTool(item, bestAxe, ResourceDataHelper.ToolType.Axe))
                     {
-                        bestAxe   = item;
-                        bestTier  = tier;
+                        bestAxe = item;
                         bestChest = chest;
                     }
                 }
             }
 
-            if (bestAxe == null) return false;
+            if (bestChest == null) return false;
 
             _toolToPull = bestAxe;
             _toolChest  = bestChest;
-            LogVerbose($"Found better axe {bestAxe.m_shared?.m_name} (tier {bestTier}) in chest");
+            LogVerbose($"Found better axe {bestAxe.m_shared?.m_name} (tier {bestAxe.m_shared.m_toolTier}) in chest");
             return true;
         }
 
@@ -1089,6 +1069,13 @@ namespace FiresCore.Npc.IdleBehaviors
             );
         }
 
+        private static readonly CompanionInventory.EquipmentSlot[] AxeCarrySlots =
+        {
+            CompanionInventory.EquipmentSlot.RightHand,
+            CompanionInventory.EquipmentSlot.RightBack,
+            CompanionInventory.EquipmentSlot.LeftBack
+        };
+
         private bool HasAxeEquippedOrInInventory()
         {
             // Check equipped weapon
@@ -1098,13 +1085,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check equipment slots
             if (_inventory != null)
             {
-                var slots = new[] {
-                    CompanionInventory.EquipmentSlot.RightHand,
-                    CompanionInventory.EquipmentSlot.RightBack,
-                    CompanionInventory.EquipmentSlot.LeftBack
-                };
-
-                foreach (var slot in slots)
+                foreach (var slot in AxeCarrySlots)
                 {
                     var item = _inventory.GetEquippedItem(slot);
                     if (IsAxe(item)) return true;
@@ -1139,7 +1120,6 @@ namespace FiresCore.Npc.IdleBehaviors
             LogVerbose($"Searching {nearbyChests.Count} chests for axe");
 
             ItemDrop.ItemData bestAxe = null;
-            int bestTier = -1;
             Container bestChest = null;
 
             foreach (var chest in nearbyChests)
@@ -1151,14 +1131,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 foreach (var item in chestInv.GetAllItems())
                 {
-                    if (item == null) continue;
-                    if (!IsAxe(item)) continue;
-
-                    int tier = item.m_shared?.m_toolTier ?? 0;
-                    if (tier > bestTier)
+                    if (IsAxe(item) && ResourceDataHelper.IsBetterTool(item, bestAxe, ResourceDataHelper.ToolType.Axe))
                     {
                         bestAxe = item;
-                        bestTier = tier;
                         bestChest = chest;
                     }
                 }
@@ -1168,7 +1143,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 _toolToPull = bestAxe;
                 _toolChest = bestChest;
-                LogVerbose($"Found {bestAxe.m_shared?.m_name} (tier {bestTier}) in chest");
+                LogVerbose($"Found {bestAxe.m_shared?.m_name} (tier {bestAxe.m_shared.m_toolTier}) in chest");
                 return true;
             }
 
@@ -1238,32 +1213,21 @@ namespace FiresCore.Npc.IdleBehaviors
             if (storage == null) return false;
 
             ItemDrop.ItemData bestAxe = null;
-            int bestTier = -1;
 
             foreach (var item in storage.GetAllItems())
             {
-                if (!IsAxe(item)) continue;
-                int tier = item.m_shared?.m_toolTier ?? 0;
-                if (tier > bestTier)
-                {
+                if (IsAxe(item) && ResourceDataHelper.IsBetterTool(item, bestAxe, ResourceDataHelper.ToolType.Axe))
                     bestAxe = item;
-                    bestTier = tier;
-                }
             }
 
             if (bestAxe == null) return false;
 
-            // Unequip current right hand
-            var currentRightHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
-            if (currentRightHand != null)
+            if (!ResourceDataHelper.TryEquipInRightHand(_inventory, bestAxe, null, holsterWeaponOnBack: false))
             {
-                _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.RightHand);
-                storage.AddItem(currentRightHand);
+                LogVerbose($"No room in storage for {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
+                return false;
             }
 
-            // Equip axe
-            storage.RemoveItem(bestAxe);
-            _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightHand, bestAxe);
             _inventory.ApplyVisualEquipment();
             _inventory.SaveToZDO();
 
@@ -1276,63 +1240,27 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_inventory == null) return;
 
             ItemDrop.ItemData bestAxe = null;
-            int bestTier = -1;
             CompanionInventory.EquipmentSlot? bestSlot = null;
-            bool bestIsInStorage = false;
 
-            // Check right hand
-            var rightHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
-            if (IsAxe(rightHand))
+            foreach (var slot in AxeCarrySlots)
             {
-                int tier = rightHand.m_shared?.m_toolTier ?? 0;
-                if (tier > bestTier)
+                var equipped = _inventory.GetEquippedItem(slot);
+                if (IsAxe(equipped) && ResourceDataHelper.IsBetterTool(equipped, bestAxe, ResourceDataHelper.ToolType.Axe))
                 {
-                    bestAxe = rightHand;
-                    bestTier = tier;
-                    bestSlot = CompanionInventory.EquipmentSlot.RightHand;
+                    bestAxe = equipped;
+                    bestSlot = slot;
                 }
             }
 
-            // Check right back
-            var rightBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-            if (IsAxe(rightBack))
-            {
-                int tier = rightBack.m_shared?.m_toolTier ?? 0;
-                if (tier > bestTier)
-                {
-                    bestAxe = rightBack;
-                    bestTier = tier;
-                    bestSlot = CompanionInventory.EquipmentSlot.RightBack;
-                }
-            }
-
-            // Check left back
-            var leftBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack);
-            if (IsAxe(leftBack))
-            {
-                int tier = leftBack.m_shared?.m_toolTier ?? 0;
-                if (tier > bestTier)
-                {
-                    bestAxe = leftBack;
-                    bestTier = tier;
-                    bestSlot = CompanionInventory.EquipmentSlot.LeftBack;
-                }
-            }
-
-            // Check storage
             var storage = _inventory.GetStorageInventory();
             if (storage != null)
             {
                 foreach (var item in storage.GetAllItems())
                 {
-                    if (!IsAxe(item)) continue;
-                    int tier = item.m_shared?.m_toolTier ?? 0;
-                    if (tier > bestTier)
+                    if (IsAxe(item) && ResourceDataHelper.IsBetterTool(item, bestAxe, ResourceDataHelper.ToolType.Axe))
                     {
                         bestAxe = item;
-                        bestTier = tier;
                         bestSlot = null;
-                        bestIsInStorage = true;
                     }
                 }
             }
@@ -1353,38 +1281,17 @@ namespace FiresCore.Npc.IdleBehaviors
             // Holster left hand item if needed
             HolsterLeftHand();
 
-            // Swap current right hand
-            var currentRightHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
-            if (currentRightHand != null)
+            if (!ResourceDataHelper.TryEquipInRightHand(_inventory, bestAxe, bestSlot, holsterWeaponOnBack: true))
             {
-                _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.RightHand);
-                var currentRightBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-                if (currentRightBack == null && currentRightHand.IsWeapon())
-                {
-                    _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightBack, currentRightHand);
-                }
-                else
-                {
-                    storage?.AddItem(currentRightHand);
-                }
+                LogVerbose($"No room to put away {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
+                return;
             }
 
-            // Equip best axe
-            if (bestIsInStorage)
-            {
-                storage?.RemoveItem(bestAxe);
-            }
-            else if (bestSlot.HasValue)
-            {
-                _inventory.UnequipSlotSilent(bestSlot.Value);
-            }
-
-            _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightHand, bestAxe);
             _inventory.RecalculateEquipmentBonusesPublic();
             _inventory.ApplyVisualEquipment();
             _inventory.SaveToZDO();
 
-            LogVerbose($"Equipped {bestAxe.m_shared?.m_name} (tier {bestTier})");
+            LogVerbose($"Equipped {bestAxe.m_shared?.m_name} (tier {bestAxe.m_shared.m_toolTier})");
         }
 
         private void HolsterLeftHand()
@@ -1402,20 +1309,27 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (!shouldHolster) return;
 
-            _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.LeftHand);
-
-            var leftBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack);
-            if (leftBack == null)
-            {
-                _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.LeftBack, leftHand);
-            }
-            else
-            {
-                var storage = _inventory.GetStorageInventory();
-                storage?.AddItem(leftHand);
-            }
+            if (!ResourceDataHelper.TryStowEquipped(_inventory, CompanionInventory.EquipmentSlot.LeftHand, CompanionInventory.EquipmentSlot.LeftBack))
+                LogVerbose($"No room to holster {leftHand.m_shared?.m_name} - keeping it in hand");
 
             _inventory.ApplyVisualEquipment();
+        }
+
+        /// <summary>The best axe tier the companion holds, carries, can pull from a nearby chest or can craft now.</summary>
+        private int ReachableAxeTier()
+        {
+            var axes = new List<ItemDrop.ItemData>();
+            var equipped = GetEquippedAxe();
+            if (equipped != null) axes.Add(equipped);
+            var storage = _inventory?.GetStorageInventory();
+            if (storage != null) axes.AddRange(storage.GetAllItems());
+            foreach (var chest in ChestHelper.FindNearbyChests(Transform.position, CompanionSettings.ChestSearchRadius))
+            {
+                var chestInv = chest != null ? chest.GetInventory() : null;
+                if (chestInv != null) axes.AddRange(chestInv.GetAllItems());
+            }
+            return Mathf.Max(ResourceDataHelper.BestToolTier(axes, ResourceDataHelper.ToolType.Axe),
+                ResourceDataHelper.BestCraftableToolTier(CraftableAxes, ResourceDataHelper.ToolType.Axe, storage, Transform.position, WorkbenchSearchRadius));
         }
 
         private ItemDrop.ItemData GetEquippedAxe()
@@ -1428,140 +1342,43 @@ namespace FiresCore.Npc.IdleBehaviors
             return null;
         }
 
-        private bool IsAxe(ItemDrop.ItemData item)
+        private static bool IsAxe(ItemDrop.ItemData item)
         {
-            if (item == null) return false;
-
-            string prefabName = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-            string itemName = item.m_shared?.m_name?.ToLowerInvariant() ?? "";
-
-            // Must contain "axe" but not "pickaxe"
-            bool hasAxe = prefabName.Contains("axe") || itemName.Contains("axe");
-            bool isPickaxe = prefabName.Contains("pickaxe") || itemName.Contains("pickaxe");
-
-            return hasAxe && !isPickaxe;
+            return ResourceDataHelper.IsToolAppropriate(item, ResourceDataHelper.ToolType.Axe, 0);
         }
 
-        private bool CanCraftBasicAxe()
+        /// <summary>
+        /// Picks an axe of at least <paramref name="minTier"/> the companion can craft from its vanilla recipe and sets
+        /// _craftRecipe and _craftWorkbench, the station that recipe needs (null when it needs none).
+        /// </summary>
+        private bool TryPlanAxeCraft(int minTier)
+        {
+            _craftRecipe = ResourceDataHelper.FindCraftableTool(CraftableAxes, ResourceDataHelper.ToolType.Axe, minTier,
+                _inventory?.GetStorageInventory(), Transform.position, WorkbenchSearchRadius, out _craftWorkbench);
+            return _craftRecipe != null;
+        }
+
+        private void BeginAxeCraft()
+        {
+            if (_craftWorkbench != null)
+            {
+                SetPhase(GatherPhase.MovingToWorkbench);
+                MoveToPosition(_craftWorkbench.transform.position);
+                return;
+            }
+
+            StopMovement();
+            SetPhase(GatherPhase.CraftingTool);
+        }
+
+        private bool CraftPlannedAxe()
         {
             var storage = _inventory?.GetStorageInventory();
-            if (storage == null) return false;
-
-            int wood  = CountItemsByPrefab(storage, "Wood");
-            int flint = CountItemsByPrefab(storage, "Flint");
-            int stone = CountItemsByPrefab(storage, "Stone");
-
-            // Flint Axe: 6 Wood + 4 Flint
-            if (wood >= 6 && flint >= 4) return true;
-            // Stone Axe: 4 Wood + 1 Stone
-            if (wood >= 4 && stone >= 1) return true;
-
-            return false;
-        }
-
-        private CraftingStation FindNearestWorkbench()
-        {
-            var colliders = Physics.OverlapSphere(Transform.position, WorkbenchSearchRadius);
-            CraftingStation nearest = null;
-            float nearestDist = float.MaxValue;
-            var processed = new HashSet<CraftingStation>();
-
-            foreach (var collider in colliders)
-            {
-                if (collider == null) continue;
-                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
-                if (station == null || processed.Contains(station)) continue;
-                processed.Add(station);
-
-                string stName = (station.m_name ?? "").ToLowerInvariant();
-                string goName = (station.gameObject.name ?? "").ToLowerInvariant();
-                if (!stName.Contains("workbench") && !goName.Contains("workbench")) continue;
-
-                float dist = Vector3.Distance(Transform.position, station.transform.position);
-                if (dist < nearestDist)
-                {
-                    nearestDist = dist;
-                    nearest = station;
-                }
-            }
-
-            return nearest;
-        }
-
-        private bool TryCraftBestAxe()
-        {
-            var storage = _inventory?.GetStorageInventory();
-            if (storage == null) return false;
-
-            int wood  = CountItemsByPrefab(storage, "Wood");
-            int flint = CountItemsByPrefab(storage, "Flint");
-            int stone = CountItemsByPrefab(storage, "Stone");
-
-            if (wood >= 6 && flint >= 4)
-            {
-                ConsumeItems(storage, "Wood", 6);
-                ConsumeItems(storage, "Flint", 4);
-                return AddCraftedItem(storage, AxePrefabFlint);
-            }
-            if (wood >= 4 && stone >= 1)
-            {
-                ConsumeItems(storage, "Wood", 4);
-                ConsumeItems(storage, "Stone", 1);
-                return AddCraftedItem(storage, AxePrefabStone);
-            }
-
-            return false;
-        }
-
-        private int CountItemsByPrefab(Inventory inv, string prefabName)
-        {
-            int count = 0;
-            foreach (var item in inv.GetAllItems())
-            {
-                if (item?.m_dropPrefab?.name == prefabName)
-                    count += item.m_stack;
-            }
-            return count;
-        }
-
-        private void ConsumeItems(Inventory inv, string prefabName, int amount)
-        {
-            int remaining = amount;
-            var items = new System.Collections.Generic.List<ItemDrop.ItemData>(inv.GetAllItems());
-            foreach (var item in items)
-            {
-                if (remaining <= 0) break;
-                if (item?.m_dropPrefab?.name != prefabName) continue;
-                int toRemove = Mathf.Min(remaining, item.m_stack);
-                item.m_stack -= toRemove;
-                remaining -= toRemove;
-                if (item.m_stack <= 0)
-                    inv.RemoveItem(item);
-            }
-        }
-
-        private bool AddCraftedItem(Inventory inv, string prefabName)
-        {
-            if (ZNetScene.instance == null) return false;
-            var prefab = ZNetScene.instance.GetPrefab(prefabName);
-            if (prefab == null)
-            {
-                LogVerbose($"Crafted item prefab not found: {prefabName}");
+            if (_craftRecipe == null || storage == null || !ResourceDataHelper.CraftTool(_craftRecipe, _craftWorkbench, storage))
                 return false;
-            }
-            var itemDrop = prefab.GetComponent<ItemDrop>();
-            if (itemDrop == null) return false;
 
-            var newItem = itemDrop.m_itemData.Clone();
-            newItem.m_stack = 1;
-            if (!inv.AddItem(newItem))
-            {
-                LogVerbose($"No inventory space for crafted {prefabName}");
-                return false;
-            }
-
-            _inventory?.SaveToZDO();
-            Debug.Log($"[WoodGathering] {Companion?.companionName} crafted {prefabName}");
+            _inventory.SaveToZDO();
+            Debug.Log($"[WoodGathering] {Companion?.companionName} crafted {_craftRecipe.m_item.name}");
             return true;
         }
 
@@ -1575,6 +1392,7 @@ namespace FiresCore.Npc.IdleBehaviors
             float closestDist = float.MaxValue;
             GameObject closest = null;
             var processed = new HashSet<GameObject>();
+            int axeTier = ReachableAxeTier();
 
             foreach (var collider in colliders)
             {
@@ -1595,7 +1413,8 @@ namespace FiresCore.Npc.IdleBehaviors
                     processed.Add(target);
                 }
 
-                if (target == null) continue;
+                // A tree no reachable axe can cut (a tier-2 birch nearest home) would block chopping for good.
+                if (target == null || !ResourceDataHelper.CanChop(target, axeTier)) continue;
 
                 float dist = Vector3.Distance(position, target.transform.position);
                 if (dist < closestDist)
@@ -1608,41 +1427,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Also check for stumps
             if (closest == null)
             {
-                closest = FindNearbyStump(position, radius);
-            }
-
-            return closest;
-        }
-
-        private GameObject FindNearbyStump(Vector3 position, float radius)
-        {
-            var colliders = Physics.OverlapSphere(position, radius);
-            float closestDist = float.MaxValue;
-            GameObject closest = null;
-            var processed = new HashSet<GameObject>();
-
-            foreach (var collider in colliders)
-            {
-                if (collider == null) continue;
-
-                var destructible = collider.GetComponent<Destructible>() ?? collider.GetComponentInParent<Destructible>();
-                if (destructible != null && !processed.Contains(destructible.gameObject))
-                {
-                    string name = destructible.name.ToLowerInvariant();
-                    if (name.EndsWith("(clone)"))
-                        name = name.Substring(0, name.Length - 7).Trim();
-
-                    if (name.Contains("stub") || name.Contains("stump"))
-                    {
-                        processed.Add(destructible.gameObject);
-                        float dist = Vector3.Distance(position, destructible.transform.position);
-                        if (dist < closestDist)
-                        {
-                            closestDist = dist;
-                            closest = destructible.gameObject;
-                        }
-                    }
-                }
+                closest = ResourceDataHelper.FindNearestTreeStump(position, radius);
             }
 
             return closest;
@@ -1674,13 +1459,6 @@ namespace FiresCore.Npc.IdleBehaviors
             return results;
         }
 
-        private bool IsStump(ResourceDataHelper.ResourceData resource)
-        {
-            if (resource == null || resource.GameObject == null) return false;
-            string name = resource.GameObject.name.ToLowerInvariant();
-            return name.Contains("stump") || name.Contains("stub");
-        }
-
         private void OnStumpDestroyed(Vector3 stumpPosition, string stumpName)
         {
             // 70% chance to spawn sapling
@@ -1690,7 +1468,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            string saplingPrefab = DetermineSaplingPrefab(stumpName);
+            string saplingPrefab = ResourceDataHelper.GetSaplingForStump(stumpName);
             if (string.IsNullOrEmpty(saplingPrefab))
             {
                 LogVerbose($"No matching sapling for: {stumpName}");
@@ -1698,25 +1476,6 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             SpawnSapling(saplingPrefab, stumpPosition);
-        }
-
-        private string DetermineSaplingPrefab(string stumpName)
-        {
-            if (string.IsNullOrEmpty(stumpName)) return null;
-
-            string nameLower = stumpName.ToLowerInvariant();
-            if (nameLower.EndsWith("(clone)"))
-                nameLower = nameLower.Substring(0, nameLower.Length - 7).Trim();
-
-            if (nameLower.Contains("beech")) return "Beech_Sapling";
-            if (nameLower.Contains("birch")) return "Birch_Sapling";
-            if (nameLower.Contains("oak")) return "Oak_Sapling";
-            if (nameLower.Contains("pine")) return "FirTree_Sapling";
-            if (nameLower.Contains("fir")) return "FirTree_Sapling";
-            if (nameLower.Contains("swamp") || nameLower.Contains("ancient")) return "Ancient_Sapling";
-            if (nameLower.Contains("ygga") || nameLower.Contains("yggdrasil")) return "YggdrasilShoot_Sapling";
-
-            return null;
         }
 
         private void SpawnSapling(string prefabName, Vector3 position)

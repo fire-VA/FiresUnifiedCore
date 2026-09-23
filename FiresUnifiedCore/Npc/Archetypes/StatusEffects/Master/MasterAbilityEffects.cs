@@ -78,7 +78,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 
                 // Spawn VFX
                 SpawnVFX("fx_shield_start", m_character.transform.position);
-                SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
+                SpawnVFX("vfx_ghost_hit", m_character.transform.position);
                 
                 // Grant skill XP for surviving fatal damage
                 var skillSystem = m_character.GetComponent<ArchetypeSkillSystem>();
@@ -113,18 +113,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -171,23 +160,12 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             // VFX
             SpawnVFX("fx_DvergerMage_Support_start", target.transform.position);
             SpawnVFX("fx_creature_tamed", target.transform.position);
-            SpawnVFX("vfx_spiritbolt_explosion", target.transform.position);
+            SpawnVFX("vfx_ghost_hit", target.transform.position);
             
             Debug.Log($"[LayOnHandsEffect] {m_character?.m_name} used Lay on Hands on {target.m_name} - healed {healAmount:F0} HP");
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -232,6 +210,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 _isActive = true;
                 m_character.Message(MessageHud.MessageType.Center, "<color=red>DEATH WISH!</color>");
                 SpawnVFX("vfx_MeadBzerker", m_character.transform.position);
+                var companion = m_character.GetComponent<CompanionController>();
+                if (companion != null) ArchetypeChatManager.AnnounceAbilityUsed(companion, "DeathWish");
                 Debug.Log($"[DeathWishEffect] {m_character.m_name} DEATH WISH activated at {healthPercent * 100:F0}% HP!");
             }
             else if (!shouldBeActive && _isActive)
@@ -266,18 +246,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
         /// </summary>
         public bool BlocksHealing => _isActive;
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -338,18 +307,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -449,7 +407,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                     skillSystem?.OnAbilityHitEnemy("rainofarrows", character, willKill || character.IsDead());
                     
                     // Arrow hit VFX
-                    SpawnVFX("fx_arrow_hit", character.transform.position);
+                    SpawnVFX("vfx_arrowhit", character.transform.position);
                 }
             }
         }
@@ -466,7 +424,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 );
                 Vector3 impactPos = TargetPosition + randomOffset;
                 
-                SpawnVFX("fx_arrow_hit", impactPos);
+                SpawnVFX("vfx_arrowhit", impactPos);
             }
         }
         
@@ -485,18 +443,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -542,7 +489,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             }
             
             // Warning VFX at target location
-            SpawnVFX("vfx_spray_fire", TargetPosition);
+            SpawnVFX("vfx_FireballHit", TargetPosition);
             
             if (m_character != null)
             {
@@ -566,13 +513,10 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
         private void DoMeteorImpact()
         {
             // Massive VFX
-            SpawnVFX("vfx_fireball_explosion", TargetPosition);
-            SpawnVFX("vfx_spray_fire", TargetPosition);
+            SpawnVFX("fx_fireball_staff_explosion", TargetPosition);
+            SpawnVFX("vfx_FireballHit", TargetPosition);
             SpawnVFX("vfx_sledge_hit", TargetPosition);
-            
-            // Try to spawn actual fire AOE
-            SpawnFireAOE(TargetPosition);
-            
+
             // Get skill system for XP tracking
             var skillSystem = m_character?.GetComponent<ArchetypeSkillSystem>();
             
@@ -615,37 +559,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             Debug.Log($"[MeteorEffect] IMPACT! {Damage:F0} fire damage in {Radius}m radius");
         }
         
-        private void SpawnFireAOE(Vector3 position)
-        {
-            try
-            {
-                // Try to use game's fire AOE
-                string[] fireAoePrefabs = { "Fader_fire_aoe", "vfx_fire_aoe", "fx_Fader_fire" };
-                foreach (var prefabName in fireAoePrefabs)
-                {
-                    var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                    if (prefab != null)
-                    {
-                        Object.Instantiate(prefab, position, Quaternion.identity);
-                        return;
-                    }
-                }
-            }
-            catch { }
-        }
-        
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -767,18 +681,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             Debug.Log($"[DivineHymnEffect] Channeling complete");
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -860,18 +763,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             Debug.Log($"[ChiExplosionEffect] Hit {hitCount} enemies for up to {Damage:F0} damage");
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion

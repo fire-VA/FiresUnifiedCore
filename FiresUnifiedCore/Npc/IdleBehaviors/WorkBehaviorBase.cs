@@ -402,9 +402,9 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         /// <summary>
-        /// Plays work/crafting animation.
+        /// Holds or ends a station work pose (<see cref="PlayerAnimationCatalog.SetCrafting"/>).
         /// </summary>
-        protected void PlayWorkAnimation(bool enable)
+        protected void PlayWorkAnimation(bool enable, int useAnimation = PlayerAnimationCatalog.WorkbenchCrafting)
         {
             if (AnimationController != null)
             {
@@ -412,8 +412,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             else if (ZAnim != null)
             {
-                ZAnim.SetBool("crafting", enable);
-                ZAnim.SetBool("Working", enable);
+                PlayerAnimationCatalog.SetCrafting(ZAnim, null, enable ? useAnimation : PlayerAnimationCatalog.NoCrafting);
             }
         }
         

@@ -273,7 +273,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Healer
             }
             
             m_character.Message(MessageHud.MessageType.TopLeft, $"Blood Pact! ({_remainingCharges} remaining)");
-            AbilityFXManager.SpawnEffect("vfx_spray_fire", m_character.transform.position, null, 0.5f);
+            AbilityFXManager.SpawnEffect("vfx_FireballHit", m_character.transform.position, null, 0.5f);
             
             if (_remainingCharges <= 0)
             {

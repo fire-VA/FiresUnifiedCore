@@ -23,6 +23,11 @@ namespace FiresCore.Npc
         private ZNetView _nview;
         private bool _initialized;
 
+        // The head item this NPC is wearing, for NpcFashionBridge's helmet-hides-hair rule. VisEquipment's own
+        // m_currentHelmetItemHash is private and holds a hash; the fashion pipeline works in prefab names.
+        private string _currentHelmetName = "";
+        public string CurrentHelmetName => _currentHelmetName;
+
         // When true, a model override is pending from the ZDO/SavedNpcManager.
         // DelayedInitialize will wait for the override to be applied before enabling VisEquipment.
         private bool _hasPendingModelOverride;
@@ -647,37 +652,44 @@ namespace FiresCore.Npc
                 }
             }
 
-            // Set up attachment points if not already set
+            // Attach joints by the names vanilla's own Player rig uses (our bodies share that rig), taken from the
+            // skeleton the body mesh is skinned to.
+            HashSet<Transform> skeleton = null;
+            if (_visEquipment.m_bodyModel != null && _visEquipment.m_bodyModel.bones != null)
+            {
+                skeleton = new HashSet<Transform>(_visEquipment.m_bodyModel.bones);
+                skeleton.Remove(null);
+            }
+
             if (_visEquipment.m_leftHand == null)
-                _visEquipment.m_leftHand = FindTransformRecursive(visual, "LeftHand_Attach") 
-                    ?? FindTransformRecursive(visual, "LeftHand");
+                _visEquipment.m_leftHand = FindJointOnSkeleton(visual, VanillaJointName(v => v.m_leftHand, "LeftHand_Attach"), skeleton)
+                    ?? FindJointOnSkeleton(visual, "LeftHand", skeleton);
 
             if (_visEquipment.m_rightHand == null)
-                _visEquipment.m_rightHand = FindTransformRecursive(visual, "RightHand_Attach") 
-                    ?? FindTransformRecursive(visual, "RightHand");
+                _visEquipment.m_rightHand = FindJointOnSkeleton(visual, VanillaJointName(v => v.m_rightHand, "RightHand_Attach"), skeleton)
+                    ?? FindJointOnSkeleton(visual, "RightHand", skeleton);
 
             if (_visEquipment.m_helmet == null)
-                _visEquipment.m_helmet = FindTransformRecursive(visual, "Helmet_attach") 
-                    ?? FindTransformRecursive(visual, "Head");
+                _visEquipment.m_helmet = FindJointOnSkeleton(visual, VanillaJointName(v => v.m_helmet, "Helmet_attach"), skeleton)
+                    ?? FindJointOnSkeleton(visual, "Head", skeleton);
 
             if (_visEquipment.m_backShield == null)
-                _visEquipment.m_backShield = FindTransformRecursive(visual, "BackShield_attach");
+                _visEquipment.m_backShield = FindJointOnSkeleton(visual, VanillaJointName(v => v.m_backShield, "BackShield_attach"), skeleton);
 
             if (_visEquipment.m_backMelee == null)
-                _visEquipment.m_backMelee = FindTransformRecursive(visual, "BackMelee_attach");
+                _visEquipment.m_backMelee = FindJointOnSkeleton(visual, VanillaJointName(v => v.m_backMelee, "BackOneHanded_attach"), skeleton);
 
             if (_visEquipment.m_backTwohandedMelee == null)
-                _visEquipment.m_backTwohandedMelee = FindTransformRecursive(visual, "BackTwohandedMelee_attach") 
-                    ?? FindTransformRecursive(visual, "BackTwoHanded_attach");
+                _visEquipment.m_backTwohandedMelee = FindJointOnSkeleton(visual, VanillaJointName(v => v.m_backTwohandedMelee, "BackTwohanded_attach"), skeleton);
 
             if (_visEquipment.m_backBow == null)
-                _visEquipment.m_backBow = FindTransformRecursive(visual, "BackBow_attach");
+                _visEquipment.m_backBow = FindJointOnSkeleton(visual, VanillaJointName(v => v.m_backBow, "BackBow_attach"), skeleton);
 
             if (_visEquipment.m_backTool == null)
-                _visEquipment.m_backTool = FindTransformRecursive(visual, "BackTool_attach");
+                _visEquipment.m_backTool = FindJointOnSkeleton(visual, VanillaJointName(v => v.m_backTool, "BackTool_attach"), skeleton);
 
             if (_visEquipment.m_backAtgeir == null)
-                _visEquipment.m_backAtgeir = FindTransformRecursive(visual, "BackAtgeir_attach");
+                _visEquipment.m_backAtgeir = FindJointOnSkeleton(visual, VanillaJointName(v => v.m_backAtgeir, "BackAtgeir_attach"), skeleton);
 
             // Cloth colliders, always rebuilt from the rig. A prefab baked before 1.0 still holds Unity CapsuleColliders
             // in this list, where 1.0 keeps MagicaCloth ones, and MagicaCloth calls GetColliderType() on every entry it
@@ -778,6 +790,20 @@ namespace FiresCore.Npc
         /// <summary>
         /// Caches player models from the player prefab for reuse.
         /// </summary>
+        private static VisEquipment _vanillaPlayerVis;
+
+        /// <summary>The name vanilla's Player rig gives an attach joint, so our rigs follow any rename (the 1.0 name otherwise).</summary>
+        internal static string VanillaJointName(Func<VisEquipment, Transform> joint, string fallback)
+        {
+            if (_vanillaPlayerVis == null)
+            {
+                var playerPrefab = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab("Player") : null;
+                if (playerPrefab != null) _vanillaPlayerVis = playerPrefab.GetComponent<VisEquipment>();
+            }
+            var vanillaJoint = _vanillaPlayerVis != null ? joint(_vanillaPlayerVis) : null;
+            return vanillaJoint != null ? vanillaJoint.name : fallback;
+        }
+
         private static void CachePlayerModels()
         {
             if (_playerModelsCached) return;
@@ -1077,6 +1103,14 @@ namespace FiresCore.Npc
             {
                 case CompanionInventory.EquipmentSlot.Helmet:
                     VisEquipmentCompat.SetHelmetItem(_visEquipment, name);
+                    // Vanilla re-resolves hair against the head item every frame, but only for players
+                    // (VisEquipment.UpdateEquipmentVisuals runs that block inside if (m_isPlayer)). This is the
+                    // one place an NPC's helmet changes, so it is where the same rule gets applied.
+                    if (!string.Equals(_currentHelmetName, name, StringComparison.Ordinal))
+                    {
+                        _currentHelmetName = name;
+                        Bridge.NpcFashionBridge.ReapplyForHelmet(gameObject);
+                    }
                     break;
 
                 case CompanionInventory.EquipmentSlot.Chest:
@@ -1192,7 +1226,8 @@ namespace FiresCore.Npc
                 if (_visEquipmentStableTimer >= 1.0f)
                 {
                     _visEquipmentStable = true;
-                    
+                    ScheduleHeadAttachmentCheck(HeadCheckAfterStableSeconds);
+
                     // If eye color was set while waiting, apply it now
                     if (_eyeColorPending)
                     {
@@ -1301,9 +1336,9 @@ namespace FiresCore.Npc
         private Mesh _nativeBodyMesh;
 
         /// <summary>
-        /// Swaps the body mesh only onto a rig that can skin it, and never onto a pairing Unity already rejected this
-        /// session. The prefab's own model-table mesh is tried first because it is the only one guaranteed to match a
-        /// baked rig; the live Player mesh is a legacy fallback. Returns true when a mesh was assigned.
+        /// Swaps the body mesh only onto a rig that can skin it, and never onto a pairing Unity rejects
+        /// (<see cref="NpcBodyMeshGuard.IsAssignable"/>). The prefab's own model-table mesh is tried first; the live
+        /// Player mesh is used when the guard refuses it. Returns true when a mesh was assigned.
         /// </summary>
         private bool TryAssignBodyMesh(Mesh mesh, int modelIndex = -1)
         {
@@ -1348,8 +1383,8 @@ namespace FiresCore.Npc
         /// NPC's body renderer is the one holding that mesh, blacklist the pairing and swap to the best
         /// remaining candidate (own model-table mesh → live Player mesh → the prefab's original body
         /// mesh) so the body renders again instead of staying invisible. Also works on undressed
-        /// ghost/preview clones — no ZDO or Initialize() required. Returns true when this instance was
-        /// healed.
+        /// ghost/preview clones — no ZDO or Initialize() required. Returns true when this NPC held the
+        /// rejected mesh, healed or not.
         /// </summary>
         internal bool HealRejectedBodyMesh(string meshName, string goName)
         {
@@ -1382,11 +1417,17 @@ namespace FiresCore.Npc
                 else if (live != null && !ReferenceEquals(live, bad) && NpcBodyMeshGuard.IsAssignable(live, bodyRenderer)) { replacement = live; source = "vanilla-player"; }
                 else if (_nativeBodyMesh != null && !ReferenceEquals(_nativeBodyMesh, bad) && NpcBodyMeshGuard.IsAssignable(_nativeBodyMesh, bodyRenderer)) { replacement = _nativeBodyMesh; source = "native-default"; }
 
-                if (replacement == null) return false;
+                string rejected = $"[NpcBodyMeshGuard] '{meshName}' (vanilla mesh: {ReferenceEquals(bad, live)}) rejected by Unity at skin time on {gameObject.name}";
+                string layout = NpcBodyMeshGuard.DescribeRejectedLayout(bad);
+                if (replacement == null)
+                {
+                    NpcBodyMeshGuard.LogOnce($"heal|{GetInstanceID()}|{bad.GetInstanceID()}",
+                        $"{rejected}, and no skinnable body mesh is left, so it stays hidden. Rejected {layout}");
+                    return true;
+                }
                 bodyRenderer.sharedMesh = replacement;
-                NpcBodyMeshGuard.LogOnce(
-                    $"heal|{GetInstanceID()}|{meshName}",
-                    $"[NpcBodyMeshGuard] '{meshName}' rejected by Unity at skin time on {gameObject.name} — swapped body to '{replacement.name}' ({source}); pairing blacklisted for this session.");
+                NpcBodyMeshGuard.LogOnce($"heal|{GetInstanceID()}|{bad.GetInstanceID()}",
+                    $"{rejected}; swapped body to '{replacement.name}' ({source}), pairing blacklisted for this session. Rejected {layout}");
                 return true;
             }
             catch { return false; }
@@ -1959,6 +2000,8 @@ namespace FiresCore.Npc
             if (_visEquipment != null)
                 _managedVisEquipments.Remove(_visEquipment);
 
+            Bridge.NpcFashionBridge.Forget(gameObject);
+
             // Cancel any pending invokes
             CancelInvoke();
             
@@ -2214,6 +2257,152 @@ namespace FiresCore.Npc
             int bodyBones = _visEquipment.m_bodyModel?.bones?.Length ?? -1;
             Debug.Log($"[NpcVisEquipment][cloth] '{name}' boneMap={(boneMap == null ? "null" : boneMap.Count.ToString())} "
                 + $"bodyBones={bodyBones} clothColliders={_visEquipment.m_clothColliders?.Count ?? -1}");
+        }
+
+        /// <summary>
+        /// Finds an attach joint on the skeleton the body mesh is skinned to, the only one the Animator moves. A joint of
+        /// the same name on any other rig under Visual would pin gear and hair in place while the body crouches away.
+        /// </summary>
+        private Transform FindJointOnSkeleton(Transform visual, string jointName, HashSet<Transform> skeleton)
+        {
+            Transform offSkeleton = null;
+            foreach (var candidate in visual.GetComponentsInChildren<Transform>(true))
+            {
+                if (!candidate.name.Equals(jointName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (IsUnderHiddenOriginal(candidate, visual)) continue;
+                if (skeleton == null || skeleton.Contains(candidate) || HasAncestorIn(candidate, skeleton)) return candidate;
+                if (offSkeleton == null) offSkeleton = candidate;
+            }
+            if (offSkeleton != null)
+                Debug.LogWarning($"[NpcVisEquipment] '{name}' joint '{jointName}' exists only off the body's skeleton, at "
+                    + $"{PathUnder(offSkeleton, transform)}: items attached there will not follow the animation.");
+            return offSkeleton;
+        }
+
+        private static bool HasAncestorIn(Transform node, HashSet<Transform> set)
+        {
+            for (var cur = node.parent; cur != null; cur = cur.parent)
+                if (set.Contains(cur)) return true;
+            return false;
+        }
+
+        private static bool IsUnderHiddenOriginal(Transform node, Transform visual)
+        {
+            for (var cur = node; cur != null && cur != visual; cur = cur.parent)
+                if (!cur.gameObject.activeSelf && cur.name.StartsWith("__OriginalVisual_")) return true;
+            return false;
+        }
+
+        private static string PathUnder(Transform node, Transform root)
+        {
+            string path = node.name;
+            for (var cur = node.parent; cur != null && cur != root; cur = cur.parent) path = cur.name + "/" + path;
+            return path;
+        }
+
+        private const float HeadItemMaxOffset = 0.5f;
+        private const float HeadCheckAfterStableSeconds = 5f;
+        private const float HeadCheckAfterAttachSeconds = 1f;
+        private readonly HashSet<string> _reportedHeadItems = new HashSet<string>();
+
+        /// <summary>Runs <see cref="CheckHeadAttachments"/> once the latest attach has settled.</summary>
+        internal void ScheduleHeadAttachmentCheck(float delay = HeadCheckAfterAttachSeconds)
+        {
+            CancelInvoke(nameof(CheckHeadAttachments));
+            Invoke(nameof(CheckHeadAttachments), delay);
+        }
+
+        /// <summary>
+        /// Reports, once per item, any hair, beard or helmet renderer that hangs away from the animated Head bone, and
+        /// any skinned attachment bound to bones that are not the body's. Silent when everything sits where it should.
+        /// </summary>
+        private void CheckHeadAttachments()
+        {
+            var body = _visEquipment != null ? _visEquipment.m_bodyModel : null;
+            var helmetJoint = _visEquipment != null ? _visEquipment.m_helmet : null;
+            if (body == null || body.bones == null) return;
+
+            var skeleton = new HashSet<Transform>(body.bones);
+            skeleton.Remove(null);
+            Transform head = null;
+            foreach (var bone in skeleton)
+                if (bone.name == "Head") { head = bone; break; }
+            if (head == null) return;
+
+            float limit = HeadItemMaxOffset * Mathf.Max(0.1f, transform.lossyScale.y);
+            LogHeadInventoryOnce(body, head, skeleton);
+            foreach (var renderer in GetComponentsInChildren<Renderer>())
+            {
+                if (renderer == null || ReferenceEquals(renderer, body) || !renderer.enabled) continue;
+
+                string problem = null;
+                if (renderer is SkinnedMeshRenderer skinned && skinned.bones != null && skinned.bones.Length > 0)
+                {
+                    if (skinned.GetComponentInParent<MagicaCloth2.MagicaCloth>() != null) continue;
+                    foreach (var bone in skinned.bones)
+                        if (bone != null && !skeleton.Contains(bone)) { problem = $"skinned to '{bone.name}', which is not one of the body's bones"; break; }
+                }
+                else if (helmetJoint != null && renderer.transform.IsChildOf(helmetJoint))
+                {
+                    float offset = Vector3.Distance(renderer.bounds.center, head.position);
+                    if (offset > limit)
+                        problem = $"sits {offset:F2} m from the Head bone (limit {limit:F2}); helmet joint "
+                            + $"'{PathUnder(helmetJoint, transform)}' on the body's skeleton: {HasAncestorIn(helmetJoint, skeleton)}";
+                }
+                if (problem == null) continue;
+
+                string path = PathUnder(renderer.transform, transform);
+                if (!_reportedHeadItems.Add(path)) continue;
+                Debug.LogWarning($"[NpcAttachDiag] '{_companionNameForLogs}' '{path}' {problem}. REPORT THIS LINE.");
+            }
+        }
+
+        private string _companionNameForLogs => GetComponent<CompanionController>()?.companionName ?? name;
+
+        private const float HeadInventoryRadius = 1.5f;
+        private bool _headInventoryLogged;
+
+        /// <summary>
+        /// One line per NPC per session naming every renderer around the head (or carrying a hair/beard name): how it is
+        /// attached and where its bounds centre sits in the Head bone's frame. A skinned style bound to the right bones
+        /// with foreign bindposes floats without tripping the checks above; this line still names it.
+        /// </summary>
+        private void LogHeadInventoryOnce(SkinnedMeshRenderer body, Transform head, HashSet<Transform> skeleton)
+        {
+            // Verbose-only, checked before the scan: with it off, walking every renderer and measuring its bounds
+            // against the head only built a string to throw away, once per NPC.
+            if (_headInventoryLogged || !VerboseLogging) return;
+            _headInventoryLogged = true;
+
+            float radius = HeadInventoryRadius * Mathf.Max(0.1f, transform.lossyScale.y);
+            var items = new System.Text.StringBuilder();
+            foreach (var renderer in GetComponentsInChildren<Renderer>())
+            {
+                if (renderer == null || ReferenceEquals(renderer, body) || !renderer.enabled) continue;
+                string path = PathUnder(renderer.transform, transform);
+                bool styleNamed = path.Contains("NPC_Hair_") || path.Contains("NPC_Beard_");
+                Vector3 offset = head.InverseTransformPoint(renderer.bounds.center);
+                if (!styleNamed && offset.magnitude * head.lossyScale.y > radius) continue;
+
+                string attach;
+                if (renderer is SkinnedMeshRenderer skinned && skinned.bones != null && skinned.bones.Length > 0)
+                {
+                    int onBody = 0;
+                    foreach (var bone in skinned.bones) if (bone != null && skeleton.Contains(bone)) onBody++;
+                    int bindposes = skinned.sharedMesh != null ? skinned.sharedMesh.bindposes.Length : 0;
+                    attach = $"skinned bones={skinned.bones.Length} onBody={onBody} bindposes={bindposes} root={(skinned.rootBone != null ? skinned.rootBone.name : "-")}";
+                }
+                else
+                {
+                    attach = $"rigid under '{(renderer.transform.parent != null ? renderer.transform.parent.name : "-")}'";
+                }
+                if (items.Length > 0) items.Append(" | ");
+                items.Append($"{path} [{attach}] headLocal=({offset.x:F2},{offset.y:F2},{offset.z:F2})");
+            }
+            // One row per head item on a single line, which reached 761 columns against a 100-column console. The
+            // floating-hair bug this was written for is fixed, so it only prints when asked for now. The warning
+            // above stays unconditional - that one reports an actual problem.
+            Debug.Log($"[NpcAttachDiag] '{_companionNameForLogs}' head items: {(items.Length > 0 ? items.ToString() : "none")}");
         }
 
         /// <summary>Gives the body the working Custom/Player material copied from the Player prefab, which armor overlays need.</summary>

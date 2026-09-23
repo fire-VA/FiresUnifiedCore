@@ -28,11 +28,19 @@ namespace FiresCore.Npc
     {
         // Static collection of all active companions for easy lookup
         private static readonly List<CompanionController> _allCompanions = new List<CompanionController>();
-        
+        private static readonly Dictionary<Character, CompanionController> _byCharacter = new Dictionary<Character, CompanionController>();
+
         /// <summary>
         /// Gets all currently active companions in the world.
         /// </summary>
         public static IReadOnlyList<CompanionController> AllCompanions => _allCompanions;
+
+        /// <summary>The companion driving this character, if any. Cheap enough for per-frame hooks.</summary>
+        internal static bool TryGet(Character character, out CompanionController companion)
+        {
+            companion = null;
+            return character != null && _byCharacter.TryGetValue(character, out companion) && companion != null;
+        }
         
         /// <summary>
         /// Gets the active companion for a specific player (the one following them).
@@ -231,6 +239,7 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
        {
            _allCompanions.Add(this);
        }
+       if (_character != null) _byCharacter[_character] = this;
   }
 
         private void Start()
@@ -304,6 +313,7 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
         {
             // Unregister from global list
             _allCompanions.Remove(this);
+            if (_character != null) _byCharacter.Remove(_character);
 
      if (isTamed && ownerPlayerId != 0)
         {
@@ -613,6 +623,7 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
             _nview.Register<long>("RPC_Command", RPC_Command);
             _nview.Register("RPC_TeleportToOwner", RPC_TeleportToOwner); // Legacy - kept for backwards compatibility
             _nview.Register<Vector3>("RPC_TeleportToPosition", RPC_TeleportToPosition); // New - uses server position
+            _nview.Register<Vector3>(ReelInRpc, RPC_ReelIn);
             _nview.Register("RPC_Respawn", RPC_Respawn);
             _nview.Register<string>("RPC_SetTarget", RPC_SetTarget);
     }
@@ -1492,6 +1503,7 @@ if (isTamed && ownerPlayerId == 0 &&
         {
             if (player == null) return false;
             if (isTamed) return false;
+            if (RefusesRecruitment()) return false;
 
             var inventory = player.GetInventory();
             if (inventory == null) return false;
@@ -1539,39 +1551,32 @@ if (isTamed && ownerPlayerId == 0 &&
             return true;
         }
 
+        /// <summary>
+        /// Wild-faction gate, checked before any currency is taken: hostile wild companions (Bandit / Cultist) refuse
+        /// to be recruited (Docs/WILD_COMPANION_SPAWN_PLAN.md section 10: kill-and-loot content). Neutrals (faction 0)
+        /// and non-wild spawns (no companion_wild_faction key) pass; any non-zero CompanionFaction is hostile
+        /// (CompanionFactionExtensions.IsHostileByDefault). Shows the refusal when it refuses.
+        /// </summary>
+        private bool RefusesRecruitment()
+        {
+            var factionZdo = _nview != null ? _nview.GetZDO() : null;
+            if (factionZdo == null) return false;
+
+            int factionInt = factionZdo.GetInt(FiresCore.Npc.WildSpawn.WildCompanionDresser.ZDO_FACTION, -1);
+            if (factionInt <= 0) return false;
+
+            MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center, $"{GetDisplayName()} refuses to join you!");
+            Debug.Log($"[CompanionController] Refused recruitment: {companionName} is hostile-faction (ZDO faction={factionInt})");
+            return true;
+        }
+
            public void TameCompanion(Player owner)
           {
          if (owner == null) return;
 
       Debug.Log($"[CompanionController] Taming {companionName} to {owner.GetPlayerName()}");
 
-      // Wild-faction gate: hostile wild companions (Bandit / Cultist) refuse to
-      // be recruited regardless of currency or items offered. See
-      // Docs/WILD_COMPANION_SPAWN_PLAN.md section 10 - the design calls for bandits to
-      // be kill-and-loot content, not recruit content. Neutrals (faction == 0)
-      // fall through to the normal tame flow. If the ZDO has no
-      // companion_wild_faction key at all (non-wild spawn: placed NPC, admin
-      // spawn, etc.) we also fall through - this gate only refuses things that
-      // the WildCompanionDresser has positively tagged as hostile.
-      if (_nview != null)
-      {
-        var factionZdo = _nview.GetZDO();
-        if (factionZdo != null)
-        {
-          int factionInt = factionZdo.GetInt(
-              FiresCore.Npc.WildSpawn.WildCompanionDresser.ZDO_FACTION, -1);
-          if (factionInt > 0)
-          {
-            // Anything non-zero in our CompanionFaction enum is hostile by
-            // definition (see CompanionFactionExtensions.IsHostileByDefault).
-            MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center,
-              $"{GetDisplayName()} refuses to join you!");
-            Debug.Log($"[CompanionController] Refused recruitment: " +
-                  $"{companionName} is hostile-faction (ZDO faction={factionInt})");
-            return;
-          }
-        }
-      }
+      if (RefusesRecruitment()) return;
 
       // IDENTITY COMPLETENESS (fixes "tamed before it got a name"): a wild companion's
       // name / appearance / gear are assigned by CompanionRandomLoadout on a ~0.5s delay after
@@ -2122,6 +2127,22 @@ private void RPC_TameCompanion(long sender)
         /// LEGACY RPC - kept for backwards compatibility with old clients.
         /// New teleports use RPC_TeleportToPosition which includes the position.
         /// </summary>
+        /// <summary>Routed to the machine that owns this companion's ZDO by the server's reel-in.</summary>
+        public const string ReelInRpc = "RPC_CompanionReelIn";
+
+        /// <summary>
+        /// The server's follow reel-in, run where the companion lives: only the ZDO owner's ZSyncTransform decides the
+        /// position, so a position the server writes into the ZDO is overwritten on the owner's next tick. If ownership
+        /// moved on the way, the next heartbeat asks the new owner.
+        /// </summary>
+        private void RPC_ReelIn(long sender, Vector3 landing)
+        {
+            if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
+            Vector3 spawnPos = GetSafeTeleportPositionNearPoint(landing);
+            TeleportToPositionInternal(spawnPos, GetOwner(), isPortal: false);
+            Debug.Log($"[CompanionController] {companionName} reeled in to its owner at {spawnPos}");
+        }
+
         private void RPC_TeleportToOwner(long sender)
         {
             // Only process if we're NOT the owner (owner already did the teleport)
@@ -2469,6 +2490,7 @@ if (isTamed)
                    if (owner != null)
                    {
                        _companionAI.SetFollowTarget(owner.gameObject);
+                       Debug.Log($"[CompanionController] {companionName} loaded {Vector3.Distance(transform.position, owner.transform.position):F0} m from {owner.GetPlayerName()}: following");
                    }
                }
                else if (wasFollowing && !ownerPresent)
@@ -3170,6 +3192,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         public CompanionInventory GetInventory() => _inventory;
         public CompanionCombat GetCombat() => _combat;
         public CompanionSkills GetSkills() => _skills;
+        internal CompanionEquipmentData EquipmentData => _equipmentData;
         public CompanionStats GetStats() => _stats;
         public CompanionProgression GetProgression() => _progression;
 
@@ -3188,6 +3211,18 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
                 return Mathf.Clamp(1 + (_progression.Level / TamedProgressionLevelsPerTier), 1, MaxEffectiveLevel);
             int starLevel = _character != null ? _character.GetLevel() : 1;
             return Mathf.Clamp(starLevel, 1, MaxEffectiveLevel);
+        }
+
+        /// <summary>
+        /// Owner: keeps a tamed companion's Character level on its effective level, so vanilla's level scaling
+        /// (Attack.GetLevelDamageFactor on native attacks, the hover stars) agrees with the health scaling. A wild
+        /// companion's star level is already its effective level.
+        /// </summary>
+        internal void SyncCharacterLevel()
+        {
+            if (!isTamed || _character == null || _nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
+            int level = GetEffectiveLevel();
+            if (_character.GetLevel() != level) _character.SetLevel(level);
         }
 
      public CompanionConsumables GetConsumables() => _consumables;

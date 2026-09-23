@@ -1,13 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
-using FiresCore.Items;
 
 namespace FiresCore.Npc.Core
 {
     /// <summary>
-    /// Item transfers between containers and companion inventories that respect stack and weight limits, take
-    /// what is available when there isn't enough (reported as a partial result), and save the ZDO afterwards.
+    /// Item transfers between containers and companion inventories that respect stack limits and take what is
+    /// available when there isn't enough (reported as a partial result). Containers are written only after
+    /// ChestHelper.TryClaimForWrite, so vanilla saves them.
     /// </summary>
     public static class InventoryTransferService
     {
@@ -134,50 +134,25 @@ namespace FiresCore.Npc.Core
             var sourceInv = source.GetInventory();
             if (sourceInv == null)
                 return TransferResult.Failed("Source inventory is null", maxAmount, prefabName);
-            
+
+            if (CountItem(sourceInv, prefabName) == 0)
+                return TransferResult.Failed($"No {prefabName} found", maxAmount, prefabName);
+
+            if (!IdleBehaviors.ChestHelper.TryClaimForWrite(source, destination))
+                return TransferResult.Failed("Container is open or off-limits", maxAmount, prefabName);
+
             int totalPulled = 0;
             var itemsToProcess = new List<ItemDrop.ItemData>(sourceInv.GetAllItems());
-            
+
             foreach (var item in itemsToProcess)
             {
-                if (item == null) continue;
                 if (totalPulled >= maxAmount) break;
-                
-                string itemPrefab = item.m_dropPrefab?.name ?? "";
-                if (!itemPrefab.Equals(prefabName, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                
-                int toMove = Mathf.Min(item.m_stack, maxAmount - totalPulled);
-                
-                // Check if destination can hold this
-                if (!CanAddToInventory(destination, item, toMove))
-                {
-                    // Try to add what we can
-                    toMove = GetMaxAddableAmount(destination, item);
-                    if (toMove <= 0) continue;
-                }
-                
-                // Use ItemDataHelper for safe cloning that preserves all data
-                var clone = ItemDataHelper.CloneForPartialTransfer(item, toMove);
-                if (clone == null)
-                {
-                    Debug.LogWarning($"[InventoryTransferService] Failed to clone {prefabName}");
-                    continue;
-                }
-                
-                if (destination.AddItem(clone))
-                {
-                    sourceInv.RemoveItem(item, toMove);
-                    totalPulled += toMove;
-                }
+                if (!IsPrefab(item, prefabName)) continue;
+
+                int toMove = Mathf.Min(item.m_stack, maxAmount - totalPulled, GetMaxAddableAmount(destination, item));
+                totalPulled += IdleBehaviors.ChestHelper.MoveItem(sourceInv, destination, item, toMove);
             }
-            
-            // Save the container
-            if (totalPulled > 0)
-            {
-                SaveContainer(source);
-            }
-            
+
             if (totalPulled == 0)
             {
                 return TransferResult.Failed($"No {prefabName} found or cannot add to inventory", maxAmount, prefabName);
@@ -316,48 +291,22 @@ namespace FiresCore.Npc.Core
             var destInv = destination.GetInventory();
             if (destInv == null)
                 return TransferResult.Failed("Destination inventory is null", maxAmount, prefabName);
-            
+
+            if (!IdleBehaviors.ChestHelper.TryClaimForWrite(destination, source))
+                return TransferResult.Failed("Container is open or off-limits", maxAmount, prefabName);
+
             int totalDeposited = 0;
             var itemsToProcess = new List<ItemDrop.ItemData>(source.GetAllItems());
-            
+
             foreach (var item in itemsToProcess)
             {
-                if (item == null) continue;
                 if (totalDeposited >= maxAmount) break;
-                
-                string itemPrefab = item.m_dropPrefab?.name ?? "";
-                if (!itemPrefab.Equals(prefabName, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                
-                int toMove = Mathf.Min(item.m_stack, maxAmount - totalDeposited);
-                
-                // Check if destination can hold this
-                if (!CanAddToInventory(destInv, item, toMove))
-                {
-                    toMove = GetMaxAddableAmount(destInv, item);
-                    if (toMove <= 0) continue;
-                }
-                
-                // Use ItemDataHelper for safe cloning that preserves all data
-                var clone = ItemDataHelper.CloneForPartialTransfer(item, toMove);
-                if (clone == null)
-                {
-                    Debug.LogWarning($"[InventoryTransferService] Failed to clone {prefabName} for deposit");
-                    continue;
-                }
-                
-                if (destInv.AddItem(clone))
-                {
-                    source.RemoveItem(item, toMove);
-                    totalDeposited += toMove;
-                }
+                if (!IsPrefab(item, prefabName)) continue;
+
+                int toMove = Mathf.Min(item.m_stack, maxAmount - totalDeposited, GetMaxAddableAmount(destInv, item));
+                totalDeposited += IdleBehaviors.ChestHelper.MoveItem(source, destInv, item, toMove);
             }
-            
-            if (totalDeposited > 0)
-            {
-                SaveContainer(destination);
-            }
-            
+
             if (totalDeposited == 0)
             {
                 return TransferResult.Failed($"Could not deposit {prefabName}", maxAmount, prefabName);
@@ -440,7 +389,7 @@ namespace FiresCore.Npc.Core
                 return TransferResult.Failed("Storage inventory is null");
             
             int totalDeposited = 0;
-            var depositable = IdleBehaviors.ChestHelper.GetDepositableItems(storageInv);
+            var depositable = IdleBehaviors.ChestHelper.GetDepositableItems(source);
             
             foreach (var item in depositable)
             {
@@ -475,52 +424,25 @@ namespace FiresCore.Npc.Core
         #region Utility Methods
         
         /// <summary>
-        /// Checks if an inventory can add a specific amount of an item.
+        /// Checks if an inventory can add a specific amount of an item (vanilla Inventory.CanAddItem).
         /// </summary>
         public static bool CanAddToInventory(Inventory inv, ItemDrop.ItemData item, int amount)
         {
-            if (inv == null || item == null) return false;
-            
-            // Check for stacking with existing items
-            foreach (var existing in inv.GetAllItems())
-            {
-                if (existing == null) continue;
-                if (existing.m_shared?.m_name != item.m_shared?.m_name) continue;
-                
-                int canStack = existing.m_shared.m_maxStackSize - existing.m_stack;
-                amount -= canStack;
-                
-                if (amount <= 0) return true;
-            }
-            
-            // Need new slot(s)
-            int slotsNeeded = Mathf.CeilToInt((float)amount / item.m_shared.m_maxStackSize);
-            return inv.GetEmptySlots() >= slotsNeeded;
+            return inv != null && item != null && inv.CanAddItem(item, amount);
         }
-        
+
         /// <summary>
-        /// Gets the maximum amount of an item that can be added to an inventory.
+        /// Gets the maximum amount of an item that can be added to an inventory, as vanilla CanAddItem counts it.
         /// </summary>
         public static int GetMaxAddableAmount(Inventory inv, ItemDrop.ItemData item)
         {
             if (inv == null || item == null) return 0;
-            
-            int maxAdd = 0;
-            
-            // Count space in existing stacks
-            foreach (var existing in inv.GetAllItems())
-            {
-                if (existing == null) continue;
-                if (existing.m_shared?.m_name != item.m_shared?.m_name) continue;
-                
-                maxAdd += existing.m_shared.m_maxStackSize - existing.m_stack;
-            }
-            
-            // Add space for new stacks in empty slots
-            int emptySlots = inv.GetEmptySlots();
-            maxAdd += emptySlots * item.m_shared.m_maxStackSize;
-            
-            return maxAdd;
+            return IdleBehaviors.ChestHelper.GetAddableAmount(inv, item);
+        }
+
+        private static bool IsPrefab(ItemDrop.ItemData item, string prefabName)
+        {
+            return item?.m_dropPrefab != null && item.m_dropPrefab.name.Equals(prefabName, StringComparison.OrdinalIgnoreCase);
         }
         
         /// <summary>
@@ -564,26 +486,7 @@ namespace FiresCore.Npc.Core
             }
             return total;
         }
-        
-        /// <summary>
-        /// Saves a container's inventory to its ZDO.
-        /// Container auto-saves when inventory changes, but we trigger the onChanged callback
-        /// to ensure any listeners are notified.
-        /// </summary>
-        private static void SaveContainer(Container container)
-        {
-            if (container == null) return;
-            
-            // Container's inventory has an m_onChanged action that gets called
-            // when the inventory changes. The Container subscribes to this
-            // and saves to ZDO. We can trigger it by invoking the action.
-            var inv = container.GetInventory();
-            if (inv != null && inv.m_onChanged != null)
-            {
-                inv.m_onChanged.Invoke();
-            }
-        }
-        
+
         #endregion
     }
 }

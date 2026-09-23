@@ -32,6 +32,7 @@ namespace FiresCore.UI.ContextMenu
         private static readonly Color TextDim    = new Color(0.8f, 0.72f, 0.56f, 0.7f);
 
         private GameObject _canvasGo;
+        private Canvas _canvas;
         private RectTransform _canvasRect;
         private RectTransform _panel;
         private RectTransform _header;
@@ -163,6 +164,7 @@ namespace FiresCore.UI.ContextMenu
             _rows.Clear();
             if (_canvasGo != null) Object.Destroy(_canvasGo);
             _canvasGo = null;
+            _canvas = null;
             _canvasRect = null;
             _panel = null;
             _header = null;
@@ -194,18 +196,22 @@ namespace FiresCore.UI.ContextMenu
         }
 
         // ── build helpers ────────────────────────────────────────────────────
+        // Built inactive and enabled once configured: CanvasScaler applies its scale in OnEnable, and a canvas configured
+        // after AddComponent stays at scale 1 for its first frame, the frame the menu is placed in.
         private void BuildCanvas()
         {
             _canvasGo = new GameObject("FiresContextMenuCanvas");
+            _canvasGo.SetActive(false);
             Object.DontDestroyOnLoad(_canvasGo);
-            var canvas = _canvasGo.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 7000; // above the patrol popup (6000) / book (210)
+            _canvas = _canvasGo.AddComponent<Canvas>();
+            _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            _canvas.sortingOrder = 7000; // above the patrol popup (6000) / book (210)
             var scaler = _canvasGo.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = 0.5f;
             _canvasGo.AddComponent<GraphicRaycaster>();
+            _canvasGo.SetActive(true);
             _canvasRect = (RectTransform)_canvasGo.transform;
         }
 
@@ -227,17 +233,22 @@ namespace FiresCore.UI.ContextMenu
             rect.offsetMax = new Vector2(-sidePad, yTop);
         }
 
+        // Works from the screen size and canvas scale rather than the new canvas's rect, which isn't laid out in its first
+        // frame. Opens left/up on overflow, then clamps the whole panel on screen.
         private void PositionAtCursor(Vector2 screenPos)
         {
-            RectTransformUtility.ScreenPointToLocalPointInRectangle(_canvasRect, screenPos, null, out var local);
+            float scale = _canvas.scaleFactor;
+            float halfW = Screen.width * 0.5f / scale;
+            float halfH = Screen.height * 0.5f / scale;
+            var local = new Vector2(screenPos.x / scale - halfW, screenPos.y / scale - halfH);
             var size = _panel.sizeDelta;
-            float halfW = _canvasRect.rect.width * 0.5f;
-            float halfH = _canvasRect.rect.height * 0.5f;
 
             float pivotX = (local.x + size.x > halfW) ? 1f : 0f;  // overflow right → open left
             float pivotY = (local.y - size.y < -halfH) ? 0f : 1f; // overflow bottom → open up
             _panel.pivot = new Vector2(pivotX, pivotY);
-            _panel.anchoredPosition = local;
+            float x = Mathf.Clamp(local.x, -halfW + size.x * pivotX, halfW - size.x * (1f - pivotX));
+            float y = Mathf.Clamp(local.y, -halfH + size.y * pivotY, halfH - size.y * (1f - pivotY));
+            _panel.anchoredPosition = new Vector2(x, y);
         }
     }
 }

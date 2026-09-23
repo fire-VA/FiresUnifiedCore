@@ -8,31 +8,33 @@ namespace FiresCore.Npc
     {
         #region Head Look-At
 
+        private const float MinHeadLookWeight = 0.01f;
+        private const string HeadBoneName = "Head";
+        private const float MaxLookUpDegrees = 25f;
+        private const float MaxLookDownDegrees = 35f;
+
+        // The animated pose under the look offset, and the rotation written over it: the animator does not rewrite the head
+        // every frame (culled, or a clip without a head key), and blending from our own last write compounded the offset.
+        private Quaternion _headBaseLocal;
+        private Quaternion _headWrittenLocal;
+        private bool _headWritten;
+
         private void FindHeadBone()
         {
             if (_animator == null) return;
 
             _headBone = _animator.GetBoneTransform(HumanBodyBones.Head);
-
             if (_headBone == null)
             {
-                var bones = GetComponentsInChildren<Transform>();
-                foreach (var bone in bones)
+                foreach (var bone in GetComponentsInChildren<Transform>(true))
                 {
-                    string boneName = bone.name.ToLowerInvariant();
-                    if (boneName.Contains("head") && !boneName.Contains("headeffect"))
-                    {
-                        _headBone = bone;
-                        break;
-                    }
+                    if (bone.name != HeadBoneName) continue;
+                    _headBone = bone;
+                    break;
                 }
             }
 
-            if (_headBone != null)
-            {
-                _headBaseRotation = _headBone.localRotation;
-                _headBoneFound = true;
-            }
+            _headBoneFound = _headBone != null;
         }
 
         private void UpdateHeadLookAt()
@@ -143,7 +145,7 @@ namespace FiresCore.Npc
             foreach (var character in Character.GetAllCharacters())
             {
                 if (character == null || character.IsDead()) continue;
-                if (character == _character) return;
+                if (character == _character) continue;
                 if (character.IsPlayer() || character.IsTamed()) continue;
 
                 float dist = Vector3.Distance(myPos, character.transform.position);
@@ -177,82 +179,39 @@ namespace FiresCore.Npc
 
         private void ApplyHeadLookAt()
         {
-            if (!enableHeadLookAt || !_headBoneFound || _headBone == null) return;
-            if (_isSittingOnChair || _isPlayingEmote) return;
-            // Single-writer (facing): an active sub-behavior (bow training, gathering, station work)
-            // owns the companion's facing. Return the head to its base rotation and stop tracking, so
-            // the head doesn't keep drifting toward a stale look-at target while the task locks the body.
-            if (IsInSubBehavior) { _headBone.localRotation = _headBaseRotation; return; }
+            if (!_headBoneFound || _headBone == null) return;
 
-            // Skip if weight is very low
-            if (_headLookWeight < 0.01f)
+            // The animated pose this frame, or the one under last frame's write when the animator left the bone alone.
+            Quaternion current = _headBone.localRotation;
+            Quaternion baseLocal = _headWritten && current == _headWrittenLocal ? _headBaseLocal : current;
+
+            Vector3 lookDir = _currentHeadLookDirection;
+            lookDir.y *= 0.5f;
+            // Single-writer (facing): an active sub-behavior (bow training, gathering, station work) owns the facing.
+            bool looking = enableHeadLookAt && !_isSittingOnChair && !_isPlayingEmote && !IsInSubBehavior
+                && _headLookWeight >= MinHeadLookWeight && lookDir.sqrMagnitude > 0.000001f;
+            if (!looking)
             {
-                _headBone.localRotation = _headBaseRotation;
+                if (_headWritten) _headBone.localRotation = baseLocal;
+                _headWritten = false;
                 return;
             }
 
-            try
-            {
-                Vector3 lookDir = _currentHeadLookDirection;
-                lookDir.y *= 0.5f;
+            // Yaw and pitch relative to the body, clamped, then applied as a world-space turn so the bone's own axes
+            // (which are not the body's on the Valheim rig) can't turn a yaw into roll.
+            Vector3 localDir = Quaternion.Inverse(transform.rotation) * lookDir.normalized;
+            float yaw = Mathf.Clamp(Mathf.Atan2(localDir.x, localDir.z) * Mathf.Rad2Deg, -maxLookAtAngle, maxLookAtAngle);
+            float pitch = Mathf.Clamp(-Mathf.Asin(Mathf.Clamp(localDir.y, -1f, 1f)) * Mathf.Rad2Deg, -MaxLookUpDegrees, MaxLookDownDegrees);
+            Vector3 clampedDir = transform.rotation * (Quaternion.Euler(pitch, yaw, 0f) * Vector3.forward);
 
-                // CRITICAL: Check magnitude BEFORE operations to avoid zero vector issues
-                float magnitude = lookDir.magnitude;
-                if (magnitude < 0.001f)
-                {
-                    _headBone.localRotation = _headBaseRotation;
-                    return;
-                }
-                
-                lookDir = lookDir / magnitude; // Manual normalize
+            Transform parent = _headBone.parent;
+            Quaternion baseWorld = parent != null ? parent.rotation * baseLocal : baseLocal;
+            Quaternion turned = Quaternion.FromToRotation(transform.forward, clampedDir) * baseWorld;
+            _headBone.rotation = Quaternion.Slerp(baseWorld, turned, _headLookWeight);
 
-                Quaternion targetRotation = Quaternion.LookRotation(lookDir);
-                
-                // Validate quaternion before using
-                if (float.IsNaN(targetRotation.x) || float.IsNaN(targetRotation.y) || 
-                    float.IsNaN(targetRotation.z) || float.IsNaN(targetRotation.w))
-                {
-                    _headBone.localRotation = _headBaseRotation;
-                    return;
-                }
-                
-                Quaternion localTarget = Quaternion.Inverse(transform.rotation) * targetRotation;
-                
-                // Validate inverse result
-                if (float.IsNaN(localTarget.x) || float.IsNaN(localTarget.y) || 
-                    float.IsNaN(localTarget.z) || float.IsNaN(localTarget.w))
-                {
-                    _headBone.localRotation = _headBaseRotation;
-                    return;
-                }
-
-                Vector3 euler = localTarget.eulerAngles;
-                euler.x = ClampAngle(euler.x, -25f, 35f);
-                euler.y = ClampAngle(euler.y, -maxLookAtAngle, maxLookAtAngle);
-                euler.z = 0f;
-
-                localTarget = Quaternion.Euler(euler);
-                
-                Quaternion blendedRotation = Quaternion.Slerp(_headBaseRotation, _headBaseRotation * localTarget, _headLookWeight);
-                
-                // Final validation before applying
-                if (!float.IsNaN(blendedRotation.x) && !float.IsNaN(blendedRotation.y) && 
-                    !float.IsNaN(blendedRotation.z) && !float.IsNaN(blendedRotation.w))
-                {
-                    _headBone.localRotation = blendedRotation;
-                }
-                else
-                {
-                    _headBone.localRotation = _headBaseRotation;
-                }
-            }
-            catch { }
-        }
-
-        private float ClampAngle(float angle, float min, float max)
-        {
-            if (angle > 180f) angle -= 360f;
-            return Mathf.Clamp(angle, min, max);
+            _headBaseLocal = baseLocal;
+            _headWrittenLocal = _headBone.localRotation;
+            _headWritten = true;
         }
 
         #endregion

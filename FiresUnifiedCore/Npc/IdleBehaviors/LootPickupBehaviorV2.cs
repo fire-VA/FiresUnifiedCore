@@ -232,14 +232,13 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             StopMovement();
-            
+
+            Vector3 itemPosition = _targetItem.transform.position;
+            string itemName = _targetItem.m_itemData?.m_dropPrefab?.name ?? "unknown";
             if (TryPickupItem(_targetItem))
             {
                 _itemsPickedUp++;
-                _lootedPositions.Add(_targetItem.transform.position);
-                
-                // Fire event
-                string itemName = _targetItem.m_itemData?.m_dropPrefab?.name ?? "unknown";
+                _lootedPositions.Add(itemPosition);
                 CompanionEvents.FireResourceGathered(Companion, itemName, 1);
             }
             
@@ -318,23 +317,14 @@ namespace FiresCore.Npc.IdleBehaviors
             
             Vector3 center = SearchCenter;
             float searchRadius = GetEffectiveSearchRadius(range);
-            var colliders = Physics.OverlapSphere(center, searchRadius);
-            
-            foreach (var collider in colliders)
+
+            foreach (var itemDrop in ChestHelper.FindLooseItems(center, searchRadius))
             {
-                if (collider == null) continue;
-                
-                var itemDrop = collider.GetComponent<ItemDrop>();
-                if (itemDrop == null || !itemDrop.CanPickup()) continue;
-                
-                var itemData = itemDrop.m_itemData;
-                if (itemData == null) continue;
-                
                 if (IsPositionLooted(itemDrop.transform.position)) continue;
-                
-                float pickupChance = GetPickupChance(itemData);
+
+                float pickupChance = GetPickupChance(itemDrop.m_itemData);
                 if (Random.value > pickupChance) continue;
-                
+
                 result.Add(itemDrop);
             }
             
@@ -415,46 +405,10 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private bool TryPickupItem(ItemDrop itemDrop)
         {
-            if (itemDrop == null || Inventory == null) return false;
-            
-            try
-            {
-                if (!itemDrop.CanPickup()) return false;
-                
-                var itemData = itemDrop.m_itemData;
-                if (itemData == null) return false;
-                
-                var storage = GetStorageInventory();
-                if (storage == null) return false;
-                
-                if (storage.CanAddItem(itemData))
-                {
-                    var clonedItem = itemData.Clone();
-                    
-                    var nview = itemDrop.GetComponent<ZNetView>();
-                    if (nview != null && nview.IsValid() && !nview.IsOwner())
-                    {
-                        nview.ClaimOwnership();
-                    }
-
-                    // Add to inventory and remove the world drop. ItemDrop
-                    // carries a ZNetView, so we MUST route the destroy through
-                    // ZNetScene (via the helper). Raw Object.Destroy on a
-                    // ZNetView'd object leaves a stale ZNetScene.m_instances
-                    // entry that NREs in RemoveObjects every tick afterwards.
-                    storage.AddItem(clonedItem);
-                    CompanionNetworkHelper.Destroy(itemDrop.gameObject, disableFirst: false);
-
-                    LogVerbose($"Picked up {itemData.m_shared.m_name}");
-                    return true;
-                }
-            }
-            catch (System.Exception ex)
-            {
-                LogWarning($"Failed to pickup item: {ex.Message}");
-            }
-            
-            return false;
+            int taken = ChestHelper.TryTakeLooseItem(itemDrop, GetStorageInventory());
+            if (taken > 0)
+                LogVerbose($"Picked up {taken}x {itemDrop.m_itemData.m_shared.m_name}");
+            return taken > 0;
         }
         
         private bool IsPositionLooted(Vector3 pos)

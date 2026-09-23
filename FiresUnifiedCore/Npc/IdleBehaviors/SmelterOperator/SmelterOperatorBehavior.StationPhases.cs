@@ -303,10 +303,9 @@ namespace FiresCore.Npc.IdleBehaviors
             // For kilns, pull wood
             if (_isKilnOperation)
             {
-                string[] woodTypes = { "Wood", "RoundLog", "FineWood", "ElderBark", "YggdrasilWood" };
                 int capacity = GetRemainingStationCapacity();
-                
-                foreach (string woodType in woodTypes)
+
+                foreach (string woodType in PieceDataHelper.GetStationInputs(_targetSmelter))
                 {
                     bestChest = ContainerRegistry.GetClosestWithItem(Transform.position, woodType, CHEST_SEARCH_RADIUS);
                     if (bestChest != null)
@@ -322,7 +321,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // For smelters: prioritize fuel if needed, then ore
                 if (NeedsFuel() && !HasFuel())
                 {
-                    string fuelPrefab = _targetSmelter.m_fuelItem?.gameObject.name ?? "Coal";
+                    string fuelPrefab = _targetSmelter.m_fuelItem.gameObject.name;
                     bestChest = ContainerRegistry.GetClosestWithItem(Transform.position, fuelPrefab, CHEST_SEARCH_RADIUS);
                     if (bestChest != null)
                     {
@@ -540,14 +539,16 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
             
-            bool hasOre = HasOre() || HasOreInChests();
+            // No ore slot (1.0 Frost Kiln): fuel alone. No fuel item (windmill, spinning wheel): ore alone.
+            bool hasOre = !StationTakesOre || HasOre() || HasOreInChests();
             // Also count fuel already loaded in the smelter - if the station already has
             // coal we don't need any in the companion inventory or nearby chests.
             float loadedFuel = !_isKilnOperation ? GetCurrentFuel() : 0f;
             bool smelterAlreadyHasFuel = !_isKilnOperation && _targetSmelter != null
                                          && _targetSmelter.m_maxFuel > 0
                                          && loadedFuel > 0f;
-            bool hasFuel = HasFuel() || HasFuelInChests() || smelterAlreadyHasFuel;
+            bool burnsFuel = _targetSmelter != null && _targetSmelter.m_maxFuel > 0 && _targetSmelter.m_fuelItem != null;
+            bool hasFuel = !burnsFuel || HasFuel() || HasFuelInChests() || smelterAlreadyHasFuel;
             bool hasWood = _isKilnOperation && (HasWoodForKiln() || HasWoodInChests());
             
             // For kilns, we only need wood
@@ -570,8 +571,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return true;
             }
             
-            // For smelters, we need ore AND fuel (or ability to make fuel via kiln)
-            bool canGetFuel = hasFuel || (FindNearbyKiln() != null && (HasWoodForKiln() || HasWoodInChests()));
+            // For smelters, we need ore AND fuel (or a kiln that makes it from wood we can get)
+            bool canGetFuel = hasFuel || FindNearbyKiln() != null;
             
             if (!hasOre && !hasFuel)
             {
@@ -1054,12 +1055,13 @@ namespace FiresCore.Npc.IdleBehaviors
             // STEP 5: Need fuel but no fuel in chests - try kiln workflow
             if (needsFuel && !hasFuelInv && !hasFuelChests && !_isKilnOperation && fuelBelowThreshold)
             {
-                bool haveOreSomewhere = hasOreInv || hasOreChests;
-                bool canMakeCoal = (HasWoodForKiln() || HasWoodInChests()) && FindNearbyKiln() != null;
+                bool haveOreSomewhere = !StationTakesOre || hasOreInv || hasOreChests;
+                Smelter coalKiln = FindNearbyKiln();
+                bool canMakeCoal = coalKiln != null;
                 
                 if (haveOreSomewhere && canMakeCoal)
                 {
-                    _nearbyKiln = FindNearbyKiln();
+                    _nearbyKiln = coalKiln;
                     if (_nearbyKiln != null)
                     {
                         _needsCoalFromKiln = true;
@@ -1074,9 +1076,8 @@ namespace FiresCore.Npc.IdleBehaviors
                             int kilnCapacity = GetRemainingKilnCapacity();
                             if (kilnCapacity > 0)
                             {
-                                string[] woodTypes = { "Wood", "RoundLog", "FineWood" };
                                 int totalPulled = 0;
-                                foreach (string woodType in woodTypes)
+                                foreach (string woodType in PieceDataHelper.GetStationInputs(_nearbyKiln))
                                 {
                                     if (totalPulled >= kilnCapacity) break;
                                     var storageInv = _inventory.GetStorageInventory();

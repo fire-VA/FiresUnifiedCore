@@ -1,13 +1,14 @@
 ﻿using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
 using FiresCore.Npc.Core;
 
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Autonomous farm work for a staying companion with a home position: collect honey, harvest ripe crops, plant
-    /// seeds on cultivated soil (fetching a cultivator from inventory or a chest, or crafting one at a forge), and
-    /// deposit the harvest once half full. Players can turn it off from the radial menu.
+    /// Autonomous farm work for a staying companion with a home position: empty hives (honey, feathers), harvest ripe
+    /// crops, plant seeds on cultivated soil (fetching a cultivator from inventory or a chest, or crafting one at a
+    /// forge), and deposit the harvest once half full. Players can turn it off from the radial menu.
     /// </summary>
     public partial class FarmingBehavior : IdleSubBehavior
     {
@@ -101,8 +102,10 @@ namespace FiresCore.Npc.IdleBehaviors
         private Container       _seedChest;
 
         // Planting
-        private string  _seedToPlant;
-        private Vector3 _plantPosition;
+        private List<Vector3>                    _plantSpots = new List<Vector3>();
+        private FarmingDataHelper.CropSapling    _cropToPlant;
+        private Vector3                          _plantPosition;
+        private readonly Dictionary<string, int> _plantedCountBySapling = new Dictionary<string, int>();
 
         // Drop collection
         private List<ItemDrop> _pendingPickups   = new List<ItemDrop>();
@@ -115,7 +118,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private GameObject _commandedTarget;
 
         // Stats
-        private int _honeyHarvested;
+        private int _hiveProduceHarvested;
         private int _cropsHarvested;
         private int _seedsPlanted;
         private int _itemsDeposited;
@@ -178,14 +181,15 @@ namespace FiresCore.Npc.IdleBehaviors
             if (FarmingDataHelper.FindNearbyHarvestableCrops(home, CropDetectionRange).Count > 0)
                 return true;
 
-            // Planting: need seeds (inventory or nearby chests) + cultivated ground + cultivator source.
+            // Planting: need seeds (inventory or nearby chests) that grow on cultivated ground here + cultivator source.
             RefreshNearbyChests();
-            if (!HasSeedsToPlant() && !ChestHasSeeds()) return false;
+            if (!HasAnySeeds()) return false;
 
-            var plantSpots = FarmingDataHelper.FindPlantablePositions(home, PlantingDetectionRange, PlantSpacing);
-            if (plantSpots.Count == 0) return false;
+            RefreshPlantSpots(home);
+            if (_plantSpots.Count == 0) return false;
+            if (!StorageHas(IsSeedForPlantSpots) && FindChestWith(IsSeedForPlantSpots) == null) return false;
 
-            return HasCultivator() || ChestHasCultivator() || CanCraftCultivator();
+            return HasCultivator() || FindChestWith(IsCultivator) != null || CanCraftCultivator();
         }
 
         public override void Start()
@@ -194,7 +198,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             _currentPhase              = FarmPhase.Idle;
             _phaseStartTime            = Time.time;
-            _honeyHarvested            = 0;
+            _hiveProduceHarvested      = 0;
             _cropsHarvested            = 0;
             _seedsPlanted              = 0;
             _itemsDeposited            = 0;
@@ -216,8 +220,8 @@ namespace FiresCore.Npc.IdleBehaviors
             _combatMovement?.UnlockMovement();
             _combatMovement?.ClearCommandPriority();
 
-            if (_honeyHarvested > 0 || _cropsHarvested > 0 || _seedsPlanted > 0)
-                Debug.Log($"[Farming] {Companion.companionName} done — honey:{_honeyHarvested} crops:{_cropsHarvested} planted:{_seedsPlanted}");
+            if (_hiveProduceHarvested > 0 || _cropsHarvested > 0 || _seedsPlanted > 0)
+                Debug.Log($"[Farming] {Companion.companionName} done - hive:{_hiveProduceHarvested} crops:{_cropsHarvested} planted:{_seedsPlanted}");
 
             base.Cancel();
         }
@@ -265,8 +269,8 @@ namespace FiresCore.Npc.IdleBehaviors
             FarmPhase.CraftingCultivator      => "Crafting cultivator",
             FarmPhase.GettingSeeds            => "Looking for seeds",
             FarmPhase.MovingToSeedChest       => "Getting seeds from chest",
-            FarmPhase.MovingToBeehive         => "Walking to beehive",
-            FarmPhase.HarvestingBeehive       => "Harvesting honey",
+            FarmPhase.MovingToBeehive   when _targetBeehive != null => $"Walking to {FarmingDataHelper.GetHiveName(_targetBeehive)}",
+            FarmPhase.HarvestingBeehive when _targetBeehive != null => $"Collecting {FarmingDataHelper.GetProduceName(_targetBeehive)}",
             FarmPhase.MovingToCrop            => "Walking to crops",
             FarmPhase.HarvestingCrop          => "Harvesting crops",
             FarmPhase.MovingToPlantSpot       => "Walking to plant",
@@ -322,7 +326,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 var hive = _commandedTarget.GetComponent<Beehive>()
                         ?? _commandedTarget.GetComponentInParent<Beehive>();
-                if (hive != null && FarmingDataHelper.HasPrivateAreaAccess(hive.transform.position))
+                if (hive != null && ChestHelper.WardsAllow(hive.transform.position, Companion))
                 {
                     _targetBeehive  = hive;
                     _targetPosition = InteractionPointHelper.GetInteractionPoint(hive.gameObject, Transform.position, InteractionDistance);
@@ -333,7 +337,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 var crop = _commandedTarget.GetComponent<Pickable>()
                         ?? _commandedTarget.GetComponentInParent<Pickable>();
-                if (crop != null && FarmingDataHelper.HasPrivateAreaAccess(crop.transform.position))
+                if (crop != null && ChestHelper.WardsAllow(crop.transform.position, Companion))
                 {
                     _targetCrop     = crop;
                     _targetPosition = InteractionPointHelper.GetInteractionPoint(crop.gameObject, Transform.position, InteractionDistance);
@@ -363,7 +367,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var beehives = FarmingDataHelper.FindNearbyHarvestableBeehives(home, BeehiveDetectionRange);
             foreach (var hive in beehives)
             {
-                if (!FarmingDataHelper.HasPrivateAreaAccess(hive.transform.position)) continue;
+                if (!ChestHelper.WardsAllow(hive.transform.position, Companion)) continue;
                 if (!IsReachable(hive.transform.position)) continue;
 
                 _targetBeehive  = hive;
@@ -377,7 +381,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var crops = FarmingDataHelper.FindNearbyHarvestableCrops(home, CropDetectionRange);
             foreach (var crop in crops)
             {
-                if (!FarmingDataHelper.HasPrivateAreaAccess(crop.transform.position)) continue;
+                if (!ChestHelper.WardsAllow(crop.transform.position, Companion)) continue;
                 if (!IsReachable(crop.transform.position)) continue;
 
                 _targetCrop     = crop;
@@ -387,17 +391,16 @@ namespace FiresCore.Npc.IdleBehaviors
                 return true;
             }
 
-            // Priority 3: planting (requires seeds + cultivator)
-            bool hasSeedsInInventory = HasSeedsToPlant();
-            bool hasSeedsInChests    = !hasSeedsInInventory && ChestHasSeeds();
-            if (!hasSeedsInInventory && !hasSeedsInChests) return false;
+            // Priority 3: planting (requires seeds that grow here + cultivator)
+            if (!HasAnySeeds()) return false;
 
-            var plantSpots = FarmingDataHelper.FindPlantablePositions(home, PlantingDetectionRange, PlantSpacing);
-            if (plantSpots.Count == 0) return false;
+            RefreshPlantSpots(home);
+            if (_plantSpots.Count == 0) return false;
 
-            // Retrieve seeds from a chest if we don't have any in inventory.
-            if (!hasSeedsInInventory)
+            // Retrieve seeds from a chest if we don't carry any that grow on these spots.
+            if (!StorageHas(IsSeedForPlantSpots))
             {
+                if (FindChestWith(IsSeedForPlantSpots) == null) return false;
                 SetPhase(FarmPhase.GettingSeeds);
                 return true;
             }
@@ -409,98 +412,67 @@ namespace FiresCore.Npc.IdleBehaviors
                 return true;
             }
 
-            return TryFindPlantingTask(plantSpots);
+            return TryFindPlantingTask();
         }
 
-        private bool TryFindPlantingTask(List<Vector3> plantSpots)
+        private bool TryFindPlantingTask()
         {
             var storage = _inventory?.GetStorageInventory();
             if (storage == null) return false;
 
             foreach (var item in storage.GetAllItems())
             {
-                if (!FarmingDataHelper.CanBePlanted(item)) continue;
-                string seedPrefab = item.m_dropPrefab?.name;
-                if (string.IsNullOrEmpty(seedPrefab)) continue;
-
-                foreach (var pos in plantSpots)
+                foreach (var crop in LeastPlantedFirst(FarmingDataHelper.SaplingsForSeed(item?.m_dropPrefab?.name)))
                 {
-                    if (!FarmingDataHelper.IsValidPlantingPosition(pos, seedPrefab, PlantSpacing)) continue;
+                    if (!HasSeedsFor(storage, crop)) continue;
 
-                    _seedToPlant    = seedPrefab;
-                    _plantPosition  = pos;
-                    _targetPosition = pos;
-                    SetPhase(FarmPhase.MovingToPlantSpot);
-                    TryMoveToPosition(_targetPosition);
-                    return true;
+                    foreach (var pos in _plantSpots)
+                    {
+                        if (!FarmingDataHelper.IsValidPlantingPosition(pos, crop, PlantSpacing)) continue;
+
+                        _cropToPlant    = crop;
+                        _plantPosition  = pos;
+                        _targetPosition = pos;
+                        SetPhase(FarmPhase.MovingToPlantSpot);
+                        TryMoveToPosition(_targetPosition);
+                        return true;
+                    }
                 }
             }
             return false;
         }
+
+        /// <summary>A seed that grows into more than one sapling (1.0 KaleSeeds: kale or seed kale) alternates between them.</summary>
+        private IEnumerable<FarmingDataHelper.CropSapling> LeastPlantedFirst(IReadOnlyList<FarmingDataHelper.CropSapling> crops)
+            => crops.OrderBy(crop => _plantedCountBySapling.TryGetValue(crop.Prefab.name, out int planted) ? planted : 0);
+
+        private bool HasSeedsFor(Inventory storage, FarmingDataHelper.CropSapling crop)
+        {
+            foreach (var seed in crop.Seeds)
+                if (CountItems(storage, seed.Item) < seed.Amount) return false;
+            return true;
+        }
+
+        private bool IsSeedForPlantSpots(ItemDrop.ItemData item)
+        {
+            foreach (var crop in FarmingDataHelper.SaplingsForSeed(item?.m_dropPrefab?.name))
+                foreach (var spot in _plantSpots)
+                    if (FarmingDataHelper.CanGrowAt(crop, spot)) return true;
+            return false;
+        }
+
+        private bool HasAnySeeds()
+            => StorageHas(FarmingDataHelper.CanBePlanted) || FindChestWith(FarmingDataHelper.CanBePlanted) != null;
+
+        private void RefreshPlantSpots(Vector3 home)
+            => _plantSpots = FarmingDataHelper.FindPlantablePositions(home, PlantingDetectionRange, PlantSpacing);
 
         // ── Cultivator helpers ────────────────────────────────────────────────
 
-        private bool HasCultivator()
-        {
-            var storage = _inventory?.GetStorageInventory();
-            if (storage == null) return false;
-            foreach (var item in storage.GetAllItems())
-            {
-                if (item?.m_dropPrefab?.name?.IndexOf("cultivator", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                    return true;
-            }
-            return false;
-        }
+        private static bool IsCultivator(ItemDrop.ItemData item)
+            => item?.m_dropPrefab?.name?.IndexOf("cultivator", System.StringComparison.OrdinalIgnoreCase) >= 0;
 
-        private bool ChestHasCultivator()
-        {
-            foreach (var chest in _nearbyChests)
-            {
-                if (chest == null) continue;
-                foreach (var item in chest.GetInventory()?.GetAllItems() ?? new List<ItemDrop.ItemData>())
-                {
-                    if (item?.m_dropPrefab?.name?.IndexOf("cultivator", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                        return true;
-                }
-            }
-            return false;
-        }
-
-        private Container FindChestWithCultivator()
-        {
-            foreach (var chest in _nearbyChests)
-            {
-                if (chest == null) continue;
-                foreach (var item in chest.GetInventory()?.GetAllItems() ?? new List<ItemDrop.ItemData>())
-                {
-                    if (item?.m_dropPrefab?.name?.IndexOf("cultivator", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                        return chest;
-                }
-            }
-            return null;
-        }
-
-        private bool ChestHasSeeds()
-        {
-            foreach (var chest in _nearbyChests)
-            {
-                if (chest == null) continue;
-                foreach (var item in chest.GetInventory()?.GetAllItems() ?? new List<ItemDrop.ItemData>())
-                    if (FarmingDataHelper.CanBePlanted(item)) return true;
-            }
-            return false;
-        }
-
-        private Container FindChestWithSeeds()
-        {
-            foreach (var chest in _nearbyChests)
-            {
-                if (chest == null) continue;
-                foreach (var item in chest.GetInventory()?.GetAllItems() ?? new List<ItemDrop.ItemData>())
-                    if (FarmingDataHelper.CanBePlanted(item)) return chest;
-            }
-            return null;
-        }
+        private bool HasCultivator() => StorageHas(IsCultivator);
 
         private bool CanCraftCultivator()
         {
@@ -551,13 +523,24 @@ namespace FiresCore.Npc.IdleBehaviors
             _nearbyChests = ChestHelper.FindNearbyChests(pos, ChestSearchRadius);
         }
 
-        private bool HasSeedsToPlant()
+        private bool StorageHas(System.Predicate<ItemDrop.ItemData> match)
         {
             var storage = _inventory?.GetStorageInventory();
             if (storage == null) return false;
             foreach (var item in storage.GetAllItems())
-                if (FarmingDataHelper.CanBePlanted(item)) return true;
+                if (match(item)) return true;
             return false;
+        }
+
+        private Container FindChestWith(System.Predicate<ItemDrop.ItemData> match)
+        {
+            foreach (var chest in _nearbyChests)
+            {
+                if (chest == null) continue;
+                foreach (var item in chest.GetInventory()?.GetAllItems() ?? new List<ItemDrop.ItemData>())
+                    if (match(item)) return chest;
+            }
+            return null;
         }
 
         private bool ShouldDeposit()

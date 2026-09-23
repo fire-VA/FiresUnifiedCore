@@ -175,7 +175,8 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 var commandedWnt = _commandedTarget.GetComponent<WearNTear>()
                                 ?? _commandedTarget.GetComponentInParent<WearNTear>();
-                if (commandedWnt != null && commandedWnt.GetHealthPercentage() < RepairThreshold)
+                if (commandedWnt != null && commandedWnt.GetHealthPercentage() < RepairThreshold
+                    && ChestHelper.WardsAllow(commandedWnt.transform.position, Companion))
                 {
                     if (!CanAcquireHammer())
                     {
@@ -185,7 +186,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     LogVerbose("CanStart: TRUE - commanded damaged piece");
                     return true;
                 }
-                // Target was destroyed, fully healed, or never had a WearNTear; drop it.
+                // Target was destroyed, fully healed, warded off, or never had a WearNTear; drop it.
                 _commandedTarget = null;
             }
 
@@ -428,7 +429,17 @@ namespace FiresCore.Npc.IdleBehaviors
             var storage = GetStorageInventory();
             if (storage == null) { SetPhase(RepairPhase.Complete); return false; }
 
-            if (!TryConsumeItems(storage, "Wood", WoodNeeded) ||
+            var hammerPrefab = ZNetScene.instance?.GetPrefab(HammerPrefab);
+            if (hammerPrefab == null || !storage.CanAddItem(hammerPrefab, 1))
+            {
+                LogWarning("Hammer prefab missing or no inventory space - aborting");
+                PlayWorkAnimation(false);
+                SetPhase(RepairPhase.Complete);
+                return false;
+            }
+
+            if (!HasCraftingMaterials() ||
+                !TryConsumeItems(storage, "Wood", WoodNeeded) ||
                 !TryConsumeItems(storage, "Stone", StoneNeeded))
             {
                 LogWarning("Could not consume crafting materials for hammer — aborting");
@@ -437,14 +448,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            if (!TryAddHammerToInventory(storage))
-            {
-                LogWarning("Could not add Hammer prefab to inventory");
-                PlayWorkAnimation(false);
-                SetPhase(RepairPhase.Complete);
-                return false;
-            }
-
+            // Created from its prefab so m_dropPrefab is set: IsHammerItem matches it and it survives save/load (Inventory.cs:88-96).
+            storage.AddItem(hammerPrefab, 1);
             SaveInventory();
             PlayWorkAnimation(false);
             LogVerbose("Crafted a hammer");
@@ -674,7 +679,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var piece = wearNTear.GetComponent<Piece>();
             if (piece == null || piece.GetCreator() == 0L) return false;
 
-            return true;
+            return ChestHelper.WardsAllow(wearNTear.transform.position, Companion);
         }
 
         private WearNTear PickNextPiece()
@@ -752,7 +757,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool TryTakeHammerFromChest(Container chest)
         {
-            if (chest == null) return false;
+            if (chest == null || !ChestHelper.TryClaimForWrite(chest, Companion)) return false;
 
             var chestInv   = chest.GetInventory();
             var storage    = GetStorageInventory();
@@ -763,13 +768,8 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 if (IsHammerItem(item)) { hammer = item; break; }
             }
-            if (hammer == null) return false;
+            if (hammer == null || ChestHelper.MoveItem(chestInv, storage, hammer, hammer.m_stack) == 0) return false;
 
-            var clone = hammer.Clone();
-            if (!storage.AddItem(clone)) return false;
-
-            chestInv.RemoveItem(hammer);
-            SmartStorageOrganizer.SaveContainer(chest);
             SaveInventory();
             return true;
         }
@@ -791,20 +791,6 @@ namespace FiresCore.Npc.IdleBehaviors
                     return station.Object.GetComponent<CraftingStation>();
             }
             return null;
-        }
-
-        private bool TryAddHammerToInventory(Inventory storage)
-        {
-            var prefab = ZNetScene.instance?.GetPrefab(HammerPrefab);
-            if (prefab == null) return false;
-
-            var itemDrop = prefab.GetComponent<ItemDrop>();
-            if (itemDrop == null) return false;
-
-            var newItem = itemDrop.m_itemData.Clone();
-            newItem.m_stack      = 1;
-            newItem.m_durability = newItem.m_shared.m_maxDurability;
-            return storage.AddItem(newItem);
         }
 
         private static bool IsHammerItem(ItemDrop.ItemData item)
@@ -871,11 +857,11 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #region Repair
 
+        // The hammer's own attack animation (swing_hammer, upper body), as vanilla Player.Repair plays it (Player.cs:2768).
         private void PlayHammerSwingAnimation()
         {
-            // Hammer is a one-handed tool — use Valheim's standard one-handed swing triggers
-            int idx = UnityEngine.Random.Range(0, 3);
-            string trigger = $"swing_axe{idx}";
+            string trigger = _equippedHammer?.m_shared.m_attack.m_attackAnimation;
+            if (string.IsNullOrEmpty(trigger)) return;
             ZAnim?.SetTrigger(trigger);
             LogVerbose($"Hammer swing: {trigger}");
         }
@@ -894,6 +880,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             var nview = wearNTear.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return false;
+            if (!ChestHelper.WardsAllow(wearNTear.transform.position, Companion)) return false;
 
             // Claim ownership so WearNTear.Repair()'s IsOwner() check passes
             nview.ClaimOwnership();

@@ -122,14 +122,6 @@ namespace FiresCore.Npc.Combat
           
                 if (nativeSuccess)
                 {
-                    string animTrigger = useSecondary ? 
-                        GetSecondaryAttackAnimation() : 
-                        Context.GetAttackAnimationTrigger(_attackChainLevel);
-         
-                    Context.BroadcastRPC("RPC_CompanionAttack",
-                        animTrigger,
-                        Context.GetAttackAnimationIndex());
-        
                     if (CompanionCombat.VerboseLogging)
                         Debug.Log($"[MeleeBehavior] ========== ExecuteAttack END (NATIVE) ==========");
                     return;
@@ -161,6 +153,8 @@ namespace FiresCore.Npc.Combat
       
       protected override bool ShouldUseSecondaryAttack(Character target)
    {
+            if (!_hasSecondaryAttack) return false;
+
             // First check base conditions
    if (!base.ShouldUseSecondaryAttack(target))
     {
@@ -358,31 +352,5 @@ float trackingDuration = hitDelay * 0.8f; // Track for 80% of wind-up
           // Use our context's weapon-aware timing
        return Context.GetEstimatedHitDelay();
 }
-     
-    /// <summary>
-        /// Gets the secondary attack animation for melee weapons.
-        /// </summary>
-   protected override string GetSecondaryAttackAnimation()
-     {
-            var secondaryAttack = Context.EquipmentData?.SecondaryAttack;
-      if (secondaryAttack != null && !string.IsNullOrEmpty(secondaryAttack.m_attackAnimation))
-       {
-    return secondaryAttack.m_attackAnimation;
-        }
-  
-            // Fallback based on melee weapon animation state
- return Context.WeaponAnimationState switch
-            {
-        ItemDrop.ItemData.AnimationState.OneHanded => "sword_secondary",
-                ItemDrop.ItemData.AnimationState.TwoHandedClub => "sledge_secondary",
-                ItemDrop.ItemData.AnimationState.TwoHandedAxe => "battleaxe_secondary",
-    ItemDrop.ItemData.AnimationState.Greatsword => "greatsword_secondary",
-       ItemDrop.ItemData.AnimationState.Atgeir => "atgeir_secondary",
-         ItemDrop.ItemData.AnimationState.Knives => "knife_secondary",
-  ItemDrop.ItemData.AnimationState.DualAxes => "dualaxes_secondary",
-       ItemDrop.ItemData.AnimationState.Scythe => "scythe_secondary",
-      _ => "attack_secondary"
-       };
-        }
   }
 }

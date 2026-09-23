@@ -46,6 +46,11 @@ private const float OptimalMax = 15f;
   private const float MinShotInterval = 0.3f;
         private const float PlantDuration = 0.15f;
         private const float ThreatCheckInterval = 0.1f;
+
+        // Player.QueueReloadAction (Player.cs:5644-5645): m_reloadAnimation is a Bool held while reloading, and
+        // m_reloadAnimation + "_done" is the Trigger fired when the reload completes.
+        private const string DefaultReloadAnimation = "reload_crossbow";
+        private const string ReloadDoneSuffix = "_done";
      
         #endregion
         
@@ -53,6 +58,7 @@ private const float OptimalMax = 15f;
         
       // Crossbow state
         private bool _isReloading;
+        private string _reloadAnimation;
         private float _reloadStartTime;
         private float _currentReloadDuration;
      private bool _isLoaded;
@@ -127,7 +133,7 @@ private const float OptimalMax = 15f;
         
   public override void OnDeactivate()
   {
-     _isReloading = false;
+            StopReload();
             _isLoaded = false;
             _dodgeAfterShot = false;
    _dodgeThreat = null;
@@ -164,7 +170,7 @@ private const float OptimalMax = 15f;
       
             // Reset loaded state when weapon changes
     _isLoaded = false;
-            _isReloading = false;
+            StopReload();
         }
         
     #endregion
@@ -550,8 +556,6 @@ SetPhase(CrossbowPhase.Approaching);
     Context.Animator.SetTrigger(animTrigger);
      }
 
-            Context.BroadcastRPC("RPC_CompanionAttack", animTrigger, 0);
-       
          if (CompanionCombat.VerboseLogging)
             {
                 Debug.Log($"[CrossbowBehavior] Shot at {target.m_name}, distance: {_lastKnownTargetDistance:F1}m");
@@ -564,7 +568,9 @@ SetPhase(CrossbowPhase.Approaching);
         
      private void SpawnBoltProjectile(Character target)
   {
-            GameObject projectilePrefab = GetBoltProjectile();
+            // Vanilla crossbows carry no projectile of their own: the bolt brings it, and adds its damage.
+            var ammo = Context.Inventory?.FindAmmoFor(Context.CurrentWeapon);
+            GameObject projectilePrefab = ammo?.m_shared.m_attack.m_attackProjectile ?? GetBoltProjectile();
             if (projectilePrefab == null)
             {
       if (CompanionCombat.VerboseLogging)
@@ -583,6 +589,7 @@ SetPhase(CrossbowPhase.Approaching);
             if (projectile != null)
     {
     HitData hitData = Context.CreateHitData(target);
+                if (ammo != null) hitData.m_damage.Add(ammo.GetDamage());
         float velocity = Context.CurrentAttack?.m_projectileVel ?? 60f;
                 
           projectile.Setup(
@@ -655,7 +662,7 @@ SetPhase(CrossbowPhase.Approaching);
    
         public override void CancelAttack()
         {
-       _isReloading = false;
+            StopReload();
    _dodgeAfterShot = false;
     _dodgeThreat = null;
      base.CancelAttack();
@@ -667,63 +674,61 @@ SetPhase(CrossbowPhase.Approaching);
         
       private void StartReload()
         {
-    if (_isReloading) return;
-            
-     _isReloading = true;
-      _reloadStartTime = Time.time;
-            
-  if (Context.ZAnim != null)
+            if (_isReloading) return;
+
+            _isReloading = true;
+            _reloadStartTime = Time.time;
+            _reloadAnimation = string.IsNullOrEmpty(Context.ReloadAnimation) ? DefaultReloadAnimation : Context.ReloadAnimation;
+            SetReloadPose(true);
+
+            if (CompanionCombat.VerboseLogging)
             {
-         Context.ZAnim.SetBool("reload_crossbow", true);
-  }
-      else if (Context.Animator != null && Context.HasAnimatorParameter("reload_crossbow"))
-            {
-     Context.Animator.SetBool("reload_crossbow", true);
-       }
-            
-     string reloadAnim = Context.CurrentAttack?.m_reloadAnimation;
-       if (!string.IsNullOrEmpty(reloadAnim))
-            {
-     if (Context.ZAnim != null)
-                {
-     Context.ZAnim.SetTrigger(reloadAnim);
-           }
-    else if (Context.Animator != null && Context.HasAnimatorParameter(reloadAnim))
-    {
-    Context.Animator.SetTrigger(reloadAnim);
-    }
+                Debug.Log($"[CrossbowBehavior] Started reload, time: {_currentReloadDuration}s");
             }
-            
-         if (CompanionCombat.VerboseLogging)
-     {
-     Debug.Log($"[CrossbowBehavior] Started reload, time: {_currentReloadDuration}s");
-          }
- }
-        
-   private void UpdateReload()
- {
-            if (!_isReloading) return;
-          
-            float reloadProgress = (Time.time - _reloadStartTime) / _currentReloadDuration;
-    
-       if (reloadProgress >= 1f)
+        }
+
+        private void UpdateReload()
         {
-                _isReloading = false;
-  _isLoaded = true;
-    
-      if (Context.ZAnim != null)
-                {
- Context.ZAnim.SetBool("reload_crossbow", false);
-      }
- else if (Context.Animator != null && Context.HasAnimatorParameter("reload_crossbow"))
-                {
-                    Context.Animator.SetBool("reload_crossbow", false);
- }
-        
-                if (CompanionCombat.VerboseLogging)
-         Debug.Log("[CrossbowBehavior] Reload complete - ready to fire");
-}
-   }
+            if (!_isReloading) return;
+
+            float reloadProgress = (Time.time - _reloadStartTime) / _currentReloadDuration;
+            if (reloadProgress < 1f) return;
+
+            _isReloading = false;
+            _isLoaded = true;
+            SetReloadPose(false);
+            string doneTrigger = _reloadAnimation + ReloadDoneSuffix;
+            if (Context.ZAnim != null)
+            {
+                Context.ZAnim.SetTrigger(doneTrigger);
+            }
+            else if (Context.Animator != null && Context.HasAnimatorParameter(doneTrigger))
+            {
+                Context.Animator.SetTrigger(doneTrigger);
+            }
+
+            if (CompanionCombat.VerboseLogging)
+                Debug.Log("[CrossbowBehavior] Reload complete - ready to fire");
+        }
+
+        private void StopReload()
+        {
+            if (!_isReloading) return;
+            _isReloading = false;
+            SetReloadPose(false);
+        }
+
+        private void SetReloadPose(bool reloading)
+        {
+            if (Context.ZAnim != null)
+            {
+                Context.ZAnim.SetBool(_reloadAnimation, reloading);
+            }
+            else if (Context.Animator != null && Context.HasAnimatorParameter(_reloadAnimation))
+            {
+                Context.Animator.SetBool(_reloadAnimation, reloading);
+            }
+        }
         
         #endregion
         

@@ -11,29 +11,23 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
     #region Tank - Iron Wall (L40)
     
     /// <summary>
-    /// Iron Wall Effect (Tank L40) - Enhanced blocking passive.
-    /// Increases block damage reduction from 40% to 60%.
-    /// This is a PASSIVE effect - always active.
+    /// Iron Wall Effect (Tank L40) - permanent passive: a block cuts the damage that gets past the shield by at least
+    /// 60% (BlockingBehavior reads BlockDamageReduction).
     /// </summary>
     public class IronWallEffect : CompanionStatusEffectBase
     {
-        public float EnhancedBlockReduction { get; set; } = 0.4f; // Take only 40% damage when blocking (60% reduction)
-        
-        public override string Description => 
+        public float BlockDamageReduction { get; set; } = 0.6f;
+
+        public override string Description =>
             $"<color=#AAAAFF>Iron Wall</color>\n" +
-            $"Blocking reduces damage by {(1f - EnhancedBlockReduction) * 100:F0}%";
-        
+            $"Blocking reduces damage by {BlockDamageReduction * 100:F0}%";
+
         public IronWallEffect()
         {
             m_name = "Iron Wall";
             m_tooltip = "Enhanced blocking technique";
-            Duration = 0f; // Permanent passive
+            Duration = 0f;
         }
-        
-        // Note: This needs to hook into the blocking system
-        // For now, it marks the character as having enhanced block
-        public bool HasEnhancedBlock => true;
-        public float BlockDamageModifier => EnhancedBlockReduction;
     }
     
     #endregion
@@ -76,7 +70,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
                 _lastTickTime = Time.time;
                 
                 // Ground VFX
-                SpawnVFX("vfx_spiritbolt_explosion", GroundPosition);
+                SpawnVFX("vfx_ghost_hit", GroundPosition);
                 
                 m_character.Message(MessageHud.MessageType.TopLeft, "Consecrated Ground!");
             }
@@ -124,21 +118,10 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             }
             
             // Ground glow VFX
-            SpawnVFX("vfx_spiritbolt_explosion", GroundPosition);
+            SpawnVFX("vfx_ghost_hit", GroundPosition);
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -174,7 +157,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             if (m_character != null)
             {
                 SpawnVFX("fx_shield_start", m_character.transform.position);
-                SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
+                SpawnVFX("vfx_ghost_hit", m_character.transform.position);
                 m_character.Message(MessageHud.MessageType.Center, "<color=gold>Divine Shield!</color>");
             }
         }
@@ -213,18 +196,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -248,13 +220,17 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         {
             m_name = "Execute";
             m_tooltip = "Devastating damage to weakened foes";
-            Duration = 0f; // Permanent passive
+            Duration = 0f;
         }
-        
-        // This needs to be checked during combat - mark the character
-        public bool HasExecute => true;
-        public float ExecuteThreshold => HealthThreshold;
-        public float ExecuteDamageBonus => DamageBonus;
+
+        /// <summary>Melee and area hits know their target here (vanilla sets m_hitCollider before ModifyAttack).</summary>
+        public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
+        {
+            var target = hitData.m_hitCollider != null ? hitData.m_hitCollider.GetComponentInParent<Character>() : null;
+            if (target == null || target == m_character || target.IsDead()) return;
+            if (target.GetHealthPercentage() >= HealthThreshold) return;
+            hitData.m_damage.Modify(DamageBonus);
+        }
     }
     
     #endregion
@@ -330,18 +306,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -398,18 +363,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -478,18 +432,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -523,7 +466,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         {
             if (m_character != null)
             {
-                SpawnVFX("vfx_fireball_explosion", m_character.transform.position);
+                SpawnVFX("fx_fireball_staff_explosion", m_character.transform.position);
                 m_character.Message(MessageHud.MessageType.TopLeft, "<color=#FF00FF>Overcharged!</color>");
             }
         }
@@ -539,18 +482,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
         // Note: Eitr cost modification needs integration with casting system
         public float GetEitrCostMultiplier() => EitrCostMultiplier;
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -662,7 +594,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             if (m_character != null)
             {
                 SpawnVFX("fx_DvergerMage_Support_start", m_character.transform.position);
-                SpawnVFX("vfx_spiritbolt_explosion", m_character.transform.position);
+                SpawnVFX("vfx_ghost_hit", m_character.transform.position);
                 m_character.Message(MessageHud.MessageType.Center, "<color=white>RESURRECTION!</color>");
             }
             
@@ -671,18 +603,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             return true;
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -749,18 +670,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion
@@ -814,18 +724,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
     
     #endregion

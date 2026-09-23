@@ -93,7 +93,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Ranger
         protected override void OnEffectApplied()
         {
             m_character?.Message(MessageHud.MessageType.TopLeft, "Arrows blessed!");
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character?.transform.position ?? Vector3.zero, null, 0.5f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character?.transform.position ?? Vector3.zero, null, 0.5f);
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)

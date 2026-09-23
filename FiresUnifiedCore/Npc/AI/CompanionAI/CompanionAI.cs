@@ -74,7 +74,7 @@ namespace FiresCore.Npc.AI
         private const float OwnerWalkSpeed     = 2.6f;   // walk / crouch-walk pace -> companion walks
         private const float OwnerJogSpeed      = 4.6f;   // medium pace -> companion jogs; at/above -> runs
         
-        private enum FollowSpeed { Stopped, Sneaking, Walking, Jogging, Running, Sprinting }
+        internal enum FollowSpeed { Stopped, Sneaking, Walking, Jogging, Running, Sprinting }
         private FollowSpeed _currentFollowSpeed = FollowSpeed.Stopped;
         private float _lastFollowDiag; // throttle for the always-on [CompanionFollowDiag] line
         
@@ -83,15 +83,13 @@ namespace FiresCore.Npc.AI
         private bool _isOwnerWalking = false;
         private bool _isOwnerRunning = false;
         private bool _isCompanionSneaking = false;
+        private bool _isOwnerProne = false;
+        private float _ownerProneSpeed;
+        private Movement.CompanionStance _stance;
         private float _lastOwnerStanceCheck = -10f;
         private float _ownerSpeed = 0f;      // owner horizontal speed (m/s), sampled in UpdateOwnerStance -> pace matching
         private bool _isClosingGap = false;  // hysteresis: true while catching up to the trail band, until tucked in
         private const float OwnerStanceCheckInterval = 0.2f;
-        
-        // Vanilla's crouch animator parameter ("crouching", replicated by ZSyncAnimation) — the ONLY
-        // crouch state a non-player Humanoid has. Shared with the stealth-factor patch so enemy
-        // sight range shrinks for a crouched companion on every machine.
-        public static readonly int CrouchingAnimHash = ZSyncAnimation.GetHash("crouching");
 
         [Header("Combat Settings")]
         // Detection radius for the threat scan loop. Lowered from 20 to 15 m
@@ -251,6 +249,7 @@ namespace FiresCore.Npc.AI
             _stateController = GetComponent<CompanionStateController>();
             _humanoid = GetComponent<Humanoid>();
             _zanim = GetComponent<ZSyncAnimation>();
+            _stance = GetComponent<Movement.CompanionStance>();
             _combatRef = GetComponent<CompanionCombat>();
             _threatAnalyzer = GetComponent<ThreatAnalyzer>();
             _terrainAwareness = GetComponent<TerrainAwareness>();
@@ -603,7 +602,10 @@ namespace FiresCore.Npc.AI
 
             OnEnterState(newState);
 
-            if (StateTransitionLogging || VerboseLogging)
+            // Also on the follow diagnostic: the Following <-> Idle <-> Combat transitions are the whole story when
+            // a companion stops following, and they are event-driven, not per-frame.
+            if (StateTransitionLogging || VerboseLogging
+                || FiresCore.Config.ConfigManager.Instance?.configCompanionFollowDiag?.Value == true)
             {
                 string targetInfo = _targetCreature != null ? _targetCreature.m_name : "none";
                 string staminaInfo = _staminaManager != null ? 
@@ -910,6 +912,18 @@ namespace FiresCore.Npc.AI
 
         public bool ShouldBeFollowing => _shouldFollow;
         public bool IsInCombat => _currentState == AIState.Combat;
+
+        /// <summary>The follow gait this AI picked on its last tick — matched to the owner's measured pace and
+        /// stance. The single source for "how fast is this companion following"; CompanionCombatMovement mirrors it
+        /// into its MovementIntent rather than running a second set of distance tiers that could disagree.</summary>
+        internal FollowSpeed CurrentFollowSpeed => _currentFollowSpeed;
+
+        /// <summary>True while the FSM is actually following, as opposed to idling, fighting or returning.</summary>
+        public bool IsFollowingState => _currentState == AIState.Following;
+
+        /// <summary>The single owner-AFK answer: the owner has held still for <see cref="playerIdleThreshold"/>
+        /// seconds, so the companion may stand down and do its own thing.</summary>
+        public bool IsOwnerIdle => _isOwnerIdle;
         public float TimeSinceStateChange => Time.time - _lastStateChangeTime;
         public bool IsUsingRangedWeapon => _isRangedWeapon;
         
@@ -1094,24 +1108,14 @@ namespace FiresCore.Npc.AI
         public int StuckCheckCount => _consecutiveStuckFrames;
         
         /// <summary>
-        /// Sets the companion's crouch/sneak state.
-        ///
-        /// For a non-player Humanoid the "crouching" animator bool IS the crouch state:
-        /// Character.SetCrouch is an EMPTY virtual (only Player overrides it), Character has no
-        /// m_crouching field, and Character.IsCrouching() is virtual-false for non-players. The bool
-        /// uses vanilla's parameter name (Player.s_crouching = ZSyncAnimation.GetHash("crouching"))
-        /// and ZSyncAnimation replicates it, so every machine plays the crouch animation and the
-        /// stealth-factor patch can read the same state. The old layered approach invoked the empty
-        /// virtual, poked a nonexistent field, and set a wrong-named bool ("crouch") — all no-ops.
+        /// Sets the companion's crouch/sneak state. For a non-player Humanoid the replicated "crouching" animator bool IS the
+        /// crouch state (Character.SetCrouch is an empty virtual and IsCrouching is false for non-players), so
+        /// <see cref="Movement.CompanionStance"/> owns it. Standing up also ends prone.
         /// </summary>
         private void SetCompanionCrouch(bool crouch)
         {
-            if (m_character == null) return;
-
-            if (_zanim != null)
-            {
-                _zanim.SetBool(CrouchingAnimHash, crouch);
-            }
+            if (m_character == null || _stance == null) return;
+            _stance.SetCrouch(crouch);
         }
 
         #endregion

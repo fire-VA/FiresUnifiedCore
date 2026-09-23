@@ -151,7 +151,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Tank
                     };
                     attacker.ApplyDamage(reflectHit, true, false, HitData.DamageModifier.Normal);
                     
-                    AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", attacker.transform.position, null, 0.5f);
+                    AbilityFXManager.SpawnEffect("vfx_ghost_hit", attacker.transform.position, null, 0.5f);
                 }
             }
         }

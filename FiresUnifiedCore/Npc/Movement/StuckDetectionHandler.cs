@@ -31,7 +31,7 @@ namespace FiresCore.Npc.Movement
         private readonly Character _character;
         private readonly Rigidbody _rigidbody;
         private readonly CompanionController _companion;
-        private readonly FollowBehavior _followBehavior;
+        private readonly CompanionTraversal _traversal;
         
         // CombatContext is set lazily since it's obtained via reflection
         private CombatContext _combatContext;
@@ -80,13 +80,13 @@ namespace FiresCore.Npc.Movement
             Character character,
             Rigidbody rigidbody,
             CompanionController companion,
-            FollowBehavior followBehavior)
+            CompanionTraversal followBehavior)
         {
             _transform = transform;
             _character = character;
             _rigidbody = rigidbody;
             _companion = companion;
-            _followBehavior = followBehavior;
+            _traversal = followBehavior;
             
             _stuckCheckStartPos = transform.position;
             _stuckCheckStartTime = Time.time;
@@ -110,8 +110,8 @@ namespace FiresCore.Npc.Movement
         /// </summary>
         public void UpdateGroundedState()
         {
-            _followBehavior?.UpdateGroundedState();
-            _isGrounded = _followBehavior?.IsGrounded ?? _character?.IsOnGround() ?? false;
+            _traversal?.UpdateGroundedState();
+            _isGrounded = _traversal?.IsGrounded ?? _character?.IsOnGround() ?? false;
         }
         
         #endregion
@@ -238,7 +238,7 @@ namespace FiresCore.Npc.Movement
         private bool HasSignificantObstacleAhead(bool isMoving)
         {
             if (!isMoving) return false;
-            return _followBehavior?.HasSignificantObstacleAhead() ?? false;
+            return _traversal?.HasSignificantObstacleAhead() ?? false;
         }
         
         /// <summary>
@@ -249,7 +249,7 @@ namespace FiresCore.Npc.Movement
             if (_companion == null || !_companion.IsFollowing) return false;
             var owner = _companion.GetOwner();
             if (owner == null) return false;
-            return _followBehavior?.ShouldJumpToFollowOwner(owner.transform.position) ?? false;
+            return _traversal?.ShouldJumpToFollowOwner(owner.transform.position) ?? false;
         }
         
         /// <summary>
@@ -266,7 +266,7 @@ namespace FiresCore.Npc.Movement
                     return;
             }
             
-            _followBehavior?.ExecuteJump(isMoving);
+            _traversal?.ExecuteJump(isMoving);
         }
         
         /// <summary>

@@ -44,8 +44,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Base
             _lastTickTime = Time.time;
             _totalHealed = 0f;
             
-            // Apply initial burst heal if set
-            if (InitialHeal > 0f && m_character != null)
+            // Every client applies the effect from the routed RPC; only the target's owner heals, or it heals once per client.
+            if (InitialHeal > 0f && m_character != null && m_character.IsOwner())
             {
                 m_character.Heal(InitialHeal, ShowHealText);
                 _totalHealed += InitialHeal;

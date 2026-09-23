@@ -56,8 +56,8 @@ namespace FiresCore.Npc.Commands
         [Header("Feedback Settings")]
         [Tooltip("Show visual ping marker at target location")]
         public bool showPingMarker = true;
-        [Tooltip("How long the ping marker is visible")]
-        public float pingMarkerDuration = 3f;
+        private const string PingMarkerPrefab = "vfx_lootspawn";
+        private static readonly Vector3 PingMarkerOffset = Vector3.up * 0.5f;
 
         public static bool VerboseLogging = true;  // ENABLED FOR DEBUGGING
 
@@ -67,9 +67,6 @@ namespace FiresCore.Npc.Commands
 
         // Currently active commands per companion
         private Dictionary<CompanionController, ActiveCommand> _activeCommands = new Dictionary<CompanionController, ActiveCommand>();
-
-        // Ping marker object pool
-        private List<GameObject> _activePingMarkers = new List<GameObject>();
 
         // Layer masks for raycasting
         private int _targetLayerMask;
@@ -108,6 +105,8 @@ namespace FiresCore.Npc.Commands
             public float CommandTime;
             public float ExpirationTime;
             public bool IsComplete;
+            /// <summary>A sub-behavior took the command and releases its priority itself (IdleSubBehavior.Complete/Cancel).</summary>
+            public bool DelegatedToSubBehavior;
 
             public ActiveCommand(CommandType type, Vector3 position, GameObject targetObj = null, Character targetChar = null, float duration = 30f)
             {
@@ -159,14 +158,6 @@ namespace FiresCore.Npc.Commands
         {
             if (_instance == this)
                 _instance = null;
-
-            // Clean up ping markers
-            foreach (var marker in _activePingMarkers)
-            {
-                if (marker != null)
-                    Destroy(marker);
-            }
-            _activePingMarkers.Clear();
         }
 
         #endregion
@@ -714,11 +705,14 @@ namespace FiresCore.Npc.Commands
                 return (CommandType.TrainArchery, hitObj.transform.position, hitObj, null);
             }
 
-            // 4. Check for Smelter/Kiln (processing stations)
+            // 4. Smelter-type production station (smelter, kilns, windmill, spinning wheel, eitr refinery, Frost Kiln).
+            //    The bathtub and siege-machine engines are Smelters too but produce nothing to operate.
             var smelter = hitObj.GetComponent<Smelter>() ?? hitObj.GetComponentInParent<Smelter>();
             if (smelter != null)
             {
-                return (CommandType.OperateSmelter, smelter.transform.position, smelter.gameObject, null);
+                if (PieceDataHelper.IsOperableStation(smelter))
+                    return (CommandType.OperateSmelter, smelter.transform.position, smelter.gameObject, null);
+                return (CommandType.MoveToPosition, hitPoint, smelter.gameObject, null);
             }
 
             // 5. CookingStation → cook food (separate from fire-tending; the
@@ -736,11 +730,14 @@ namespace FiresCore.Npc.Commands
                 return (CommandType.TendFire, fireplace.transform.position, fireplace.gameObject, null);
             }
 
-            // 6. Check for Crafting Station (workbench, forge, etc.)
+            // 6. Crafting station where gear is made or repaired (workbench, forge, black forge, galdr table). The
+            //    upgrade station and the food stations (cauldron, mead cauldron, prep table) are not workbenches.
             var craftingStation = hitObj.GetComponent<CraftingStation>() ?? hitObj.GetComponentInParent<CraftingStation>();
             if (craftingStation != null)
             {
-                return (CommandType.UseWorkstation, craftingStation.transform.position, craftingStation.gameObject, null);
+                if (IsGearStation(craftingStation))
+                    return (CommandType.UseWorkstation, craftingStation.transform.position, craftingStation.gameObject, null);
+                return (CommandType.MoveToPosition, hitPoint, craftingStation.gameObject, null);
             }
 
             // 6.3. Beehive → harvest (farming behavior)
@@ -750,16 +747,13 @@ namespace FiresCore.Npc.Commands
                 return (CommandType.Farm, beehive.transform.position, beehive.gameObject, null);
             }
 
-            // 6.5. Check for Container/Chest (for depositing items)
+            // 6.5. Player-built storage → deposit (not tombstones, world loot chests, carts or ships)
             var container = hitObj.GetComponent<Container>() ?? hitObj.GetComponentInParent<Container>();
             if (container != null)
             {
-                // Skip if it's a ship container (m_wagon check) or other special containers
-                var nview = container.GetComponent<ZNetView>();
-                if (nview != null && nview.IsValid())
-                {
+                if (ContainerRegistry.IsPlayerStorage(container))
                     return (CommandType.DepositToChest, container.transform.position, container.gameObject, null);
-                }
+                return (CommandType.MoveToPosition, hitPoint, container.gameObject, null);
             }
 
             // 6.7. Plant / cultivated soil → farming. Plant component covers
@@ -828,28 +822,65 @@ namespace FiresCore.Npc.Commands
             return (CommandType.MoveToPosition, hitPoint, null, null);
         }
 
+        private static HashSet<string> s_cropPickableNames;
+        private static HashSet<string> s_gearStationNames;
+
         /// <summary>
-        /// True if the object is a Pickable that names like a player-grown
-        /// crop. Used to route player Shift+MMB on a harvestable carrot or
-        /// turnip into the Farm command (which deposits afterward) rather
-        /// than the generic GatherResource path.
+        /// True for a crop a player grew, routed to Farm (harvest, then deposit) instead of the generic gather: a
+        /// Pickable that a cultivated-ground sapling grows into (Plant.m_grownPrefabs: carrots through 1.0's kale, oats,
+        /// poteitr and cultivated mushrooms) standing on cultivated ground. Wild barley and flax are separate prefabs,
+        /// and wild Mistlands mushrooms stand on uncultivated ground.
         /// </summary>
-        private bool IsCropPickable(GameObject obj)
+        private static bool IsCropPickable(GameObject obj)
         {
             var pickable = obj.GetComponent<Pickable>() ?? obj.GetComponentInParent<Pickable>();
             if (pickable == null) return false;
 
-            string pickableName = (pickable.gameObject.name ?? "").ToLowerInvariant();
-            // Common crop name fragments. Berries / mushrooms are wild gather,
-            // not farming; carrots / turnips / onions / barley / flax are.
-            return pickableName.Contains("carrot")
-                || pickableName.Contains("turnip")
-                || pickableName.Contains("onion")
-                || pickableName.Contains("barley")
-                || pickableName.Contains("flax")
-                || pickableName.Contains("seedcarrot")
-                || pickableName.Contains("seedturnip")
-                || pickableName.Contains("seedonion");
+            Vector3 position = pickable.transform.position;
+            var heightmap = Heightmap.FindHeightmap(position);
+            if (heightmap == null || !heightmap.IsCultivated(position)) return false;
+
+            s_cropPickableNames ??= BuildCropPickableNames();
+            return s_cropPickableNames.Contains(Utils.GetPrefabName(pickable.gameObject));
+        }
+
+        private static HashSet<string> BuildCropPickableNames()
+        {
+            var names = new HashSet<string>();
+            foreach (var prefab in ZNetScene.instance.m_prefabs)
+            {
+                var plant = prefab.GetComponent<Plant>();
+                if (plant == null || !plant.m_needCultivatedGround) continue;
+                foreach (var grown in plant.m_grownPrefabs)
+                    if (grown != null && grown.GetComponent<Pickable>() != null)
+                        names.Add(grown.name);
+            }
+            return names;
+        }
+
+        /// <summary>
+        /// A station where some recipe's repairable gear is crafted or repaired, i.e. one vanilla repairs at
+        /// (InventoryGui.CanRepair), and not the upgrade station.
+        /// </summary>
+        private static bool IsGearStation(CraftingStation station)
+        {
+            if (station.m_upgrader) return false;
+            s_gearStationNames ??= BuildGearStationNames();
+            return s_gearStationNames.Contains(station.m_name);
+        }
+
+        private static HashSet<string> BuildGearStationNames()
+        {
+            var names = new HashSet<string>();
+            foreach (var recipe in ObjectDB.instance.m_recipes)
+            {
+                if (recipe.m_item == null) continue;
+                var shared = recipe.m_item.m_itemData.m_shared;
+                if (!shared.m_useDurability || !shared.m_canBeReparied) continue;
+                if (recipe.m_craftingStation != null) names.Add(recipe.m_craftingStation.m_name);
+                if (recipe.m_repairStation != null) names.Add(recipe.m_repairStation.m_name);
+            }
+            return names;
         }
 
         /// <summary>
@@ -874,17 +905,11 @@ namespace FiresCore.Npc.Commands
         /// </summary>
         private bool TryResolveWaterSurface(Vector3 hitPoint, out Vector3 waterSurface)
         {
-            const float SeaLevel = 30f;
-            const float MinDepth = 0.5f;
             waterSurface = hitPoint;
+            if (!FishingBehavior.IsWaterAt(hitPoint)) return false;
 
-            if (ZoneSystem.instance == null) return false;
-            ZoneSystem.instance.GetSolidHeight(hitPoint, out float groundY);
-            if (SeaLevel - groundY < MinDepth) return false;
-
-            // Snap to the water surface so FishingBehavior.FindShoreNearWaterPoint
-            // can sweep outward and locate dry land near y=31.
-            waterSurface = new Vector3(hitPoint.x, SeaLevel, hitPoint.z);
+            // Snap to the water surface so FishingBehavior.FindShoreNearWaterPoint can sweep outward for dry land.
+            waterSurface = new Vector3(hitPoint.x, ZoneSystem.instance.m_waterLevel, hitPoint.z);
             return true;
         }
 
@@ -986,6 +1011,10 @@ namespace FiresCore.Npc.Commands
         {
             if (companion == null) return;
 
+            // A companion only simulates (and runs its command/idle life) on its ZDO owner.
+            var nview = companion.GetComponent<ZNetView>();
+            if (nview != null && nview.IsValid() && !nview.IsOwner()) nview.ClaimOwnership();
+
             // Cancel any existing command
             CancelCommand(companion);
             
@@ -1007,7 +1036,7 @@ namespace FiresCore.Npc.Commands
                     target.targetChar,
                     timeout: 120f, // 2 minutes for complex commands
                     onComplete: () => CompleteCommand(companion, "Success"),
-                    onFailed: (reason) => Debug.Log($"[CompanionCommandSystem] Command failed for {companion.companionName}: {reason}")
+                    onFailed: (reason) => CompleteCommand(companion, $"Failed: {reason}")
                 );
             }
 
@@ -1045,6 +1074,7 @@ namespace FiresCore.Npc.Commands
                 CommandType.OperateSmelter => CompanionStateController.CommandType.SubBehavior,
                 CommandType.TendFire => CompanionStateController.CommandType.SubBehavior,
                 CommandType.UseWorkstation => CompanionStateController.CommandType.SubBehavior,
+                CommandType.DepositToChest => CompanionStateController.CommandType.SubBehavior,
                 _ => CompanionStateController.CommandType.None
             };
         }
@@ -1268,7 +1298,7 @@ namespace FiresCore.Npc.Commands
             {
                 stateController.RegisterCommandCompletionHook(() =>
                 {
-                    StartCoroutine(PickupLootAtDestination(companion, command.TargetPosition));
+                    StartCoroutine(CollectLooseItems(companion, command.TargetPosition, DestinationLootRadius, DestinationLootSeconds));
                 });
             }
 
@@ -1289,126 +1319,110 @@ namespace FiresCore.Npc.Commands
             StartCoroutine(MonitorMoveCommandWithStateController(companion, command, stateController));
         }
         
+        private const float LootCheckRadius = 3f;
+        private const float DestinationLootRadius = 4f;
+        private const float DestinationLootSeconds = 5f;
+        private const float ResourceLootRadius = 5f;
+        private const float ResourceLootSeconds = 10f;
+        private const float LootReachDistance = 1.5f;
+        private const float LootApproachStepSeconds = 0.2f;
+        private const float LootPickupIntervalSeconds = 0.3f;
+        private const string CollectAuthorityOwner = "CommandCollect";
+        private const float CollectAuthoritySeconds = 5f;
+
         /// <summary>
         /// Checks if there are dropped items near a position.
         /// </summary>
         private bool CheckForLootAtPosition(Vector3 position, out int count)
         {
-            count = 0;
-            float pickupRadius = 3f;
-            
-            Collider[] colliders = Physics.OverlapSphere(position, pickupRadius);
-            foreach (var collider in colliders)
-            {
-                if (collider == null) continue;
-                var itemDrop = collider.GetComponent<ItemDrop>();
-                if (itemDrop != null && itemDrop.CanPickup())
-                {
-                    count++;
-                }
-            }
-            
+            count = ChestHelper.FindLooseItems(position, LootCheckRadius).Count;
             return count > 0;
         }
-        
+
         /// <summary>
-        /// Picks up loot at the destination after arriving.
+        /// Walks to the nearest loose item around <paramref name="position"/> and takes it, one per tick, until none is
+        /// left or <paramref name="duration"/> runs out. The approach goes through the movement authority (PlayerCommand).
         /// </summary>
-        private IEnumerator PickupLootAtDestination(CompanionController companion, Vector3 position)
+        private IEnumerator CollectLooseItems(CompanionController companion, Vector3 position, float radius, float duration)
         {
-            var inventory = companion.GetComponent<CompanionInventory>();
-            if (inventory == null) yield break;
-            
-            var storageInv = inventory.GetStorageInventory();
+            var storageInv = companion.GetComponent<CompanionInventory>()?.GetStorageInventory();
             if (storageInv == null) yield break;
-            
+
             int itemsCollected = 0;
-            float collectTime = 5f;
             float startTime = Time.time;
-            float pickupRadius = 4f;
-            
-            while (Time.time - startTime < collectTime && companion != null)
+            while (companion != null && Time.time - startTime < duration)
             {
-                Collider[] colliders = Physics.OverlapSphere(position, pickupRadius);
-                bool foundItem = false;
-                
-                foreach (var collider in colliders)
+                var drop = FindClosestLooseItem(companion.transform.position, position, radius);
+                if (drop == null) break;
+
+                if (Vector3.Distance(companion.transform.position, drop.transform.position) > LootReachDistance)
                 {
-                    if (collider == null) continue;
-                    
-                    var itemDrop = collider.GetComponent<ItemDrop>();
-                    if (itemDrop == null || !itemDrop.CanPickup()) continue;
-                    
-                    foundItem = true;
-                    
-                    // Move toward item if needed
-                    float dist = Vector3.Distance(companion.transform.position, itemDrop.transform.position);
-                    if (dist > 1.5f)
-                    {
-                        var character = companion.GetCharacter();
-                        if (character != null)
-                        {
-                            Vector3 dir = (itemDrop.transform.position - companion.transform.position).normalized;
-                            dir.y = 0;
-                            // Single-writer: drive the collect approach through UMA (PlayerCommand) so it
-                            // can't race ApplyMovement; released when the collect loop ends.
-                            var authority = companion.GetMovementAuthority();
-                            if (authority != null)
-                            {
-                                if (authority.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.PlayerCommand, "CommandCollect", 5f))
-                                    authority.SetMoveDirection("CommandCollect", dir, walk: true, run: false);
-                            }
-                            else
-                            {
-                                character.SetMoveDir(dir);
-                                character.SetWalk(true);
-                            }
-                        }
-                        yield return new WaitForSeconds(0.2f);
-                        continue;
-                    }
-                    
-                    // Pick up the item
-                    var itemData = itemDrop.m_itemData;
-                    if (itemData != null && storageInv.CanAddItem(itemData))
-                    {
-                        storageInv.AddItem(itemData.Clone());
-                        itemsCollected++;
-
-                        // Remove from world. ItemDrop carries a ZNetView, so this MUST
-                        // route through ZNetScene.Destroy (via the helper) - raw
-                        // Object.Destroy leaves a stale m_instances entry that NREs in
-                        // ZNetScene.RemoveObjects every tick afterwards.
-                        CompanionNetworkHelper.Destroy(itemDrop.gameObject, disableFirst: false);
-                    }
-
-                    break; // Process one item per tick
+                    StepToward(companion, drop.transform.position);
+                    yield return new WaitForSeconds(LootApproachStepSeconds);
+                    continue;
                 }
 
-                if (!foundItem) break;
-                
-                yield return new WaitForSeconds(0.3f);
-            }
-            
-            // Stop movement — release the collect authority (clean stop through the single writer).
-            var umaStop = companion.GetMovementAuthority();
-            if (umaStop != null)
-            {
-                umaStop.ReleaseAuthority("CommandCollect");
-            }
-            else
-            {
-                var charStop = companion.GetCharacter();
-                if (charStop != null)
-                {
-                    charStop.SetMoveDir(Vector3.zero);
-                    charStop.SetWalk(false);
-                }
+                if (ChestHelper.TryTakeLooseItem(drop, storageInv) > 0)
+                    itemsCollected++;
+                yield return new WaitForSeconds(LootPickupIntervalSeconds);
             }
 
+            if (companion == null) yield break;
+            StopCollecting(companion);
             if (itemsCollected > 0)
-            {
                 ShowMessage($"{companion.companionName} collected {itemsCollected} item{(itemsCollected > 1 ? "s" : "")}");
+        }
+
+        private static ItemDrop FindClosestLooseItem(Vector3 from, Vector3 center, float radius)
+        {
+            ItemDrop closest = null;
+            float closestDistance = float.MaxValue;
+            foreach (var drop in ChestHelper.FindLooseItems(center, radius))
+            {
+                float distance = Vector3.Distance(from, drop.transform.position);
+                if (distance < closestDistance)
+                {
+                    closestDistance = distance;
+                    closest = drop;
+                }
+            }
+            return closest;
+        }
+
+        private static void StepToward(CompanionController companion, Vector3 target)
+        {
+            Vector3 dir = (target - companion.transform.position).normalized;
+            dir.y = 0;
+            var authority = companion.GetMovementAuthority();
+            if (authority != null)
+            {
+                if (authority.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.PlayerCommand, CollectAuthorityOwner, CollectAuthoritySeconds))
+                    authority.SetMoveDirection(CollectAuthorityOwner, dir, walk: true, run: false);
+                return;
+            }
+
+            var character = companion.GetCharacter();
+            if (character != null)
+            {
+                character.SetMoveDir(dir);
+                character.SetWalk(true);
+            }
+        }
+
+        private static void StopCollecting(CompanionController companion)
+        {
+            var authority = companion.GetMovementAuthority();
+            if (authority != null)
+            {
+                authority.ReleaseAuthority(CollectAuthorityOwner);
+                return;
+            }
+
+            var character = companion.GetCharacter();
+            if (character != null)
+            {
+                character.SetMoveDir(Vector3.zero);
+                character.SetWalk(false);
             }
         }
         
@@ -1557,6 +1571,7 @@ namespace FiresCore.Npc.Commands
                     
                     if (idleBehavior.TryStartSubBehavior<WoodGatheringBehavior>())
                     {
+                        command.DelegatedToSubBehavior = true;
                         Debug.Log($"[COMMAND] {companion.companionName} started WoodGatheringBehavior");
                         ShowMessage($"{companion.companionName}: Chopping wood");
                         return;
@@ -1576,6 +1591,7 @@ namespace FiresCore.Npc.Commands
                 
                 if (idleBehavior.TryStartSubBehavior<ResourceGatheringBehavior>())
                 {
+                    command.DelegatedToSubBehavior = true;
                     Debug.Log($"[COMMAND] {companion.companionName} started ResourceGatheringBehavior for {command.TargetObject?.name}");
                     ShowMessage($"{companion.companionName}: Gathering resources");
                     return;
@@ -1625,8 +1641,7 @@ namespace FiresCore.Npc.Commands
                     resourceDestroyed = true;
                     Debug.Log($"[CompanionCommandSystem] {companion.companionName} destroyed resource, collecting loot");
                     
-                    // Collect dropped items
-                    yield return StartCoroutine(CollectDroppedItems(companion, resourcePosition));
+                    yield return StartCoroutine(CollectLooseItems(companion, resourcePosition, ResourceLootRadius, ResourceLootSeconds));
                     
                     CompleteCommand(companion, "Resource gathered");
                     yield break;
@@ -1703,110 +1718,6 @@ namespace FiresCore.Npc.Commands
             }
         }
         
-        /// <summary>
-        /// Collects dropped items near a position into companion's inventory.
-        /// </summary>
-        private IEnumerator CollectDroppedItems(CompanionController companion, Vector3 position)
-        {
-            float collectTime = 10f; // Spend up to 10 seconds collecting
-            float startTime = Time.time;
-            int itemsCollected = 0;
-            
-            var inventory = companion.GetComponent<CompanionInventory>();
-            if (inventory == null) yield break;
-            
-            var storageInv = inventory.GetStorageInventory();
-            if (storageInv == null) yield break;
-            
-            while (Time.time - startTime < collectTime)
-            {
-                // Find nearby item drops
-                var colliders = Physics.OverlapSphere(position, 5f);
-                bool foundItems = false;
-                
-                foreach (var collider in colliders)
-                {
-                    if (collider == null) continue;
-                    
-                    var itemDrop = collider.GetComponent<ItemDrop>();
-                    if (itemDrop == null || !itemDrop.CanPickup()) continue;
-                    
-                    foundItems = true;
-                    
-                    // Move toward item if too far
-                    float dist = Vector3.Distance(companion.transform.position, itemDrop.transform.position);
-                    if (dist > 1.5f)
-                    {
-                        var character = companion.GetCharacter();
-                        if (character != null)
-                        {
-                            Vector3 dir = (itemDrop.transform.position - companion.transform.position).normalized;
-                            dir.y = 0;
-                            // Single-writer: drive the collect approach through UMA (PlayerCommand).
-                            var authority = companion.GetMovementAuthority();
-                            if (authority != null)
-                            {
-                                if (authority.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.PlayerCommand, "CommandCollect", 5f))
-                                    authority.SetMoveDirection("CommandCollect", dir, walk: true, run: false);
-                            }
-                            else
-                            {
-                                character.SetMoveDir(dir);
-                                character.SetWalk(true);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Pick up the item
-                        var itemData = itemDrop.m_itemData;
-                        if (itemData != null && storageInv.CanAddItem(itemData))
-                        {
-                            storageInv.AddItem(itemData.Clone());
-                            itemsCollected++;
-
-                            // Remove from world via ZNetScene-routed destroy. See the
-                            // sibling pickup site (~line 1242) for the rationale: raw
-                            // Object.Destroy on a ZNetView'd ItemDrop strands an entry
-                            // in ZNetScene.m_instances that NREs in RemoveObjects.
-                            CompanionNetworkHelper.Destroy(itemDrop.gameObject, disableFirst: false);
-                        }
-                    }
-
-                    break; // Process one item per tick
-                }
-                
-                if (!foundItems)
-                {
-                    // No more items nearby
-                    break;
-                }
-                
-                yield return new WaitForSeconds(0.3f);
-            }
-            
-            // Stop movement — release the collect authority (clean stop through the single writer).
-            var umaStop = companion.GetMovementAuthority();
-            if (umaStop != null)
-            {
-                umaStop.ReleaseAuthority("CommandCollect");
-            }
-            else
-            {
-                var charStop = companion.GetCharacter();
-                if (charStop != null)
-                {
-                    charStop.SetMoveDir(Vector3.zero);
-                    charStop.SetWalk(false);
-                }
-            }
-
-            if (itemsCollected > 0)
-            {
-                ShowMessage($"{companion.companionName} collected {itemsCollected} items");
-            }
-        }
-
         private void ExecuteSmelterCommand(CompanionController companion, ActiveCommand command)
         {
             Debug.Log($"[COMMAND] ExecuteSmelterCommand called for {companion.companionName}");
@@ -1829,6 +1740,7 @@ namespace FiresCore.Npc.Commands
                 
                 if (idleBehavior.TryStartSubBehavior<SmelterOperatorBehavior>())
                 {
+                    command.DelegatedToSubBehavior = true;
                     Debug.Log($"[COMMAND] {companion.companionName} TryStartSubBehavior SUCCEEDED! IsInSubBehavior={idleBehavior.IsInSubBehavior}");
                     ShowMessage($"{companion.companionName}: Operating smelter");
                     
@@ -1858,15 +1770,15 @@ namespace FiresCore.Npc.Commands
             var interactionBehavior = companion.GetComponent<CompanionInteractionBehavior>();
             interactionBehavior?.ForceDetach();
 
-            // CRITICAL: Try V2 behavior first (the active one), then fall back to V1
             var fireBehaviorV2 = idleBehavior?.GetSubBehavior<FireTendingBehaviorV2>();
             if (fireBehaviorV2 != null)
             {
                 Debug.Log($"[COMMAND] {companion.companionName} found FireTendingBehaviorV2");
                 fireBehaviorV2.SetCommandedTarget(command.TargetObject);
-                
+
                 if (idleBehavior.TryStartSubBehavior<FireTendingBehaviorV2>())
                 {
+                    command.DelegatedToSubBehavior = true;
                     Debug.Log($"[COMMAND] {companion.companionName} started FireTendingBehaviorV2 successfully");
                     ShowMessage($"{companion.companionName}: Tending fire");
                     return;
@@ -1876,23 +1788,9 @@ namespace FiresCore.Npc.Commands
                     Debug.LogWarning($"[COMMAND] {companion.companionName} FireTendingBehaviorV2.CanStart() returned false");
                 }
             }
-            
-            // Try V1 behavior as fallback
-            var fireBehavior = idleBehavior?.GetSubBehavior<FireTendingBehavior>();
-            if (fireBehavior != null)
-            {
-                Debug.Log($"[COMMAND] {companion.companionName} trying fallback FireTendingBehavior (V1)");
-                fireBehavior.SetCommandedTarget(command.TargetObject);
-                
-                if (idleBehavior.TryStartSubBehavior<FireTendingBehavior>())
-                {
-                    ShowMessage($"{companion.companionName}: Tending fire");
-                    return;
-                }
-            }
-            
+
             // Fallback: move to fire
-            Debug.Log($"[COMMAND] {companion.companionName} fire tending behaviors unavailable, falling back to move command");
+            Debug.Log($"[COMMAND] {companion.companionName} fire tending unavailable, falling back to move command");
             ExecuteMoveCommand(companion, command);
         }
 
@@ -1905,26 +1803,21 @@ namespace FiresCore.Npc.Commands
             var interactionBehavior = companion.GetComponent<CompanionInteractionBehavior>();
             interactionBehavior?.ForceDetach();
 
-            // Find the workstation behavior
-            var workstationBehavior = idleBehavior?.GetSubBehavior<WorkstationInteractionBehavior>();
-            if (workstationBehavior != null)
+            var workstationBehavior = idleBehavior?.GetSubBehavior<WorkstationInteractionBehaviorV2>();
+            var station = command.TargetObject != null ? command.TargetObject.GetComponent<CraftingStation>() : null;
+            if (workstationBehavior != null && station != null)
             {
-                // Get the crafting station from the target object
-                var station = command.TargetObject?.GetComponent<CraftingStation>();
-                if (station != null)
+                workstationBehavior.SetCommandedStation(station);
+
+                if (idleBehavior.TryStartSubBehavior<WorkstationInteractionBehaviorV2>())
                 {
-                    workstationBehavior.SetCommandedStation(station);
-                    
-                    if (idleBehavior.TryStartSubBehavior<WorkstationInteractionBehavior>())
-                    {
-                        ShowMessage($"{companion.companionName}: Using workstation");
-                        
-                        // DON'T mark as complete - the sub-behavior will run until done
-                        return;
-                    }
+                    command.DelegatedToSubBehavior = true;
+                    ShowMessage($"{companion.companionName}: Using workstation");
+                    return;
                 }
+                workstationBehavior.SetCommandedStation(null);
             }
-            
+
             // Fallback: move to workstation
             ExecuteMoveCommand(companion, command);
         }
@@ -1945,20 +1838,20 @@ namespace FiresCore.Npc.Commands
                 combatMovement.SetCommandPriorityDuration(60f); // 1 minute for deposit
             }
 
-            // Find the chest deposit behavior
-            var depositBehavior = idleBehavior?.GetSubBehavior<ChestDepositBehavior>();
+            var depositBehavior = idleBehavior?.GetSubBehavior<ChestDepositBehaviorV2>();
             if (depositBehavior != null)
             {
-                // Set the target chest - create a method for this
                 depositBehavior.SetCommandedTarget(command.TargetObject);
-                
-                if (idleBehavior.TryStartSubBehavior<ChestDepositBehavior>())
+
+                if (idleBehavior.TryStartSubBehavior<ChestDepositBehaviorV2>())
                 {
+                    command.DelegatedToSubBehavior = true;
                     ShowMessage($"{companion.companionName}: Depositing items to chest");
                     return;
                 }
+                depositBehavior.SetCommandedTarget(null);
             }
-            
+
             // Fallback: manual deposit via coroutine
             Debug.Log($"[CompanionCommandSystem] {companion.companionName} using fallback deposit method");
             StartCoroutine(ManualDepositToChest(companion, command));
@@ -1986,6 +1879,7 @@ namespace FiresCore.Npc.Commands
                 cookBehavior.SetCommandedTarget(command.TargetObject);
                 if (idleBehavior.TryStartSubBehavior<CompanionCookingBehavior>())
                 {
+                    command.DelegatedToSubBehavior = true;
                     ShowMessage($"{companion.companionName}: Cooking");
                     return;
                 }
@@ -2009,6 +1903,7 @@ namespace FiresCore.Npc.Commands
                 repairBehavior.SetCommandedTarget(command.TargetObject);
                 if (idleBehavior.TryStartSubBehavior<BuildingRepairBehavior>())
                 {
+                    command.DelegatedToSubBehavior = true;
                     ShowMessage($"{companion.companionName}: Repairing");
                     return;
                 }
@@ -2034,6 +1929,7 @@ namespace FiresCore.Npc.Commands
                 fishBehavior.SetCommandedSpot(command.TargetPosition);
                 if (idleBehavior.TryStartSubBehavior<FishingBehavior>())
                 {
+                    command.DelegatedToSubBehavior = true;
                     ShowMessage($"{companion.companionName}: Fishing");
                     return;
                 }
@@ -2057,6 +1953,7 @@ namespace FiresCore.Npc.Commands
                 farmBehavior.SetCommandedTarget(command.TargetObject);
                 if (idleBehavior.TryStartSubBehavior<FarmingBehavior>())
                 {
+                    command.DelegatedToSubBehavior = true;
                     ShowMessage($"{companion.companionName}: Farming");
                     return;
                 }
@@ -2085,7 +1982,8 @@ namespace FiresCore.Npc.Commands
                 if (dist < 2.5f) break;
                 yield return new WaitForSeconds(0.3f);
             }
-            
+            if (companion == null) yield break;
+
             // Stop movement — CombatMovement.ClearMoveDestination releases its UMA authority (clean stop
             // through the single writer); no raw SetMoveDir needed.
             combatMovement?.ClearMoveDestination();
@@ -2101,57 +1999,49 @@ namespace FiresCore.Npc.Commands
             yield return new WaitForSeconds(0.3f);
             
             // Get the container and inventory
-            var container = command.TargetObject?.GetComponent<Container>();
+            var container = command.TargetObject != null ? command.TargetObject.GetComponent<Container>() : null;
             var inventory = companion.GetComponent<CompanionInventory>();
-            
-            if (container == null || inventory == null)
+
+            if (container == null || inventory == null || !ChestHelper.TryClaimForWrite(container, companion))
             {
                 ShowMessage($"{companion.companionName}: Can't access chest");
                 CompleteCommand(companion, "Chest not accessible");
                 yield break;
             }
-            
+
             var storageInv = inventory.GetStorageInventory();
             var chestInv = container.GetInventory();
-            
+
             if (storageInv == null || chestInv == null)
             {
                 ShowMessage($"{companion.companionName}: Can't access inventories");
                 CompleteCommand(companion, "Inventory not accessible");
                 yield break;
             }
-            
+
             // Deposit items
             int deposited = 0;
             var itemsToDeposit = new List<ItemDrop.ItemData>(storageInv.GetAllItems());
-            
+
             foreach (var item in itemsToDeposit)
             {
                 if (item == null) continue;
-                
+
                 // Skip consumables (food) - companion needs these
                 if (item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Consumable)
                     continue;
-                    
+
                 // Skip equipped items
                 if (item.m_equipped)
                     continue;
-                    
+
                 // Skip quest items
                 if (item.m_shared.m_questItem)
                     continue;
-                
-                // Try to add to chest
-                if (chestInv.CanAddItem(item))
-                {
-                    var clone = item.Clone();
-                    if (chestInv.AddItem(clone))
-                    {
-                        storageInv.RemoveItem(item);
-                        deposited++;
-                    }
-                }
-                
+
+                if (ChestHelper.MoveItem(storageInv, chestInv, item, item.m_stack) > 0)
+                    deposited++;
+
                 // Stop if chest is full
                 if (chestInv.GetEmptySlots() == 0) break;
             }
@@ -2179,7 +2069,8 @@ namespace FiresCore.Npc.Commands
             {
                 var clusterChests = ChestHelper.FindNearbyChests(
                     container.transform.position, CompanionSettings.ChestAutoSortRadius);
-                if (clusterChests != null && clusterChests.Count >= 2)
+                clusterChests.RemoveAll(chest => !ChestHelper.TryClaimForWrite(chest, companion));
+                if (clusterChests.Count >= 2)
                 {
                     var orgResult = SmartStorageOrganizer.OrganizeChestCluster(
                         clusterChests,
@@ -2359,6 +2250,9 @@ namespace FiresCore.Npc.Commands
             
             if (started)
             {
+                if (_activeCommands.TryGetValue(companion, out var trainCommand))
+                    trainCommand.DelegatedToSubBehavior = true;
+
                 // Training started - register with state controller for tracking
                 if (stateController != null)
                 {
@@ -2442,37 +2336,30 @@ namespace FiresCore.Npc.Commands
             Debug.Log($"[COMMAND] CompleteCommand for {companion.companionName}: {reason}");
 
             CommandType completedType = CommandType.None;
+            bool delegatedToSubBehavior = false;
             if (_activeCommands.TryGetValue(companion, out var command))
             {
                 command.IsComplete = true;
                 completedType = command.Type;
+                delegatedToSubBehavior = command.DelegatedToSubBehavior;
             }
 
-            // CRITICAL: Only clear command priority for commands that don't delegate to sub-behaviors
-            // Sub-behaviors (training, gathering, smelting, etc.) manage their OWN command priority
-            // via StartAsCommand() and Complete()/Cancel() - we must not interfere
-            bool isSubBehaviorCommand = completedType == CommandType.TrainArchery ||
-                                        completedType == CommandType.GatherResource ||
-                                        completedType == CommandType.OperateSmelter ||
-                                        completedType == CommandType.TendFire ||
-                                        completedType == CommandType.UseWorkstation;
-            
-            // Release movement priority via state controller
-            var stateController = companion.GetComponent<CompanionStateController>();
-            if (stateController != null && !isSubBehaviorCommand)
+            // A sub-behavior that took the command releases its own priority in Complete()/Cancel() and may still be running
+            // (a felled tree completes the Gather command early); fallback paths must release it here or it holds for 120 s.
+            if (delegatedToSubBehavior)
             {
-                stateController.ReleaseMovementPriority("PlayerCommand");
+                Debug.Log($"[COMMAND] NOT clearing priority for {companion.companionName} - sub-behavior running {completedType} manages its own priority");
             }
-            
-            var combatMovement = companion.GetComponent<CompanionCombatMovement>();
-            if (combatMovement != null && combatMovement.HasCommandPriority && !isSubBehaviorCommand)
+            else
             {
-                Debug.Log($"[COMMAND] Clearing command priority for {companion.companionName} (non-subbehavior command: {completedType})");
-                combatMovement.ClearCommandPriority();
-            }
-            else if (isSubBehaviorCommand)
-            {
-                Debug.Log($"[COMMAND] NOT clearing priority for {companion.companionName} - sub-behavior command {completedType} manages its own priority");
+                companion.GetComponent<CompanionStateController>()?.ReleaseMovementPriority("PlayerCommand");
+
+                var combatMovement = companion.GetComponent<CompanionCombatMovement>();
+                if (combatMovement != null && combatMovement.HasCommandPriority)
+                {
+                    Debug.Log($"[COMMAND] Clearing command priority for {companion.companionName} ({completedType})");
+                    combatMovement.ClearCommandPriority();
+                }
             }
             
             // Clear target assignment in coordinator
@@ -2519,44 +2406,17 @@ namespace FiresCore.Npc.Commands
 
         #region Feedback
 
+        /// <summary>
+        /// Spawns vfx_lootspawn at the pinged spot. It is a networked effect whose own TimedDestruction (3 s) removes it
+        /// through ZNetScene.Destroy on its owner; a raw Destroy would leave its ZDO and ZNetScene entry behind.
+        /// </summary>
         private void ShowPingMarker(Vector3 position, CommandType type)
         {
             if (!showPingMarker) return;
 
-            // Create a simple ping marker effect
-            StartCoroutine(ShowPingMarkerCoroutine(position, type));
-        }
-
-        private IEnumerator ShowPingMarkerCoroutine(Vector3 position, CommandType type)
-        {
-            // Create ping effect using Valheim's effect system if available
-            GameObject effect = null;
-            
-            // Try to spawn a visual effect (outside try-catch for the yield)
-            var effectPrefab = ZNetScene.instance?.GetPrefab("vfx_lootspawn");
+            var effectPrefab = ZNetScene.instance?.GetPrefab(PingMarkerPrefab);
             if (effectPrefab != null)
-            {
-                try
-                {
-                    effect = Instantiate(effectPrefab, position + Vector3.up * 0.5f, Quaternion.identity);
-                    _activePingMarkers.Add(effect);
-                }
-                catch { }
-            }
-            
-            // Wait for ping duration
-            yield return new WaitForSeconds(pingMarkerDuration);
-            
-            // Clean up
-            if (effect != null)
-            {
-                try
-                {
-                    _activePingMarkers.Remove(effect);
-                    Destroy(effect);
-                }
-                catch { }
-            }
+                Instantiate(effectPrefab, position + PingMarkerOffset, Quaternion.identity);
         }
 
         private void ShowCommandFeedback(CompanionController companion, CommandType type, GameObject target)
@@ -2581,19 +2441,6 @@ namespace FiresCore.Npc.Commands
             };
 
             ShowMessage(message);
-
-            // Play a sound effect
-            try
-            {
-                // Try to play the companion's acknowledge sound
-                var character = companion.GetComponent<Character>();
-                if (character != null)
-                {
-                    var zanim = companion.GetComponent<ZSyncAnimation>();
-                    zanim?.SetTrigger("alert");
-                }
-            }
-            catch { }
         }
 
         private void ShowMessage(string message)

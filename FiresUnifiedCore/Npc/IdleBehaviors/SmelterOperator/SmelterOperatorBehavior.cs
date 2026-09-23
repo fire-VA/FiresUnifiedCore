@@ -134,6 +134,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // Target chest for current pull/deposit operation
         private Container _targetChestForPull;
         private Container _targetChestForDeposit;
+        private Container _chestOpenedVisually; // Only a chest we opened gets closed by us
         private string _pullItemPrefab;
         private int _pullItemAmount;
         
@@ -159,7 +160,10 @@ namespace FiresCore.Npc.IdleBehaviors
         // Idle waiting state
         private float _lastEmoteTime;
         private float _nextEmoteDelay;
-        private static readonly string[] _waitingEmotes = { "emote_nonono", "emote_think", "emote_comehere", "emote_point", "emote_wave" };
+        private static readonly string[] _waitingEmotes = { "emote_nonono", "emote_shrug", "emote_comehere", "emote_point", "emote_wave" };
+        private const string AddOreRpc = "RPC_AddOre";
+        private const string AddFuelRpc = "RPC_AddFuel";
+        private const string EmptyProcessedRpc = "RPC_EmptyProcessed";
         private const float MinEmoteInterval = 8f;
         private const float MaxEmoteInterval = 20f;
         
@@ -178,6 +182,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private float _lastOreAddTime = 0f;
         private float _lastFuelAddTime = 0f;
         private float _lastAnyAddTime = 0f;  // Track ANY add operation for animation pacing
+        private float _lastEmptyTime = 0f;   // Last RPC_EmptyProcessed request; a remote owner answers a moment later
         private const float MinSingleInputInterval = 1.0f; // Minimum seconds between individual ore/fuel adds (matches animation time)
         
         // ANTI-LOOP: Track that we just pulled items to prevent immediately going back to PullingFromChests
@@ -418,7 +423,8 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private float ScoreSmelterNeedsAttention(Smelter smelter)
         {
-            if (smelter == null) return 0f;
+            // Battering ram engines and the bathtub are Smelters too; only a player command sends a companion to them.
+            if (!PieceDataHelper.IsOperableStation(smelter)) return 0f;
             
             var nview = smelter.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return 0f;
@@ -466,22 +472,21 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"[SmelterOperator]   - State: queued={queued}/{smelter.m_maxOre}, fuel={fuel:F0}/{smelter.m_maxFuel}, hasCapacity={hasCapacity}, needsFuel={needsFuel}");
             }
             
-            string stationType = PieceDataHelper.GetSmelterType(smelter);
-            bool isKiln = stationType.ToLowerInvariant().Contains("kiln");
+            bool isKiln = PieceDataHelper.IsCharcoalKiln(smelter);
             
             if (CompanionIdleBehavior.VerboseLogging)
-                Debug.Log($"[SmelterOperator]   - Station type: {stationType}, isKiln={isKiln}");
+                Debug.Log($"[SmelterOperator]   - Station type: {PieceDataHelper.GetSmelterType(smelter)}, isKiln={isKiln}");
             
             if (isKiln)
             {
                 // Kiln needs wood
                 if (hasCapacity)
                 {
-                    string[] woodTypes = { "Wood", "RoundLog", "FineWood", "ElderBark", "YggdrasilWood" };
+                    var woodTypes = PieceDataHelper.GetStationInputs(smelter);
                     bool foundWoodInChest = false;
                     foreach (string woodType in woodTypes)
                     {
-                        int count = ChestHelper.CountItemInChests(nearbyChests, woodType);
+                        int count = ChestHelper.GetAvailableItemCount(nearbyChests, woodType);
                         if (count > 0)
                         {
                             if (CompanionIdleBehavior.VerboseLogging)
@@ -505,7 +510,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         {
                             foreach (string woodType in woodTypes)
                             {
-                                if (storage.HaveItem(woodType))
+                                if (ChestHelper.CountPrefabInInventory(storage, woodType) > 0)
                                 {
                                     if (CompanionIdleBehavior.VerboseLogging)
                                         Debug.Log($"[SmelterOperator]   - Found {woodType} in companion inventory!");
@@ -529,7 +534,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         if (conversion.m_from != null)
                         {
                             string oreName = conversion.m_from.name;
-                        int count = ChestHelper.CountItemInChests(nearbyChests, oreName);
+                        int count = ChestHelper.GetAvailableItemCount(nearbyChests, oreName);
                             if (count > 0)
                             {
                                 if (CompanionIdleBehavior.VerboseLogging)
@@ -580,7 +585,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         {
                             foreach (var conversion in smelter.m_conversion)
                             {
-                                if (conversion.m_from != null && storage.HaveItem(conversion.m_from.name))
+                                if (conversion.m_from != null && ChestHelper.CountPrefabInInventory(storage, conversion.m_from.name) > 0)
                                 {
                                     if (CompanionIdleBehavior.VerboseLogging)
                                         Debug.Log($"[SmelterOperator]   - Found {conversion.m_from.name} in companion inventory!");
@@ -596,7 +601,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (needsFuel && smelter.m_fuelItem != null)
                 {
                     string fuelName = smelter.m_fuelItem.name;
-                    int fuelCount = ChestHelper.CountItemInChests(nearbyChests, fuelName);
+                    int fuelCount = ChestHelper.GetAvailableItemCount(nearbyChests, fuelName);
                     if (fuelCount > 0)
                     {
                         if (CompanionIdleBehavior.VerboseLogging)
@@ -606,7 +611,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     else if (_inventory != null)
                     {
                         var storage = _inventory.GetStorageInventory();
-                        if (storage != null && storage.HaveItem(fuelName))
+                        if (storage != null && ChestHelper.CountPrefabInInventory(storage, fuelName) > 0)
                         {
                             if (CompanionIdleBehavior.VerboseLogging)
                                 Debug.Log($"[SmelterOperator]   - Found {fuelName} (fuel) in companion inventory!");
