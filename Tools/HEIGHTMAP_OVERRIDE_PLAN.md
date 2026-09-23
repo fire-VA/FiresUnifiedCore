@@ -121,7 +121,7 @@ not apply. FiresAdminTerrain should **not** register one. The requirement still 
 does: the predicate must evaluate identically on every peer, because every peer runs `ApplyToHeightmap`.
 
 How WEC/IH terrain tools reach voxel and skyland terrain: FiresAdminTerrain
-`Tools/WEC_IH_TERRAIN_BRIDGE_PLAN.md`.
+`Docs/PLAN_WecInfinityHammerTerrainBridge.md` (branch `feat/wec-ih-terrain-bridge`).
 
 ---
 
