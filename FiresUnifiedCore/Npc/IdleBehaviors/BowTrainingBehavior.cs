@@ -172,6 +172,11 @@ namespace FiresCore.Npc.IdleBehaviors
                     if (CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[BowTraining] {Companion?.companionName} bow left hand — re-equipping");
                     EnsureBowEquipped();
+                    if (!VerifyBowInHand())
+                    {
+                        Complete();
+                        return true;
+                    }
                 }
             }
 
@@ -485,7 +490,7 @@ namespace FiresCore.Npc.IdleBehaviors
             float staminaCost = 20f;
             if (_stats != null)
             {
-                staminaCost = _stats.GetStaminaCost(staminaCost, Skills.SkillType.Bows);
+                staminaCost = _stats.GetAttackStaminaCost(staminaCost, Skills.SkillType.Bows);
                 if (!_stats.UseStamina(staminaCost))
                 {
                     // Not enough stamina - take a break instead of firing
@@ -605,7 +610,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Check right back for holstered bow
             var rightBack = _inventory?.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-            if (rightBack?.m_shared?.m_itemType == ItemDrop.ItemData.ItemType.Bow)
+            if (IsTrainingBow(rightBack))
             {
                 if (rightBack.m_shared?.m_attack?.m_attackProjectile != null)
                 {
@@ -634,23 +639,40 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Helpers
         
+        /// <summary>Crossbows are ItemType Bow too, but train the Crossbows skill, not Bows.</summary>
+        private static bool IsTrainingBow(ItemDrop.ItemData item)
+        {
+            return item?.m_shared != null
+                && item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow
+                && item.m_shared.m_skillType == Skills.SkillType.Bows;
+        }
+
+        /// <summary>A crossbow held in the left hand would be overwritten by equipping a bow from the back.</summary>
+        private static bool IsCrossbowType(ItemDrop.ItemData item)
+        {
+            return item?.m_shared?.m_itemType == ItemDrop.ItemData.ItemType.Bow && !IsTrainingBow(item);
+        }
+
         private bool HasBowEquipped()
         {
             if (_inventory == null) return false;
             
             // Check left hand (where bows are equipped when in use)
             var leftHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftHand);
-            if (leftHand != null && leftHand.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow)
+            if (IsTrainingBow(leftHand))
                 return true;
+            
+            if (IsCrossbowType(leftHand))
+                return false;
             
             // Check left back (holstered bow)
             var leftBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack);
-            if (leftBack != null && leftBack.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow)
+            if (IsTrainingBow(leftBack))
                 return true;
             
             // Also check right back (some configurations might put bow there)
             var rightBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-            if (rightBack != null && rightBack.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow)
+            if (IsTrainingBow(rightBack))
                 return true;
             
             return false;
@@ -666,7 +688,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Check if bow is already in left hand
             var leftHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftHand);
-            if (leftHand != null && leftHand.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow)
+            if (IsTrainingBow(leftHand))
             {
                 // Bow is already equipped, but we should still unequip right hand weapon
                 UnequipRightHandWeapon();
@@ -674,13 +696,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 FinalizeEquipmentChange();
                 return;
             }
+            if (IsCrossbowType(leftHand)) return;
             
             // First, unequip any weapon from right hand (move to back or storage)
             UnequipRightHandWeapon();
             
             // Check if bow is holstered on LeftBack first (primary location for bows)
             var leftBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack);
-            if (leftBack != null && leftBack.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow)
+            if (IsTrainingBow(leftBack))
             {
                 EquipBowFromSlot(CompanionInventory.EquipmentSlot.LeftBack, leftBack);
                 return;
@@ -688,7 +711,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Check if bow is holstered on RightBack (secondary location)
             var rightBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-            if (rightBack != null && rightBack.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow)
+            if (IsTrainingBow(rightBack))
             {
                 EquipBowFromSlot(CompanionInventory.EquipmentSlot.RightBack, rightBack);
                 return;
@@ -716,11 +739,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_inventory == null) return false;
             
-            var leftHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftHand);
-            if (leftHand == null) return false;
-            if (leftHand.m_shared == null) return false;
-            
-            return leftHand.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow;
+            return IsTrainingBow(_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftHand));
         }
         
         /// <summary>

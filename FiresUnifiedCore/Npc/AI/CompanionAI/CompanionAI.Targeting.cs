@@ -319,6 +319,9 @@ namespace FiresCore.Npc.AI
                 return false;
             if (target == m_character)
                 return false;
+            // Vanilla AI never picks these (BaseAI.FindEnemy, BaseAI.cs:1046), e.g. the 1.0 ShadowPerson.
+            if (target.m_aiSkipTarget)
+                return false;
 
             // PvP companion battles: a non-allied owner's companion or player — both sides PvP-enabled —
             // is a valid target, bypassing the never-attack-player / never-attack-tamed / same-faction

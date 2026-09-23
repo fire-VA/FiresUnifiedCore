@@ -38,6 +38,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private const float MaxUpgradeTime = 60f;
         private const float UpgradeAttemptChance = 0.3f;
         private const int MaxUpgradesPerSession = 3;
+        private const float MinStationCover = 0.7f;
         
         #endregion
         
@@ -291,12 +292,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (collider == null) continue;
                 
                 var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
-                if (station == null) continue;
-                
+                if (station == null || station.m_upgrader) continue;
+
                 int level = station.GetLevel();
                 float dist = DistanceTo(station.transform.position);
-                
-                if (level > bestLevel || (level == bestLevel && dist < bestDist))
+
+                if ((level > bestLevel || (level == bestLevel && dist < bestDist)) && IsStationUsable(station))
                 {
                     bestLevel = level;
                     bestDist = dist;
@@ -339,46 +340,42 @@ namespace FiresCore.Npc.IdleBehaviors
                 int maxQuality = item.m_shared.m_maxQuality;
                 
                 if (currentQuality >= maxQuality) continue;
-                
-                var requirements = GetUpgradeRequirements(item, currentQuality + 1);
-                if (requirements == null || requirements.Count == 0) continue;
-                
+
+                int targetQuality = currentQuality + 1;
+                Recipe recipe = ObjectDB.instance?.GetRecipe(item);
+                if (recipe == null || !CanStationUpgrade(station, recipe, targetQuality)) continue;
+
+                var requirements = GetUpgradeRequirements(recipe, targetQuality);
+                if (requirements.Count == 0) continue;
+
                 if (!HasRequiredMaterials(requirements, storageInv)) continue;
-                if (!CanStationUpgrade(station, item)) continue;
-                
+
                 return (item, slot, currentQuality, requirements);
             }
             
             return null;
         }
         
-        private List<Piece.Requirement> GetUpgradeRequirements(ItemDrop.ItemData item, int targetQuality)
+        /// <summary>What a normal (non-upgrader) station charges: GetAmount(q) of every non-upgrader resource (Player.ConsumeResources:2086-2090).</summary>
+        private List<Piece.Requirement> GetUpgradeRequirements(Recipe recipe, int targetQuality)
         {
-            if (item == null || ObjectDB.instance == null) return null;
-            
-            Recipe recipe = ObjectDB.instance.GetRecipe(item);
-            if (recipe == null) return null;
-            
             var requirements = new List<Piece.Requirement>();
-            
+
             foreach (var req in recipe.m_resources)
             {
-                if (req.m_resItem == null) continue;
-                
-                int amountNeeded = req.GetAmount(targetQuality);
-                int amountPrev = req.GetAmount(targetQuality - 1);
-                int upgradeAmount = amountNeeded - amountPrev;
-                
-                if (upgradeAmount > 0)
+                if (req.m_resItem == null || req.m_upgraderResource) continue;
+
+                int amount = req.GetAmount(targetQuality);
+                if (amount > 0)
                 {
                     requirements.Add(new Piece.Requirement
                     {
                         m_resItem = req.m_resItem,
-                        m_amount = upgradeAmount
+                        m_amount = amount
                     });
                 }
             }
-            
+
             return requirements;
         }
         
@@ -400,16 +397,24 @@ namespace FiresCore.Npc.IdleBehaviors
             return true;
         }
         
-        private bool CanStationUpgrade(CraftingStation station, ItemDrop.ItemData item)
+        /// <summary>Vanilla Player.RequiredCraftingStation(recipe, quality, checkLevel: true) with this (non-upgrader) station as the current one.</summary>
+        private static bool CanStationUpgrade(CraftingStation station, Recipe recipe, int targetQuality)
         {
-            if (station == null || item == null) return false;
-            
-            Recipe recipe = ObjectDB.instance?.GetRecipe(item);
-            if (recipe == null) return false;
-            
-            if (recipe.m_craftingStation == null) return true;
-            
-            return recipe.m_craftingStation.m_name == station.m_name;
+            CraftingStation requiredStation = recipe.GetRequiredStation(targetQuality);
+            if (requiredStation == null) return station.m_showBasicRecipies;
+            return requiredStation.m_name == station.m_name
+                && station.GetLevel() >= recipe.GetRequiredStationLevel(targetQuality);
+        }
+
+        /// <summary>Vanilla CraftingStation.CheckUsable: roof cover and fire where the station requires them.</summary>
+        private static bool IsStationUsable(CraftingStation station)
+        {
+            if (station.m_craftRequireRoof)
+            {
+                Cover.GetCoverForPoint(station.m_roofCheckPoint.position, out float coverPercentage, out bool underRoof);
+                if (!underRoof || coverPercentage < MinStationCover) return false;
+            }
+            return !station.m_craftRequireFire || EffectArea.IsPointPlus025InsideBurningArea(station.transform.position);
         }
         
         private bool PerformUpgrade()

@@ -7,8 +7,8 @@ namespace FiresCore.Npc.Combat
     /// <summary>
     /// Staff combat. Offensive staves kite like BowBehavior: retreat from the danger range, backpedal while
     /// casting when close, plant and cast at optimal range, and close the gap when too far. Support staves
-    /// (shield, roots and similar) only target the owner, the owner's other companions and their tamed
-    /// creatures, with healers holding near the group and away from enemies.
+    /// (ally buffs such as shield and frost orbs) only target the owner, the owner's other companions and their
+    /// tamed creatures, with healers holding near the group and away from enemies.
     /// </summary>
     public class StaffBehavior : WeaponBehavior
     {
@@ -75,6 +75,12 @@ namespace FiresCore.Npc.Combat
         private const float CompanionBuffPriorityBonus = 20f;
         private const float EyeHeight = 1.5f;
         private const float ProjectileSpawnHeight = 1.5f;
+        private const float ProjectileSpawnDelay = 0.4f;
+        private const float ProjectileAttackDuration = 1.5f;
+
+        // A looping attack state (staff_rapidfire-loop) only ends on this trigger; vanilla Attack.Stop sends it
+        // (Attack.cs:363-364).
+        private const string AttackAbortTrigger = "attack_abort";
 
         #endregion
         
@@ -111,7 +117,9 @@ namespace FiresCore.Npc.Combat
         private float _lastShieldApplication;
         private string _cachedShieldEffectName;
         private int _cachedShieldEffectHash;
-        
+
+        private bool _inLoopingAttack;
+
         #endregion
         
         #region Public Properties
@@ -670,7 +678,13 @@ namespace FiresCore.Npc.Combat
         {
             var weapon = Context.CurrentWeapon;
             if (weapon?.m_shared == null) return false;
-            
+
+            // An area effect that never hits enemies is an ally buff (staff_shield_aoe, 1.0 staff_FrostOrbs_aoe).
+            var buffArea = Context.CurrentAttack?.m_attackProjectile != null
+                ? Context.CurrentAttack.m_attackProjectile.GetComponent<Aoe>()
+                : null;
+            if (buffArea != null && !buffArea.m_hitEnemy) return true;
+
             string weaponName = weapon.m_shared.m_name?.ToLowerInvariant() ?? "";
             
             // Also check the prefab name (m_dropPrefab or item name)
@@ -685,9 +699,8 @@ namespace FiresCore.Npc.Combat
             // StaffShield is the Staff of Protection
             if (prefabName.Contains("staffshield") ||
                 prefabName.Contains("staff_shield") ||
-                weaponName.Contains("shield") || 
+                weaponName.Contains("shield") ||
                 weaponName.Contains("protection") ||
-                weaponName.Contains("greenroots") ||
                 weaponName.Contains("gentle"))
             {
                 if (CompanionCombat.VerboseLogging)
@@ -1173,9 +1186,6 @@ namespace FiresCore.Npc.Combat
                 // Try native attack system
                 if (Context.UseNativeAttackSystem && TryStartNativeAttack(actualTarget, false))
                 {
-                    Context.BroadcastRPC("RPC_CompanionAttack",
-                        Context.GetAttackAnimationTrigger(_attackChainLevel),
-                        Context.GetAttackAnimationIndex());
                     return;
                 }
   
@@ -1213,94 +1223,116 @@ namespace FiresCore.Npc.Combat
            int randomIndex = UnityEngine.Random.Range(0, attackTemplate.m_attackRandomAnimations);
         animTrigger = $"{attackTemplate.m_attackAnimation}{randomIndex}";
      }
-      
-             Context.PlayAttackAnimation(animTrigger, (int)Context.CurrentWeapon.m_shared.m_animationState);
+
+                bool animationPlayed = Context.PlayAttackAnimation(animTrigger, (int)Context.CurrentWeapon.m_shared.m_animationState,
+                    -1f, CombatContext.AnimationPriority.Attack);
+                _inLoopingAttack = animationPlayed && attackTemplate.m_loopingAttack;
     }
-     
-       // Use coroutine for projectile spawn and attack finish
-            float spawnDelay = 0.4f;
- float attackDuration = 1.5f;
-            _attackCoroutine = Owner.StartCoroutine(ProjectileAttackCoroutine(target, attackTemplate, spawnDelay, attackDuration));
-    
-    Context.BroadcastRPC("RPC_CompanionAttack", animTrigger, (int)Context.CurrentWeapon.m_shared.m_animationState);
-      
+
+            _attackCoroutine = Owner.StartCoroutine(ProjectileAttackCoroutine(target, attackTemplate));
+
      if (CompanionCombat.VerboseLogging)
     {
      Debug.Log($"[StaffBehavior] Projectile attack started - weapon: {Context.CurrentWeapon.m_shared.m_name}, " +
     $"projectile: {attackTemplate.m_attackProjectile.name}, anim: {animTrigger}");
           }
         }
-    
-private IEnumerator ProjectileAttackCoroutine(Character target, Attack attackTemplate, float spawnDelay, float attackDuration)
+
+        /// <summary>
+        /// Fires the cast's projectile after the wind-up. A looping attack (StaffIceShards) keeps firing a burst every
+        /// m_burstInterval for the rest of the cast, paying per burst when the attack says so, then ends its loop.
+        /// </summary>
+        private IEnumerator ProjectileAttackCoroutine(Character target, Attack attackTemplate)
         {
-  yield return new WaitForSeconds(spawnDelay);
-   
-       if (!(Context.Companion?.isDefeated ?? true) && target != null && !target.IsDead())
- {
-      SpawnProjectile(target, attackTemplate);
-    }
-      
- yield return new WaitForSeconds(attackDuration - spawnDelay);
- FinishAttack();
-   _attackCoroutine = null;
-        }
-    
-    private void SpawnProjectile(Character target, Attack attackTemplate)
- {
-        if (attackTemplate?.m_attackProjectile == null || target == null) return;
-        
-        // CRITICAL: For support staves, apply the buff directly to the friendly target
-        // This prevents the AOE from accidentally buffing enemies
-        if (_isSupportStaff)
-        {
-            SpawnSupportStaffEffect(target, attackTemplate);
-            return;
-        }
-      
-    // Calculate spawn position (from character's chest/hands area)
-   Vector3 spawnPos = Context.Transform.position + Vector3.up * ProjectileSpawnHeight + Context.Transform.forward * 0.5f;
-     
-    // Calculate direction to target
-            Vector3 targetPos = target.transform.position + Vector3.up * 1f;
-   Vector3 direction = (targetPos - spawnPos).normalized;
-   
-   Quaternion rotation = Quaternion.LookRotation(direction);
-            
-   // Spawn the projectile
-     GameObject projectileObj = UnityEngine.Object.Instantiate(attackTemplate.m_attackProjectile, spawnPos, rotation);
-   
-         // Configure the projectile
-    var projectile = projectileObj.GetComponent<Projectile>();
-            if (projectile != null)
-       {
-HitData hitData = Context.CreateHitData(target);
-   
-             projectile.Setup(
-   Context.Character,
-       direction * attackTemplate.m_projectileVel,
-              attackTemplate.m_attackHitNoise,
-   hitData,
-     null,
-              Context.CurrentWeapon
-           );
-          
-                if (CompanionCombat.VerboseLogging)
-        {
-     Debug.Log($"[StaffBehavior] Spawned projectile {attackTemplate.m_attackProjectile.name} " +
-      $"at {spawnPos} toward {target.m_name}, damage: {hitData.m_damage.GetTotalDamage():F1}");
-   }
-  }
-       else
+            yield return new WaitForSeconds(ProjectileSpawnDelay);
+            float elapsed = ProjectileSpawnDelay;
+
+            if (CanKeepCasting(target))
             {
-        // No Projectile component - might be a different type of attack object (AOE, etc)
-      if (CompanionCombat.VerboseLogging)
-          {
- Debug.Log($"[StaffBehavior] Spawned attack object {attackTemplate.m_attackProjectile.name} " +
-        $"(no Projectile component - may be AOE/special attack)");
+                SpawnProjectile(target, attackTemplate);
+
+                int burstsFired = 1;
+                while (attackTemplate.m_loopingAttack && burstsFired < attackTemplate.m_projectileBursts
+                       && elapsed + attackTemplate.m_burstInterval < ProjectileAttackDuration)
+                {
+                    yield return new WaitForSeconds(attackTemplate.m_burstInterval);
+                    elapsed += attackTemplate.m_burstInterval;
+                    if (!CanKeepCasting(target)) break;
+                    if (attackTemplate.m_perBurstResourceUsage && !TryConsumeAttackStamina(attackTemplate)) break;
+                    SpawnProjectile(target, attackTemplate);
+                    burstsFired++;
                 }
-      }
-  
-            // Raise skill
+            }
+
+            EndLoopingAttack();
+            if (elapsed < ProjectileAttackDuration)
+            {
+                yield return new WaitForSeconds(ProjectileAttackDuration - elapsed);
+            }
+            FinishAttack();
+            _attackCoroutine = null;
+        }
+
+        private bool CanKeepCasting(Character target)
+        {
+            return !(Context.Companion?.isDefeated ?? true) && target != null && !target.IsDead();
+        }
+
+        private void EndLoopingAttack()
+        {
+            if (!_inLoopingAttack) return;
+            _inLoopingAttack = false;
+
+            if (Context.ZAnim != null)
+            {
+                Context.ZAnim.SetTrigger(AttackAbortTrigger);
+            }
+            else if (Context.Animator != null && Context.HasAnimatorParameter(AttackAbortTrigger))
+            {
+                Context.Animator.SetTrigger(AttackAbortTrigger);
+            }
+        }
+
+        public override void CancelAttack()
+        {
+            EndLoopingAttack();
+            base.CancelAttack();
+        }
+
+        private void SpawnProjectile(Character target, Attack attackTemplate)
+        {
+            if (attackTemplate?.m_attackProjectile == null || target == null) return;
+
+            // CRITICAL: For support staves, apply the buff directly to the friendly target
+            // This prevents the AOE from accidentally buffing enemies
+            if (_isSupportStaff)
+            {
+                SpawnSupportStaffEffect(target, attackTemplate);
+                return;
+            }
+
+            Vector3 spawnPos = Context.Transform.position + Vector3.up * ProjectileSpawnHeight + Context.Transform.forward * 0.5f;
+            Vector3 targetPos = target.transform.position + Vector3.up * 1f;
+            Vector3 direction = (targetPos - spawnPos).normalized;
+            GameObject projectileObj = UnityEngine.Object.Instantiate(attackTemplate.m_attackProjectile, spawnPos, Quaternion.LookRotation(direction));
+
+            // Projectiles, Aoes and SpawnAbility summons all start from IProjectile.Setup (owner, velocity, noise, hit,
+            // weapon, ammo; Projectile.cs:260-271); without it a SpawnAbility never spawns and an Aoe has no owner.
+            HitData hitData = Context.CreateHitData(target);
+            projectileObj.GetComponent<IProjectile>()?.Setup(
+                Context.Character,
+                direction * attackTemplate.m_projectileVel,
+                attackTemplate.m_attackHitNoise,
+                hitData,
+                Context.CurrentWeapon,
+                null);
+
+            if (CompanionCombat.VerboseLogging)
+            {
+                Debug.Log($"[StaffBehavior] Spawned {attackTemplate.m_attackProjectile.name} at {spawnPos} toward {target.m_name}, " +
+                    $"damage: {hitData.m_damage.GetTotalDamage():F1}");
+            }
+
             Context.CompanionSkills?.RaiseSkill(Context.GetWeaponSkillType(), 1f);
         }
         
@@ -1324,7 +1356,11 @@ HitData hitData = Context.CreateHitData(target);
             // Spawn the visual effect at the friendly target's position
             Vector3 targetPos = friendlyTarget.transform.position;
             GameObject effectObj = UnityEngine.Object.Instantiate(attackTemplate.m_attackProjectile, targetPos, Quaternion.identity);
-            
+
+            // An ownerless Aoe skips its friend/enemy test (Aoe.ShouldHit) and would buff enemies standing inside it.
+            effectObj.GetComponent<IProjectile>()?.Setup(Context.Character, Vector3.zero, attackTemplate.m_attackHitNoise,
+                null, Context.CurrentWeapon, null);
+
             // CRITICAL: Modify the spawned AOE to only affect friendlies, not enemies
             var aoe = effectObj.GetComponent<Aoe>();
             if (aoe != null)
@@ -1543,6 +1579,10 @@ HitData hitData = Context.CreateHitData(target);
                 adjustedCost = stats.GetEitrCost(baseEitrCost, magicSkill);
             }
             
+            var chainCasting = Context.Character?.GetSEMan()?.GetStatusEffect(Archetypes.StatusEffects.StatusEffectManager.EFFECT_CHAIN_CASTING.GetStableHashCode())
+                as Archetypes.StatusEffects.Expert.ChainCastingEffect;
+            if (chainCasting != null && chainCasting.TryFreeCast()) return true;
+
             // Try to use eitr
             if (stats.UseEitr(adjustedCost))
             {

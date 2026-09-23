@@ -474,7 +474,7 @@ namespace FiresCore.Utilities
             float dMinusZ = playerPosition.z - worldBounds.min.z;
             float dPlusZ = worldBounds.max.z - playerPosition.z;
 
-            Debug.Log($"[ENVBOX-DBG] inside-check: box='{gameObject.name}' size={BoxSize} playerPos={playerPosition} " +
+            if (FiresCore.Logging.FiresLogger.VerboseEnabled) Debug.Log($"[ENVBOX-DBG] inside-check: box='{gameObject.name}' size={BoxSize} playerPos={playerPosition} " +
                       $"INSIDE={inside} worldMin={worldBounds.min} worldMax={worldBounds.max} " +
                       $"distWalls[-X={dMinusX:F1} +X={dPlusX:F1} -Y={dMinusY:F1} +Y={dPlusY:F1} -Z={dMinusZ:F1} +Z={dPlusZ:F1}]");
         }
@@ -671,7 +671,7 @@ namespace FiresCore.Utilities
                     break;
             }
 
-            Debug.Log($"[ENVBOX-DBG] ApplySkyboxOverride: box='{gameObject.name}' mode={CurrentSkyboxMode} " +
+            if (FiresCore.Logging.FiresLogger.VerboseEnabled) Debug.Log($"[ENVBOX-DBG] ApplySkyboxOverride: box='{gameObject.name}' mode={CurrentSkyboxMode} " +
                       $"enclosure={(m_enclosureMesh != null ? "built" : "NULL")} dungeonEnvForced={m_dungeonEnvForced}.");
         }
 
@@ -873,7 +873,7 @@ namespace FiresCore.Utilities
             // Heavy diagnostics: BoxSize, top-cap flag, WORLD center + world min/max bounds, and geometry counts.
             // If the crypt/play area sits outside these world bounds, the sky WILL leak past a wall.
             Bounds worldBounds = GetWorldBounds();
-            Debug.Log($"[ENVBOX-DBG] CreateEnclosureMesh: box='{gameObject.name}' BoxSize={BoxSize} includeTop={includeTop} " +
+            if (FiresCore.Logging.FiresLogger.VerboseEnabled) Debug.Log($"[ENVBOX-DBG] CreateEnclosureMesh: box='{gameObject.name}' BoxSize={BoxSize} includeTop={includeTop} " +
                       $"localScale={transform.localScale} color={color} cull=Off(double-sided) " +
                       $"worldCenter={worldBounds.center} worldMin={worldBounds.min} worldMax={worldBounds.max} " +
                       $"verts={vertices.Count} tris={triangles.Count / 3}");
@@ -1366,7 +1366,7 @@ namespace FiresCore.Utilities
             // main-mesh shell to rebuild anymore (removed — the enclosure shell + forced env are the whole interior).
 
             Bounds worldBounds = GetWorldBounds();
-            Debug.Log($"[ENVBOX-DBG] ReconfigureBoxToBounds: box='{gameObject.name}' newCenter={worldCenter} " +
+            if (FiresCore.Logging.FiresLogger.VerboseEnabled) Debug.Log($"[ENVBOX-DBG] ReconfigureBoxToBounds: box='{gameObject.name}' newCenter={worldCenter} " +
                       $"requestedSize={size} appliedBoxSize={BoxSize} worldMin={worldBounds.min} worldMax={worldBounds.max}.");
         }
 

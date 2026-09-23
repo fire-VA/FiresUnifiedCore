@@ -28,6 +28,11 @@ namespace FiresCore.Npc.Archetypes
         private const float OneHandedBerserkerAffinity = 5f;
         private const float OneHandedTankAffinity = 3f;
         private const float MinSubArchetypeScoreThreshold = 5f;
+
+        /// <summary>Archetype the player picked in the radial menu (int ArchetypeClass); honored while the gear still fits it.</summary>
+        public const string ZdoArchetypeOverride = "companion_archetype_override";
+        /// <summary>Hybrid sub-archetype the player picked in the radial menu; honored from HYBRID_UNLOCK_LEVEL.</summary>
+        public const string ZdoSubArchetypeOverride = "companion_sub_archetype_override";
         private const float CritChancePerLevel = 0.005f;
         private const float PaladinBlockPriorityScale = 0.8f;
         private const float RangerAttackRange = 18f;
@@ -90,7 +95,9 @@ namespace FiresCore.Npc.Archetypes
         private CompanionProgression _progression;
         private StaminaManager _staminaManager;
         private Character _character;
-        
+        private ZNetView _nview;
+        private bool _hybridUnlockedAtLastEval;
+
         // Statistics tracking
         private ArchetypeStatistics _statistics;
         private float _blockingStartTime;
@@ -185,7 +192,8 @@ namespace FiresCore.Npc.Archetypes
             _progression = GetComponent<CompanionProgression>();
             _staminaManager = GetComponent<StaminaManager>();
             _character = GetComponent<Character>();
-            
+            _nview = GetComponent<ZNetView>();
+
             // Initialize statistics
             _statistics = new ArchetypeStatistics();
             
@@ -197,9 +205,36 @@ namespace FiresCore.Npc.Archetypes
         {
             // Evaluate archetype on start (delayed to ensure inventory is loaded)
             Invoke(nameof(EvaluateArchetype), 0.5f);
-            
+
             // Try to load saved statistics
             LoadStatistics();
+
+            if (_progression != null) _progression.OnAttributeChanged += OnProgressionChanged;
+        }
+
+        /// <summary>
+        /// Level changes re-scale the archetype bonuses, and crossing HYBRID_UNLOCK_LEVEL (a level-up or a late vault
+        /// restore) picks the hybrid sub-archetype there and then instead of at the next gear change.
+        /// </summary>
+        private void OnProgressionChanged()
+        {
+            if (_currentArchetype == ArchetypeClass.None) return;
+            ApplyArchetypeStatModifiers();
+            if (AbilityUnlockSystem.HasUnlockedHybrid(CompanionLevel) == _hybridUnlockedAtLastEval) return;
+            EvaluateSubArchetype(_currentArchetype);
+            NotifyArchetypeListeners();
+        }
+
+        private void NotifyArchetypeListeners()
+        {
+            GetComponent<HybridAbilityManager>()?.RefreshHybridDefinition();
+            GetComponent<Combat.EmergencyEvasion.EmergencyEvasionManager>()?.OnArchetypeChanged();
+        }
+
+        private ArchetypeClass ReadArchetypeChoice(string zdoKey)
+        {
+            if (_nview == null || !_nview.IsValid()) return ArchetypeClass.None;
+            return (ArchetypeClass)_nview.GetZDO().GetInt(zdoKey, (int)ArchetypeClass.None);
         }
         
         private void Update()
@@ -228,6 +263,9 @@ namespace FiresCore.Npc.Archetypes
                 case ArchetypeClass.Rogue:
                     UpdateRogueBehavior();
                     break;
+                case ArchetypeClass.Monk:
+                    ApplyDpsDirective();
+                    break;
                 case ArchetypeClass.Ranger:
                     UpdateRangerBehavior();
                     break;
@@ -245,6 +283,8 @@ namespace FiresCore.Npc.Archetypes
         
         private void OnDestroy()
         {
+            if (_progression != null) _progression.OnAttributeChanged -= OnProgressionChanged;
+
             // Finalize statistics before destruction
             _statistics?.FinalizeTracking();
             
@@ -275,7 +315,14 @@ namespace FiresCore.Npc.Archetypes
         public void EvaluateArchetype()
         {
             if (_companion == null || _companion.ownerPlayerId == 0) return;
-            
+
+            var chosen = ReadArchetypeChoice(ZdoArchetypeOverride);
+            if (chosen != ArchetypeClass.None && IsArchetypeStillValid(chosen))
+            {
+                if (chosen != _currentArchetype) SetArchetype(chosen);
+                return;
+            }
+
             // Evaluate best archetype based on CURRENTLY EQUIPPED items (not storage)
             var newArchetype = EvaluateBestArchetype();
             
@@ -589,6 +636,7 @@ namespace FiresCore.Npc.Archetypes
             // Fire events
             OnArchetypeAssigned?.Invoke(newArchetype);
             OnLegacyArchetypeAssigned?.Invoke(_legacyArchetype);
+            NotifyArchetypeListeners();
             
             // ALWAYS log archetype changes - important for debugging role assignment
             if (oldArchetype != newArchetype)
@@ -634,12 +682,11 @@ namespace FiresCore.Npc.Archetypes
         {
             _subArchetype = ArchetypeClass.None;
             _subDefinition = null;
-            
-            if (_inventory == null) return;
-            
+
             // LEVEL GATE: Sub-archetypes only unlock at level 25+
             int level = CompanionLevel;
-            if (level < AbilityUnlockSystem.HYBRID_UNLOCK_LEVEL)
+            _hybridUnlockedAtLastEval = AbilityUnlockSystem.HasUnlockedHybrid(level);
+            if (!_hybridUnlockedAtLastEval)
             {
                 if (VerboseLogging)
                 {
@@ -647,6 +694,15 @@ namespace FiresCore.Npc.Archetypes
                 }
                 return;
             }
+
+            var chosenSub = ReadArchetypeChoice(ZdoSubArchetypeOverride);
+            if (chosenSub != ArchetypeClass.None && chosenSub != primaryArchetype && HybridArchetypeDefinitions.GetHybrid(primaryArchetype, chosenSub) != null)
+            {
+                AssignSubArchetype(primaryArchetype, chosenSub, "picked in the radial menu");
+                return;
+            }
+
+            if (_inventory == null) return;
             
             // Score potential sub-archetypes based on what's in storage AND backup slots
             var archetypeScores = new Dictionary<ArchetypeClass, float>();
@@ -776,36 +832,31 @@ namespace FiresCore.Npc.Archetypes
             // Only assign sub-archetype if there's meaningful equipment for it
             if (bestScore >= MinSubArchetypeScoreThreshold)
             {
-                _subArchetype = bestSub;
-                _subDefinition = ArchetypeRegistry.GetDefinition(bestSub);
-                
-                // Always log sub-archetype assignment for debugging
-                Debug.Log($"[Archetype] {_companion?.companionName} sub-archetype: {_subArchetype} (score: {bestScore:F1})");
-                
-                // Notify hybrid ability manager to refresh
-                var hybridManager = GetComponent<HybridAbilityManager>();
-                if (hybridManager != null)
-                {
-                    hybridManager.RefreshHybridDefinition();
-                }
-                
-                // Trigger compendium discovery for this hybrid
-                try
-                {
-                    var owner = _companion?.GetOwner();
-                    if (owner != null)
-                    {
-                        FiresCore.Bridge.CompanionEventBridge.RaiseHybridUnlocked(owner, (int)primaryArchetype, (int)bestSub);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"[ArchetypeController] Hybrid compendium discovery error: {ex.Message}");
-                }
+                AssignSubArchetype(primaryArchetype, bestSub, $"score {bestScore:F1}");
             }
             else if (VerboseLogging)
             {
                 Debug.Log($"[Archetype] {_companion?.companionName} no sub-archetype (best score: {bestScore:F1})");
+            }
+        }
+
+        private void AssignSubArchetype(ArchetypeClass primaryArchetype, ArchetypeClass sub, string reason)
+        {
+            _subArchetype = sub;
+            _subDefinition = ArchetypeRegistry.GetDefinition(sub);
+            Debug.Log($"[Archetype] {_companion?.companionName} sub-archetype: {_subArchetype} ({reason})");
+
+            try
+            {
+                var owner = _companion?.GetOwner();
+                if (owner != null)
+                {
+                    FiresCore.Bridge.CompanionEventBridge.RaiseHybridUnlocked(owner, (int)primaryArchetype, (int)sub);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[ArchetypeController] Hybrid compendium discovery error: {ex.Message}");
             }
         }
         
@@ -945,7 +996,13 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         public void ForceReevaluate()
         {
+            var before = _currentArchetype;
             EvaluateArchetype();
+            if (_currentArchetype == before && _currentArchetype != ArchetypeClass.None)
+            {
+                EvaluateSubArchetype(_currentArchetype);
+                NotifyArchetypeListeners();
+            }
         }
         
         #endregion
@@ -957,6 +1014,7 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         private void ConfigureForArchetype(ArchetypeClass archetype)
         {
+            ResetCombatTuning();
             switch (archetype)
             {
                 case ArchetypeClass.Tank:
@@ -981,8 +1039,33 @@ namespace FiresCore.Npc.Archetypes
                     ConfigureAsHealer();
                     break;
             }
+            _combat?.RefreshCombatContext();
         }
-        
+
+        private bool _combatBaseCaptured;
+        private float _baseBlockChance;
+        private float _baseParryChance;
+        private float _baseAttackRange;
+
+        /// <summary>
+        /// The ConfigureAs* methods scale or replace CompanionCombat's tuning; starting each archetype from the values the
+        /// companion spawned with keeps repeat assignments from compounding and drops the last archetype's range.
+        /// </summary>
+        private void ResetCombatTuning()
+        {
+            if (_combat == null) return;
+            if (!_combatBaseCaptured)
+            {
+                _baseBlockChance = _combat.blockChance;
+                _baseParryChance = _combat.parryChance;
+                _baseAttackRange = _combat.attackRange;
+                _combatBaseCaptured = true;
+            }
+            _combat.blockChance = _baseBlockChance;
+            _combat.parryChance = _baseParryChance;
+            _combat.attackRange = _baseAttackRange;
+        }
+
         /// <summary>
         /// Applies archetype stat modifiers to companion stats.
         /// These scale with companion level.

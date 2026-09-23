@@ -4,11 +4,11 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Fixes hair and beard attachments rendering at a hundred times their size on Fires NPC bodies.
-    /// VisEquipment.AttachItem sets position and rotation but never scale, so a modded style whose root scale is
-    /// not 1 loses that factor and inherits the joint's instead. After attach, the instance's world scale is
-    /// restored to the attach child's authored world scale. Only bodies with a CompanionController are touched,
-    /// and skinned attachments are skipped since they follow the bones.
+    /// Sizes rigid attachments (hair, beards, helmets, weapons) on Fires NPC bodies: the attach child's authored world
+    /// scale times the body's own scale, so a giant's sword and hair grow with the giant and a dwarf's shrink.
+    /// VisEquipment.AttachItem keeps the item's world size and never touches scale, which pins items to player size on
+    /// scaled bodies and made modded styles whose root scale is not 1 render a hundred times too large. Only bodies with
+    /// a CompanionController are touched; skinned attachments follow the bones and are skipped.
     /// </summary>
     [HarmonyPatch(typeof(VisEquipment), "AttachItem")]
     internal static class NpcAttachmentScaleFix
@@ -41,7 +41,8 @@ namespace FiresCore.Npc
             if (Mathf.Approximately(jointLossy.x, 0f) || Mathf.Approximately(jointLossy.y, 0f) || Mathf.Approximately(jointLossy.z, 0f))
                 return;
 
-            Vector3 corrected = new Vector3(authored.x / jointLossy.x, authored.y / jointLossy.y, authored.z / jointLossy.z);
+            float bodyScale = __instance.transform.lossyScale.y;
+            Vector3 corrected = new Vector3(authored.x * bodyScale / jointLossy.x, authored.y * bodyScale / jointLossy.y, authored.z * bodyScale / jointLossy.z);
 
             // Only touch it when meaningfully wrong — vanilla-authored items already match, and a
             // no-op write every re-equip would be pointless churn.

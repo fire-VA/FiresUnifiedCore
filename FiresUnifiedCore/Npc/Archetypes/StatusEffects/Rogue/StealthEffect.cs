@@ -122,7 +122,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
                 string[] particlePrefabs = new[]
                 {
                     "vfx_ghost_death",     // Ghost death/spawn effect
-                    "vfx_Wraith_hit",      // Wraith hit effect
+                    "vfx_wraith_hit",      // Wraith hit effect
                     "vfx_ice_destroyed",   // Ice particles (ghostly looking)
                 };
                 
@@ -180,18 +180,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
             }
         }
         
-        private void SpawnVFX(string prefabName, Vector3 position)
-        {
-            try
-            {
-                var prefab = ZNetScene.instance?.GetPrefab(prefabName);
-                if (prefab != null)
-                {
-                    Object.Instantiate(prefab, position, Quaternion.identity);
-                }
-            }
-            catch { }
-        }
+        private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
         
         private void ApplyVanishImmunity()
         {

@@ -116,7 +116,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Rogue
         {
             m_character?.Message(MessageHud.MessageType.TopLeft, "Holy Assassination!");
             AbilityFXManager.SpawnEffect("vfx_ghost_death", m_character?.transform.position ?? Vector3.zero, null, 0.6f);
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character?.transform.position ?? Vector3.zero, null, 0.5f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character?.transform.position ?? Vector3.zero, null, 0.5f);
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)

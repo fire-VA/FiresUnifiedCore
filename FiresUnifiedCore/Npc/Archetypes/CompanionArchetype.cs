@@ -180,108 +180,18 @@ namespace FiresCore.Npc.Archetypes
         }
         
         /// <summary>
-        /// Checks if an item is a support/buff staff.
-        /// Support staves include: shield staves, protection staves, healing staves, and restoration staves.
+        /// A Blood Magic staff: protection, the summoning staves (Dead Raiser, Trollstav, Spirit Caller) and 1.0's blood
+        /// staves. That school is the Cleric's; Elemental Magic is the Mage's.
         /// </summary>
         public static bool IsSupportStaff(ItemDrop.ItemData item)
         {
-            if (item?.m_shared == null) return false;
-            
-            // Must be a staff (elemental or blood magic skill)
-            var skill = item.m_shared.m_skillType;
-            if (skill != Skills.SkillType.ElementalMagic && 
-                skill != Skills.SkillType.BloodMagic)
-            {
-                // Some support staves might not have magic skill - check prefab name
-                string prefabCheck = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-                if (!prefabCheck.Contains("staff"))
-                    return false;
-            }
-            
-            string weaponName = item.m_shared.m_name?.ToLowerInvariant() ?? "";
-            string prefabName = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-            
-            // Check for known support staff patterns
-            // Valheim support staves:
-            // - StaffShield (protection staff)
-            // - StaffGreenRoots (root/entangle - could be support)
-            // - StaffClusterbomb (bubble shield)
-            if (prefabName.Contains("staffshield") ||
-                prefabName.Contains("staff_shield") ||
-                prefabName.Contains("staffclusterbomb") ||
-                prefabName.Contains("clusterbomb") ||
-                weaponName.Contains("$item_staffshield") ||
-                weaponName.Contains("shield") ||
-                weaponName.Contains("protection") ||
-                weaponName.Contains("greenroots") ||
-                weaponName.Contains("gentle") ||
-                weaponName.Contains("restoration") ||
-                weaponName.Contains("heal") ||
-                weaponName.Contains("bubble"))
-            {
-                return true;
-            }
-            
-            // Check for shield-type status effect on the staff
-            if (item.m_shared.m_equipStatusEffect != null)
-            {
-                string effectName = item.m_shared.m_equipStatusEffect.name?.ToLowerInvariant() ?? "";
-                if (effectName.Contains("shield") || effectName.Contains("protect"))
-                    return true;
-            }
-            
-            // Check for attack status effect that applies shields/protection
-            if (item.m_shared.m_attackStatusEffect != null)
-            {
-                string attackEffect = item.m_shared.m_attackStatusEffect.name?.ToLowerInvariant() ?? "";
-                if (attackEffect.Contains("shield") || attackEffect.Contains("protect") || attackEffect.Contains("bubble"))
-                    return true;
-            }
-            
-            return false;
+            return item?.m_shared?.m_skillType == Skills.SkillType.BloodMagic;
         }
         
-        /// <summary>
-        /// Checks if an item is an offensive staff (fire, ice, lightning, etc.)
-        /// </summary>
+        /// <summary>An Elemental Magic staff: fire, frost, lightning, cluster bomb, roots.</summary>
         public static bool IsOffensiveStaff(ItemDrop.ItemData item)
         {
-            if (item?.m_shared == null) return false;
-            
-            // Must be a staff (elemental or blood magic)
-            var skill = item.m_shared.m_skillType;
-            if (skill != Skills.SkillType.ElementalMagic && 
-                skill != Skills.SkillType.BloodMagic)
-                return false;
-            
-            // If it's a support staff, it's not offensive
-            if (IsSupportStaff(item))
-                return false;
-            
-            string prefabName = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-            string weaponName = item.m_shared.m_name?.ToLowerInvariant() ?? "";
-            
-            // Check for known offensive staff patterns
-            if (prefabName.Contains("staff_fireball") ||
-                prefabName.Contains("staff_ice") ||
-                prefabName.Contains("staff_lightning") ||
-                prefabName.Contains("staff_skeleton") ||
-                prefabName.Contains("staff_dead") ||
-                weaponName.Contains("fire") ||
-                weaponName.Contains("frost") ||
-                weaponName.Contains("ice") ||
-                weaponName.Contains("lightning") ||
-                weaponName.Contains("dead") ||
-                weaponName.Contains("skeleton"))
-            {
-                return true;
-            }
-            
-            // If it has projectile attacks, it's offensive
-            if (item.m_shared.m_attack?.m_attackProjectile != null)
-                return true;
-            
-            return true; // Default to offensive for unknown staves
+            return item?.m_shared?.m_skillType == Skills.SkillType.ElementalMagic;
         }
         
         /// <summary>

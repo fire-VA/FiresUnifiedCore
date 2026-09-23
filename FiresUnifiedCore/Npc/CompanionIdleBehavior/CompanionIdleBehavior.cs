@@ -5,6 +5,7 @@ using FiresCore.Npc.Combat;
 using FiresCore.Npc.IdleBehaviors;
 using FiresCore.Npc.Movement;
 using FiresCore.Npc.NpcMode;
+using FiresCore.Npc.Animation;
 
 namespace FiresCore.Npc
 {
@@ -237,7 +238,6 @@ namespace FiresCore.Npc
         private Vector3 _currentHeadLookDirection;
         private Vector3 _targetHeadLookDirection;
         private Transform _headBone;
-        private Quaternion _headBaseRotation;
         private bool _headBoneFound = false;
         private float _headLookWeight = 0f;
         private float _targetHeadLookWeight = 0f;
@@ -252,11 +252,12 @@ namespace FiresCore.Npc
 
         // Chair sitting
         private bool _isSittingOnChair;
+        private ZNetView _nview;
+        private bool _wasOwner;
         private float _chairSitEndTime;
         private float _chairHardTimeoutTime;
         private float _lastChairCheckTime;
-        private GameObject _currentChairObject;
-        
+
         // UI interaction freeze
         private bool _isPlayerInteracting;
         private float _interactionStartTime;
@@ -315,6 +316,7 @@ namespace FiresCore.Npc
             _animator = GetComponentInChildren<Animator>(true);
             _zanim = GetComponent<ZSyncAnimation>();
             _npcModule = GetComponent<CompanionNpcModule>();
+            _nview = GetComponent<ZNetView>();
         }
 
         private void Start()
@@ -369,7 +371,20 @@ namespace FiresCore.Npc
             {
                 return;
             }
-            
+
+            // Only the machine owning the companion lives its idle life. Every other client used to run it too, each
+            // playing its own emotes (broadcast triggers) and repeating every chore. Head look-at is local and cosmetic.
+            if (_nview == null || !_nview.IsValid()) return;
+            if (!_nview.IsOwner())
+            {
+                if (_wasOwner) ReleaseIdleOnOwnershipLoss();
+                _wasOwner = false;
+                UpdateHeadLookAt();
+                return;
+            }
+            if (!_wasOwner) ClearInheritedPoses();
+            _wasOwner = true;
+
             if (_stateController == null)
                 _stateController = GetComponent<CompanionStateController>();
             
@@ -508,6 +523,28 @@ namespace FiresCore.Npc
             ApplyHeadLookAt();
         }
 
+        /// <summary>Drops the chore, seat and emote this machine was running once another machine owns the companion.</summary>
+        private void ReleaseIdleOnOwnershipLoss()
+        {
+            CancelActiveSubBehavior();
+            if (_isSittingOnChair) StandUpFromChair();
+            if (_character != null) InteractableOccupancyManager.ReleaseAllForOccupant(_character);
+            _isPlayingEmote = false;
+            _currentEmote = "";
+            _isPersistentEmote = false;
+            _hasActiveDestination = false;
+        }
+
+        /// <summary>
+        /// A new owner inherits the previous owner's seat and emote bools through the ZDO (a saved companion keeps them
+        /// too), but none of the seat or emote state that would end them, so they are released unless it really sits.
+        /// </summary>
+        private void ClearInheritedPoses()
+        {
+            if (_interactionBehavior != null && _interactionBehavior.IsAttached) return;
+            PlayerAnimationCatalog.StopAll(_zanim, _animator);
+        }
+
         #endregion
 
         #region Public API
@@ -598,14 +635,10 @@ namespace FiresCore.Npc
             
             _lastCombatTime = Time.time;
             
-            // Clear any active emote
+            // Clear any active emote: a loop left running here slid across the ground into combat.
             if (_isPlayingEmote && !string.IsNullOrEmpty(_currentEmote))
             {
-                if (_zanim != null)
-                    _zanim.SetBool(_currentEmote, false);
-                if (_animator != null && HasAnimatorParameter(_currentEmote))
-                    _animator.SetBool(_currentEmote, false);
-                    
+                PlayerAnimationCatalog.StopEmotes(_zanim, _animator);
                 if (shouldLog)
                     Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} cleared combat-interrupted emote: {_currentEmote}");
             }
@@ -862,7 +895,7 @@ namespace FiresCore.Npc
                     }
                 }
                 
-                if (_currentWanderLeg < _totalWanderLegs && UnityEngine.Random.value < continueWanderChance)
+                if (WanderAllowed && _currentWanderLeg < _totalWanderLegs && UnityEngine.Random.value < continueWanderChance)
                 {
                     StartNextWanderLeg();
                     SetIdleState(IdleState.Wandering);
@@ -985,22 +1018,7 @@ namespace FiresCore.Npc
                 _stateController.ForceReset();
             }
             
-            // Clear emote animation bool
-            if (_isPlayingEmote && !string.IsNullOrEmpty(_currentEmote))
-            {
-                if (_zanim != null)
-                {
-                    _zanim.SetBool(_currentEmote, false);
-                }
-                if (_animator != null && HasAnimatorParameter(_currentEmote))
-                {
-                    _animator.SetBool(_currentEmote, false);
-                }
-                
-                if (VerboseLogging)
-                    Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} cleared emote bool: {_currentEmote}");
-            }
-            
+            // The emote itself is ended by ForceAnimationStateReset below.
             _isPlayingEmote = false;
             _currentEmote = "";
             _isPersistentEmote = false;
@@ -1048,10 +1066,10 @@ namespace FiresCore.Npc
             if (!FiresCore.Bridge.ModUiRegistry.IsAnyOpen())
                 return false;
 
-            if (FiresCore.Bridge.NpcUiBridge.IsInventoryOpenFor(_companion.gameObject))
+            if (FiresCore.Bridge.NpcUiBridge.IsInventoryOpenFor(gameObject))
                 return true;
 
-            if (FiresCore.Bridge.NpcUiBridge.IsStatsOpenFor(_companion.gameObject))
+            if (FiresCore.Bridge.NpcUiBridge.IsStatsOpenFor(gameObject))
                 return true;
 
             if (_npcModule == null)

@@ -100,7 +100,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Monk
         protected override void OnEffectApplied()
         {
             m_character?.Message(MessageHud.MessageType.TopLeft, "Sacred Fist!");
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character?.transform.position ?? Vector3.zero, null, 0.5f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character?.transform.position ?? Vector3.zero, null, 0.5f);
             AbilityFXManager.SpawnEffect("vfx_Cold", m_character?.transform.position ?? Vector3.zero, null, 0.3f);
         }
         
@@ -381,7 +381,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Monk
             {
                 case 0:
                     hitData.m_damage.m_fire += FireDamage;
-                    AbilityFXManager.SpawnEffect("vfx_spray_fire", m_character?.transform.position ?? Vector3.zero, null, 0.3f);
+                    AbilityFXManager.SpawnEffect("vfx_FireballHit", m_character?.transform.position ?? Vector3.zero, null, 0.3f);
                     break;
                 case 1:
                     hitData.m_damage.m_frost += FrostDamage;

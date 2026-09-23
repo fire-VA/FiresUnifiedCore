@@ -6,21 +6,26 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Catches Unity's render-time body-mesh rejection ("SkinnedMeshRenderer: Rendering stopped because the data
-    /// for mesh ... does not match"), which leaves an NPC invisible. The bone-count check cannot predict it (the
-    /// live bodyfem matches the baked rig's count but not its vertex layout) and Unity offers no API, so this
-    /// listens for the message on the threaded log event (Unity raises it from its skinning work, so the
-    /// main-thread event never delivers it), blacklists that mesh and rig pairing for the session, and swaps
-    /// affected bodies to their best remaining candidate. Every body-mesh assignment site consults the blacklist.
+    /// Keeps NPC bodies off meshes Unity refuses to skin ("SkinnedMeshRenderer: Rendering stopped because the data
+    /// for mesh ... does not match"), which leaves an NPC invisible. The bone-count check cannot predict it: the
+    /// baked bodyfem has the rig's bone and vertex counts, yet Unity rejects it on the rig and accepts the vanilla
+    /// Player's bodyfem. So a mesh whose vertex layout differs from its vanilla namesake's is refused up front.
+    /// Anything that still slips through is caught on the threaded log event (Unity raises the message from its
+    /// skinning work, so the main-thread event never delivers it): the pairing is blacklisted for the session and
+    /// affected bodies swap to their best remaining candidate. Every body-mesh assignment site consults
+    /// <see cref="IsAssignable"/>.
     /// </summary>
     public static class NpcBodyMeshGuard
     {
         private const string ErrorPrefix = "SkinnedMeshRenderer: Rendering stopped because the data for mesh '";
         private const string GoMarker = "Game Object '";
+        private const string PlayerPrefabName = "Player";
 
         private static bool _installed;
         private static bool _healing;
-        private static readonly HashSet<string> _rejected = new HashSet<string>();
+        private static readonly HashSet<(int Mesh, int Bones)> _rejected = new HashSet<(int, int)>();
+        private static readonly Dictionary<int, bool> _matchesVanillaLayout = new Dictionary<int, bool>();
+        private static readonly Dictionary<int, string> _layoutWhenJudged = new Dictionary<int, string>();
         private static readonly HashSet<string> _logged = new HashSet<string>();
         private static readonly HashSet<string> _healed = new HashSet<string>();
         private static readonly HashSet<string> _queued = new HashSet<string>();
@@ -55,20 +60,77 @@ namespace FiresCore.Npc
             return !(bones > 0 && binds > 0 && bones != binds);
         }
 
-        /// <summary>True when this mesh may be assigned to this renderer: the skeleton can skin it and
-        /// Unity hasn't already rejected the pairing this session.</summary>
+        /// <summary>True when this mesh may be assigned to this renderer: the skeleton can skin it, its vertex layout
+        /// matches the vanilla Player mesh of the same name, and Unity hasn't already rejected the pairing this
+        /// session.</summary>
         public static bool IsAssignable(Mesh mesh, SkinnedMeshRenderer smr)
-            => CanSkin(mesh, smr) && !IsRejected(mesh, smr);
+            => CanSkin(mesh, smr) && !IsRejected(mesh, smr) && MatchesVanillaLayout(mesh);
 
         internal static void LogOnce(string key, string message)
         {
             if (_logged.Add(key)) Debug.Log(message);
         }
 
-        private static string PairKey(Mesh mesh, SkinnedMeshRenderer skinnedRenderer)
+        private static (int, int) PairKey(Mesh mesh, SkinnedMeshRenderer skinnedRenderer)
         {
             int bones = skinnedRenderer.bones != null ? skinnedRenderer.bones.Length : 0;
-            return mesh.GetInstanceID() + "|" + bones;
+            return (mesh.GetInstanceID(), bones);
+        }
+
+        /// <summary>
+        /// False when the vanilla Player has a body mesh of the same name whose vertex layout differs. That mesh skins
+        /// on the Player rig, so the difference is what gets ours rejected. Judged once per mesh after ZNetScene loads.
+        /// </summary>
+        private static bool MatchesVanillaLayout(Mesh mesh)
+        {
+            int id = mesh.GetInstanceID();
+            if (_matchesVanillaLayout.TryGetValue(id, out bool matches)) return matches;
+
+            var player = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(PlayerPrefabName) : null;
+            if (player == null) return true;
+            var vanilla = FindModelMesh(player.GetComponent<VisEquipment>(), mesh.name);
+
+            string ours = LayoutSignature(mesh);
+            _layoutWhenJudged[id] = ours;
+            matches = vanilla == null || ReferenceEquals(vanilla, mesh) || LayoutSignature(vanilla) == ours;
+            _matchesVanillaLayout[id] = matches;
+            if (!matches)
+                Debug.Log($"[NpcBodyMeshGuard] '{mesh.name}' has a different vertex layout from the vanilla Player's " +
+                          $"(ours: {ours} | vanilla: {LayoutSignature(vanilla)}); NPC bodies use the vanilla mesh.");
+            return matches;
+        }
+
+        /// <summary>A rejected mesh's layout now, against the layout it had when first judged. A difference means
+        /// something rewrote the shared mesh after it was assigned.</summary>
+        internal static string DescribeRejectedLayout(Mesh mesh)
+        {
+            string now = LayoutSignature(mesh) + ", blendshapes " + mesh.blendShapeCount + ", readable " + mesh.isReadable;
+            if (!_layoutWhenJudged.TryGetValue(mesh.GetInstanceID(), out string judged)) return $"layout {now} (never judged)";
+            return now.StartsWith(judged, StringComparison.Ordinal)
+                ? $"layout {now} (unchanged since judged)"
+                : $"layout CHANGED since judged: was {judged} | now {now}";
+        }
+
+        private static Mesh FindModelMesh(VisEquipment playerVis, string meshName)
+        {
+            if (playerVis == null || playerVis.m_models == null) return null;
+            foreach (var model in playerVis.m_models)
+            {
+                if (model != null && model.m_mesh != null && model.m_mesh.name == meshName) return model.m_mesh;
+            }
+            return null;
+        }
+
+        private static string LayoutSignature(Mesh mesh)
+        {
+            var signature = new System.Text.StringBuilder();
+            signature.Append("verts ").Append(mesh.vertexCount).Append(", skin ").Append(mesh.skinWeightBufferLayout);
+            for (int stream = 0; stream < mesh.vertexBufferCount; stream++)
+                signature.Append(", stream").Append(stream).Append(' ').Append(mesh.GetVertexBufferStride(stream)).Append('B');
+            foreach (var attribute in mesh.GetVertexAttributes())
+                signature.Append(", ").Append(attribute.attribute).Append(' ').Append(attribute.format).Append('x')
+                    .Append(attribute.dimension).Append('@').Append(attribute.stream);
+            return signature.ToString();
         }
 
         private static void OnLogMessage(string condition, string stackTrace, LogType type)

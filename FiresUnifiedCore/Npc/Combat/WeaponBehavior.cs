@@ -1,6 +1,7 @@
 ﻿using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
+using HarmonyLib;
 using FiresCore.Npc.AI;
 
 namespace FiresCore.Npc.Combat
@@ -15,6 +16,9 @@ namespace FiresCore.Npc.Combat
     {
         protected CombatContext Context { get; private set; }
         protected MonoBehaviour Owner { get; private set; }
+
+        /// <summary>The item whose attacks this behaviour starts: the equipped weapon, or for bare hands the unarmed weapon.</summary>
+        protected virtual ItemDrop.ItemData AttackWeapon => Context.CurrentWeapon;
 
         // Common state
         protected float _lastAttackTime;
@@ -44,9 +48,11 @@ namespace FiresCore.Npc.Combat
         // Track if we're using native hit detection
         protected bool _usingNativeHitDetection;
 
-        // COMBO SYSTEM - leverages vanilla Attack chain system
-        protected float _comboWindowDuration = 0.5f; // Time window to continue combo (slightly larger than vanilla's 0.2s)
-        protected float _lastComboTime;
+        // COMBO SYSTEM - vanilla Attack.Start picks the chain level; this mirrors its choice for decisions.
+        // Attack.cs:243 chains only when the previous attack ended at most this long ago.
+        private const float VanillaChainWindow = 0.2f;
+        private static readonly AccessTools.FieldRef<Attack, int> StartedChainLevelRef =
+            AccessTools.FieldRefAccess<Attack, int>("m_currentAttackCainLevel");
         protected int _maxChainLevel;
         protected bool _comboActive;
 
@@ -130,7 +136,7 @@ namespace FiresCore.Npc.Combat
             UpdateAttackTimingFromWeapon();
 ConfigureAI();
 
-        _hasSecondaryAttack = Context.EquipmentData?.SecondaryAttack != null;
+            _hasSecondaryAttack = HasUsableSecondaryAttack();
           _maxChainLevel = Context.AttackChainLevels;
 
      if (CompanionCombat.VerboseLogging)
@@ -225,6 +231,16 @@ ConfigureAI();
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// A secondary exists when it has an animation (ItemDrop.ItemData.HaveSecondaryAttack). A spear throw spends the
+        /// spear from the companion's own inventory (CompanionConsumablePatches) and it lands retrievable.
+        /// </summary>
+        private bool HasUsableSecondaryAttack()
+        {
+            var weapon = AttackWeapon;
+            return weapon != null && weapon.HaveSecondaryAttack();
         }
 
         protected virtual bool ShouldUseSecondaryAttack(Character target)
@@ -335,7 +351,7 @@ ConfigureAI();
       _comboActive = false;
      UpdateAttackTimingFromWeapon();
 
-     _hasSecondaryAttack = Context.EquipmentData?.SecondaryAttack != null;
+            _hasSecondaryAttack = HasUsableSecondaryAttack();
        _maxChainLevel = Context.AttackChainLevels;
 
   if (CompanionCombat.VerboseLogging)
@@ -375,18 +391,21 @@ ConfigureAI();
             }
       }
 
+        /// <summary>
+        /// The chain lapses once the last attack has been over for longer than vanilla's window
+        /// (Humanoid.m_timeSinceLastAttack, Humanoid.cs:333-338).
+        /// </summary>
         protected virtual void UpdateComboState()
         {
-            if (_comboActive && Time.time - _lastComboTime > _comboWindowDuration)
-            {
-                _comboActive = false;
-                _attackChainLevel = 0;
-                _previousAttackInstance = null; // Clear previous attack when combo window expires
+            if (!_comboActive || _isAttacking || Context.Humanoid == null) return;
+            if (Context.Humanoid.GetTimeSinceLastAttack() <= VanillaChainWindow) return;
 
-                if (CompanionCombat.VerboseLogging)
-                {
-                    Debug.Log($"[{GetType().Name}] Combo window expired, resetting chain");
-                }
+            _comboActive = false;
+            _attackChainLevel = 0;
+
+            if (CompanionCombat.VerboseLogging)
+            {
+                Debug.Log($"[{GetType().Name}] Combo window expired, resetting chain");
             }
         }
 
@@ -394,7 +413,6 @@ ConfigureAI();
         {
  if (_maxChainLevel <= 1) return;
 
-            _lastComboTime = Time.time;
   _comboActive = true;
 
    int previousLevel = _attackChainLevel;
@@ -453,14 +471,14 @@ ConfigureAI();
                 Debug.Log($"[{GetType().Name}] Target: {target?.m_name ?? "NULL"}, SecondaryAttack: {secondaryAttack}");
             }
 
-            if (Context.Humanoid == null || Context.CurrentWeapon == null)
+            if (Context.Humanoid == null || AttackWeapon == null)
             {
                 if (CompanionCombat.VerboseLogging)
                     Debug.Log($"[{GetType().Name}] FAILED: No humanoid or weapon");
                 return false;
             }
 
-            var shared = Context.CurrentWeapon.m_shared;
+            var shared = AttackWeapon.m_shared;
             if (shared == null)
             {
                 if (CompanionCombat.VerboseLogging)
@@ -486,35 +504,13 @@ ConfigureAI();
 
             float attackDuration = _animationDuration;
 
-            // Calculate time since last attack for combo system
-            float timeSinceLastAttack = Time.time - _lastAttackTime;
-            
-            // For combo chaining, we use previousAttack if within the window
-            Attack previousAttack = null;
-            if (!secondaryAttack && _previousAttackInstance != null && timeSinceLastAttack < _comboWindowDuration)
-            {
-                previousAttack = _previousAttackInstance;
-                if (CompanionCombat.VerboseLogging)
-                {
-                    Debug.Log($"[{GetType().Name}] Passing previousAttack for combo chain (timeSince: {timeSinceLastAttack:F2}s)");
-                }
-            }
+            // Humanoid.StartAttack's inputs (Humanoid.cs:199): the last attack started and the time since an attack
+            // animation last ended; Attack.Start continues the chain from them (Attack.cs:239-245).
+            Attack previousAttack = _previousAttackInstance;
+            float timeSinceLastAttack = Context.Humanoid.GetTimeSinceLastAttack();
+            bool chainedAttack = !secondaryAttack && attackTemplate.m_attackChainLevels > 1;
 
-            // Predict animation name for lock acquisition
-            string predictedAnimName = attackTemplate.m_attackAnimation ?? "attack";
-            if (!secondaryAttack && attackTemplate.m_attackChainLevels > 1)
-            {
-                // The actual chain level is determined by Attack.Start() based on previousAttack
-                int predictedChainLevel = 0;
-                if (previousAttack != null && previousAttack.m_attackAnimation == attackTemplate.m_attackAnimation)
-                {
-                    // Try to predict what chain level we'll be at
-                    predictedChainLevel = _attackChainLevel;
-                }
-                predictedAnimName = $"{attackTemplate.m_attackAnimation}{predictedChainLevel}";
-            }
-
-            if (!Context.TryLockAnimation(predictedAnimName, attackDuration, CombatContext.AnimationPriority.Attack))
+            if (!Context.TryLockAnimation(attackTemplate.m_attackAnimation, attackDuration, CombatContext.AnimationPriority.Attack))
             {
                 if (CompanionCombat.VerboseLogging)
                     Debug.Log($"[{GetType().Name}] FAILED: Animation lock failed");
@@ -538,7 +534,6 @@ ConfigureAI();
             bool nativeStarted = false;
 
             // Try to start via native Attack.Start()
-            // CRITICAL: Pass previousAttack for combo chain support!
             if (Context.AnimEvent != null)
             {
                 try
@@ -549,12 +544,12 @@ ConfigureAI();
                         Context.ZAnim,
                         Context.AnimEvent,
                         visEquip,
-                        Context.CurrentWeapon,
-                        previousAttack,           // Pass previous attack for combos!
-                        timeSinceLastAttack,      // Vanilla checks if < 0.2s for chaining
+                        AttackWeapon,
+                        previousAttack,
+                        timeSinceLastAttack,
                         drawPercentage
                     );
-                    
+
                     if (nativeStarted && CompanionCombat.VerboseLogging)
                     {
                         Debug.Log($"[{GetType().Name}] Attack.Start() succeeded - vanilla will handle animation and timing");
@@ -566,15 +561,14 @@ ConfigureAI();
                     nativeStarted = false;
                 }
             }
-            
-            // Determine the actual animation name (Attack.Start() may have modified it)
-            string actualAnimName = predictedAnimName;
-            if (nativeStarted && !secondaryAttack && attackTemplate.m_attackChainLevels > 1)
+
+            if (nativeStarted && chainedAttack)
             {
-                // Attack.Start() handles chain levels internally, but we need to know for our tracking
-                // We can infer from the current chain level field if accessible
-                actualAnimName = $"{attackTemplate.m_attackAnimation}{_attackChainLevel}";
+                _attackChainLevel = StartedChainLevelRef(_activeAttackInstance);
             }
+            string actualAnimName = chainedAttack
+                ? $"{attackTemplate.m_attackAnimation}{_attackChainLevel}"
+                : attackTemplate.m_attackAnimation;
 
             // Register with the attack bridge for animation monitoring (fallback if animation events don't fire)
             _attackBridge?.SetActiveAttack(_activeAttackInstance, actualAnimName, hitNormalizedTime, fallbackDelay);
@@ -596,23 +590,24 @@ ConfigureAI();
             
             CommitToDecision(attackDuration);
 
+            if (nativeStarted)
+            {
+                _previousAttackInstance = _activeAttackInstance;
+            }
+
             if (secondaryAttack)
             {
                 _lastSecondaryTime = Time.time;
-                // Secondary attacks don't contribute to combo chain
+                _comboActive = false;
+                _attackChainLevel = 0;
             }
             else
             {
-                // Store this attack as previousAttack for next combo
-                _previousAttackInstance = _activeAttackInstance;
                 AdvanceComboChain();
             }
 
             // Start coroutine as safety net (CompanionAttackBridge handles primary timing now)
-            _attackCoroutine = Owner.StartCoroutine(TrackAttackAndTriggerHit(target, attackTemplate, attackDuration, secondaryAttack));
-
-            // Broadcast animation to other clients
-            Context.BroadcastRPC("RPC_CompanionAttack", actualAnimName, Context.GetAttackAnimationIndex());
+            _attackCoroutine = Owner.StartCoroutine(TrackAttackAndTriggerHit(target, attackDuration, secondaryAttack));
 
             if (CompanionCombat.VerboseLogging)
             {
@@ -631,7 +626,7 @@ ConfigureAI();
         /// IMPORTANT: We no longer delay for hitDelay - the native system handles timing.
         /// We just poll to check if hit detection fired, and only intervene if it didn't.
         /// </summary>
-        protected IEnumerator TrackAttackAndTriggerHit(Character target, Attack attackTemplate, float totalDuration, bool isSecondary = false)
+        protected IEnumerator TrackAttackAndTriggerHit(Character target, float totalDuration, bool isSecondary = false)
         {
             if (CompanionCombat.VerboseLogging)
                 Debug.Log($"[{GetType().Name}] Attack monitor started - duration: {totalDuration:F2}s");
@@ -700,7 +695,7 @@ ConfigureAI();
                     catch (System.Exception ex)
                     {
                         Debug.LogError($"[{GetType().Name}] Safety fallback OnAttackTrigger failed: {ex.Message}");
-                        DoFallbackHitDetection(attackTemplate, isSecondary ? 1.2f : 1f);
+                        DoFallbackHitDetection(isSecondary ? 1.2f : 1f);
                         hitWasTriggered = true;
                     }
                     break;
@@ -726,10 +721,10 @@ ConfigureAI();
       /// </summary>
      protected virtual void RaiseWeaponSkill(float factor = 1f)
       {
-          if (Context.CurrentWeapon?.m_shared == null) return;
+          if (AttackWeapon?.m_shared == null) return;
         if (Context.CompanionSkills == null) return;
      
-       var skillType = Context.CurrentWeapon.m_shared.m_skillType;
+       var skillType = AttackWeapon.m_shared.m_skillType;
             if (skillType != Skills.SkillType.None)
  {
            Context.CompanionSkills.RaiseSkill(skillType, factor);
@@ -764,10 +759,10 @@ ConfigureAI();
             var skills = Context.Companion?.GetSkills();
             float adjustedCost = baseCost;
             
-            if (skills != null && Context.CurrentWeapon != null)
+            if (skills != null && AttackWeapon != null)
             {
-                var weaponSkill = Context.CurrentWeapon.m_shared?.m_skillType ?? Skills.SkillType.None;
-                adjustedCost = stats.GetStaminaCost(baseCost, weaponSkill);
+                var weaponSkill = AttackWeapon.m_shared?.m_skillType ?? Skills.SkillType.None;
+                adjustedCost = stats.GetAttackStaminaCost(baseCost, weaponSkill);
             }
             
             // Try to use stamina
@@ -790,15 +785,14 @@ ConfigureAI();
    /// <summary>
       /// Fallback hit detection - only used if Attack.OnAttackTrigger() fails.
         /// </summary>
-     protected virtual void DoFallbackHitDetection(Attack attackTemplate, float damageMultiplier = 1f)
+     protected virtual void DoFallbackHitDetection(float damageMultiplier = 1f)
         {
-            Debug.Log($"[{GetType().Name}] ========== DoFallbackHitDetection START ==========");
-
-if (Context.Humanoid == null || Context.CurrentWeapon == null)
-     {
-     Debug.Log($"[{GetType().Name}] FAILED: No humanoid or weapon");
-       return;
-  }
+            if (Context.Humanoid == null || AttackWeapon == null)
+            {
+                if (CompanionCombat.VerboseLogging)
+                    Debug.Log($"[{GetType().Name}] DoFallbackHitDetection: no humanoid or weapon");
+                return;
+            }
 
             float attackRange = Context.AttackRange > 0 ? Context.AttackRange : 2.5f;
 float attackAngle = Context.AttackAngle > 0 ? Context.AttackAngle : 90f;
@@ -824,50 +818,21 @@ float attackAngle = Context.AttackAngle > 0 ? Context.AttackAngle : 90f;
             if (angle <= attackAngle / 2f && BaseAI.IsEnemy(Context.Character, character))
               {
         charactersInRange.Add(character);
-           Debug.Log($"[{GetType().Name}] Valid target: {character.m_name} at {dist:F1}m, {angle:F0}°");
      }
     }
       }
 
-            if (charactersInRange.Count == 0)
-     {
-      Debug.Log($"[{GetType().Name}] No targets hit");
-                Debug.Log($"[{GetType().Name}] ========== DoFallbackHitDetection END (NO HITS) ==========");
-  return;
-   }
-
             foreach (var hitTarget in charactersInRange)
-    {
-             Debug.Log($"[{GetType().Name}] Applying damage to: {hitTarget.m_name}");
-
-    HitData hit = Context.EquipmentData?.CreateWeaponHitData(hitTarget, Context.Character, damageMultiplier);
-
-      if (hit == null)
-                {
-     Debug.Log($"[{GetType().Name}] Creating manual HitData");
-hit = new HitData();
-            hit.m_damage = Context.CurrentWeapon.GetDamage();
-         hit.m_damage.Modify(damageMultiplier);
-            hit.m_pushForce = 30f;
-     hit.m_backstabBonus = Context.CurrentWeapon.m_shared?.m_backstabBonus ?? 3f;
-     hit.m_staggerMultiplier = attackTemplate?.m_staggerMultiplier ?? 1f;
-          hit.m_point = hitTarget.transform.position + Vector3.up;
-        hit.m_dir = (hitTarget.transform.position - Context.Transform.position).normalized;
-                 hit.m_attacker = Context.Character.GetZDOID();
-   hit.m_skill = Context.CurrentWeapon.m_shared.m_skillType;
-                }
-
-              float healthBefore = hitTarget.GetHealth();
-          hitTarget.Damage(hit);
-              float healthAfter = hitTarget.GetHealth();
-
-    Debug.Log($"[{GetType().Name}] {hitTarget.m_name}: {healthBefore:F1} -> {healthAfter:F1} (dealt {healthBefore - healthAfter:F1})");
-
-      PlayWeaponHitEffects(hitTarget, hit);
+            {
+                // CreateWeaponHitData applies the attacker's SEMan.ModifyAttack last, as vanilla does before Damage.
+                HitData hit = Context.EquipmentData.CreateWeaponHitData(hitTarget, Context.Character, damageMultiplier);
+                hitTarget.Damage(hit);
+                PlayWeaponHitEffects(hitTarget, hit);
                 RaiseWeaponSkill(damageMultiplier);
             }
 
-            Debug.Log($"[{GetType().Name}] ========== DoFallbackHitDetection END (HIT {charactersInRange.Count}) ==========");
+            if (CompanionCombat.VerboseLogging)
+                Debug.Log($"[{GetType().Name}] DoFallbackHitDetection hit {charactersInRange.Count} target(s)");
   }
 
   protected void ExecuteFallbackAttack(Character target, float hitDelay = -1f, bool isSecondary = false)
@@ -875,14 +840,14 @@ hit = new HitData();
         if (CompanionCombat.VerboseLogging)
             Debug.Log($"[{GetType().Name}] ========== ExecuteFallbackAttack START ==========");
 
-            if (Context.CurrentWeapon == null)
+            if (AttackWeapon == null)
             {
           if (CompanionCombat.VerboseLogging)
               Debug.Log($"[{GetType().Name}] FAILED: No weapon equipped");
       return;
             }
 
-            var shared = Context.CurrentWeapon.m_shared;
+            var shared = AttackWeapon.m_shared;
   Attack attackTemplate = isSecondary ? shared?.m_secondaryAttack : shared?.m_attack;
 
      if (attackTemplate == null)
@@ -904,7 +869,7 @@ hit = new HitData();
  float duration = _animationDuration > 0 ? _animationDuration : 1f;
       float damageMultiplier = isSecondary ? 1.2f : 1f;
 
- string animTrigger = isSecondary ? GetSecondaryAttackAnimation() : Context.GetAttackAnimationTrigger(_attackChainLevel);
+ string animTrigger = isSecondary ? attackTemplate.m_attackAnimation : Context.GetAttackAnimationTrigger(_attackChainLevel);
 
  Context.PlayAttackAnimation(animTrigger, Context.GetAttackAnimationIndex());
 
@@ -917,7 +882,7 @@ hit = new HitData();
 
     if (isSecondary) _lastSecondaryTime = Time.time;
 
-          _attackCoroutine = Owner.StartCoroutine(FallbackAttackCoroutine(attackTemplate, hitDelay, duration, damageMultiplier));
+          _attackCoroutine = Owner.StartCoroutine(FallbackAttackCoroutine(hitDelay, duration, damageMultiplier));
 
   if (!isSecondary) AdvanceComboChain();
 
@@ -925,7 +890,7 @@ hit = new HitData();
                 Debug.Log($"[{GetType().Name}] ========== ExecuteFallbackAttack END ==========");
      }
 
-        private IEnumerator FallbackAttackCoroutine(Attack attackTemplate, float hitDelay, float duration, float damageMultiplier = 1f)
+        private IEnumerator FallbackAttackCoroutine(float hitDelay, float duration, float damageMultiplier = 1f)
         {
   yield return new WaitForSeconds(hitDelay);
 
@@ -935,7 +900,7 @@ hit = new HitData();
    yield break;
          }
 
-         DoFallbackHitDetection(attackTemplate, damageMultiplier);
+         DoFallbackHitDetection(damageMultiplier);
 
             float remainingTime = duration - hitDelay;
             if (remainingTime > 0)
@@ -945,16 +910,6 @@ hit = new HitData();
 
      FinishAttack();
             _attackCoroutine = null;
-        }
-
-        protected virtual string GetSecondaryAttackAnimation()
-      {
-            var secondaryAttack = Context.EquipmentData?.SecondaryAttack;
-if (secondaryAttack != null && !string.IsNullOrEmpty(secondaryAttack.m_attackAnimation))
-            {
-       return secondaryAttack.m_attackAnimation;
-            }
-            return "attack_secondary";
         }
 
         protected virtual void UpdateNativeAttack()
@@ -1010,11 +965,10 @@ if (secondaryAttack != null && !string.IsNullOrEmpty(secondaryAttack.m_attackAni
 
         protected virtual void PlayWeaponHitEffects(Character target, HitData hit)
         {
-          if (Context.CurrentWeapon?.m_shared?.m_hitEffect != null)
-     {
-        Context.CurrentWeapon.m_shared.m_hitEffect.Create(hit.m_point, Quaternion.LookRotation(hit.m_dir));
-      }
-   }
+            var hitEffect = AttackWeapon?.m_shared?.m_hitEffect;
+            if (hitEffect == null || !FiresCore.Npc.Core.NpcFxRange.NearAnyPlayer(hit.m_point)) return;
+            hitEffect.Create(hit.m_point, Quaternion.LookRotation(hit.m_dir));
+        }
 
         #endregion
     }

@@ -67,6 +67,17 @@ namespace FiresCore.Npc
         /// </summary>
         private Vector3? FindValidWanderDestination(int maxAttempts = 5)
         {
+            // A follower milling about while its owner stands still takes the formation's idle-spread slot, so a
+            // group arranges itself around the player instead of clumping. This is the only consumer of that slot
+            // now that CompanionCombatMovement's own relaxed-follow wander is gone; idle wander is one system.
+            var formation = _companion?.GetFormationController();
+            if (formation != null)
+            {
+                Vector3 spread = formation.GetIdleSpreadTarget();
+                if (spread != Vector3.zero && IsDestinationReachable(spread))
+                    return spread;
+            }
+
             Vector3? bestCandidate = null;
             float bestScore = -1f;
 
@@ -180,9 +191,11 @@ namespace FiresCore.Npc
                 {
                     Color paintColor = GetTerrainPaintColor(terrainComp, position);
 
-                    if (paintColor.b > 0.5f)
+                    // Paved (0,0,1) and cultivated (0,1,0), Heightmap.m_paintMask*; 1.0 DeepSnow paints (1,1,1).
+                    bool redLow = paintColor.r < 0.5f;
+                    if (redLow && paintColor.b > 0.5f && paintColor.g < 0.5f)
                         score += pavedPathBonus;
-                    else if (paintColor.g > 0.5f)
+                    else if (redLow && paintColor.g > 0.5f && paintColor.b < 0.5f)
                         score += cultivatedBonus;
                 }
 
@@ -236,43 +249,38 @@ namespace FiresCore.Npc
 
         private bool HasNearbyPathPieces(Vector3 position)
         {
-            string[] pathPrefabs = new string[]
-            {
-                "stone_floor", "wood_floor", "stone_path", "wood_path",
-                "stonecutter", "iron_floor", "crystal_floor", "dvergr_floor",
-                "goblin_floor", "ashwood_floor", "darkwood_floor"
-            };
-
             Collider[] nearby = Physics.OverlapSphere(position, 2f);
             foreach (var collider in nearby)
             {
-                if (collider == null) continue;
-
-                string objName = collider.gameObject.name.ToLowerInvariant();
-                foreach (var pathPrefab in pathPrefabs)
-                {
-                    if (objName.Contains(pathPrefab))
-                        return true;
-                }
-
-                var piece = collider.GetComponent<Piece>();
-                if (piece != null)
-                {
-                    string pieceName = piece.m_name?.ToLowerInvariant() ?? "";
-                    if (pieceName.Contains("floor") || pieceName.Contains("path") || pieceName.Contains("stone") || pieceName.Contains("tile"))
-                        return true;
-                }
+                var piece = collider != null ? collider.GetComponentInParent<Piece>() : null;
+                if (piece != null && IsFloorPiece(piece))
+                    return true;
             }
 
             return false;
         }
 
+        // Every 1.0 floor piece has "floor" in its prefab name (wood, stone, iron, blackmarble, grausten, ashwood);
+        // piece_brazierfloor is a light.
+        private static bool IsFloorPiece(Piece piece)
+        {
+            string name = Utils.GetPrefabName(piece.gameObject);
+            return name.IndexOf(FloorPieceToken, System.StringComparison.OrdinalIgnoreCase) >= 0
+                && name.IndexOf(BrazierPieceToken, System.StringComparison.OrdinalIgnoreCase) < 0;
+        }
+
+        private const string FloorPieceToken = "floor";
+        private const string BrazierPieceToken = "brazier";
+
         #endregion
 
         #region Wandering
 
+        private bool WanderAllowed => _companion == null || CompanionBehaviorToggles.IsWanderEnabled(_companion);
+
         private void StartIdleWander()
         {
+            if (!WanderAllowed) return;
             if (Time.time - _lastWanderCompleteTime < MinWanderCooldown)
             {
                 if (VerboseLogging)

@@ -170,7 +170,7 @@ namespace FiresCore.Npc.WildSpawn
 
             BiomeFactionProfile profile = GetBiomeProfile(biome);
             CompanionFaction faction    = WeightedPickFaction(profile.FactionWeights, rng);
-            ArchetypeClass archetype    = RollArchetype(faction, rng);
+            ArchetypeClass archetype    = RollArchetype(faction, CompanionGearTable.BiomeTier(biome), rng);
             int stars                   = WeightedPickIndex(profile.StarWeights, rng);
 
             var controller = GetComponent<CompanionController>();
@@ -216,12 +216,11 @@ namespace FiresCore.Npc.WildSpawn
                       $"at {transform.position.ToString("F0")}. m_faction = {character?.m_faction}");
         }
 
-        // FactionWeights = [Neutral, Bandit, Cultist]; StarWeights = [0,1,2]; GearTier = biome gear tier for the loadout roll.
+        // FactionWeights = [Neutral, Bandit, Cultist]; StarWeights = [0,1,2]. Gear tier comes from CompanionGearTable.BiomeTier.
         private struct BiomeFactionProfile
         {
             public int[] FactionWeights; // [Neutral, Bandit, Cultist]
             public int[] StarWeights;    // [0s, 1s, 2s]
-            public int   GearTier;
         }
 
         private static BiomeFactionProfile GetBiomeProfile(Heightmap.Biome biome)
@@ -233,68 +232,60 @@ namespace FiresCore.Npc.WildSpawn
                     {
                         FactionWeights = new[] { 100, 0, 0 },
                         StarWeights    = new[] { 92, 7, 1 },
-                        GearTier       = 0,
                     };
                 case Heightmap.Biome.BlackForest:
                     return new BiomeFactionProfile
                     {
                         FactionWeights = new[] { 70, 30, 0 },
                         StarWeights    = new[] { 85, 12, 3 },
-                        GearTier       = 1,
                     };
                 case Heightmap.Biome.Swamp:
                     return new BiomeFactionProfile
                     {
                         FactionWeights = new[] { 50, 50, 0 },
                         StarWeights    = new[] { 80, 15, 5 },
-                        GearTier       = 2,
                     };
                 case Heightmap.Biome.Mountain:
                     return new BiomeFactionProfile
                     {
                         FactionWeights = new[] { 30, 50, 20 },
                         StarWeights    = new[] { 75, 18, 7 },
-                        GearTier       = 3,
                     };
                 case Heightmap.Biome.Plains:
                     return new BiomeFactionProfile
                     {
                         FactionWeights = new[] { 20, 60, 20 },
                         StarWeights    = new[] { 70, 22, 8 },
-                        GearTier       = 4,
                     };
                 case Heightmap.Biome.Mistlands:
                     return new BiomeFactionProfile
                     {
                         FactionWeights = new[] { 10, 40, 50 },
                         StarWeights    = new[] { 65, 25, 10 },
-                        GearTier       = 5,
                     };
                 case Heightmap.Biome.AshLands:
                     return new BiomeFactionProfile
                     {
                         FactionWeights = new[] { 5, 40, 55 },
                         StarWeights    = new[] { 55, 30, 15 },
-                        GearTier       = 6,
                     };
                 case Heightmap.Biome.DeepNorth:
                     return new BiomeFactionProfile
                     {
                         FactionWeights = new[] { 5, 45, 50 },
                         StarWeights    = new[] { 55, 30, 15 },
-                        GearTier       = 6,
                     };
                 default:
                     return new BiomeFactionProfile
                     {
                         FactionWeights = new[] { 100, 0, 0 },
                         StarWeights    = new[] { 95, 5, 0 },
-                        GearTier       = 0,
                     };
             }
         }
 
-        private static ArchetypeClass RollArchetype(CompanionFaction faction, System.Random rng)
+        /// <summary>From the faction's pool, only archetypes whose kit exists at the biome's tier (no staff means no mage).</summary>
+        private static ArchetypeClass RollArchetype(CompanionFaction faction, int biomeTier, System.Random rng)
         {
             ArchetypeClass[] pool;
             switch (faction)
@@ -325,6 +316,7 @@ namespace FiresCore.Npc.WildSpawn
                     pool = new[] { ArchetypeClass.Berserker };
                     break;
             }
+            pool = CompanionGearTable.ArchetypesWithKitAtOrBelow(pool, biomeTier);
             return pool[rng.Next(pool.Length)];
         }
 

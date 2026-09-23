@@ -1,74 +1,164 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 
 namespace FiresCore.Npc.WildSpawn
 {
     /// <summary>
-    /// Hand-authored name pools per <see cref="CompanionFaction"/>. The
-    /// dresser picks one deterministically using the ZDO-seeded RNG so a
-    /// given wild companion keeps their name across reloads.
+    /// Every companion name, split by gender. The gender is rolled first and the name drawn from that gender's pool,
+    /// so the body always matches the name; <see cref="IsFemaleName"/> answers from these same pools for names that
+    /// were assigned before (saved companions, static NPCs).
     /// </summary>
     internal static class CompanionNamePool
     {
-        public static string Roll(CompanionFaction faction, Random rng)
+        public static string RollFaction(CompanionFaction faction, bool isFemale, Random rng)
         {
-            string[] pool = GetPool(faction);
-            if (pool == null || pool.Length == 0) return "Wanderer";
+            string[] pool = FactionPool(faction, isFemale);
             return pool[rng.Next(pool.Length)];
         }
 
-        private static string[] GetPool(CompanionFaction faction)
+        public static string RollViking(bool isGiant, bool isDwarf, bool isFemale, Func<int, int> next)
+        {
+            string[] names;
+            string[] epithets;
+            if (isGiant) { names = isFemale ? GiantFemale : GiantMale; epithets = GiantEpithets; }
+            else if (isDwarf) { names = isFemale ? DwarfFemale : DwarfMale; epithets = DwarfEpithets; }
+            else { names = isFemale ? VikingFemale : VikingMale; epithets = StandardEpithets; }
+
+            string name = names[next(names.Length)];
+            string epithet = epithets[next(epithets.Length)];
+            return string.IsNullOrEmpty(epithet) ? name : $"{name} {epithet}";
+        }
+
+        /// <summary>True when the first word of <paramref name="name"/> is in any female pool.</summary>
+        public static bool IsFemaleName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            return FemaleNames.Contains(name.Split(' ')[0]);
+        }
+
+        private static string[] FactionPool(CompanionFaction faction, bool isFemale)
         {
             switch (faction)
             {
-                case CompanionFaction.Neutral: return _neutral;
-                case CompanionFaction.Bandit:  return _bandit;
-                case CompanionFaction.Cultist: return _cultist;
-                default:                       return _neutral;
+                case CompanionFaction.Bandit:  return Bandit;
+                case CompanionFaction.Cultist: return isFemale ? CultistFemale : CultistMale;
+                default:                       return isFemale ? NeutralFemale : NeutralMale;
             }
         }
 
         // Neutral: pastoral / Norse, recruitable wanderers.
-        private static readonly string[] _neutral = new[]
+        private static readonly string[] NeutralMale =
         {
-            "Astrid",  "Bjorn",    "Eira",     "Finnr",    "Gunna",    "Halvor",
-            "Ingrid",  "Jarl",     "Kari",     "Leif",     "Magnus",   "Nanna",
-            "Olaf",    "Ragnhild", "Sigrun",   "Thora",    "Ulf",      "Vali",
-            "Wulf",    "Yrsa",     "Aesa",     "Brand",    "Cedric",   "Dagny",
-            "Eyvind",  "Freyja",   "Gudrun",   "Haakon",   "Ivar",     "Jorunn",
-            "Ketill",  "Liv",      "Mikael",   "Njal",     "Oddr",     "Ragna",
-            "Snorri",  "Tyra",     "Uffe",     "Vanya",    "Birger",   "Estrid",
-            "Floki",   "Gest",     "Heidrun",  "Ivarr",    "Lofn",     "Ormr",
-            "Steinar", "Torvald"
+            "Bjorn", "Finnr", "Halvor", "Jarl", "Leif", "Magnus", "Olaf", "Ulf", "Vali", "Wulf", "Brand", "Cedric",
+            "Eyvind", "Haakon", "Ivar", "Ketill", "Mikael", "Njal", "Oddr", "Snorri", "Uffe", "Vanya", "Birger",
+            "Floki", "Gest", "Ivarr", "Ormr", "Steinar", "Torvald"
         };
 
-        // Bandit: harsh / guttural, hostile raiders.
-        private static readonly string[] _bandit = new[]
+        private static readonly string[] NeutralFemale =
         {
-            "Grimjaw",    "Skullsplit", "Blackmaw",  "Redhand",    "Boneripper",
-            "Ashfang",    "Sootbeard",  "Ironjaw",   "Cragg",      "Thresh",
-            "Gorm",       "Hrolf",      "Kraaken",   "Vulg",       "Brak",
-            "Rask",       "Skarn",      "Urd",       "Varg",       "Ygg",
-            "Knar",       "Flay",       "Sneer",     "Spite",      "Groth",
-            "Morg",       "Durn",       "Crag",      "Hask",       "Pyke",
-            "Skor",       "Rook",       "Gutt",      "Bonn",       "Tuskr",
-            "Rend",       "Slash",      "Vex",       "Grell",      "Drog",
-            "Brigg",      "Hagr",       "Morrok",    "Snarl",      "Throg",
-            "Vorn",       "Wurm",       "Xok",       "Ymir",       "Zarn"
+            "Astrid", "Eira", "Gunna", "Ingrid", "Kari", "Nanna", "Ragnhild", "Sigrun", "Thora", "Yrsa", "Aesa",
+            "Dagny", "Freyja", "Gudrun", "Jorunn", "Liv", "Ragna", "Tyra", "Estrid", "Heidrun", "Lofn"
+        };
+
+        // Bandit: harsh nicknames that fit either gender.
+        private static readonly string[] Bandit =
+        {
+            "Grimjaw", "Skullsplit", "Blackmaw", "Redhand", "Boneripper", "Ashfang", "Sootbeard", "Ironjaw", "Cragg",
+            "Thresh", "Gorm", "Hrolf", "Kraaken", "Vulg", "Brak", "Rask", "Skarn", "Urd", "Varg", "Ygg", "Knar",
+            "Flay", "Sneer", "Spite", "Groth", "Morg", "Durn", "Crag", "Hask", "Pyke", "Skor", "Rook", "Gutt", "Bonn",
+            "Tuskr", "Rend", "Slash", "Vex", "Grell", "Drog", "Brigg", "Hagr", "Morrok", "Snarl", "Throg", "Vorn",
+            "Wurm", "Xok", "Ymir", "Zarn"
         };
 
         // Cultist: archaic / occult, reserved for future content.
-        private static readonly string[] _cultist = new[]
+        private static readonly string[] CultistMale =
         {
-            "Azareth",    "Balthys",   "Corven",    "Daemorn",   "Ephrian",
-            "Fenriss",    "Gormath",   "Hethras",   "Isolde",    "Jorvath",
-            "Kaldris",    "Lysarn",    "Morgaeth",  "Nyxandra",  "Orsolai",
-            "Pyrrhus",    "Quorath",   "Rhovanion", "Sibyll",    "Thessra",
-            "Ulfgar",     "Varryn",    "Wessenar",  "Xylandra",  "Yrminne",
-            "Zarethos",   "Aelfric",   "Brynhild",  "Cassimir",  "Drevanth",
-            "Ebonmere",   "Faelinn",   "Gaunther",  "Hespera",   "Iorveth",
-            "Jassamyn",   "Kelthren",  "Liliath",   "Mordain",   "Nessarr",
-            "Oakenveil",  "Primavis",  "Quentris",  "Raevolur",  "Sonnerai",
-            "Thyrmond",   "Ulwyss",    "Velmeri",   "Wyncarr",   "Xaermith"
+            "Azareth", "Balthys", "Corven", "Daemorn", "Ephrian", "Fenriss", "Gormath", "Hethras", "Jorvath",
+            "Kaldris", "Lysarn", "Morgaeth", "Pyrrhus", "Quorath", "Rhovanion", "Ulfgar", "Varryn", "Wessenar",
+            "Zarethos", "Aelfric", "Cassimir", "Drevanth", "Ebonmere", "Gaunther", "Iorveth", "Kelthren", "Mordain",
+            "Nessarr", "Oakenveil", "Primavis", "Quentris", "Raevolur", "Thyrmond", "Ulwyss", "Wyncarr", "Xaermith"
         };
+
+        private static readonly string[] CultistFemale =
+        {
+            "Isolde", "Nyxandra", "Orsolai", "Sibyll", "Thessra", "Xylandra", "Yrminne", "Brynhild", "Faelinn",
+            "Hespera", "Jassamyn", "Liliath", "Sonnerai", "Velmeri"
+        };
+
+        // Generic Viking pools for companions without a wild faction (hammer-placed, static NPCs).
+        private static readonly string[] VikingMale =
+        {
+            "Bjorn", "Erik", "Ragnar", "Leif", "Harald", "Olaf", "Gunnar", "Ivar", "Sigurd", "Thorsten", "Ulf",
+            "Vidar", "Knut", "Sven", "Magnus", "Haldor", "Asmund", "Torbjorn", "Hakon", "Rolf", "Eirik", "Fenrir",
+            "Odin", "Baldr", "Freyr", "Tyr", "Bragi", "Njord", "Heimdall", "Hodr", "Vali", "Vidir", "Agnar",
+            "Arnfinn", "Birger", "Dag", "Egil", "Finn", "Gorm", "Halfdan", "Ingvar", "Jarl", "Ketil", "Leifr",
+            "Magni", "Njal", "Orm", "Peder"
+        };
+
+        private static readonly string[] VikingFemale =
+        {
+            "Astrid", "Freya", "Ingrid", "Sigrid", "Helga", "Thora", "Brynhild", "Gudrun", "Ragnhild", "Solveig",
+            "Eira", "Liv", "Saga", "Ylva", "Asa", "Hilda", "Sif", "Frigg", "Idunn", "Skuld", "Verdandi", "Urd", "Ran",
+            "Skadi", "Gerd", "Sigyn", "Nanna", "Eir", "Var", "Vor", "Snotra", "Fulla", "Alfhild", "Bothild", "Dagny",
+            "Embla", "Gunnhild", "Hervor", "Jorunn", "Kara"
+        };
+
+        private static readonly string[] GiantMale =
+        {
+            "Thrym", "Skrymir", "Utgard", "Hrungnir", "Thiazi", "Ymir", "Surtr", "Mimir", "Geirrod", "Vafthrudnir",
+            "Hymir", "Bergelmir", "Farbauti", "Gymir", "Bolthorn", "Hrimthurs", "Hraudung", "Gilling", "Baugi",
+            "Suttung", "Thjazi", "Fjalar", "Galar", "Mokkurkalfi", "Grimnir"
+        };
+
+        private static readonly string[] GiantFemale =
+        {
+            "Angrboda", "Gunnlod", "Gerdr", "Grid", "Jarnsaxa", "Gjalp", "Greip", "Hyrrokkin", "Bestla", "Rind",
+            "Skadi", "Gefjon", "Elli", "Fenja", "Menja", "Sinmara"
+        };
+
+        private static readonly string[] DwarfMale =
+        {
+            "Brokk", "Sindri", "Eitri", "Dvalin", "Durin", "Nyi", "Nordri", "Sudri", "Austri", "Vestri", "Alvis",
+            "Andvari", "Fafnir", "Hreidmar", "Regin", "Otr", "Litr", "Nain", "Nidi", "Nori", "Ori", "Bifur", "Bofur",
+            "Bombur", "Fili", "Kili", "Dori", "Gloin", "Thrain", "Thror", "Thorin", "Balin"
+        };
+
+        private static readonly string[] DwarfFemale =
+        {
+            "Disa", "Dufa", "Nott", "Dagrun", "Gullveig", "Hlif", "Hrund", "Svanhild", "Thorvi", "Vigdis", "Asny",
+            "Bergdis", "Grimhild", "Oddny", "Steinunn", "Thorunn"
+        };
+
+        private static readonly string[] StandardEpithets =
+        {
+            "", "", "", "", "",
+            "the Bold", "the Brave", "the Swift", "the Strong", "the Wise", "the Fearless", "the Wanderer",
+            "the Hunter", "the Shield", "the Axe", "Ironside", "Bloodaxe", "Fairhair", "Bluetooth", "Forkbeard",
+            "the Red", "the Black", "the White", "the Grey", "the Silent"
+        };
+
+        private static readonly string[] GiantEpithets =
+        {
+            "the Colossal", "the Mighty", "the Towering", "the Thunderous", "Mountain-Born", "the Enormous",
+            "the Titanic", "Stone-Crusher", "the Immense", "World-Shaker", "the Vast", "Cliff-Strider", "the Hulking",
+            "the Tremendous", "Giant-Blood"
+        };
+
+        private static readonly string[] DwarfEpithets =
+        {
+            "the Stout", "Iron-Forger", "Stone-Carver", "the Crafty", "Gold-Finder", "the Cunning", "Gem-Seeker",
+            "the Delver", "Deep-Walker", "the Artificer", "Anvil-Born", "the Stubborn", "Ore-Master", "the Ingenious",
+            "Cave-Dweller"
+        };
+
+        private static readonly HashSet<string> FemaleNames = BuildFemaleNames();
+
+        private static HashSet<string> BuildFemaleNames()
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pool in new[] { NeutralFemale, CultistFemale, VikingFemale, GiantFemale, DwarfFemale })
+                names.UnionWith(pool);
+            return names;
+        }
     }
 }

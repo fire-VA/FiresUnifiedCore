@@ -33,8 +33,13 @@ namespace FiresCore.Npc.IdleBehaviors
         private const float ShoreBackDist = 3f;
         private const float CastWaitMin = 12f;
         private const float CastWaitMax = 28f;
+        private const float CastAnimationDuration = 1.2f;
         private const float ReelDuration = 2f;
         private const string FishingRodPrefab = "FishingRod";
+
+        // Player rig parameters (player_animator): the throw, and the Bool that holds the rod's pull pose.
+        private const string CastTrigger = "fishingrod_throw";
+        private const string ReelPoseBool = "fishingrod_charge";
 
         #endregion
 
@@ -100,11 +105,33 @@ namespace FiresCore.Npc.IdleBehaviors
                 case FishPhase.Reeling:      return UpdateReeling();
                 case FishPhase.Collecting:   return UpdateCollecting();
                 case FishPhase.Complete:
+                    UnequipFishingRod();
                     Complete();
                     return true;
             }
             return false;
         }
+
+        /// <summary>Companion StartAttack never casts, so the rig is driven directly: throw on cast, pull pose while reeling.</summary>
+        protected override void OnPhaseChanged(FishPhase fromPhase, FishPhase toPhase)
+        {
+            if (toPhase == FishPhase.Casting)
+                ZAnim?.SetTrigger(CastTrigger);
+
+            if (toPhase == FishPhase.Reeling)
+                SetReelPose(true);
+            else if (fromPhase == FishPhase.Reeling)
+                SetReelPose(false);
+        }
+
+        public override void Cancel()
+        {
+            SetReelPose(false);
+            UnequipFishingRod();
+            base.Cancel();
+        }
+
+        private void SetReelPose(bool reeling) => ZAnim?.SetBool(ReelPoseBool, reeling);
 
         protected override FishPhase OnPhaseTimeout(FishPhase timedOut)
         {
@@ -226,14 +253,8 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             FaceTarget(_castTarget);
 
-            if (TimeInCurrentPhase < 0.3f)
-            {
-                Humanoid?.StartAttack(null, false);
-                return false;
-            }
-
-            bool stillAttacking = Character != null && Character.InAttack();
-            if (!stillAttacking && TimeInCurrentPhase > 1.2f)
+            bool stillThrowing = Character != null && Character.InAttack();
+            if (!stillThrowing && TimeInCurrentPhase > CastAnimationDuration)
             {
                 SetPhase(FishPhase.Waiting);
             }
@@ -248,7 +269,6 @@ namespace FiresCore.Npc.IdleBehaviors
             if (TimeInCurrentPhase >= _waitDuration)
             {
                 // Fish on the line — reel in
-                Humanoid?.StartAttack(null, false);
                 SetPhase(FishPhase.Reeling);
             }
 
@@ -269,15 +289,16 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool UpdateCollecting()
         {
+            // Rod first: the catch must not take the slot the rod came out of.
+            UnequipFishingRod();
+
             string caught = DetermineCatch(_activeBaitName);
-            if (!string.IsNullOrEmpty(caught))
+            if (!string.IsNullOrEmpty(caught) && AddFishToInventory(caught))
             {
-                AddFishToInventory(caught);
                 _fishCaught++;
                 LogVerbose($"Caught {caught}");
             }
 
-            UnequipFishingRod();
             NotifyOwner();
 
             Complete();
@@ -322,12 +343,13 @@ namespace FiresCore.Npc.IdleBehaviors
             return null;
         }
 
-        private bool IsWaterAt(Vector3 pos)
+        /// <summary>True where the solid ground (terrain or pieces) lies at least MinWaterDepth below the sea level.
+        /// No hit means no ground was found, which is not water.</summary>
+        public static bool IsWaterAt(Vector3 pos)
         {
-            if (ZoneSystem.instance == null) return false;
-            ZoneSystem.instance.GetSolidHeight(pos, out float groundY);
-            // Sea level in Valheim is y=30; water exists where terrain is submerged
-            return (30f - groundY) >= MinWaterDepth;
+            var zoneSystem = ZoneSystem.instance;
+            if (zoneSystem == null || !zoneSystem.GetSolidHeight(pos, out float groundY)) return false;
+            return zoneSystem.m_waterLevel - groundY >= MinWaterDepth;
         }
 
         /// <summary>
@@ -502,21 +524,18 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #region Inventory Helpers
 
-        private void AddFishToInventory(string fishPrefabName)
+        // Created from the prefab so m_dropPrefab is set and the fish survives save/load (Inventory.cs:88-96).
+        private bool AddFishToInventory(string fishPrefabName)
         {
             var storage = GetStorageInventory();
-            if (storage == null || ZNetScene.instance == null) return;
+            if (storage == null || ZNetScene.instance == null) return false;
 
             var prefab = ZNetScene.instance.GetPrefab(fishPrefabName);
-            if (prefab == null) return;
+            if (prefab == null || prefab.GetComponent<ItemDrop>() == null) return false;
 
-            var itemDrop = prefab.GetComponent<ItemDrop>();
-            if (itemDrop == null) return;
-
-            var fishItem = itemDrop.m_itemData.Clone();
-            fishItem.m_stack = 1;
-            if (storage.AddItem(fishItem))
-                SaveInventory();
+            if (!storage.AddItem(prefab, 1)) return false;
+            SaveInventory();
+            return true;
         }
 
         private bool HasFishingRodAvailable()

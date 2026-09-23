@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using FiresCore.Npc.Animation;
 
 namespace FiresCore.Npc.IdleBehaviors
 {
@@ -58,24 +59,13 @@ namespace FiresCore.Npc.IdleBehaviors
                             if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                                 Debug.Log($"[ResourceGathering] {Companion?.companionName} needs to get {_toolToPull?.m_shared?.m_name} from chest first");
                         }
-                        else if (CanCraftToolForResource(_targetResource))
+                        else if (TryPlanToolCraft(_targetResource))
                         {
-                            _craftWorkbench = FindNearestWorkbench();
-                            if (_craftWorkbench != null)
-                            {
-                                SetPhase(GatherPhase.MovingToWorkbench);
-                                MoveToPosition(_craftWorkbench.transform.position);
-                                CompanionChatHelper.ShowWorkingStatus(Companion, "Crafting a tool...");
+                            BeginToolCraft();
+                            CompanionChatHelper.ShowWorkingStatus(Companion, "Crafting a tool...");
 
-                                if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                                    Debug.Log($"[ResourceGathering] {Companion?.companionName} no tool in chests - will craft one at workbench");
-                            }
-                            else
-                            {
-                                Debug.LogWarning($"[ResourceGathering] {Companion?.companionName} cannot gather {_targetResource.Name} - no tool or workbench");
-                                CompanionChatHelper.QuickMessages.CantDoTask(Companion, $"I need a {_targetResource.RequiredTool.ToString().ToLower()}");
-                                SetPhase(GatherPhase.Complete);
-                            }
+                            if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
+                                Debug.Log($"[ResourceGathering] {Companion?.companionName} no tool in chests - will craft {_craftRecipe.m_item.name}");
                         }
                         else
                         {
@@ -184,6 +174,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         public override void Cancel()
         {
+            StopCraftingPose();
             CompanionChatHelper.ClearWorkingStatus(Companion);
             
             _combatMovement?.UnlockMovement();
@@ -192,6 +183,43 @@ namespace FiresCore.Npc.IdleBehaviors
             NotifyOwner();
             
             base.Cancel();
+        }
+        
+        protected override void Complete()
+        {
+            StopCraftingPose();
+            base.Complete();
+        }
+
+        protected override void SaveState()
+        {
+            StopCraftingPose();
+        }
+
+        protected override void RestoreState()
+        {
+            if (_currentPhase == GatherPhase.CraftingTool && _craftWorkbench != null)
+                PlayerAnimationCatalog.SetCrafting(_zanim, null, PlayerAnimationCatalog.CraftingFor(_craftWorkbench));
+        }
+
+        /// <summary>The station work pose is only held during CraftingTool; any exit from it has to end the pose.</summary>
+        private void StopCraftingPose()
+        {
+            if (_currentPhase == GatherPhase.CraftingTool)
+                PlayerAnimationCatalog.SetCrafting(_zanim, null, PlayerAnimationCatalog.NoCrafting);
+        }
+
+        private void BeginToolCraft()
+        {
+            if (_craftWorkbench != null)
+            {
+                SetPhase(GatherPhase.MovingToWorkbench);
+                MoveToPosition(_craftWorkbench.transform.position);
+                return;
+            }
+
+            StopMovement();
+            SetPhase(GatherPhase.CraftingTool);
         }
         
         private bool UpdateFindingResource()
@@ -310,8 +338,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 StopMovement();
                 FaceTarget(_craftWorkbench.transform.position);
-                _zanim?.SetBool("crafting", true);
-                _zanim?.SetBool("Working", true);
+                PlayerAnimationCatalog.SetCrafting(_zanim, null, PlayerAnimationCatalog.CraftingFor(_craftWorkbench));
                 SetPhase(GatherPhase.CraftingTool);
                 return false;
             }
@@ -337,10 +364,10 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Time.time - _phaseStartTime < CraftDuration)
                 return false;
 
-            _zanim?.SetBool("crafting", false);
-            _zanim?.SetBool("Working", false);
+            StopCraftingPose();
 
-            bool crafted = TryCraftToolForResource(_targetResource);
+            bool crafted = CraftPlannedTool();
+            _craftRecipe = null;
             _craftWorkbench = null;
 
             if (crafted)

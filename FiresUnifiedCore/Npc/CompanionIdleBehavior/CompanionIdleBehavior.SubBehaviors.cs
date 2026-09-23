@@ -24,7 +24,13 @@ namespace FiresCore.Npc
                 return _behaviorCoordinator;
             }
         }
-        
+
+        // Where the owner stood when the current chore began, and the chore it belongs to, so a new chore
+        // re-anchors. CompanionLeash.ShouldBreakForFollow measures the owner's displacement from it.
+        private IdleSubBehavior _ownerAnchorFor;
+        private Vector3 _ownerAnchor;
+        private float _lastFollowBreakCheck;
+
         #endregion
         
         #region Sub-Behavior System
@@ -148,6 +154,30 @@ namespace FiresCore.Npc
                     
                     CancelActiveSubBehavior();
                     return;
+                }
+            }
+
+            // A follower drops its chore when its owner walks off. CompanionAI.UpdateAI returns before the FSM for
+            // the whole time a sub-behavior is active, so a companion that started work while the owner was AFK
+            // never followed, never mirrored their crouch and never ran back. A player-commanded chore is an order
+            // and keeps going; a stay companion's work is the point and CompanionLeash leaves it alone.
+            if (!_activeSubBehavior.IsCommandInitiated)
+            {
+                if (_activeSubBehavior != _ownerAnchorFor)
+                {
+                    _ownerAnchorFor = _activeSubBehavior;
+                    _ownerAnchor = _companion?.GetOwner()?.transform.position ?? transform.position;
+                }
+                else if (Time.time - _lastFollowBreakCheck >= CompanionLeash.BusyBreakCheckInterval)
+                {
+                    _lastFollowBreakCheck = Time.time;
+                    if (CompanionLeash.ShouldBreakForFollow(_companion, _ownerAnchor))
+                    {
+                        if (VerboseLogging || Config.ConfigManager.Instance?.configCompanionFollowDiag?.Value == true)
+                            Debug.Log($"[CompanionFollowDiag] {_companion?.companionName} dropping {_activeSubBehavior.BehaviorName} — owner has moved off");
+                        CancelActiveSubBehavior();
+                        return;
+                    }
                 }
             }
 

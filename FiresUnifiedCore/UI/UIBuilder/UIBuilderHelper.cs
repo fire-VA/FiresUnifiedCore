@@ -146,7 +146,7 @@ namespace FiresCore.UI
  textRect.offsetMin = Vector2.zero;
             textRect.offsetMax = Vector2.zero;
 
-     var buttonText = textGO.AddComponent<TextMeshProUGUI>();
+     var buttonText = AddText(textGO);
             buttonText.text = text;
             buttonText.alignment = TextAlignmentOptions.Center;
             buttonText.fontStyle = FontStyles.Bold;
@@ -243,7 +243,7 @@ UIFontConfig.ApplyStyle(buttonText, UIFontConfig.ButtonText);
             textRect.anchorMax = Vector2.one;
             textRect.offsetMin = Vector2.zero;
             textRect.offsetMax = Vector2.zero;
-            var text = textGO.AddComponent<TextMeshProUGUI>();
+            var text = AddText(textGO);
             text.fontSize = fontSize;
             text.color = UIFontConfig.Colors.ParchmentInk;
             text.alignment = TextAlignmentOptions.Left;
@@ -257,7 +257,7 @@ UIFontConfig.ApplyStyle(buttonText, UIFontConfig.ButtonText);
             placeholderRect.anchorMax = Vector2.one;
             placeholderRect.offsetMin = Vector2.zero;
             placeholderRect.offsetMax = Vector2.zero;
-            var placeholder = placeholderGO.AddComponent<TextMeshProUGUI>();
+            var placeholder = AddText(placeholderGO);
             placeholder.text = placeholderText ?? "";
             placeholder.fontSize = fontSize;
             placeholder.color = new Color(UIFontConfig.Colors.ParchmentLabel.r, UIFontConfig.Colors.ParchmentLabel.g, UIFontConfig.Colors.ParchmentLabel.b, 0.6f);
@@ -279,6 +279,237 @@ UIFontConfig.ApplyStyle(buttonText, UIFontConfig.ButtonText);
             input.interactable = true;
 
             return input;
+        }
+
+        #endregion
+
+        #region Toggle and Dropdown Creation
+
+        private const float ToggleBoxSize = 22f;
+        private const float ToggleCheckInset = 5f;
+        private const float ToggleLabelGap = 8f;
+        private const float DisabledAlpha = 0.5f;
+        private const float DropdownArrowFontSize = 10f;
+        private const float DropdownArrowSize = 16f;
+        private const float DropdownArrowMargin = 6f;
+        private const float DropdownCaptionInset = 8f;
+        private const float DropdownCaptionArrowReserve = 20f;
+        private const float DropdownCaptionVerticalInset = 2f;
+        private const float DropdownListHeight = 168f;
+        private const float DropdownListGap = 2f;
+        private const float DropdownListInset = 2f;
+        private const float DropdownItemHeight = 28f;
+        private const float DropdownCheckSize = 10f;
+        private const float DropdownCheckMargin = 6f;
+        private const float DropdownItemTextInset = 22f;
+        private const float DropdownItemTextRightInset = 6f;
+        private const float DropdownScrollSensitivity = 24f;
+        private const string DropdownArrowGlyph = "▼";
+
+        /// <summary>
+        /// Creates a parchment-styled checkbox: a square box at the left of the rect that fills when on, with an optional
+        /// label to its right. The whole rect is clickable.
+        /// </summary>
+        public static Toggle CreateToggle(Transform parent, string name, bool isOn, Vector2 anchorMin, Vector2 anchorMax,
+            UnityEngine.Events.UnityAction<bool> onValueChanged = null, string label = null, float fontSize = 14f)
+        {
+            var root = new GameObject(name, typeof(RectTransform));
+            root.transform.SetParent(parent, false);
+            var rootRect = (RectTransform)root.transform;
+            rootRect.anchorMin = anchorMin;
+            rootRect.anchorMax = anchorMax;
+            rootRect.offsetMin = Vector2.zero;
+            rootRect.offsetMax = Vector2.zero;
+            var hitArea = root.AddComponent<Image>();
+            hitArea.color = Color.clear;
+            hitArea.raycastTarget = true;
+
+            var box = new GameObject("Box", typeof(RectTransform), typeof(Image));
+            box.transform.SetParent(root.transform, false);
+            var boxRect = (RectTransform)box.transform;
+            boxRect.anchorMin = new Vector2(0f, 0.5f);
+            boxRect.anchorMax = new Vector2(0f, 0.5f);
+            boxRect.pivot = new Vector2(0f, 0.5f);
+            boxRect.sizeDelta = new Vector2(ToggleBoxSize, ToggleBoxSize);
+            var boxImage = box.GetComponent<Image>();
+            boxImage.color = Color.white;
+            FiresRoundedSprite.Apply(boxImage);
+
+            var check = new GameObject("Check", typeof(RectTransform), typeof(Image));
+            check.transform.SetParent(box.transform, false);
+            var checkRect = (RectTransform)check.transform;
+            checkRect.anchorMin = Vector2.zero;
+            checkRect.anchorMax = Vector2.one;
+            checkRect.offsetMin = new Vector2(ToggleCheckInset, ToggleCheckInset);
+            checkRect.offsetMax = new Vector2(-ToggleCheckInset, -ToggleCheckInset);
+            var checkImage = check.GetComponent<Image>();
+            checkImage.color = UIFontConfig.Colors.ParchmentButton;
+            checkImage.raycastTarget = false;
+            FiresRoundedSprite.Apply(checkImage);
+
+            if (!string.IsNullOrEmpty(label))
+            {
+                var text = CreateLabel(root.transform, "Label", label, fontSize, UIFontConfig.Colors.ParchmentInk,
+                    Vector2.zero, Vector2.one, TextAlignmentOptions.MidlineLeft);
+                text.raycastTarget = false;
+                text.rectTransform.offsetMin = new Vector2(ToggleBoxSize + ToggleLabelGap, 0f);
+            }
+
+            var toggle = root.AddComponent<Toggle>();
+            toggle.targetGraphic = boxImage;
+            toggle.graphic = checkImage;
+            var colors = toggle.colors;
+            colors.normalColor = UIFontConfig.Colors.ParchmentField;
+            colors.highlightedColor = UIFontConfig.Colors.ParchmentItemSelected;
+            colors.pressedColor = UIFontConfig.Colors.ParchmentButtonPressed;
+            colors.selectedColor = UIFontConfig.Colors.ParchmentField;
+            colors.disabledColor = new Color(UIFontConfig.Colors.ParchmentField.r, UIFontConfig.Colors.ParchmentField.g,
+                UIFontConfig.Colors.ParchmentField.b, UIFontConfig.Colors.ParchmentField.a * DisabledAlpha);
+            toggle.colors = colors;
+            toggle.isOn = isOn;
+            if (onValueChanged != null) toggle.onValueChanged.AddListener(onValueChanged);
+            return toggle;
+        }
+
+        /// <summary>
+        /// Creates a parchment-styled TMP_Dropdown with a scrolling list. The template is the canonical uGUI one, with
+        /// no layout group or fitter on Content: TMP_Dropdown places and sizes the item clones itself against Content
+        /// being one item high with items anchored to its vertical middle. A VerticalLayoutGroup there fights that
+        /// placement and swallows the last option.
+        /// </summary>
+        public static TMP_Dropdown CreateDropdown(Transform parent, string name, IList<string> options, int selected,
+            Vector2 anchorMin, Vector2 anchorMax, UnityEngine.Events.UnityAction<int> onValueChanged = null, float fontSize = 14f)
+        {
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = anchorMin;
+            rect.anchorMax = anchorMax;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+            var image = go.AddComponent<Image>();
+            image.color = UIFontConfig.Colors.ParchmentField;
+            image.raycastTarget = true;
+            var dropdown = go.AddComponent<TMP_Dropdown>();
+
+            var caption = DropdownText(go.transform, "Label", fontSize, UIFontConfig.Colors.ParchmentInk, TextAlignmentOptions.MidlineLeft);
+            var captionRect = caption.rectTransform;
+            captionRect.anchorMin = Vector2.zero;
+            captionRect.anchorMax = Vector2.one;
+            captionRect.offsetMin = new Vector2(DropdownCaptionInset, DropdownCaptionVerticalInset);
+            captionRect.offsetMax = new Vector2(-DropdownCaptionArrowReserve, -DropdownCaptionVerticalInset);
+
+            var arrow = DropdownText(go.transform, "Arrow", DropdownArrowFontSize, UIFontConfig.Colors.ParchmentInk, TextAlignmentOptions.Center);
+            arrow.text = DropdownArrowGlyph;
+            var arrowRect = arrow.rectTransform;
+            arrowRect.anchorMin = new Vector2(1f, 0.5f);
+            arrowRect.anchorMax = new Vector2(1f, 0.5f);
+            arrowRect.pivot = new Vector2(1f, 0.5f);
+            arrowRect.anchoredPosition = new Vector2(-DropdownArrowMargin, 0f);
+            arrowRect.sizeDelta = new Vector2(DropdownArrowSize, DropdownArrowSize);
+
+            var template = new GameObject("Template", typeof(RectTransform));
+            template.transform.SetParent(go.transform, false);
+            var templateRect = (RectTransform)template.transform;
+            templateRect.anchorMin = new Vector2(0f, 0f);
+            templateRect.anchorMax = new Vector2(1f, 0f);
+            templateRect.pivot = new Vector2(0.5f, 1f);
+            templateRect.anchoredPosition = new Vector2(0f, DropdownListGap);
+            templateRect.sizeDelta = new Vector2(0f, DropdownListHeight);
+            template.AddComponent<Image>().color = UIFontConfig.Colors.ParchmentPanel;
+            var templateScroll = template.AddComponent<ScrollRect>();
+
+            var viewport = new GameObject("Viewport", typeof(RectTransform));
+            viewport.transform.SetParent(template.transform, false);
+            var viewportRect = (RectTransform)viewport.transform;
+            viewportRect.anchorMin = Vector2.zero;
+            viewportRect.anchorMax = Vector2.one;
+            viewportRect.pivot = new Vector2(0f, 1f);
+            viewportRect.offsetMin = new Vector2(DropdownListInset, DropdownListInset);
+            viewportRect.offsetMax = new Vector2(-DropdownListInset, -DropdownListInset);
+            viewport.AddComponent<RectMask2D>();
+
+            var content = new GameObject("Content", typeof(RectTransform));
+            content.transform.SetParent(viewport.transform, false);
+            var contentRect = (RectTransform)content.transform;
+            contentRect.anchorMin = new Vector2(0f, 1f);
+            contentRect.anchorMax = new Vector2(1f, 1f);
+            contentRect.pivot = new Vector2(0.5f, 1f);
+            contentRect.anchoredPosition = Vector2.zero;
+            contentRect.sizeDelta = new Vector2(0f, DropdownItemHeight);
+
+            templateScroll.viewport = viewportRect;
+            templateScroll.content = contentRect;
+            templateScroll.horizontal = false;
+            templateScroll.vertical = true;
+            templateScroll.movementType = ScrollRect.MovementType.Clamped;
+            templateScroll.scrollSensitivity = DropdownScrollSensitivity;
+
+            var item = new GameObject("Item", typeof(RectTransform), typeof(Toggle));
+            item.transform.SetParent(content.transform, false);
+            var itemRect = (RectTransform)item.transform;
+            itemRect.anchorMin = new Vector2(0f, 0.5f);
+            itemRect.anchorMax = new Vector2(1f, 0.5f);
+            itemRect.sizeDelta = new Vector2(0f, DropdownItemHeight);
+
+            var itemBackground = new GameObject("Item Background", typeof(RectTransform), typeof(Image));
+            itemBackground.transform.SetParent(item.transform, false);
+            var itemBackgroundRect = (RectTransform)itemBackground.transform;
+            itemBackgroundRect.anchorMin = Vector2.zero;
+            itemBackgroundRect.anchorMax = Vector2.one;
+            itemBackgroundRect.offsetMin = Vector2.zero;
+            itemBackgroundRect.offsetMax = Vector2.zero;
+            var itemBackgroundImage = itemBackground.GetComponent<Image>();
+            itemBackgroundImage.color = UIFontConfig.Colors.ParchmentButton;
+
+            var itemCheck = new GameObject("Item Checkmark", typeof(RectTransform), typeof(Image));
+            itemCheck.transform.SetParent(item.transform, false);
+            var itemCheckRect = (RectTransform)itemCheck.transform;
+            itemCheckRect.anchorMin = new Vector2(0f, 0.5f);
+            itemCheckRect.anchorMax = new Vector2(0f, 0.5f);
+            itemCheckRect.pivot = new Vector2(0f, 0.5f);
+            itemCheckRect.anchoredPosition = new Vector2(DropdownCheckMargin, 0f);
+            itemCheckRect.sizeDelta = new Vector2(DropdownCheckSize, DropdownCheckSize);
+            var itemCheckImage = itemCheck.GetComponent<Image>();
+            itemCheckImage.color = UIFontConfig.Colors.ParchmentButtonInk;
+
+            var itemLabel = DropdownText(item.transform, "Item Label", fontSize, UIFontConfig.Colors.ParchmentButtonInk, TextAlignmentOptions.MidlineLeft);
+            var itemLabelRect = itemLabel.rectTransform;
+            itemLabelRect.anchorMin = Vector2.zero;
+            itemLabelRect.anchorMax = Vector2.one;
+            itemLabelRect.offsetMin = new Vector2(DropdownItemTextInset, 0f);
+            itemLabelRect.offsetMax = new Vector2(-DropdownItemTextRightInset, 0f);
+
+            var itemToggle = item.GetComponent<Toggle>();
+            itemToggle.targetGraphic = itemBackgroundImage;
+            itemToggle.graphic = itemCheckImage;
+
+            dropdown.template = templateRect;
+            dropdown.captionText = caption;
+            dropdown.itemText = itemLabel;
+            template.SetActive(false);
+
+            var optionList = options != null ? new List<string>(options) : new List<string>();
+            dropdown.ClearOptions();
+            dropdown.AddOptions(optionList);
+            dropdown.value = Mathf.Clamp(selected, 0, Mathf.Max(0, optionList.Count - 1));
+            dropdown.RefreshShownValue();
+            if (onValueChanged != null) dropdown.onValueChanged.AddListener(onValueChanged);
+            return dropdown;
+        }
+
+        private static TextMeshProUGUI DropdownText(Transform parent, string name, float size, Color color, TextAlignmentOptions alignment)
+        {
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var text = AddText(go);
+            text.fontSize = size;
+            text.color = color;
+            text.alignment = alignment;
+            text.raycastTarget = false;
+            text.textWrappingMode = TextWrappingModes.NoWrap;
+            ApplyValheimFont(text);
+            return text;
         }
 
         #endregion
@@ -532,7 +763,7 @@ scrollbar.colors = scrollbarColors;
    textRect.offsetMin = Vector2.zero;
        textRect.offsetMax = Vector2.zero;
 
-        var tmp = textGO.AddComponent<TextMeshProUGUI>();
+        var tmp = AddText(textGO);
     tmp.text = text;
      tmp.alignment = alignment;
      UIFontConfig.ApplyStyle(tmp, style);
@@ -565,7 +796,7 @@ scrollbar.colors = scrollbarColors;
             textRect.offsetMin = Vector2.zero;
             textRect.offsetMax = Vector2.zero;
 
-            var tmp = textGO.AddComponent<TextMeshProUGUI>();
+            var tmp = AddText(textGO);
             tmp.text = text;
             tmp.fontSize = fontSize;
             tmp.color = color;
@@ -714,7 +945,7 @@ colors.normalColor = UIFontConfig.Colors.ItemNormal;
        textRect.offsetMin = new Vector2(8, 2);
             textRect.offsetMax = new Vector2(-8, -2);
 
-   var tmp = textGO.AddComponent<TextMeshProUGUI>();
+   var tmp = AddText(textGO);
    tmp.text = text;
 tmp.color = UIFontConfig.Colors.Gold;
  tmp.alignment = TextAlignmentOptions.MidlineLeft;
@@ -735,7 +966,7 @@ tmp.color = UIFontConfig.Colors.Gold;
 statusRect.anchoredPosition = new Vector2(-3, 2);
    statusRect.sizeDelta = new Vector2(70, 0);
 
-  var statusText = statusGO.AddComponent<TextMeshProUGUI>();
+  var statusText = AddText(statusGO);
  statusText.alignment = TextAlignmentOptions.BottomRight;
      statusText.raycastTarget = false;
    UIFontConfig.ApplyStyle(statusText, UIFontConfig.QuestStatus);
@@ -828,10 +1059,7 @@ result.StatusText = statusText;
         {
             if (go == null) return null;
             
-            // Ensure we have a cached font before adding the component
-            EnsureFontCache();
-            
-            var tmp = go.AddComponent<TextMeshProUGUI>();
+            var tmp = AddText(go);
             
             // Apply Primary font by default to prevent "Font Asset was not found" warnings
             ApplyPrimaryFont(tmp);
@@ -847,12 +1075,20 @@ result.StatusText = statusText;
         {
             if (go == null) return null;
             
-            var tmp = go.AddComponent<TextMeshProUGUI>();
+            var tmp = AddText(go);
             ApplyFontByCategory(tmp, category);
             
             return tmp;
         }
         
+        // TMP loads its font when the component wakes and warns when it has none, and Valheim's TMP Settings has no
+        // default font. EnsureFontCache sets one, so every text the helpers create wakes with a font.
+        private static TextMeshProUGUI AddText(GameObject go)
+        {
+            EnsureFontCache();
+            return go.AddComponent<TextMeshProUGUI>();
+        }
+
         /// <summary>
         /// Ensures we have a cached default font for TMP components.
         /// Also sets TMP_Settings.defaultFontAsset to prevent "Font Asset was not found" warnings

@@ -104,7 +104,7 @@ namespace FiresCore.Npc.AI
             for (int i = 0; i < all.Count; i++)
             {
                 var candidate = all[i];
-                if (candidate == null || candidate == m_character || candidate.IsDead()) continue;
+                if (candidate == null || candidate == m_character || candidate.IsDead() || candidate.m_aiSkipTarget) continue;
                 if (candidate.IsTamed() || candidate.IsPlayer()) continue;   // never aggro players or allied tames
                 if (!IsEnemy(candidate)) continue;                    // hostiles only — passives must not shadow a real threat
                 float sqrDistance = (candidate.transform.position - post).sqrMagnitude;

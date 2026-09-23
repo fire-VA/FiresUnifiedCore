@@ -226,20 +226,24 @@ namespace FiresCore.UI
         /// at that point mousePosition is back in top-level space (matching the active GUI.matrix), NOT the
         /// scroll-local space MarkHint may have seen (recording that position put the tip way off-screen). Clamps
         /// to the LOGICAL screen (physical / matrix scale) so it stays on-screen under a scaled window.</summary>
-        public static void DrawPendingTooltip()
+        public static void DrawPendingTooltip() => DrawPendingTooltip(Tip);
+
+        /// <summary>As <see cref="DrawPendingTooltip()"/>, with a caller-supplied style — the config windows
+        /// draw from a font-scaled copy of this skin, so their tooltip has to match.</summary>
+        public static void DrawPendingTooltip(GUIStyle tipStyle)
         {
-            if (string.IsNullOrEmpty(_pendingTip) || Tip == null) return;
+            if (string.IsNullOrEmpty(_pendingTip) || tipStyle == null) return;
             if (Event.current == null || Event.current.type != EventType.Repaint) return;
             var mouse = Event.current.mousePosition;
             var content = new GUIContent(_pendingTip);
-            float width = Mathf.Min(280f, Tip.CalcSize(content).x + 2f);
-            float height = Tip.CalcHeight(content, width);
+            float width = Mathf.Min(280f, tipStyle.CalcSize(content).x + 2f);
+            float height = tipStyle.CalcHeight(content, width);
             float scaleX = GUI.matrix.m00 != 0f ? GUI.matrix.m00 : 1f;
             float scaleY = GUI.matrix.m11 != 0f ? GUI.matrix.m11 : 1f;
             float logW = Screen.width / scaleX, logH = Screen.height / scaleY;
             float x = Mathf.Clamp(mouse.x + 14f, 4f, logW - width - 4f);
             float y = Mathf.Clamp(mouse.y + 16f, 4f, logH - height - 4f);
-            GUI.Label(new Rect(x, y, width, height), content, Tip);
+            GUI.Label(new Rect(x, y, width, height), content, tipStyle);
         }
 
         // 9-sliceable rounded-rect SPRITES for uGUI Images (the context menu etc.) in the same visual

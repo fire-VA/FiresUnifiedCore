@@ -7,8 +7,8 @@ namespace FiresCore.Npc.Core
 {
     /// <summary>
     /// Every container in the loaded world, registered from Container.Awake and removed on destruction, so
-    /// GetNearby filters a cached list instead of running a physics overlap each time. Modeled on SmartContainers'
-    /// ContainersTracker.
+    /// GetNearby filters a cached list instead of running a physics overlap each time. Queries return only
+    /// player-built storage (<see cref="IsPlayerStorage"/>). Modeled on SmartContainers' ContainersTracker.
     /// </summary>
     public static class ContainerRegistry
     {
@@ -43,56 +43,30 @@ namespace FiresCore.Npc.Core
         #region Registration
         
         /// <summary>
-        /// Registers a container to be tracked.
-        /// Called from Harmony patch on Container.Awake.
+        /// Tracks a container from Container.Awake. Queries return only <see cref="IsPlayerStorage"/> ones, checked when
+        /// asked: Player.PlacePiece sets the creator after Instantiate has run Awake (Player.cs:2273-2280).
         /// </summary>
         public static void Register(Container container)
         {
-            if (container == null) return;
-            
-            // Skip treasure chests (not player-usable)
-            string containerName = container.name?.ToLowerInvariant() ?? "";
-            if (containerName.StartsWith("treasure")) return;
-            
-            // Skip containers without an inventory
-            if (container.GetInventory() == null) return;
-            
-            var nview = container.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return;
-            
-            // CRITICAL FIX: Accept containers based on multiple criteria
-            var zdo = nview.GetZDO();
-            if (zdo == null) return;
-            
-            long creator = zdo.GetLong(ZDOVars.s_creator, 0L);
-            long owner = zdo.GetOwner();
-            
-            // Check layer
-            int containerLayer = container.gameObject.layer;
-            bool isPlayerPiece = containerLayer == LayerMask.NameToLayer("piece") ||
-                                containerLayer == LayerMask.NameToLayer("piece_nonsolid");
-            
-            // Also check by prefab name - common chest prefab patterns
-            bool isChestPrefab = containerName.Contains("chest") ||
-                                containerName.Contains("karve") ||    // Ship storage
-                                containerName.Contains("longship") || // Ship storage  
-                                containerName.Contains("cart") ||     // Cart storage
-                                containerName.Contains("storage") ||
-                                containerName.Contains("box");
-            
-            // Accept if any indicator of player ownership OR is a known chest prefab
-            if (creator == 0L && owner == 0L && !isPlayerPiece && !isChestPrefab) 
-            {
-                if (VerboseLogging)
-                    Debug.Log($"[ContainerRegistry] SKIPPED: {container.name} (creator={creator}, owner={owner}, layer={LayerMask.LayerToName(containerLayer)}, isChestPrefab={isChestPrefab})");
-                return;
-            }
-            
+            if (container == null || container.GetInventory() == null) return;
+
             if (_allContainers.Add(container))
             {
                 if (VerboseLogging)
-                    Debug.Log($"[ContainerRegistry] Registered: {container.name} at {container.transform.position} (creator={creator}, owner={owner}, layer={LayerMask.LayerToName(containerLayer)}, isChestPrefab={isChestPrefab}, total: {_allContainers.Count})");
+                    Debug.Log($"[ContainerRegistry] Registered: {container.name} at {container.transform.position} (total: {_allContainers.Count})");
             }
+        }
+
+        /// <summary>
+        /// Storage a player built: a chest whose own ZDO carries a Piece creator (ZDOVars.s_creator, set by
+        /// Piece.SetCreator on placement). World loot (treasure chests, 1.0 loot_deepNorth_*, Morkhalla chests) has no
+        /// creator, tombstones are not storage, and cart/ship containers sit on a child object without the root's ZDO.
+        /// </summary>
+        public static bool IsPlayerStorage(Container container)
+        {
+            if (container == null || container.GetInventory() == null || container.GetComponent<TombStone>() != null) return false;
+            var nview = container.GetComponent<ZNetView>();
+            return nview != null && nview.IsValid() && nview.GetZDO().GetLong(ZDOVars.s_creator, 0L) != 0L;
         }
         
         /// <summary>
@@ -123,47 +97,13 @@ namespace FiresCore.Npc.Core
             var existingContainers = UnityEngine.Object.FindObjectsByType<Container>(UnityEngine.FindObjectsSortMode.None);
             int registered = 0;
             int skipped = 0;
-            
-            int pieceLayer = LayerMask.NameToLayer("piece");
-            int pieceNonsolidLayer = LayerMask.NameToLayer("piece_nonsolid");
-            
+
             Debug.Log($"[ContainerRegistry] Initialize: Found {existingContainers.Length} Container components in scene");
-            
+
             foreach (var container in existingContainers)
             {
-                if (container == null) continue;
-                
-                string containerName = container.name?.ToLowerInvariant() ?? "";
-                if (containerName.StartsWith("treasure")) { skipped++; continue; }
-                if (container.GetInventory() == null) { skipped++; continue; }
-                
-                var nview = container.GetComponent<ZNetView>();
-                if (nview == null || !nview.IsValid()) { skipped++; continue; }
-                
-                var zdo = nview.GetZDO();
-                if (zdo == null) { skipped++; continue; }
-                
-                long creator = zdo.GetLong(ZDOVars.s_creator, 0L);
-                long owner = zdo.GetOwner();
-                int containerLayer = container.gameObject.layer;
-                bool isPlayerPiece = containerLayer == pieceLayer ||
-                                    containerLayer == pieceNonsolidLayer;
-                
-                // Also check by prefab name - common chest prefab patterns
-                bool isChestPrefab = containerName.Contains("chest") ||
-                                    containerName.Contains("karve") ||
-                                    containerName.Contains("longship") ||
-                                    containerName.Contains("cart") ||
-                                    containerName.Contains("storage") ||
-                                    containerName.Contains("box");
-                
-                // Accept if any indicator of player ownership OR is a known chest prefab
-                if (creator == 0L && owner == 0L && !isPlayerPiece && !isChestPrefab) 
-                { 
-                    skipped++; 
-                    continue; 
-                }
-                
+                if (container == null || container.GetInventory() == null) { skipped++; continue; }
+
                 _allContainers.Add(container);
                 registered++;
             }
@@ -233,9 +173,9 @@ namespace FiresCore.Npc.Core
             foreach (var container in _allContainers)
             {
                 if (container == null || container.transform == null) continue;
-                
+
                 float distSq = (container.transform.position - position).sqrMagnitude;
-                if (distSq <= radiusSq)
+                if (distSq <= radiusSq && IsPlayerStorage(container))
                 {
                     results.Add(container);
                 }
@@ -268,9 +208,9 @@ namespace FiresCore.Npc.Core
             foreach (var container in _allContainers)
             {
                 if (container == null || container.transform == null) continue;
-                
+
                 float distSq = (container.transform.position - position).sqrMagnitude;
-                if (distSq < closestDistSq)
+                if (distSq < closestDistSq && IsPlayerStorage(container))
                 {
                     closestDistSq = distSq;
                     closest = container;
@@ -293,10 +233,9 @@ namespace FiresCore.Npc.Core
                 if (container == null || container.transform == null) continue;
                 
                 float distSq = (container.transform.position - position).sqrMagnitude;
-                if (distSq >= closestDistSq) continue;
-                
+                if (distSq >= closestDistSq || !IsPlayerStorage(container)) continue;
+
                 var inv = container.GetInventory();
-                if (inv == null) continue;
                 
                 bool hasItem = false;
                 foreach (var item in inv.GetAllItems())
@@ -331,10 +270,9 @@ namespace FiresCore.Npc.Core
                 if (container == null || container.transform == null) continue;
                 
                 float distSq = (container.transform.position - position).sqrMagnitude;
-                if (distSq > radiusSq) continue;
-                
+                if (distSq > radiusSq || !IsPlayerStorage(container)) continue;
+
                 var inv = container.GetInventory();
-                if (inv == null) continue;
                 
                 foreach (var item in inv.GetAllItems())
                 {

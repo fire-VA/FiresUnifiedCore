@@ -64,8 +64,8 @@ namespace FiresCore.Logging
         }
 
         // Compact banner — flame over a hearth-status frame. 31-char frame body
-        // (3 lead + ╔ + 26 ═ + ╗); 🔥 is a surrogate pair that renders 2 cells,
-        // so the status line's padding assumes an emoji-aware console font.
+        // (3 lead + ╔ + 26 ═ + ╗); 🔥 is a surrogate pair, but the console
+        // ADVANCES ONE column for it (no VS16), however wide the font paints the glyph, so this row pads it as one cell.
         private static readonly Banner.Segment[][] s_compactLines =
         {
             new[] { new Banner.Segment("                .",            ConsoleColor.Yellow) },
@@ -86,7 +86,7 @@ namespace FiresCore.Logging
             {
                 new Banner.Segment("   ║      ",           ConsoleColor.DarkGray),
                 new Banner.Segment("🔥 HEARTH LIT",        ConsoleColor.Yellow),
-                new Banner.Segment("       ║",             ConsoleColor.DarkGray),
+                new Banner.Segment("        ║",             ConsoleColor.DarkGray),
             },
             new[] { new Banner.Segment("   ╚══════════════════════════╝", ConsoleColor.DarkGray) },
             new[] { new Banner.Segment("    FIRES UNIFIED CORE",       ConsoleColor.Cyan) },

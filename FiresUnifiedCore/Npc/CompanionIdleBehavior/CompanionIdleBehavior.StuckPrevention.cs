@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using FiresCore.Npc.Movement;
+using FiresCore.Npc.Animation;
 
 namespace FiresCore.Npc
 {
@@ -13,10 +14,6 @@ namespace FiresCore.Npc
         private float _lastWanderProgressTime;
         private const float WanderProgressCheckInterval = 8f;
         private const float WanderMinProgressDistance = 0.5f;
-
-        // Mecanim trigger that the looping-emote state machine watches for
-        // to exit; clearing the bool alone does NOT leave the looping state.
-        private static readonly int EmoteStopTriggerHash = Animator.StringToHash("emote_stop");
 
         private void CheckForStuckState()
         {
@@ -88,41 +85,8 @@ namespace FiresCore.Npc
 
         private void ForceEndEmote()
         {
-            // Call StopEmote() on the character via reflection.
-            // Vanilla Valheim's StopEmote() sets the emote bool to false in
-            // ZSyncAnimator AND clears the internal m_emoteID field. Both steps
-            // are needed for the Mecanim state machine to exit the looping
-            // emote state. Without clearing m_emoteID the animator controller
-            // keeps the state active even after the bool transitions out.
-            // StopEmote lives on Player but the underlying animation system is
-            // shared with Humanoid/Character, so the call works on companion NPCs.
-            if (_character != null)
-            {
-                var stopEmote = _character.GetType().GetMethod(
-                    "StopEmote",
-                    System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.Public |
-                    System.Reflection.BindingFlags.NonPublic);
-
-                if (stopEmote != null)
-                {
-                    stopEmote.Invoke(_character, null);
-                }
-                else
-                {
-                    // Fallback: replicate exactly what StopEmote does internally -
-                    // clear the ZSyncAnimator bool and null out m_emoteID.
-                    if (!string.IsNullOrEmpty(_currentEmote) && _zanim != null)
-                        _zanim.SetBool(_currentEmote, false);
-
-                    var emoteIdField = typeof(Character).GetField(
-                        "m_emoteID",
-                        System.Reflection.BindingFlags.Instance |
-                        System.Reflection.BindingFlags.NonPublic |
-                        System.Reflection.BindingFlags.Public);
-                    emoteIdField?.SetValue(_character, "");
-                }
-            }
+            // Character.StopEmote is an empty virtual on Humanoid; end it the way Player.UpdateEmote does.
+            PlayerAnimationCatalog.StopEmotes(_zanim, _animator);
 
             // Exit state controller emote state
             if (_stateController != null)
@@ -210,15 +174,6 @@ namespace FiresCore.Npc
 
         private void ForceResetToStanding()
         {
-            // Clear emote animation bool before clearing _currentEmote
-            if (_isPlayingEmote && !string.IsNullOrEmpty(_currentEmote))
-            {
-                if (_zanim != null)
-                    _zanim.SetBool(_currentEmote, false);
-                if (_animator != null && HasAnimatorParameter(_currentEmote))
-                    _animator.SetBool(_currentEmote, false);
-            }
-            
             _isPlayingEmote = false;
             _currentEmote = "";
             _isPersistentEmote = false;
@@ -236,86 +191,14 @@ namespace FiresCore.Npc
             SetIdleState(IdleState.Standing);
         }
 
-        private bool HasAnimatorParameter(string paramName)
-        {
-            if (_animator == null) return false;
-            foreach (var param in _animator.parameters)
-            {
-                if (param.name == paramName) return true;
-            }
-            return false;
-        }
-        
         /// <summary>
-        /// Forces a complete animation state reset to fix stuck/sliding animations.
-        /// This ensures the character returns to proper idle/movement states.
+        /// Releases emotes and seat poses (PlayerAnimationCatalog.StopAll) and stops the body. The weapon pose
+        /// (statef/statei) and the locomotion floats belong to vanilla Humanoid and Character and are left alone.
         /// </summary>
         private void ForceAnimationStateReset()
         {
-            string[] allEmoteBools = new string[]
-            {
-                // Sitting and resting poses
-                "sitting", "resting", "sleeping",
-                
-                // Persistent emotes
-                "emote_sit", "emote_rest", "emote_vibe",
-                "emote_kneel", "emote_despair", "emote_headbang", "emote_dance",
-                
-                // Quick emotes
-                "emote_point", "emote_wave", "emote_challenge",
-                "emote_cheer", "emote_nonono", "emote_thumbsup", "emote_flex",
-                "emote_laugh", "emote_shrug", "emote_blowkiss", "emote_bow",
-                "emote_cry", "emote_comehere", "emote_roar", "emote_toast", "emote_loveyou",
-                
-                // Attach animations
-                "attach_chair", "attach_stool", "attach_bed", "attach_mast",
-                
-                // Movement states
-                "forward", "backward", "left", "right",
-                "run", "walk", "crouch", "jump", "inwater"
-            };
-            
-            // Reset ZSyncAnimation
-            if (_zanim != null)
-            {
-                foreach (var emoteBool in allEmoteBools)
-                {
-                    _zanim.SetBool(emoteBool, false);
-                }
+            PlayerAnimationCatalog.StopAll(_zanim, _animator);
 
-                _zanim.SetFloat("statef", 0f);
-                _zanim.SetFloat("statei", 0f);
-                _zanim.SetTrigger("idle");
-                // Looping-emote transitions are gated on emote_stop, not on
-                // the bool going false. Without firing this trigger the
-                // animator stays parked in the emote state.
-                _zanim.SetTrigger("emote_stop");
-            }
-
-            // Reset Animator
-            if (_animator != null)
-            {
-                foreach (var emoteBool in allEmoteBools)
-                {
-                    if (HasAnimatorParameter(emoteBool))
-                        _animator.SetBool(emoteBool, false);
-                }
-
-                if (HasAnimatorParameter("forward_speed"))
-                    _animator.SetFloat("forward_speed", 0f);
-                if (HasAnimatorParameter("sideways_speed"))
-                    _animator.SetFloat("sideways_speed", 0f);
-                if (HasAnimatorParameter("turn_speed"))
-                    _animator.SetFloat("turn_speed", 0f);
-
-                if (HasAnimatorParameter("moving"))
-                    _animator.SetBool("moving", false);
-
-                _animator.SetTrigger(EmoteStopTriggerHash);
-
-                _animator.Update(0f);
-            }
-            
             // Ensure physics are grounded
             if (_character != null && (_rigidbody == null || !_rigidbody.isKinematic))
             {
@@ -331,10 +214,9 @@ namespace FiresCore.Npc
             }
             
             if (VerboseLogging)
-                Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} animation state forcefully reset (cleared {allEmoteBools.Length} emote bools)");
+                Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} animation state reset");
+        }
 
-                    }
-
-                    #endregion
-                }
-            }
+        #endregion
+    }
+}

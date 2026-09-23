@@ -190,7 +190,6 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
                 // are biome-driven inside WildCompanionDresser.
                 seed.Faction = WildSpawn.CompanionFaction.Neutral;
                 seed.AllowedArchetypesMask = ~0;
-                seed.AllowedGearTiers = new[] { 0 };
                 seed.StarWeights = new[] { 85, 12, 3 };
                 seed.EnableGroupCohesion = true;
                 seed.HardMaxGroupSize = 10;
@@ -306,6 +305,10 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
      {
          syncAnimation = prefab.AddComponent<ZSyncAnimation>();
     }
+                // Held poses (emote_sit, attach_divan, ...) replicate only if listed; the bundled list predates 1.0.
+                foreach (var anim in Animation.PlayerAnimationCatalog.All)
+                    if (anim.IsBool && !syncAnimation.m_syncBools.Contains(anim.Parameter))
+                        syncAnimation.m_syncBools.Add(anim.Parameter);
             }
 
          // ========================================
@@ -317,6 +320,8 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
         humanoid = prefab.AddComponent<Humanoid>();
  }
    ConfigureHumanoid(humanoid, rigidbody);
+            _playerTemplated.Add(prefab);
+            ApplyPlayerTemplate(prefab);
 
             // ========================================
             // 7. CompanionAI - Our custom AI that replaces MonsterAI
@@ -617,15 +622,6 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             }
             
             // ========================================
-            // 20.5. CompanionWeaponScaler - Scales weapons/items to match companion size
-            // ========================================
-            var weaponScaler = prefab.GetComponent<CompanionWeaponScaler>();
-            if (weaponScaler == null)
-            {
-                weaponScaler = prefab.AddComponent<CompanionWeaponScaler>();
-            }
-            
-            // ========================================
             // 20.6. ArchetypeController - Manages companion archetype/role (Tank, Healer, etc.)
             // ========================================
             var archetypeController = prefab.GetComponent<Archetypes.ArchetypeController>();
@@ -679,6 +675,14 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             if (doorHandler == null)
             {
                 prefab.AddComponent<CompanionDoorHandler>();
+            }
+
+            // ========================================
+            // 23. CompanionStance - crouch and VikHavn prone, seen the same on every client
+            // ========================================
+            if (prefab.GetComponent<Movement.CompanionStance>() == null)
+            {
+                prefab.AddComponent<Movement.CompanionStance>();
             }
 
             // Set layer to "character"
@@ -883,6 +887,42 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             tameable.m_startsTamed = false;
         }
 
+        private const string PlayerPrefabName = "Player";
+        private static readonly HashSet<GameObject> _playerTemplated = new HashSet<GameObject>();
+
+        /// <summary>
+        /// Copies what every NPC shares with the live Player prefab. The replicated animator parameters (locomotion, crouch,
+        /// block, seats): BaseNpc and StaticNpc bake empty lists and CompanionNpc a pre-1.0 one, so other clients saw them
+        /// glide in the idle pose. The unarmed weapon (PlayerUnarmed): without it a bare-handed NPC had no real punch or kick.
+        /// No-op until ZNetScene exists; <see cref="RegisterWithZNetScene"/> applies it to prefabs set up earlier.
+        /// </summary>
+        private static void ApplyPlayerTemplate(GameObject prefab)
+        {
+            var player = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(PlayerPrefabName) : null;
+            if (player == null || prefab == null) return;
+
+            var source = player.GetComponent<ZSyncAnimation>();
+            var target = prefab.GetComponent<ZSyncAnimation>();
+            if (source != null && target != null)
+            {
+                AddMissing(target.m_syncBools, source.m_syncBools);
+                AddMissing(target.m_syncFloats, source.m_syncFloats);
+                AddMissing(target.m_syncInts, source.m_syncInts);
+            }
+
+            var humanoid = prefab.GetComponent<Humanoid>();
+            var playerHumanoid = player.GetComponent<Humanoid>();
+            if (humanoid != null && playerHumanoid != null && humanoid.m_unarmedWeapon == null)
+                humanoid.m_unarmedWeapon = playerHumanoid.m_unarmedWeapon;
+        }
+
+        private static void AddMissing(List<string> target, List<string> source)
+        {
+            foreach (var name in source)
+                if (!target.Contains(name))
+                    target.Add(name);
+        }
+
         /// <summary>
         /// Registers companion prefabs with ZNetScene for spawning.
         /// Call this after ZNetScene is initialized.
@@ -903,6 +943,10 @@ Debug.Log($"[CompanionPrefabManager] Loaded {_loadedCompanions.Count} companion 
             int dead = FiresCore.World.NetworkPrefabs.ScrubDeadEntries(ZNetScene.instance);
             if (dead > 0)
                 Debug.Log($"[CompanionPrefabManager] Scrubbed {dead} fake-null entries from ZNetScene's prefab lists");
+
+            _playerTemplated.RemoveWhere(prefab => prefab == null);
+            foreach (var prefab in _playerTemplated)
+                ApplyPlayerTemplate(prefab);
 
             // CRITICAL: Fix shaders BEFORE registering prefabs
             // The asset bundle has broken Custom/Player shader references.
@@ -1091,7 +1135,7 @@ return companion;
         private static void FixCompanionShaders()
         {
             // Get the Player prefab from ZNetScene
-            var playerPrefab = ZNetScene.instance?.GetPrefab("Player");
+            var playerPrefab = ZNetScene.instance?.GetPrefab(PlayerPrefabName);
             if (playerPrefab == null)
             {
                 Debug.LogWarning("[CompanionPrefabManager] Could not find Player prefab to copy shader from!");

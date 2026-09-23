@@ -429,11 +429,18 @@ namespace FiresCore.Npc.IdleBehaviors
             
             StopMovement();
             FaceTarget(_targetChest.transform.position);
+
+            if (!ChestHelper.TryClaimForWrite(_targetChest, Companion))
+            {
+                LogVerbose("Target chest is open or off-limits");
+                _visitedChests.Add(_targetChest);
+                SetPhase(DepositPhase.FindingNextChest);
+                return false;
+            }
+
             PlayInteractAnimation();
-            
-            // Find all chests in cluster
-            _clusterChests = ChestHelper.FindNearbyChests(_targetChest.transform.position, ChestClusterRange);
-            LogVerbose($"Found {_clusterChests.Count} chests within {ChestClusterRange}m cluster");
+            _clusterChests = ClaimClusterChests();
+            LogVerbose($"Claimed {_clusterChests.Count} chests within {ChestClusterRange}m cluster");
             
             // Deposit items
             int deposited = DepositItemsToCluster();
@@ -454,8 +461,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             LogVerbose($"Deposited {deposited} items across {_clusterChests.Count} chests");
 
-            // Always run the organize pass - even a single chest benefits from stack
-            // consolidation, and it ensures chests are saved after deposit.
+            // Always run the organize pass - even a single chest benefits from stack consolidation.
             SetPhase(DepositPhase.Organizing);
             
             return false;
@@ -567,7 +573,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 LogVerbose($"ShouldDepositItem: {item.m_shared?.m_name} - NO (quest item)");
                 return false;
             }
-            
+            if (ChestHelper.IsAmmoForEquippedWeapon(Inventory, item))
+            {
+                LogVerbose($"ShouldDepositItem: {item.m_shared?.m_name} - NO (ammo for equipped bow/crossbow)");
+                return false;
+            }
+
             var itemType = item.m_shared.m_itemType;
             
             if (KeepTypes.Contains(itemType))
@@ -669,13 +680,12 @@ namespace FiresCore.Npc.IdleBehaviors
             Container bestChest = null;
             int bestScore = -1;
             float bestDistance = float.MaxValue;
-            
+            long ownerId = ChestHelper.ChestOwnerIdFor(Companion);
+
             foreach (var chest in Resources.NearbyChests)
             {
                 if (chest == null || _visitedChests.Contains(chest)) continue;
-
-                var nview = chest.GetComponent<ZNetView>();
-                if (nview == null || !nview.IsValid()) continue;
+                if (!ChestHelper.OwnerMayWrite(chest, ownerId)) continue;
 
                 var chestInv = chest.GetInventory();
                 if (chestInv == null || chestInv.GetEmptySlots() == 0) continue;
@@ -741,7 +751,6 @@ namespace FiresCore.Npc.IdleBehaviors
             int totalDeposited = 0;
             int skippedItems = 0;
             int failedDeposits = 0;
-            var dirtiedChests = new HashSet<Container>();
             var itemsToCheck = new List<ItemDrop.ItemData>(storage.GetAllItems());
             
             LogVerbose($"DepositItemsToCluster: Checking {itemsToCheck.Count} items in inventory against {_clusterChests.Count} chests");
@@ -765,56 +774,47 @@ namespace FiresCore.Npc.IdleBehaviors
                     continue;
                 }
                 
-                var chestInv = bestChest.GetInventory();
-                if (chestInv == null)
+                if (!ChestHelper.TryClaimForWrite(bestChest, Companion))
                 {
-                    LogVerbose($"DepositItemsToCluster: Chest has null inventory");
+                    LogVerbose($"DepositItemsToCluster: Chest for {item.m_shared?.m_name} is open or off-limits");
                     failedDeposits++;
                     continue;
                 }
 
-                if (!chestInv.CanAddItem(item))
+                int moved = ChestHelper.MoveItem(storage, bestChest.GetInventory(), item, item.m_stack);
+                if (moved == 0)
                 {
-                    LogVerbose($"DepositItemsToCluster: Chest cannot accept {item.m_shared?.m_name} (full or wrong type?)");
+                    LogVerbose($"DepositItemsToCluster: Chest cannot accept {item.m_shared?.m_name} (full?)");
                     failedDeposits++;
                     continue;
                 }
-                
-                var clone = item.Clone();
-                if (chestInv.AddItem(clone))
-                {
-                    storage.RemoveItem(item);
-                    totalDeposited++;
-                    dirtiedChests.Add(bestChest);
 
-                    string itemName = Localization.instance.Localize(item.m_shared?.m_name ?? "Item");
-                    if (_depositedItemCounts.ContainsKey(itemName))
-                        _depositedItemCounts[itemName] += item.m_stack;
-                    else
-                        _depositedItemCounts[itemName] = item.m_stack;
-
-                    LogVerbose($"DepositItemsToCluster: Deposited {item.m_stack}x {item.m_shared?.m_name}");
-                }
-                else
-                {
-                    LogVerbose($"DepositItemsToCluster: AddItem failed for {item.m_shared?.m_name}");
-                    failedDeposits++;
-                }
+                totalDeposited++;
+                string itemName = Localization.instance.Localize(item.m_shared?.m_name ?? "Item");
+                _depositedItemCounts.TryGetValue(itemName, out int depositedSoFar);
+                _depositedItemCounts[itemName] = depositedSoFar + moved;
+                LogVerbose($"DepositItemsToCluster: Deposited {moved}x {item.m_shared?.m_name}");
             }
 
+            // Owned chests save themselves (Container.OnContainerChanged); only the companion needs saving.
             if (totalDeposited > 0)
-            {
-                // Save companion inventory and every chest that received items
                 SaveInventory();
-                foreach (var chest in dirtiedChests)
-                    SmartStorageOrganizer.SaveContainer(chest);
-            }
             
             LogVerbose($"DepositItemsToCluster: Deposited {totalDeposited}, skipped {skippedItems} (keep types), failed {failedDeposits}");
             
             return totalDeposited;
         }
         
+        /// <summary>The chests around the target that this companion could claim for writing (claimed now).</summary>
+        private List<Container> ClaimClusterChests()
+        {
+            var claimed = new List<Container>();
+            foreach (var chest in ChestHelper.FindNearbyChests(_targetChest.transform.position, ChestClusterRange))
+                if (ChestHelper.TryClaimForWrite(chest, Companion))
+                    claimed.Add(chest);
+            return claimed;
+        }
+
         private Container FindBestChestForItem(ItemDrop.ItemData item)
         {
             if (item == null) return null;
@@ -849,10 +849,11 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private int OrganizeClusterChests()
         {
+            _clusterChests.RemoveAll(chest => !ChestHelper.TryClaimForWrite(chest, Companion));
             if (_clusterChests.Count < 2) return 0;
-            
+
             Vector3 clusterCenter = _targetChest?.transform.position ?? Transform.position;
-            
+
             var result = SmartStorageOrganizer.OrganizeChestCluster(
                 _clusterChests, clusterCenter, stationSearchRadius: 25f);
             

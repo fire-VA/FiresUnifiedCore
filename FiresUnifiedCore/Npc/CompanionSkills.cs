@@ -56,7 +56,13 @@ namespace FiresCore.Npc
           _companion = GetComponent<CompanionController>();
             _progression = GetComponent<CompanionProgression>();
             _nview = GetComponent<ZNetView>();
+            _character = GetComponent<Character>();
   }
+
+        private Character _character;
+
+        // Companion weapon skill adds 0.5 % damage per level (skill 0 deals full damage).
+        private const float DamageBonusPerSkillLevel = 0.005f;
 
         private void Start()
     {
@@ -116,19 +122,14 @@ if (_initialized) return;
   }
      }
         
-  private void CacheLevelUpEffect()
- {
-        // Try to find Valheim's skill level up effect
-    if (_levelUpEffectPrefab == null)
- {
-       // Look for the fx_skillup prefab
-        _levelUpEffectPrefab = ZNetScene.instance?.GetPrefab("fx_Guardian_StoneActivate");
-        if (_levelUpEffectPrefab == null)
- {
-       // Fallback - try other common effect prefabs
-        _levelUpEffectPrefab = ZNetScene.instance?.GetPrefab("vfx_Potion_stamina_medium");
-       }
-  }
+        /// <summary>The player's own skill level-up effect (vfx_skilllevelup), taken from the Player prefab: it is
+        /// not registered in ZNetScene, and it carries no ZNetView, so it stays local like the player's.</summary>
+        private void CacheLevelUpEffect()
+        {
+            if (_levelUpEffectPrefab != null) return;
+            var levelUpEffects = ZNetScene.instance?.GetPrefab("Player")?.GetComponent<Player>()?.m_skillLevelupEffects?.m_effectPrefabs;
+            if (levelUpEffects != null && levelUpEffects.Length > 0)
+                _levelUpEffectPrefab = levelUpEffects[0].m_prefab;
         }
 
 #endregion
@@ -138,14 +139,17 @@ if (_initialized) return;
       /// <summary>
      /// Gets the current level of a skill.
         /// </summary>
+        /// <summary>The level with status-effect skill bonuses (armor sets, meads), floored, like vanilla Skills.GetSkillLevel.</summary>
   public float GetSkillLevel(Skills.SkillType skillType)
       {
-    if (_skills.TryGetValue(skillType, out var data))
-      {
-      return data.level;
-    }
-     return 0f;
+            float level = _skills.TryGetValue(skillType, out var data) ? data.level : 0f;
+            var seman = _character != null ? _character.GetSEMan() : null;
+            if (seman != null && skillType != Skills.SkillType.None) seman.ModifySkillLevel(skillType, ref level);
+            return Mathf.Floor(level);
    }
+
+        /// <summary>The weapon damage factor the companion's skill gives, on native and fallback hits alike.</summary>
+        public float GetDamageSkillFactor(Skills.SkillType skillType) => 1f + GetSkillLevel(skillType) * DamageBonusPerSkillLevel;
 
         /// <summary>
         /// Sets the level of a skill directly.
@@ -182,8 +186,11 @@ if (_initialized) return;
             // Don't gain XP if already at max
           if (data.level >= maxSkillLevel) return;
 
-     // Calculate XP gain (similar to player skills)
-  float gainAmount = factor * skillGainMultiplier;
+     // Calculate XP gain (similar to player skills), with status-effect raise bonuses like Player.RaiseSkill
+            float raiseMultiplier = 1f;
+            var seman = _character != null ? _character.GetSEMan() : null;
+            if (seman != null) seman.ModifyRaiseSkill(skillType, ref raiseMultiplier);
+  float gainAmount = factor * skillGainMultiplier * raiseMultiplier;
 
           // Higher skill levels require more XP to level up
    float levelFactor = 1f + (data.level * 0.05f);
@@ -240,18 +247,13 @@ if (_companion?.isTamed == true)
           // happened in memory; we only suppress the visual.
           if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
 
-          // Play level up particle effect
-            if (_levelUpEffectPrefab != null)
-            {
-  var effectPos = transform.position + Vector3.up * 1f;
-        UnityEngine.Object.Instantiate(_levelUpEffectPrefab, effectPos, Quaternion.identity);
-            }
+          // A local effect like the player's own, so only for a player close enough to see it.
+            var effectPos = transform.position + Vector3.up * 1f;
+            if (_levelUpEffectPrefab != null && Core.NpcFxRange.NearLocalPlayer(effectPos))
+                UnityEngine.Object.Instantiate(_levelUpEffectPrefab, effectPos, Quaternion.identity);
       
     // Show floating text above companion
            ShowSkillLevelUpText(skillType, newLevel);
-     
-       // Play sound effect
-           PlayLevelUpSound();
         }
         
         private void ShowSkillLevelUpText(Skills.SkillType skillType, float level)
@@ -283,27 +285,6 @@ if (_companion?.isTamed == true)
   }
         }
   
- private void PlayLevelUpSound()
-  {
-     // Try to play a level up sound effect
-  try
-           {
-   // Use Valheim's skill increase sound if available
-          var audioSource = GetComponent<AudioSource>();
-  if (audioSource == null)
-    {
-       audioSource = gameObject.AddComponent<AudioSource>();
-         audioSource.spatialBlend = 1f;
-        audioSource.volume = 0.5f;
-   audioSource.maxDistance = 15f;
-  }
-         
-    // Try to find a suitable sound clip
-              // The player has a skill increase sound we could reference
-        }
-          catch { }
-        }
-        
       private string GetSkillDisplayName(Skills.SkillType skillType)
     {
             // Try to get localized name
@@ -351,7 +332,7 @@ _skills[skillType] = new SkillData();
         public float GetSkillFactor(Skills.SkillType skillType)
    {
    float level = GetSkillLevel(skillType);
-         return level / maxSkillLevel;
+         return Mathf.Clamp01(level / maxSkillLevel);
  }
 
  /// <summary>

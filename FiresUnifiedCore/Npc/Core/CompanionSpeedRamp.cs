@@ -88,6 +88,14 @@ namespace FiresCore.Npc.Core
 
             if (CompanionPatches.GetCachedCompanion(__instance) == null) return; // companions only
 
+            // Crouched companions walk at crouch speed, prone ones at the owner's crawl fraction of it: vanilla picks
+            // m_crouchSpeed only when IsCrouching(), which is false for non-players.
+            if (Movement.CompanionStance.TryGetSneakSpeed(__instance, out float sneakSpeed))
+            {
+                __state.Walk = __instance.m_walkSpeed;
+                __instance.m_walkSpeed = sneakSpeed;
+            }
+
             float catchUp = GetCatchUp(__instance);
 
             if (!MovementRampConfig.Enabled)

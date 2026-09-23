@@ -7,6 +7,7 @@ using HarmonyLib;
 using FiresCore.Npc.Archetypes.StatusEffects;
 using FiresCore.Npc.Archetypes.StatusEffects.Common;
 using FiresCore.Lifecycle;
+using FiresCore.Npc.Animation;
 
 namespace FiresCore.Npc.Archetypes
 {
@@ -619,9 +620,10 @@ namespace FiresCore.Npc.Archetypes
             }
             
             seman.AddStatusEffect(tauntEffect, true);
+            Combat.VikHavnBridge.Taunt(m_character, enemy, duration);
             return true;
         }
-        
+
         /// <summary>
         /// Applies minimal damage to draw initial aggro from a new target.
         /// </summary>
@@ -799,7 +801,8 @@ namespace FiresCore.Npc.Archetypes
             
             // Apply the taunt
             seman.AddStatusEffect(tauntEffect, true);
-            
+            Combat.VikHavnBridge.Taunt(taunter, enemy, duration);
+
             if (VerboseLogging)
             {
                 Debug.Log($"[TauntManager] Applied taunt to {enemy.m_name} from {taunter.m_name}");
@@ -921,12 +924,16 @@ namespace FiresCore.Npc.Archetypes
         // Cached prefab names for sledge effects
         // NOTE: vfx_sledge_hit is the VISIBLE ground slam, fx_sledge_hit is small/invisible
         private const string SledgeHitEffect = "vfx_sledge_hit";
-        private const string SledgeHitEffectFallback = "fx_sledge_hit";
+        private const string SledgeHitEffectFallback = "vfx_sledge_hit";
         private const string SledgePrefab = "SledgeStagbreaker";
         
         // Taunt animation duration
         private const float TauntEmoteDuration = 1.5f;
         private const float TauntImpactTime = 0.5f;
+        private const string RoarEmote = "roar";
+        private const string ComeHereEmote = "comehere";
+        private static readonly string[] TauntEmotes = { "flex", "challenge", RoarEmote };
+        private const float ComeHereMaxMove = 0.1f;
         private const float EffectGroundOffset = 0.1f;
         private const float AllyShockwaveScale = 0.7f;
         private const float MinimalAggroDamage = 0.01f;
@@ -1129,7 +1136,7 @@ namespace FiresCore.Npc.Archetypes
                 
                 // Spawn the sledge effect at ally position (scaled down slightly)
                 // Try multiple prefab names as fallbacks - vfx_sledge_hit is the visible one
-                string[] effectNames = { SledgeHitEffect, "fx_eikthyr_stomp", SledgeHitEffectFallback, "vfx_GoblinShaman_protect" };
+                string[] effectNames = { SledgeHitEffect, "fx_eikthyr_stomp", SledgeHitEffectFallback, "fx_shaman_protect" };
                 GameObject effectPrefab = null;
                 string usedEffectName = null;
                 
@@ -1298,27 +1305,22 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         private void PlayTauntEmote()
         {
-            if (_animator == null) return;
-            
-            // Use a random taunt emote for variety
-            string[] tauntEmotes = { "emote_flex", "emote_challenge", "emote_roar" };
-            string selectedEmote = tauntEmotes[UnityEngine.Random.Range(0, tauntEmotes.Length)];
-            
-            try
+            var zanim = GetComponent<ZSyncAnimation>();
+            if (Combat.VikHavnBridge.Installed)
             {
-                _animator.SetTrigger(selectedEmote);
-                
-                if (VerboseLogging)
-                {
-                    Debug.Log($"[TauntShockwave] Playing emote: {selectedEmote}");
-                }
+                var roar = PlayerAnimationCatalog.Find(RoarEmote);
+                if (PlayerAnimationCatalog.Play(zanim, _animator, roar))
+                    StartCoroutine(ComeHereAfterRoar(roar.Seconds));
+                return;
             }
-            catch
-            {
-                // Fall back to shout or attack animation
-                try { _animator.SetTrigger("shout"); }
-                catch { try { _animator.SetTrigger("attack"); } catch { } }
-            }
+            PlayerAnimationCatalog.Play(zanim, _animator, PlayerAnimationCatalog.Find(TauntEmotes[UnityEngine.Random.Range(0, TauntEmotes.Length)]));
+        }
+
+        private IEnumerator ComeHereAfterRoar(float roarSeconds)
+        {
+            yield return new WaitForSeconds(roarSeconds);
+            if (_character == null || _character.IsDead() || _character.GetMoveDir().magnitude >= ComeHereMaxMove) yield break;
+            PlayerAnimationCatalog.Play(GetComponent<ZSyncAnimation>(), _animator, PlayerAnimationCatalog.Find(ComeHereEmote));
         }
         
         /// <summary>
@@ -1341,7 +1343,7 @@ namespace FiresCore.Npc.Archetypes
             
             // Try to spawn the sledge hit effect (this is what creates the shockwave visual)
             // Try multiple names in order of preference
-            string[] effectNames = { SledgeHitEffect, "fx_eikthyr_stomp", SledgeHitEffectFallback, "vfx_GoblinShaman_protect" };
+            string[] effectNames = { SledgeHitEffect, "fx_eikthyr_stomp", SledgeHitEffectFallback, "fx_shaman_protect" };
             GameObject effectPrefab = null;
             string usedEffectName = null;
             
@@ -1446,7 +1448,7 @@ namespace FiresCore.Npc.Archetypes
             Vector3 headPos = enemy.transform.position + Vector3.up * 2f;
 
             // Try to spawn a visible indicator
-            string[] indicatorEffects = { "vfx_taunted_bal", "fx_crit", "vfx_blocked" };
+            string[] indicatorEffects = { "fx_crit", "vfx_blocked" };
             foreach (var effectName in indicatorEffects)
             {
                 var prefab = ZNetScene.instance?.GetPrefab(effectName);
@@ -1493,9 +1495,10 @@ namespace FiresCore.Npc.Archetypes
             }
             
             seman.AddStatusEffect(tauntEffect, true);
+            Combat.VikHavnBridge.Taunt(taunter, enemy, duration);
             return true;
         }
-        
+
         /// <summary>
         /// Applies the "Taunting" buff to show the taunter they're drawing aggro.
         /// </summary>

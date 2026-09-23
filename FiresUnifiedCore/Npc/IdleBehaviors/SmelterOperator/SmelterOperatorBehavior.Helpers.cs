@@ -1,6 +1,7 @@
 ﻿using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.Core;
+using FiresCore.Npc.Animation;
 
 namespace FiresCore.Npc.IdleBehaviors
 {
@@ -10,27 +11,21 @@ namespace FiresCore.Npc.IdleBehaviors
         #region Chest Operations
         
         /// <summary>
-        /// Opens a chest visually with proper multiplayer sync.
-        /// Uses the same mechanism as ChestInteractionService for consistent behavior.
+        /// Opens a chest visually (lid, sound, in-use flag) the way its owner does, with an immediate ZDO send.
+        /// Purely cosmetic: only a chest we already own and nobody has open. Ownership is never taken for it
+        /// (the ZDO in-use flag shows a player on another machine holding it open), and without a local player
+        /// it is skipped, since Container.SetInUse dereferences Player.m_localPlayer (Container.cs:223).
         /// </summary>
         private void TryOpenChestVisually(Container chest)
         {
-            if (chest == null) return;
+            if (chest == null || Player.m_localPlayer == null) return;
             
             var nview = chest.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return;
+            if (nview == null || !nview.IsValid() || !nview.IsOwner()) return;
+            if (chest.IsInUse() || nview.GetZDO().GetInt(ZDOVars.s_inUse) == 1) return;
             
-            // Check if already in use
-            if (chest.IsInUse()) return;
-            
-            // Claim ownership so SetInUse works
-            if (!nview.IsOwner())
-            {
-                nview.ClaimOwnership();
-            }
-            
-            // Open the chest (triggers animation, sound, ZDO sync)
             chest.SetInUse(true);
+            _chestOpenedVisually = chest;
             
             // Force immediate ZDO sync to all nearby players
             var zdo = nview.GetZDO();
@@ -47,22 +42,17 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         /// <summary>
-        /// Closes a chest visually with proper multiplayer sync.
+        /// Closes a chest this behaviour opened visually, if we still own it.
         /// </summary>
         private void TryCloseChestVisually(Container chest)
         {
-            if (chest == null) return;
+            if (chest == null || chest != _chestOpenedVisually) return;
+            _chestOpenedVisually = null;
+            if (Player.m_localPlayer == null) return;
             
             var nview = chest.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return;
+            if (nview == null || !nview.IsValid() || !nview.IsOwner()) return;
             
-            // Claim ownership so SetInUse works
-            if (!nview.IsOwner())
-            {
-                nview.ClaimOwnership();
-            }
-            
-            // Close the chest (triggers animation, sound, ZDO sync)
             chest.SetInUse(false);
             
             // Force immediate ZDO sync to all nearby players
@@ -111,7 +101,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         if (conversion.m_from != null)
                         {
                             string oreName = conversion.m_from.name;
-                            int count = ChestHelper.CountItemInChests(_nearbyChests, oreName);
+                            int count = ChestHelper.GetAvailableItemCount(_nearbyChests, oreName);
                             if (count > 0)
                             {
                                 Debug.Log($"[SmelterOperator]   - Found {count}x {oreName} in chests");
@@ -125,7 +115,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     if (_targetSmelter.m_fuelItem != null)
                     {
                         string fuelName = _targetSmelter.m_fuelItem.name;
-                        int fuelCount = ChestHelper.CountItemInChests(_nearbyChests, fuelName);
+                        int fuelCount = ChestHelper.GetAvailableItemCount(_nearbyChests, fuelName);
                         Debug.Log($"[SmelterOperator]   - Found {fuelCount}x {fuelName} (fuel) in chests");
                     }
                 }
@@ -158,24 +148,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 int woodNeeded = Mathf.Max(oreCapacity, 0);
                 if (woodNeeded > 0)
                 {
-                    string[] woodTypes = { "Wood", "RoundLog", "FineWood", "ElderBark", "YggdrasilWood" };
                     int totalPulled = 0;
-                    
-                    // CRITICAL FIX: Use PullItemsFromChests (contains matching) instead of PullItemsByPrefabName (exact matching)
-                    // because wood prefab names may vary (e.g., "wood" vs "Wood")
-                    foreach (string woodType in woodTypes)
+
+                    // Exact prefab names from the kiln's m_conversion; a substring match would also take ArrowWood & co.
+                    foreach (string woodType in PieceDataHelper.GetStationInputs(_targetSmelter))
                     {
                         if (totalPulled >= woodNeeded) break;
-                        
-                        // First try exact match
+
                         int pulled = ChestHelper.PullItemsByPrefabName(_nearbyChests, storageInv, woodType, woodNeeded - totalPulled);
-                        
-                        // If no exact match, try contains match (handles case differences)
-                        if (pulled == 0)
-                        {
-                            pulled = ChestHelper.PullItemsFromChests(_nearbyChests, storageInv, woodType.ToLowerInvariant(), woodNeeded - totalPulled);
-                        }
-                        
                         totalPulled += pulled;
                         if (pulled > 0 && CompanionIdleBehavior.VerboseLogging)
                             Debug.Log($"[SmelterOperator] Pulled {pulled}x {woodType} from chests for kiln (need {woodNeeded}, total pulled={totalPulled})");
@@ -270,9 +250,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 int kilnCapacity = GetRemainingKilnCapacity();
                 if (kilnCapacity > 0)
                 {
-                    string[] woodTypes = { "Wood", "RoundLog", "FineWood", "ElderBark", "YggdrasilWood" };
                     int totalPulled = 0;
-                    foreach (string woodType in woodTypes)
+                    foreach (string woodType in PieceDataHelper.GetStationInputs(_nearbyKiln))
                     {
                         if (totalPulled >= kilnCapacity) break;
                         int pulledWood = ChestHelper.PullItemsByPrefabName(_nearbyChests, storageInv, woodType, kilnCapacity - totalPulled);
@@ -356,7 +335,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 if (conversion.m_from != null)
                 {
-                    if (ChestHelper.ChestsHaveItem(_nearbyChests, conversion.m_from.name))
+                    if (ChestHelper.GetAvailableItemCount(_nearbyChests, conversion.m_from.name) > 0)
                         return true;
                 }
             }
@@ -364,7 +343,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check for fuel
             if (_targetSmelter.m_fuelItem != null)
             {
-                if (ChestHelper.ChestsHaveItem(_nearbyChests, _targetSmelter.m_fuelItem.name))
+                if (ChestHelper.GetAvailableItemCount(_nearbyChests, _targetSmelter.m_fuelItem.name) > 0)
                     return true;
             }
             
@@ -378,31 +357,36 @@ namespace FiresCore.Npc.IdleBehaviors
             var storageInv = _inventory.GetStorageInventory();
             if (storageInv == null) return;
             
-            // Get output item prefab names
-            var outputPrefabs = new HashSet<string>();
-            if (_targetSmelter != null)
+            // Exact output prefabs: a name substring ("Iron") also matched the companion's own SwordIron or PickaxeIron.
+            var outputPrefabs = new HashSet<string>(GetOutputNames());
+            int deposited = 0;
+            foreach (var item in new List<ItemDrop.ItemData>(storageInv.GetAllItems()))
             {
-                foreach (var conversion in _targetSmelter.m_conversion)
-                {
-                    if (conversion.m_to != null)
-                    {
-                        outputPrefabs.Add(conversion.m_to.name.ToLowerInvariant());
-                    }
-                }
+                if (!IsCarriedStationItem(item, outputPrefabs) || !TryDepositItem(item, storageInv)) continue;
+                deposited++;
+                
+                if (CompanionIdleBehavior.VerboseLogging)
+                    Debug.Log($"[SmelterOperator] Deposited {item.m_stack}x {item.m_dropPrefab.name} to chests");
             }
             
-            // Deposit each output type
-            foreach (string outputName in outputPrefabs)
+            if (deposited > 0)
             {
-                int deposited = ChestHelper.DepositItemType(_nearbyChests, storageInv, outputName);
                 _itemsDeposited += deposited;
-                
-                if (CompanionIdleBehavior.VerboseLogging && deposited > 0)
-                    Debug.Log($"[SmelterOperator] Deposited {deposited}x {outputName} to chests");
+                _inventory.SaveToZDO();
             }
             
             // Return unused input materials back to chests
             ReturnUnusedMaterialsToChests();
+        }
+        
+        /// <summary>A carried stack whose exact prefab is in <paramref name="prefabs"/>; never an equipped item.</summary>
+        private bool IsCarriedStationItem(ItemDrop.ItemData item, ICollection<string> prefabs)
+        {
+            if (item?.m_dropPrefab == null || !prefabs.Contains(item.m_dropPrefab.name)) return false;
+            if (item.m_equipped) return false;
+            foreach (var equipped in _inventory.GetAllEquipped().Values)
+                if (ReferenceEquals(equipped, item)) return false;
+            return true;
         }
         
         /// <summary>
@@ -434,15 +418,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 inputPrefabs.Add(_targetSmelter.m_fuelItem.name);
             }
             
-            // Add wood types for kiln operations
-            if (_isKilnOperation || _needsCoalFromKiln)
-            {
-                inputPrefabs.Add("Wood");
-                inputPrefabs.Add("RoundLog");
-                inputPrefabs.Add("FineWood");
-                inputPrefabs.Add("ElderBark");
-                inputPrefabs.Add("YggdrasilWood");
-            }
+            // A kiln target's wood is already in its m_conversion above; add the helper kiln's when making coal.
+            if (_needsCoalFromKiln && _nearbyKiln != null)
+                inputPrefabs.UnionWith(PieceDataHelper.GetStationInputs(_nearbyKiln));
             
             // Return each input type to chests
             var itemsToReturn = new List<ItemDrop.ItemData>(storageInv.GetAllItems());
@@ -450,40 +428,8 @@ namespace FiresCore.Npc.IdleBehaviors
             
             foreach (var item in itemsToReturn)
             {
-                if (item == null) continue;
-                
-                string dropName = item.m_dropPrefab?.name ?? "";
-                
-                if (inputPrefabs.Contains(dropName))
-                {
-                    // Try to return to a chest that already has this item
-                    var targetChest = ChestHelper.FindChestWithItem(_nearbyChests, item);
-                    if (targetChest != null)
-                    {
-                        var containerInv = targetChest.GetInventory();
-                        if (containerInv != null && containerInv.CanAddItem(item))
-                        {
-                            containerInv.AddItem(item.Clone());
-                            storageInv.RemoveItem(item);
-                            returnedCount++;
-                            continue;
-                        }
-                    }
-                    
-                    // Try any chest with room
-                    foreach (var container in _nearbyChests)
-                    {
-                        if (container == null) continue;
-                        var containerInv = container.GetInventory();
-                        if (containerInv != null && containerInv.CanAddItem(item))
-                        {
-                            containerInv.AddItem(item.Clone());
-                            storageInv.RemoveItem(item);
-                            returnedCount++;
-                            break;
-                        }
-                    }
-                }
+                if (IsCarriedStationItem(item, inputPrefabs) && TryDepositItem(item, storageInv))
+                    returnedCount++;
             }
             
             if (returnedCount > 0)
@@ -589,7 +535,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (conversion.m_from != null)
                 {
                     string oreName = conversion.m_from.name;
-                    bool found = ChestHelper.ChestsHaveItem(_nearbyChests, oreName);
+                    bool found = ChestHelper.GetAvailableItemCount(_nearbyChests, oreName) > 0;
                     if (found)
                     {
                         if (CompanionIdleBehavior.VerboseLogging)
@@ -630,28 +576,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
-            // Check for the smelter's specific fuel type
-            if (_targetSmelter.m_fuelItem != null)
-            {
-                string fuelName = _targetSmelter.m_fuelItem.name;
-                bool found = ChestHelper.ChestsHaveItem(_nearbyChests, fuelName);
-                if (found)
-                {
-                    if (CompanionIdleBehavior.VerboseLogging)
-                        Debug.Log($"[SmelterOperator] HasFuelInChests - Found {fuelName} in chests!");
-                    return true;
-                }
-                
-                if (CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[SmelterOperator] HasFuelInChests - No {fuelName} found in {_nearbyChests.Count} chests");
-                return false;
-            }
+            // A station without a fuel item (charcoal kiln, windmill, spinning wheel) burns nothing.
+            if (_targetSmelter.m_fuelItem == null) return false;
             
-            // Default fuel check (Coal)
-            bool hasCoal = ChestHelper.ChestsHaveItem(_nearbyChests, "Coal");
+            string fuelName = _targetSmelter.m_fuelItem.name;
+            bool found = ChestHelper.GetAvailableItemCount(_nearbyChests, fuelName) > 0;
             if (CompanionIdleBehavior.VerboseLogging)
-                Debug.Log($"[SmelterOperator] HasFuelInChests - Coal check: {hasCoal} ({_nearbyChests.Count} chests)");
-            return hasCoal;
+                Debug.Log($"[SmelterOperator] HasFuelInChests - {fuelName} found={found} in {_nearbyChests.Count} chests");
+            return found;
         }
         
         /// <summary>
@@ -666,7 +598,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_isKilnOperation) return false;
             
             // Some smelters don't use fuel
-            if (_targetSmelter.m_maxFuel == 0) return false;
+            if (_targetSmelter.m_maxFuel == 0 || _targetSmelter.m_fuelItem == null) return false;
             
             var nview = _targetSmelter.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return false;
@@ -709,22 +641,12 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private bool HasFuel()
         {
-            if (_inventory == null || _targetSmelter == null) return false;
+            if (_inventory == null || _targetSmelter == null || _targetSmelter.m_fuelItem == null) return false;
             
             var storageInv = _inventory.GetStorageInventory();
             if (storageInv == null) return false;
             
-            string fuelPrefab = _targetSmelter.m_fuelItem?.gameObject.name ?? "Coal";
-            
-            foreach (var item in storageInv.GetAllItems())
-            {
-                if (item == null) continue;
-                string dropName = item.m_dropPrefab?.name ?? "";
-                if (dropName.Equals(fuelPrefab, System.StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            
-            return false;
+            return ChestHelper.CountPrefabInInventory(storageInv, _targetSmelter.m_fuelItem.gameObject.name) > 0;
         }
         
         /// <summary>
@@ -783,7 +705,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var nview = _targetSmelter.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return false;
             
-            int queued = nview.GetZDO().GetInt("queued", 0);
+            int queued = nview.GetZDO().GetInt(ZDOVars.s_queued, 0);
             int maxItems = _targetSmelter.m_maxOre;
             
             if (queued >= maxItems) return false;
@@ -792,6 +714,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return HasMaterials();
         }
         
+        /// <summary>Carries an input or the fuel of the target, by exact prefab name (substrings took Coal for CharcoalResin).</summary>
         private bool HasMaterials()
         {
             if (_inventory == null) return false;
@@ -799,30 +722,14 @@ namespace FiresCore.Npc.IdleBehaviors
             var storageInv = _inventory.GetStorageInventory();
             if (storageInv == null) return false;
             
-            var neededOres = GetNeededOres();
-            string neededFuel = GetNeededFuel();
-            
-            foreach (var item in storageInv.GetAllItems())
+            foreach (string oreName in GetNeededOres())
             {
-                if (item == null) continue;
-                
-                string name = item.m_shared.m_name?.ToLowerInvariant() ?? "";
-                string dropName = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-                
-                foreach (string oreName in neededOres)
-                {
-                    if (name.Contains(oreName.ToLowerInvariant()) || dropName.Contains(oreName.ToLowerInvariant()))
-                        return true;
-                }
-                
-                if (!string.IsNullOrEmpty(neededFuel))
-                {
-                    if (name.Contains(neededFuel.ToLowerInvariant()) || dropName.Contains(neededFuel.ToLowerInvariant()))
-                        return true;
-                }
+                if (ChestHelper.CountPrefabInInventory(storageInv, oreName) > 0)
+                    return true;
             }
             
-            return false;
+            string neededFuel = GetNeededFuel();
+            return neededFuel != null && ChestHelper.CountPrefabInInventory(storageInv, neededFuel) > 0;
         }
         
         private bool IsProcessing()
@@ -832,23 +739,26 @@ namespace FiresCore.Npc.IdleBehaviors
             var nview = _targetSmelter.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return false;
             
-            int queued = nview.GetZDO().GetInt("queued", 0);
+            int queued = nview.GetZDO().GetInt(ZDOVars.s_queued, 0);
             return queued > 0;
         }
         
+        /// <summary>
+        /// Output the station holds instead of dropping: a spawn-stack station (windmill) collects products in the ZDO
+        /// until the stack fills or it is emptied (Smelter.QueueProcessed).
+        /// </summary>
         private bool HasOutput()
         {
             if (_targetSmelter == null) return false;
             
-            // Check via ZDO if there's spawned output waiting
             var nview = _targetSmelter.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return false;
             
-            // Smelters spawn output as a prefab - check if the spawn point exists
-            // We can also check the ZDO for spawned count
-            int spawned = nview.GetZDO().GetInt("spawnedAmount", 0);
-            return spawned > 0;
+            return nview.GetZDO().GetInt(ZDOVars.s_spawnAmount) > 0;
         }
+        
+        /// <summary>The target has an ore slot; the 1.0 Frost Kiln has none and produces from fuel alone (Smelter.cs:346).</summary>
+        private bool StationTakesOre => _targetSmelter != null && _targetSmelter.m_maxOre > 0;
         
         #endregion
         
@@ -858,45 +768,15 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_targetSmelter == null) return new List<string>();
             
-            var result = new List<string>();
-            
-            // CRITICAL FIX: For kilns, the "ore" is actually WOOD!
-            // Kilns don't have m_conversion entries pointing to Wood - they just accept wood directly
-            // IMPORTANT: These are EXACT prefab names - do NOT use pattern matching that might catch arrows!
-            if (_isKilnOperation)
-            {
-                // Return EXACT wood prefab names for kilns (not patterns!)
-                // This list is used for exact matching in TryAddOre()
-                result.Add("Wood");
-                result.Add("RoundLog");
-                result.Add("FineWood");
-                result.Add("ElderBark");
-                result.Add("YggdrasilWood");
-                return result;
-            }
-            
-            // Check smelter's conversion list for regular smelters
-            foreach (var conversion in _targetSmelter.m_conversion)
-            {
-                if (conversion.m_from != null)
-                {
-                    result.Add(conversion.m_from.name);
-                }
-            }
-            
-            return result;
+            // Kilns too: the charcoal kiln is a Smelter whose m_conversion is its accepted wood.
+            return PieceDataHelper.GetStationInputs(_targetSmelter);
         }
         
+        /// <summary>The target's fuel prefab, or null when it burns nothing.</summary>
         private string GetNeededFuel()
         {
-            if (_targetSmelter == null) return null;
-            
-            if (_targetSmelter.m_fuelItem != null)
-            {
-                return _targetSmelter.m_fuelItem.name;
-            }
-            
-            return "Coal"; // Default fuel for most smelters
+            if (_targetSmelter == null || _targetSmelter.m_fuelItem == null) return null;
+            return _targetSmelter.m_fuelItem.name;
         }
         
         private List<string> GetOutputNames()
@@ -992,19 +872,11 @@ namespace FiresCore.Npc.IdleBehaviors
                 string dropName = item.m_dropPrefab?.name ?? "";
                 if (string.IsNullOrEmpty(dropName)) continue;
                 
-                    // Check against needed ores (for kilns this includes wood types)
+                    // Exact names from the station's own m_conversion, compared like Smelter.IsItemAllowed.
                     foreach (string oreName in neededOres)
                     {
-                        // CRITICAL FIX: Use EXACT match only, not contains!
-                        // This prevents ArrowWood from matching "Wood" and causing "Item not allowed" spam
-                        bool matches = dropName.Equals(oreName, System.StringComparison.OrdinalIgnoreCase);
-                        
-                        // For kilns, also verify it's actually valid wood (not arrows, etc.)
-                        if (matches && _isKilnOperation && !ChestHelper.IsValidWoodForKiln(dropName))
-                        {
-                            matches = false;
-                        }
-                        
+                        bool matches = string.Equals(dropName, oreName, System.StringComparison.Ordinal);
+
                         if (matches)
                     {
                         // CRITICAL: Remove from inventory FIRST, then call RPC
@@ -1012,7 +884,8 @@ namespace FiresCore.Npc.IdleBehaviors
                         // Clone the item data before removal for logging
                         string itemName = item.m_shared?.m_name ?? dropName;
                         int stackBefore = item.m_stack;
-                        
+                        bool cheated = item.m_cheated;
+
                         // Try to remove one item from the stack
                         if (!storageInv.RemoveOneItem(item))
                         {
@@ -1021,10 +894,8 @@ namespace FiresCore.Npc.IdleBehaviors
                             continue; // Try next item
                         }
                         
-                        // Successfully removed from inventory - now add to smelter via RPC
-                        // CRITICAL: Use the ACTUAL prefab name from the item, not oreName
-                        // This ensures the RPC gets the correct prefab reference
-                        nview.InvokeRPC("RPC_AddOre", dropName);
+                        // 1.0 registers RPC_AddOre as (string name, bool cheated); see Smelter.OnAddOre.
+                        nview.InvokeRPC(AddOreRpc, dropName, cheated);
                         _inventory.SaveToZDO();
                         
                         if (CompanionIdleBehavior.VerboseLogging)
@@ -1095,7 +966,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     }
                     
                     // Successfully removed from inventory - now add to smelter via RPC
-                    nview.InvokeRPC("RPC_AddFuel");
+                    nview.InvokeRPC(AddFuelRpc);
                     _inventory.SaveToZDO();
                     
                     if (CompanionIdleBehavior.VerboseLogging)
@@ -1108,20 +979,20 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
         
+        /// <summary>
+        /// Empties held output the way the station's empty switch does (Smelter.OnEmpty sends RPC_EmptyProcessed,
+        /// Smelter.cs:249): the owner spawns the stack at the output point. Paced so a remote owner can answer.
+        /// </summary>
         private bool TryCollectOutput()
         {
-            if (_targetSmelter == null || _humanoid == null) return false;
+            if (!HasOutput() || Time.time - _lastEmptyTime < MinSingleInputInterval) return false;
             
-            // Interact with smelter to collect output
-            var interactable = _targetSmelter as Interactable;
-            if (interactable != null && interactable.Interact(_humanoid, false, false))
-            {
-                if (CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[SmelterOperator] Collected output from smelter");
-                return true;
-            }
+            _lastEmptyTime = Time.time;
+            _targetSmelter.GetComponent<ZNetView>().InvokeRPC(EmptyProcessedRpc);
             
-            return false;
+            if (CompanionIdleBehavior.VerboseLogging)
+                Debug.Log($"[SmelterOperator] Emptied held output of {GetStationName()}");
+            return true;
         }
         
         #endregion
@@ -1129,10 +1000,14 @@ namespace FiresCore.Npc.IdleBehaviors
         #region Kiln Helpers
         
         /// <summary>
-        /// Finds a nearby kiln for coal production.
+        /// A free charcoal kiln (read from its Smelter data) that makes the target's fuel and accepts wood we carry or
+        /// can pull from the nearby chests. A fuel-only station such as the Frost Kiln is never it.
         /// </summary>
         private Smelter FindNearbyKiln()
         {
+            if (_targetSmelter == null || _targetSmelter.m_fuelItem == null) return null;
+            string fuelPrefab = _targetSmelter.m_fuelItem.gameObject.name;
+            
             var colliders = Physics.OverlapSphere(_targetPosition, StationDetectionRange);
             
             foreach (var collider in colliders)
@@ -1143,88 +1018,59 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (smelter == null) continue;
                 if (smelter == _targetSmelter) continue; // Skip our main target
                 
-                string stationType = GetStationTypeFromSmelter(smelter);
-                if (stationType.ToLowerInvariant().Contains("kiln"))
+                if (!PieceDataHelper.IsCharcoalKiln(smelter) || !PieceDataHelper.StationProduces(smelter, fuelPrefab)) continue;
+                if (!CarriesWoodFor(smelter) && !ChestsHoldWoodFor(smelter)) continue;
+                
+                if (InteractableOccupancyManager.CanUseInteractable(smelter.gameObject, _character))
                 {
-                    // Check if kiln is available
-                    if (InteractableOccupancyManager.CanUseInteractable(smelter.gameObject, _character))
-                    {
-                        return smelter;
-                    }
+                    return smelter;
                 }
             }
             
             return null;
         }
         
+        /// <summary>The kiln whose wood matters: the target when operating a kiln, else the helper kiln for coal.</summary>
+        private Smelter WoodKiln => _isKilnOperation ? _targetSmelter : _nearbyKiln != null ? _nearbyKiln : FindNearbyKiln();
+
         /// <summary>
-        /// Checks if we have wood to fill a kiln.
-        /// CRITICAL: Uses ChestHelper.IsValidWoodForKiln() to exclude arrows and other non-fuel items.
+        /// Checks if we carry wood the kiln accepts (its own m_conversion inputs).
         /// </summary>
         private bool HasWoodForKiln()
         {
-            if (_inventory == null)
-            {
-                if (CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[SmelterOperator] HasWoodForKiln: No inventory");
-                return false;
-            }
-            
-            var storageInv = _inventory.GetStorageInventory();
-            if (storageInv == null)
-            {
-                if (CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[SmelterOperator] HasWoodForKiln: No storage inventory");
-                return false;
-            }
-            
-            var allItems = storageInv.GetAllItems();
+            var kiln = WoodKiln;
+            if (kiln == null) return false;
+
+            bool carried = CarriesWoodFor(kiln);
             if (CompanionIdleBehavior.VerboseLogging)
-                Debug.Log($"[SmelterOperator] HasWoodForKiln: Checking {allItems.Count} items in storage");
+                Debug.Log($"[SmelterOperator] HasWoodForKiln: {carried} (accepted: {string.Join(", ", PieceDataHelper.GetStationInputs(kiln))})");
+            return carried;
+        }
+        
+        private bool CarriesWoodFor(Smelter kiln)
+        {
+            var storageInv = _inventory != null ? _inventory.GetStorageInventory() : null;
+            if (storageInv == null) return false;
             
-            foreach (var item in allItems)
+            foreach (var item in storageInv.GetAllItems())
             {
-                if (item == null) continue;
-                
-                string dropName = item.m_dropPrefab?.name ?? "";
-                
-                // CRITICAL FIX: Use ChestHelper.IsValidWoodForKiln() to exclude arrows and other non-fuel items
-                // This prevents "Item not allowed ArrowWood" spam
-                if (ChestHelper.IsValidWoodForKiln(dropName))
-                {
-                    if (CompanionIdleBehavior.VerboseLogging)
-                        Debug.Log($"[SmelterOperator] HasWoodForKiln: FOUND valid wood - {dropName} x{item.m_stack}");
+                if (item?.m_dropPrefab != null && PieceDataHelper.StationAccepts(kiln, item.m_dropPrefab.name))
                     return true;
-                }
             }
-            
-            if (CompanionIdleBehavior.VerboseLogging)
-            {
-                Debug.Log($"[SmelterOperator] HasWoodForKiln: No valid wood found. Items in inventory:");
-                foreach (var item in allItems)
-                {
-                    if (item != null)
-                    {
-                        string prefab = item.m_dropPrefab?.name ?? "?";
-                        bool isValidWood = ChestHelper.IsValidWoodForKiln(prefab);
-                        Debug.Log($"[SmelterOperator]   - {prefab} x{item.m_stack} (validWood={isValidWood})");
-                    }
-                }
-            }
-            
             return false;
         }
         
         /// <summary>
-        /// Checks if nearby chests have VALID wood for kilns.
-        /// CRITICAL: Uses exact prefab matching to exclude arrows (ArrowWood, etc.)
+        /// Checks if nearby chests hold wood the kiln accepts (exact prefab names, so never ArrowWood).
         /// </summary>
         private bool HasWoodInChests()
         {
-            // Valid wood types for kilns - EXACT prefab names only
-            string[] validWoodTypes = { "Wood", "RoundLog", "FineWood", "ElderBark", "YggdrasilWood" };
-            
-            // Fallback to direct ChestHelper with EXACT matching
+            var kiln = WoodKiln;
+            return kiln != null && ChestsHoldWoodFor(kiln);
+        }
+        
+        private bool ChestsHoldWoodFor(Smelter kiln)
+        {
             if (_nearbyChests == null || _nearbyChests.Count == 0) return false;
             
             foreach (var container in _nearbyChests)
@@ -1240,8 +1086,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     
                     string prefabName = item.m_dropPrefab?.name ?? "";
                     
-                    // Use ChestHelper.IsValidWoodForKiln() to properly exclude arrows
-                    if (ChestHelper.IsValidWoodForKiln(prefabName))
+                    if (PieceDataHelper.StationAccepts(kiln, prefabName))
                     {
                         if (CompanionIdleBehavior.VerboseLogging)
                             Debug.Log($"[SmelterOperator] HasWoodInChests: Found valid wood {prefabName} x{item.m_stack}");
@@ -1256,6 +1101,23 @@ namespace FiresCore.Npc.IdleBehaviors
         #endregion
         
         #region Item Pickup
+        
+        /// <summary>
+        /// True when a loose item is ours to take now. Taking it needs its ZDO (destroying a copy we don't own leaves
+        /// the item in the world), so otherwise its owner is asked for it the way vanilla ItemDrop.Pickup does;
+        /// RequestOwn paces its own retries and the next scan takes the item once ownership arrives.
+        /// </summary>
+        private static bool CanTakeOrRequestItem(ItemDrop itemDrop)
+        {
+            if (itemDrop.IsPiece()) return false;
+            
+            var itemNview = itemDrop.GetComponent<ZNetView>();
+            if (itemNview == null || !itemNview.IsValid()) return false;
+            
+            if (itemDrop.CanPickup()) return true;
+            itemDrop.RequestOwn();
+            return false;
+        }
         
         /// <summary>
         /// Finds the nearest pickupable item within scan radius of the center point.
@@ -1273,15 +1135,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (collider == null) continue;
                 
                 ItemDrop itemDrop = collider.GetComponent<ItemDrop>() ?? collider.GetComponentInParent<ItemDrop>();
-                if (itemDrop == null) continue;
-                
-                // Check if we can pickup
-                if (!itemDrop.CanPickup()) continue;
-                if (itemDrop.IsPiece()) continue;
-                
-                // Check if item has valid ZNetView
-                var itemNview = itemDrop.GetComponent<ZNetView>();
-                if (itemNview == null || !itemNview.IsValid()) continue;
+                if (itemDrop == null || !CanTakeOrRequestItem(itemDrop)) continue;
                 
                 float dist = Vector3.Distance(Transform.position, itemDrop.transform.position);
                 if (dist < nearestDist)
@@ -1301,13 +1155,10 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool TryPickupSpecificItem(ItemDrop itemDrop)
         {
             if (itemDrop == null || !itemDrop || !itemDrop.gameObject.activeInHierarchy) return false;
-            if (!itemDrop.CanPickup()) return false;
+            if (!CanTakeOrRequestItem(itemDrop)) return false;
             
             var storageInv = _inventory?.GetStorageInventory();
             if (storageInv == null) return false;
-            
-            var itemNview = itemDrop.GetComponent<ZNetView>();
-            if (itemNview == null || !itemNview.IsValid()) return false;
             
             itemDrop.Load();
             var itemData = itemDrop.m_itemData;
@@ -1346,11 +1197,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (collider == null) continue;
                 
                 ItemDrop itemDrop = collider.GetComponent<ItemDrop>() ?? collider.GetComponentInParent<ItemDrop>();
-                if (itemDrop == null) continue;
-                
-                // Check if we can pickup
-                if (!itemDrop.CanPickup()) continue;
-                if (itemDrop.IsPiece()) continue;
+                if (itemDrop == null || !CanTakeOrRequestItem(itemDrop)) continue;
                 
                 count++;
             }
@@ -1372,14 +1219,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (collider == null) continue;
                 
                 ItemDrop itemDrop = collider.GetComponent<ItemDrop>() ?? collider.GetComponentInParent<ItemDrop>();
-                if (itemDrop == null) continue;
-                
-                // Check if we can pickup
-                if (!itemDrop.CanPickup()) continue;
-                if (itemDrop.IsPiece()) continue;
-                
-                var itemNview = itemDrop.GetComponent<ZNetView>();
-                if (itemNview == null || !itemNview.IsValid()) continue;
+                if (itemDrop == null || !CanTakeOrRequestItem(itemDrop)) continue;
                 
                 itemDrop.Load();
                 var itemData = itemDrop.m_itemData;
@@ -1429,17 +1269,8 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_targetSmelter == null) return "station";
             
-            // Use PieceDataHelper for proper station type identification
+            // Display label only
             return PieceDataHelper.GetSmelterType(_targetSmelter);
-        }
-        
-        /// <summary>
-        /// Gets the station type from a Smelter component.
-        /// </summary>
-        private string GetStationTypeFromSmelter(Smelter smelter)
-        {
-            if (smelter == null) return "station";
-            return PieceDataHelper.GetSmelterType(smelter);
         }
         
         private void NotifyOwner()
@@ -1495,11 +1326,14 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private void PlayWorkingAnimation(bool enable)
         {
-            if (_zanim != null)
-            {
-                _zanim.SetBool("crafting", enable);
-                _zanim.SetBool("Working", enable);
-            }
+            PlayerAnimationCatalog.SetCrafting(_zanim, null, enable ? PlayerAnimationCatalog.WorkbenchCrafting : PlayerAnimationCatalog.NoCrafting);
+        }
+        
+        /// <summary>Ends the work pose and closes a chest we opened, so neither outlives the job or an interruption.</summary>
+        private void ReleaseStationVisuals()
+        {
+            PlayWorkingAnimation(false);
+            TryCloseChestVisually(_chestOpenedVisually);
         }
         
         private void SetPhase(OperatePhase phase)

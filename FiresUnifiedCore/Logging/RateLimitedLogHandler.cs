@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Text;
 using System.Threading;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using UnityEngine;
 
@@ -14,6 +17,25 @@ namespace FiresCore.Logging
     {
         private const string LogPrefix = "[FiresUnifiedCore]";
         private const string UnityLogSourceName = "Unity Log";
+        private const string InnerExceptionPrefix = "---> ";
+        private const string UnknownOrigin = "unknown";
+        private const string UnityRuntimeOrigin = "Unity/runtime";
+
+        private const string RouteSection = "Logging";
+        private const string RouteKey = "RouteOtherModsThroughQueue";
+        private const string RouteDescription =
+            "Send other mods' Unity log lines through this family's output queue instead of letting Unity echo them "
+            + "raw. Stops a third-party line printing through the middle of a banner. The cost is that those lines "
+            + "stop appearing in Player.log; they are still in LogOutput.log and the console.";
+
+        private static ConfigEntry<bool> _routeOtherModLines;
+
+        // Core binds this from its own config file at setup; nothing else should.
+        internal static void BindConfig(ConfigFile config)
+        {
+            if (config == null) return;
+            _routeOtherModLines = config.Bind(RouteSection, RouteKey, true, RouteDescription);
+        }
 
         private const string LimitExceededFragment        = "Failed to send data k_EResultLimitExceeded";
         private const string ShaderBinaryWarningFragment  = "Failed to find expected binary shader data";
@@ -56,14 +78,26 @@ namespace FiresCore.Logging
             StatusBanner.Register(StatusSource, DescribeSuppressed);
         }
 
+        // Core's line in the status box: this handler's counts plus UnityLogSuppressionPatch's, which sees the native
+        // Unity warnings that never pass through this handler, so the two never count the same message.
         private string DescribeSuppressed()
         {
-            var counts = new List<string>(4);
-            if (_suppressedShaderWarnings > 0) counts.Add($"{_suppressedShaderWarnings:N0} shader binary-data");
-            if (_suppressedMissingScriptWarnings > 0) counts.Add($"{_suppressedMissingScriptWarnings:N0} missing-script");
-            if (_suppressedKinematicWarnings > 0) counts.Add($"{_suppressedKinematicWarnings:N0} kinematic-velocity");
-            if (_suppressedValheimNreBugs > 0) counts.Add($"{_suppressedValheimNreBugs:N0} known no-fix NRE");
+            var counts = new List<string>(6);
+            AddCount(counts, _suppressedShaderWarnings + UnityLogSuppressionPatch.SuppressedShaderWarnings, "shader binary-data");
+            AddCount(counts, _suppressedMissingScriptWarnings + UnityLogSuppressionPatch.SuppressedMissingScriptWarnings, "missing-script");
+            AddCount(counts, _suppressedKinematicWarnings + UnityLogSuppressionPatch.SuppressedKinematicWarnings, "kinematic-velocity");
+            AddCount(counts, UnityLogSuppressionPatch.SuppressedNonReadableMeshWarnings, "non-readable-mesh");
+            AddCount(counts, UnityLogSuppressionPatch.SuppressedClutterNreWarnings, "ClutterSystem NRE");
+            AddCount(counts, UnityLogSuppressionPatch.SuppressedHeadlessRenderErrors, "headless render/video");
+            AddCount(counts, BepInExLogSuppressionPatch.QuietedOtherModLines, "other mods quieted");
+            AddCount(counts, BepInExLogSuppressionPatch.SuppressedHarmonyMissing, "HarmonyX probe misses");
+            AddCount(counts, _suppressedValheimNreBugs, "known no-fix NRE");
             return counts.Count == 0 ? null : $"log filter held back {string.Join(", ", counts)} (verbose shows them)";
+        }
+
+        private static void AddCount(List<string> counts, int count, string label)
+        {
+            if (count > 0) counts.Add($"{count:N0} {label}");
         }
 
         public void LogFormat(LogType logType, UnityEngine.Object context, string format, params object[] args)
@@ -72,7 +106,29 @@ namespace FiresCore.Logging
             if (TryWriteOurModLineToBepInEx(logType, message)) return;
 
             if (!VerbosePassThrough() && ShouldSuppress(logType, message)) return;
+            if (TryRouteOtherModLine(logType, message)) return;
             _inner.LogFormat(logType, context, format, args);
+        }
+
+        // Another mod's Debug.Log reaches the console twice: once as Unity's own raw stdout echo, and once through
+        // BepInEx's Unity Log listener. The raw echo does not pass through Core's output queue, so it lands wherever
+        // it likes - including through the middle of a banner that is still being written. Routing the line to BepInEx
+        // ourselves and dropping the native forward gives it the queue's ordering, the same treatment our own tagged
+        // lines already get.
+        //
+        // The cost, and it is the reason this is a setting: a line that does not go to the inner handler does not
+        // reach Player.log either. It is still in LogOutput.log and the console. That is the trade already made for
+        // our own output; this extends it to everyone else's.
+        //
+        // Runs AFTER ShouldSuppress on purpose. The our-line hop above deliberately precedes suppression, and reusing
+        // it here would have quietly exempted every third-party line from the shader, missing-script and kinematic
+        // filters.
+        private bool TryRouteOtherModLine(LogType logType, string message)
+        {
+            if (_routeOtherModLines == null || !_routeOtherModLines.Value) return false;
+            if (Thread.CurrentThread.ManagedThreadId != _mainThreadId) return false;
+            _ourModLineSource.Log(ToBepInExLevel(logType), message);
+            return true;
         }
 
         // Our tagged lines go straight to BepInEx under the "Unity Log" source, so the console and LogOutput.log get each
@@ -113,8 +169,9 @@ namespace FiresCore.Logging
         }
 
         // Relay a logged exception WITHOUT stamping our log-handler chain across its stack trace. Reads as
-        // "[FiresUnifiedCore] relayed exception from '<mod>': <type>: <msg>\n<original throw stack>" so a reader
-        // immediately sees which mod actually threw and that FiresUnifiedCore is only the relay - not the source.
+        // "[FiresUnifiedCore] relayed exception from '<mod>': <type>: <msg>\n<original throw stack>", then
+        // "---> <type>: <msg>\n<stack>" per inner exception, so a reader immediately sees which mod actually threw
+        // and that FiresUnifiedCore is only the relay - not the source.
         //
         // We emit the exception's OWN captured stack as text and suppress Unity's live call-stack append for this one
         // write. That append is what was plastering every chained handler frame (FiresCore.Logging.RateLimitedLogHandler,
@@ -124,9 +181,9 @@ namespace FiresCore.Logging
         {
             if (exception == null) return;
 
-            string origin = ResolveOriginAssembly(exception);
+            string origin = ResolveOriginThroughWrappers(exception);
             string body = $"{LogPrefix} relayed exception from '{origin}' (FiresUnifiedCore is only relaying this - the error is in that mod):\n"
-                        + $"{exception.GetType().FullName}: {exception.Message}\n{exception.StackTrace}";
+                        + DescribeExceptionChain(exception);
 
             StackTraceLogType previous = Application.GetStackTraceLogType(LogType.Error);
             bool toggled = previous != StackTraceLogType.None;
@@ -139,6 +196,47 @@ namespace FiresCore.Logging
             {
                 if (toggled) Application.SetStackTraceLogType(LogType.Error, previous);
             }
+        }
+
+        // TypeInitializationException and TargetInvocationException only wrap the real cause, so the cause's throw site names
+        // the origin unless the wrapper's own throw site is more specific.
+        private static string ResolveOriginThroughWrappers(Exception exception)
+        {
+            string ownOrigin = ResolveOriginAssembly(exception);
+            if (!IsRuntimeWrapper(exception) || exception.InnerException == null) return ownOrigin;
+
+            string causeOrigin = ResolveOriginThroughWrappers(exception.InnerException);
+            return SpecificityOf(causeOrigin) >= SpecificityOf(ownOrigin) ? causeOrigin : ownOrigin;
+        }
+
+        private static bool IsRuntimeWrapper(Exception exception)
+            => exception is TypeInitializationException || exception is TargetInvocationException;
+
+        private enum OriginSpecificity { Unknown, UnityRuntime, NamedAssembly }
+
+        private static OriginSpecificity SpecificityOf(string origin)
+        {
+            if (origin == UnknownOrigin) return OriginSpecificity.Unknown;
+            return origin == UnityRuntimeOrigin ? OriginSpecificity.UnityRuntime : OriginSpecificity.NamedAssembly;
+        }
+
+        private static string DescribeExceptionChain(Exception exception)
+        {
+            var description = new StringBuilder();
+            AppendTypeMessageAndStack(description, exception);
+            for (Exception inner = exception.InnerException; inner != null; inner = inner.InnerException)
+            {
+                description.Append('\n').Append(InnerExceptionPrefix);
+                AppendTypeMessageAndStack(description, inner);
+            }
+            return description.ToString();
+        }
+
+        private static void AppendTypeMessageAndStack(StringBuilder description, Exception exception)
+        {
+            description.Append(exception.GetType().FullName).Append(": ").Append(exception.Message);
+            string stack = exception.StackTrace;
+            if (!string.IsNullOrEmpty(stack)) description.Append('\n').Append(stack);
         }
 
         // The assembly of the deepest (throw-site) frame = the mod that actually threw. assembly_valheim/utils map to
@@ -156,7 +254,7 @@ namespace FiresCore.Logging
                 }
             }
             catch { }
-            return ParseTopTypeFromStackString(exception.StackTrace) ?? "unknown";
+            return ParseTopTypeFromStackString(exception.StackTrace) ?? UnknownOrigin;
         }
 
         private static string Friendly(string assemblyName)
@@ -164,7 +262,7 @@ namespace FiresCore.Logging
             if (assemblyName == "assembly_valheim" || assemblyName == "assembly_utils" || assemblyName == "assembly_guiutils")
                 return "Valheim";
             if (assemblyName.StartsWith("UnityEngine", StringComparison.Ordinal) || assemblyName == "mscorlib" || assemblyName.StartsWith("System", StringComparison.Ordinal))
-                return "Unity/runtime";
+                return UnityRuntimeOrigin;
             return assemblyName;
         }
 

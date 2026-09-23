@@ -64,7 +64,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Mage
             if (m_character == null) return;
             
             m_character.Message(MessageHud.MessageType.Center, "Shield Explodes!");
-            AbilityFXManager.SpawnEffect("vfx_fireball_explosion", m_character.transform.position, null, ExplosionRange / 8f);
+            AbilityFXManager.SpawnEffect("fx_fireball_staff_explosion", m_character.transform.position, null, ExplosionRange / 8f);
             
             var characters = Character.GetAllCharacters();
             foreach (var character in characters)
@@ -130,8 +130,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Mage
         protected override void OnEffectApplied()
         {
             m_character?.Message(MessageHud.MessageType.Center, "DIVINE WRATH!");
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character?.transform.position ?? Vector3.zero, null, 1f);
-            AbilityFXManager.SpawnEffect("vfx_fireball_explosion", m_character?.transform.position ?? Vector3.zero, null, 0.8f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character?.transform.position ?? Vector3.zero, null, 1f);
+            AbilityFXManager.SpawnEffect("fx_fireball_staff_explosion", m_character?.transform.position ?? Vector3.zero, null, 0.8f);
             
             // Buff nearby allies
             BuffAllies();
@@ -205,7 +205,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Mage
         {
             _lastAuraTick = Time.time;
             m_character?.Message(MessageHud.MessageType.Center, "INFERNO!");
-            AbilityFXManager.SpawnEffect("vfx_spray_fire", m_character?.transform.position ?? Vector3.zero, null, 1f);
+            AbilityFXManager.SpawnEffect("vfx_FireballHit", m_character?.transform.position ?? Vector3.zero, null, 1f);
         }
         
         public override void UpdateStatusEffect(float dt)
@@ -357,7 +357,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Mage
         protected override void OnEffectApplied()
         {
             m_character?.Message(MessageHud.MessageType.TopLeft, "Storm power!");
-            AbilityFXManager.SpawnEffect("vfx_thunderbolt_explosion", m_character?.transform.position ?? Vector3.zero, null, 0.8f);
+            AbilityFXManager.SpawnEffect("fx_JotunWitch_LightningBolt_Explosion", m_character?.transform.position ?? Vector3.zero, null, 0.8f);
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)

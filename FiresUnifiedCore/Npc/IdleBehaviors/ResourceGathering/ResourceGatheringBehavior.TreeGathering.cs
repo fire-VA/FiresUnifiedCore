@@ -29,17 +29,18 @@ namespace FiresCore.Npc.IdleBehaviors
             float closestDist = float.MaxValue;
             GameObject closest = null;
             var processed = new HashSet<GameObject>();
-            
+            int axeTier = ReachableAxeTier();
+
             foreach (var collider in colliders)
             {
                 if (collider == null) continue;
-                
+
                 var treeBase = collider.GetComponent<TreeBase>() ?? collider.GetComponentInParent<TreeBase>();
                 var treeLog = collider.GetComponent<TreeLog>() ?? collider.GetComponentInParent<TreeLog>();
-                
+
                 GameObject target = null;
                 string treeType = null;
-                
+
                 if (treeBase != null && !processed.Contains(treeBase.gameObject))
                 {
                     target = treeBase.gameObject;
@@ -52,8 +53,9 @@ namespace FiresCore.Npc.IdleBehaviors
                     treeType = "TreeLog";
                     processed.Add(target);
                 }
-                
-                if (target == null) continue;
+
+                // A tree no reachable axe can cut (a tier-2 birch nearest home) would block chopping for good.
+                if (target == null || !ResourceDataHelper.CanChop(target, axeTier)) continue;
                 
                 float dist = Vector3.Distance(position, target.transform.position);
                 if (dist < closestDist)
@@ -69,7 +71,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Also check for stumps if no trees/logs found
             if (closest == null)
             {
-                closest = FindNearbyStump(position, radius);
+                closest = ResourceDataHelper.FindNearestTreeStump(position, radius);
             }
             
             if (closest == null && (VerboseLogging || CompanionIdleBehavior.VerboseLogging))
@@ -78,101 +80,6 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             return closest;
-        }
-        
-        /// <summary>
-        /// Finds a nearby tree stump to clear.
-        /// Stumps are Destructibles with "stump" or "stub" in the name.
-        /// 
-        /// VALHEIM STUB NAMING CONVENTION:
-        /// - Beech trees: Beech_Stub
-        /// - Birch trees: Birch_Stub, Birch1_aut_Stub, Birch2_Stub, Birch2_aut_Stub
-        /// - Oak trees: Oak_Stub
-        /// - Pine/Fir trees: FirTree_Stub, Pinetree_01_Stub
-        /// - Swamp trees: SwampTree1_Stub
-        /// - Yggdrasil: YggaShoot_Stub, YggaShoot1_Stub, etc.
-        /// </summary>
-        private GameObject FindNearbyStump(Vector3 position, float radius)
-        {
-            var colliders = Physics.OverlapSphere(position, radius);
-            float closestDist = float.MaxValue;
-            GameObject closest = null;
-            var processed = new HashSet<GameObject>();
-            
-            foreach (var collider in colliders)
-            {
-                if (collider == null) continue;
-                
-                // Check for Destructible stumps (most common type)
-                var destructible = collider.GetComponent<Destructible>() ?? collider.GetComponentInParent<Destructible>();
-                if (destructible != null && !processed.Contains(destructible.gameObject))
-                {
-                    string name = destructible.name.ToLowerInvariant();
-                    // Remove (Clone) suffix if present
-                    if (name.EndsWith("(clone)"))
-                        name = name.Substring(0, name.Length - 7).Trim();
-                    
-                    // Check for stub or stump in name
-                    if (name.Contains("stub") || name.Contains("stump"))
-                    {
-                        processed.Add(destructible.gameObject);
-                        
-                        float dist = Vector3.Distance(position, destructible.transform.position);
-                        if (dist < closestDist)
-                        {
-                            closestDist = dist;
-                            closest = destructible.gameObject;
-                            
-                            if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                                Debug.Log($"[ResourceGathering] Found stump (Destructible): {destructible.name} at distance {dist:F1}m");
-                        }
-                    }
-                    continue;
-                }
-                
-                // Also check for ZNetView objects with stub/stump names (some stumps might not have Destructible)
-                var zview = collider.GetComponent<ZNetView>() ?? collider.GetComponentInParent<ZNetView>();
-                if (zview != null && !processed.Contains(zview.gameObject))
-                {
-                    string name = zview.gameObject.name.ToLowerInvariant();
-                    if (name.EndsWith("(clone)"))
-                        name = name.Substring(0, name.Length - 7).Trim();
-                    
-                    if (name.Contains("stub") || name.Contains("stump"))
-                    {
-                        // Make sure it's not just a visual mesh - needs to be damageable
-                        var hasDestructible = zview.GetComponent<IDestructible>() != null ||
-                                             zview.GetComponentInParent<IDestructible>() != null;
-                        if (hasDestructible)
-                        {
-                            processed.Add(zview.gameObject);
-                            
-                            float dist = Vector3.Distance(position, zview.transform.position);
-                            if (dist < closestDist)
-                            {
-                                closestDist = dist;
-                                closest = zview.gameObject;
-                                
-                                if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                                    Debug.Log($"[ResourceGathering] Found stump (ZNetView): {zview.gameObject.name} at distance {dist:F1}m");
-                            }
-                        }
-                    }
-                }
-            }
-            
-            return closest;
-        }
-        
-        /// <summary>
-        /// Checks if a target resource is a stump.
-        /// </summary>
-        private bool IsStump(ResourceDataHelper.ResourceData resource)
-        {
-            if (resource == null || resource.GameObject == null) return false;
-            
-            string name = resource.GameObject.name.ToLowerInvariant();
-            return name.Contains("stump") || name.Contains("stub");
         }
         
         /// <summary>
@@ -219,14 +126,6 @@ namespace FiresCore.Npc.IdleBehaviors
             
             _aoeDamageAttempts++;
             
-            // Create hit data for AOE damage
-            float damage = 25f; // Base damage
-            if (weapon != null)
-            {
-                damage = weapon.GetDamage().GetTotalBlockableDamage();
-                damage = Mathf.Max(damage, 25f); // Minimum damage
-            }
-            
             Vector3 aoeCenter = Transform.position + Transform.forward * 1.5f + Vector3.up * 1f;
             
             // Find all destructibles in AOE radius
@@ -241,39 +140,19 @@ namespace FiresCore.Npc.IdleBehaviors
                 var treeLog = collider.GetComponent<TreeLog>() ?? collider.GetComponentInParent<TreeLog>();
                 if (treeLog != null && treeLog == _targetResource.TreeLog)
                 {
-                    // Create hit data
-                    var hitData = new HitData
-                    {
-                        m_damage = { m_chop = damage, m_pickaxe = 0, m_damage = damage * 0.5f },
-                        m_point = collider.bounds.center,
-                        m_dir = (collider.bounds.center - Transform.position).normalized,
-                        m_attacker = _character.GetZDOID(),
-                        m_toolTier = (short)(weapon?.m_shared?.m_toolTier ?? 0),
-                        m_hitCollider = collider
-                    };
-                    
+                    var hitData = CreateAoeHit(weapon, collider);
                     treeLog.Damage(hitData);
                     hitSomething = true;
                     
                     if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                        Debug.Log($"[ResourceGathering] {Companion?.companionName} AOE hit {treeLog.name} for {damage:F0} chop damage");
+                        Debug.Log($"[ResourceGathering] {Companion?.companionName} AOE hit {treeLog.name} for {hitData.m_damage.m_chop:F0} chop damage");
                 }
                 
                 // Also check for generic destructibles that might be tree parts
                 var destructible = collider.GetComponent<Destructible>() ?? collider.GetComponentInParent<Destructible>();
                 if (destructible != null && ReferenceEquals(destructible, _targetResource.Destructible))
                 {
-                    var hitData = new HitData
-                    {
-                        m_damage = { m_chop = damage, m_pickaxe = 0, m_damage = damage * 0.5f },
-                        m_point = collider.bounds.center,
-                        m_dir = (collider.bounds.center - Transform.position).normalized,
-                        m_attacker = _character.GetZDOID(),
-                        m_toolTier = (short)(weapon?.m_shared?.m_toolTier ?? 0),
-                        m_hitCollider = collider
-                    };
-                    
-                    destructible.Damage(hitData);
+                    destructible.Damage(CreateAoeHit(weapon, collider));
                     hitSomething = true;
                 }
             }
@@ -299,6 +178,13 @@ namespace FiresCore.Npc.IdleBehaviors
             }
         }
         
+        /// <summary>The area swing hits like a direct swing with the tool, so the log's damage modifiers apply.</summary>
+        private HitData CreateAoeHit(ItemDrop.ItemData weapon, Collider collider)
+        {
+            Vector3 point = collider.bounds.center;
+            return ResourceDataHelper.CreateResourceHitData(_targetResource, _character, weapon, point, (point - Transform.position).normalized, collider);
+        }
+
         /// <summary>
         /// Called when a stump is destroyed - tries to spawn a sapling.
         /// </summary>
@@ -311,8 +197,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
             
-            // Determine sapling type based on stump name
-            string saplingPrefab = DetermineSaplingPrefab(stumpName);
+            string saplingPrefab = ResourceDataHelper.GetSaplingForStump(stumpName);
             if (string.IsNullOrEmpty(saplingPrefab))
             {
                 if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
@@ -322,71 +207,6 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Spawn the sapling
             SpawnSapling(saplingPrefab, stumpPosition);
-        }
-        
-        /// <summary>
-        /// Determines which sapling prefab to spawn based on the stump name.
-        /// 
-        /// VALHEIM STUB NAMING CONVENTION:
-        /// - Beech trees: Beech_Stub
-        /// - Birch trees: Birch_Stub, Birch1_aut_Stub
-        /// - Oak trees: Oak_Stub
-        /// - Pine/Fir trees: FirTree_Stub, Pinetree_01_Stub
-        /// - Swamp trees: SwampTree1_Stub
-        /// - Yggdrasil: YggaShoot_Stub
-        /// </summary>
-        private string DetermineSaplingPrefab(string stumpName)
-        {
-            if (string.IsNullOrEmpty(stumpName)) return null;
-            
-            string nameLower = stumpName.ToLowerInvariant();
-            
-            // Remove (Clone) suffix if present
-            if (nameLower.EndsWith("(clone)"))
-                nameLower = nameLower.Substring(0, nameLower.Length - 7).Trim();
-            
-            // Beech trees (Beech_Stub)
-            if (nameLower.Contains("beech"))
-                return "Beech_Sapling";
-            
-            // Birch trees (Birch_Stub, Birch1_Stub, Birch1_aut_Stub, Birch2_Stub, Birch2_aut_Stub)
-            if (nameLower.Contains("birch"))
-                return "Birch_Sapling";
-            
-            // Oak trees (Oak_Stub)
-            if (nameLower.Contains("oak"))
-                return "Oak_Sapling";
-            
-            // Pine trees (Pinetree_01_Stub, PineTree_Stub)
-            if (nameLower.Contains("pine"))
-                return "FirTree_Sapling"; // Pine and Fir share the same sapling
-            
-            // Fir trees (FirTree_Stub)
-            if (nameLower.Contains("fir"))
-                return "FirTree_Sapling";
-            
-            // Swamp/Ancient trees (SwampTree1_Stub)
-            if (nameLower.Contains("swamp") || nameLower.Contains("ancient"))
-                return "Ancient_Sapling";
-            
-            // Yggdrasil shoots (YggaShoot_Stub, YggaShoot1_Stub, etc.)
-            if (nameLower.Contains("ygga") || nameLower.Contains("yggdrasil"))
-                return "YggdrasilShoot_Sapling";
-            
-            // Ashlands trees - no sapling available in vanilla
-            if (nameLower.Contains("ashland"))
-                return null;
-            
-            // Default fallback for generic stumps/stubs - try to match common patterns
-            // If it just says "stub" or "stump" without a tree type, default to beech
-            if (nameLower.Contains("stump") || nameLower.Contains("stub"))
-            {
-                if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[ResourceGathering] Unknown stump type: {stumpName}, defaulting to Beech_Sapling");
-                return "Beech_Sapling";
-            }
-            
-            return null;
         }
         
         /// <summary>
@@ -498,7 +318,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             // Also check for stumps to clear
-            var stump = FindNearbyStump(_lastTreePosition, StumpSearchRadius);
+            var stump = ResourceDataHelper.FindNearestTreeStump(_lastTreePosition, StumpSearchRadius);
             if (stump != null)
             {
                 var stumpData = ResourceDataHelper.GetResourceData(stump);

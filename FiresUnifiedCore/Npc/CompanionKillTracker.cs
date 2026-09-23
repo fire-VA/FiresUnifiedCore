@@ -146,6 +146,13 @@ namespace FiresCore.Npc
                 _progression.OnKill(victim);
             }
 
+            // Rampage stacks live on the owner's copy of the status effect, where the companion's attacks run.
+            if (_nview != null && _nview.IsValid() && _nview.IsOwner())
+            {
+                var rampage = _character?.GetSEMan()?.GetStatusEffect(Archetypes.StatusEffects.StatusEffectManager.EFFECT_RAMPAGE.GetStableHashCode());
+                (rampage as Archetypes.StatusEffects.Expert.RampageEffect)?.OnKill();
+            }
+
             // Mark dirty for batched save (don't save immediately)
             MarkDirty();
 

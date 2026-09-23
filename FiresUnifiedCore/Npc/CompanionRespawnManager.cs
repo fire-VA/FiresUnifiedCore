@@ -1606,12 +1606,11 @@ private Vector3 GetSpawnPositionNearPlayer(Player player)
       /// </summary>
         private void PlayRespawnEffect(Vector3 position)
         {
-    var effectPrefab = ZNetScene.instance?.GetPrefab("fx_GP_Activation");
-     if (effectPrefab != null)
-   {
-    UnityEngine.Object.Instantiate(effectPrefab, position, Quaternion.identity);
-            }
+            Archetypes.AbilityFXManager.SpawnEffect(RespawnEffect, position);
         }
+
+        private const string RespawnEffect = "fx_GP_Activation";
+        private const string ResurrectEffect = "vfx_ghost_hit";
         
         /// <summary>
         /// Directly applies scale to a companion GameObject.
@@ -1826,12 +1825,7 @@ private Vector3 GetSpawnPositionNearPlayer(Player player)
             // Play respawn effect
             PlayRespawnEffect(spawnPos);
             
-            // Special resurrection VFX
-            var respawnFx = ZNetScene.instance?.GetPrefab("vfx_spiritbolt_explosion");
-            if (respawnFx != null)
-            {
-                UnityEngine.Object.Instantiate(respawnFx, spawnPos, Quaternion.identity);
-            }
+            Archetypes.AbilityFXManager.SpawnEffect(ResurrectEffect, spawnPos);
             
             // Notify
             MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center,

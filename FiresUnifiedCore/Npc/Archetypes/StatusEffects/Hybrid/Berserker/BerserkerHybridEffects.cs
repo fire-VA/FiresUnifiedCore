@@ -99,7 +99,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Berserker
         {
             m_character?.Message(MessageHud.MessageType.Center, "WRATHFUL SMITE!");
             AbilityFXManager.SpawnEffect("vfx_MeadBzerker", m_character?.transform.position ?? Vector3.zero, null, 0.8f);
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character?.transform.position ?? Vector3.zero, null, 1f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character?.transform.position ?? Vector3.zero, null, 1f);
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
@@ -310,8 +310,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Berserker
                 }
             }
             
-            AbilityFXManager.SpawnEffect("vfx_fireball_explosion", m_character.transform.position, null, AoERange / FireballFxBaseRadius);
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character.transform.position, null, AoERange / SpiritBoltFxBaseRadius);
+            AbilityFXManager.SpawnEffect("fx_fireball_staff_explosion", m_character.transform.position, null, AoERange / FireballFxBaseRadius);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character.transform.position, null, AoERange / SpiritBoltFxBaseRadius);
         }
         
         public static bool Apply(Character target, float duration)

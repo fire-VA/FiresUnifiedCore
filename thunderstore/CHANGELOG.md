@@ -1,3 +1,76 @@
+* v0.2.60 - safer building wear, faster loading of built-up areas, main-menu tools for mods, lighter file watching, better companions
+  - heavily built areas load and unload faster: each building piece no longer copies its whole area's piece list when it appears or goes away (a vanilla cost that grew with the square of the pieces in one area)
+  - buildings don't wear or collapse while the ground under them is still loading
+  - Fires mods can add right-click options to worlds on the main menu, and show pop-up dialogs with text boxes, checkboxes and dropdowns
+  - the right-click menu on the main menu's world list opens at the cursor instead of off screen at resolutions above 1080p
+  - every mod's file watchers (config hot reload and the like) now run on Windows file notifications instead of re-scanning their folders every 0.75 seconds; [File Watching] turns this off or sets how long changes are gathered before they reach the mods
+  - a file saved again with the same contents no longer counts as a change, so mods that re-save their config after each reload (such as MaxPlayerCount) don't reload over and over
+  - Core's exception relay now prints every inner exception (type, message and stack trace) and names the mod behind TypeInitializationException / TargetInvocationException wrappers, so errors such as a failed static initializer show their real cause instead of 'unknown'
+  - a second noisy warning filter now reports once, and its counts join the status box
+  - status box lines that are too wide now wrap instead of being cut off
+  - wild and hammer-placed companions spawn with gear from the real 1.0 item list, matched to where they spawn (Meadows to Deep North) and to their role: guardians with a shield, rangers with a bow or crossbow and matching arrows, mages and clerics with staves, and so on; now and then a lucky one has gear from the next biome up
+  - companions no longer carry the rare wooden training weapons
+  - companions shooting bows and crossbows fire the arrows or bolts they carry, with their damage (fire arrows burn, frost arrows chill), instead of always wooden arrows
+  - giant and dwarf companions' weapons, helmets, hair and beards now grow or shrink with them, instead of staying player-sized
+  - one-handed weapons companions carry on their back show up again after a companion's body changes
+  - companion shields and parries now actually block damage, so guardians and paladins hold the line
+  - the high-level companion passives work: Iron Wall, Unyielding, Rampage, Execute, Death Wish and Chain Casting
+  - the archetype and hybrid class you pick in a companion's radial menu now stick
+  - companions become their hybrid class as soon as they reach level 25, instead of at their next gear change
+  - companion ability effects only play near players, so fights at a distant base are no longer heard in your ear, and they no longer show doubled in multiplayer
+  - ability visuals that went missing in 1.0 are back
+  - companion group heals no longer heal extra for every player online
+  - wild companions' names now match their bodies
+  - companion helmets, hoods and hair attach to the skeleton that actually moves
+  - followers pulled back to you after you fly or teleport away land on the ground beside you instead of dropping from your height
+  - the status box shows how much time AI pathfinding takes
+  - following companions now actually arrive at your side after you fly or teleport away, skylands included, instead of staying where they were
+  - companions no longer get hair or beard styles meant for other characters, which floated above their heads; ones that had one get a proper style
+  - in multiplayer each companion's idle life runs on one machine, so its emotes and chores no longer repeat for every player nearby
+  - companions no longer lose or duplicate items when they put things in chests or take them out in multiplayer, leave chests alone while someone has them open, and respect private chests and wards
+  - companions organise chests the way players do: ore and coal by the smelter, bars by the forge, wood and stone by the workbench and stonecutter, raw food by the cooking stations, seeds by the fields, clothes and armour in the wardrobe or by the beds, and trophies and valuables in chests of their own
+  - companion jobs work in 1.0: smelters, kilns and windmills no longer destroy ore or wood, cooking stations are tended properly, fires get their own fuel, farming knows the 1.0 crops (kale, oats, poteitr), and gathering uses real tools
+  - tools, hammers, cultivators and fish that companions make or catch no longer vanish when you log out
+  - companions no longer fight with shovels, scythes or tankards, chase shadow creatures they can't hit, or throw frost-orb staves at enemies
+  - companions no longer slide across the ground while emoting, and get up properly from thrones, ship seats and divans
+  - patrol and quest NPCs walk instead of gliding for other players
+  - companions show their work poses at workbenches, forges and cauldrons, jump over obstacles again, and are never unstuck into lava or tar
+  - the radial menu's wander switch works
+  - with VikHavn Combat Moveset Additions installed, following companions crawl beside you when you go prone, at your crawl speed, and duck lower while sneaking
+  - sneaking companions are harder to spot: their stealth now uses their Sneak skill and status effects, and crawling hides them better still
+  - companions turn their heads smoothly to look at you instead of whipping them from side to side
+  - companions without a weapon really punch and kick now, with the player's own moves
+  - with VikHavn Combat Moveset Additions installed, companion kicks launch foes the way yours do, bare-handed companions grab stunned foes, hold them for everyone to hit and then kick them away, and tank companions' taunts are VikHavn taunts (the rune, and the foe stays on them)
+  - tank companions roar, flex or call enemies over when they taunt, and every player sees it
+  - crawling and sneaking companions follow VikHavn's Sneak Stance settings from the server
+  - a command to a companion works even when another player's game was running that companion
+  - companions sent fishing find water at the world's real water level
+  - woodcutting companions skip trees their axe is too weak to chop
+  - companions tending a fire only start a batch they can finish, so food isn't left burning
+  - Fires menus and dialogs no longer fill the log with 'The LiberationSans SDF Font Asset was not found' warnings
+  - arriving somewhere no longer freezes the game while your companions are found, and big worlds no longer hitch every few seconds from keeping track of companions
+  - companions no longer flash invisible or fill the log with "vertex stride" errors when they appear with a female body
+  - console summary boxes line up in Windows Terminal, including the ones whose icon it draws narrow
+  - quieter logs: pathfinding measurement starts with one line, and old login diagnostics are gone
+  - custom dungeons no longer rebuild themselves (with an error and a two-second freeze) when they spawn far from the host
+  - a unique dungeon such as the mausoleum crypt now places once on worlds made before it was installed: further out when the middle is taken, never on a player's build or across a generated river, and in a fresh zone of its own on one-zone-at-a-time worlds (not over a converted world's explored land)
+  - custom dungeon rooms can carry vanilla props (lit torches) that every player sees, with no extra network objects
+  - dungeon environment-box debug lines only print with verbose logging on
+  - companions' skills, Strength and Intelligence, class damage bonuses and critical hits now count on every attack, not just some; tamed companions hit harder as they level, the same way their health grows
+  - companion armor works like a player's: it counts difficulty, backstabs and staggers the way yours does, upgraded and world-level armor is stronger, and resist meads and gear resistances no longer stack beyond what a player gets
+  - heavy armor slows companions and light gear speeds them up, and the Speed attribute now makes them faster
+  - companion skill bonuses from armor sets and meads count, and skill-gain bonuses apply
+  - companions heal from food at the same rate you do (it was far faster), food wears off gradually like yours, and eitr regeneration uses gear and effects
+  - companions drink healing meads for their real effect, and stamina and eitr from meads and effects reach them
+  - gear and effects that change attack, block and dodge stamina costs now apply to companions
+  - Ashlands companions' fire immunity also stops them catching fire
+  - the companion stats page shows the real strength of class abilities
+  - companion armour wears out when they are hit, like yours, and they repair it at a workbench; the wear is saved with the companion
+  - companions drink any mead that suits the moment: healing when hurt, a resistance against what is hurting them, stamina or eitr when low, and attack meads in a fight
+  - companions eat by the same rules you do: they top a food up once it is past halfway, and a new food replaces their emptiest one
+  - a fortified companion really gets the armor Fortify promises, so tanks and paladins shrug off hits while it lasts
+  - less stutter from physics: the game no longer creates a throwaway object for every collision it reports (about half a million of them in a quarter hour); [Performance] Reuse Collision Callbacks turns it off
+
 * v0.2.35 - one status box for every Fires mod
   - Fires mods share one status box in the log, about once a minute, instead of each printing its own repeating lines; turn it off or change the interval with [General] StatusBanner and StatusBannerSeconds
   - fewer repeated log lines

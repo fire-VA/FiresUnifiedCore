@@ -36,16 +36,7 @@ namespace FiresCore.Npc.Core
         // The heartbeat reels in followers past CompanionLeash.SnapDistance (the SAME 80m ceiling the client-side
         // run-back snaps at) — the safety net for followers the client path can't manage (dormant / blind peer).
         private static float _lastHeartbeat;
-
-        // Companion prefab names this service scans. Mirrors the list in
-        // CompanionPatches and CompanionRestoreService — kept local so we
-        // don't take a hard dependency on internal helpers.
-        private static readonly string[] _companionPrefabNames =
-        {
-            "CompanionNpc",
-            "CompanionNpc_Wild",
-            "BaseNpc",
-        };
+        private static readonly List<ZDO> HeartbeatCompanions = new List<ZDO>();
 
         // ──────────────────────────────────────────────────────────────────
         // RPC registration — non-generic Register(name, action) form
@@ -57,6 +48,7 @@ namespace FiresCore.Npc.Core
         [HarmonyPostfix]
         public static void ZNet_Start_RegisterRpc()
         {
+            CompanionZdoCensus.Reset();
             if (ZRoutedRpc.instance == null)
             {
                 Debug.LogWarning($"{LogPrefix} ZNet.Start postfix: ZRoutedRpc.instance is null — RPC '{RPC_Reconcile}' NOT registered. Reconcile will silently no-op.");
@@ -130,8 +122,11 @@ namespace FiresCore.Npc.Core
 
                 Debug.Log($"{LogPrefix} Reconcile received: playerId={playerId}, ownerPos={ownerPos} (sender={sender})");
 
-                int teleported = ReconcileFollowersFor(playerId, ownerPos, CompanionLeash.ArrivalReelInDistance);
-                Debug.Log($"{LogPrefix} Reconcile complete for player {playerId}: teleported={teleported}");
+                CompanionZdoCensus.WhenReady(() =>
+                {
+                    int teleported = ReconcileFollowersFor(playerId, ownerPos, CompanionLeash.ArrivalReelInDistance);
+                    Debug.Log($"{LogPrefix} Reconcile complete for player {playerId}: teleported={teleported}");
+                });
             }
             catch (Exception ex)
             {
@@ -149,19 +144,12 @@ namespace FiresCore.Npc.Core
             if (ZDOMan.instance == null || playerId == 0L) return 0;
 
             int teleported = 0;
-            var temp = new List<ZDO>();
-            foreach (var prefabName in _companionPrefabNames)
+            var companions = new List<ZDO>();
+            CompanionZdoCensus.Collect(companions);
+            foreach (var zdo in companions)
             {
-                temp.Clear();
-                int idx = 0;
-                while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(prefabName, temp, ref idx)) { }
-
-                foreach (var zdo in temp)
-                {
-                    if (zdo == null || !zdo.IsValid()) continue;
-                    if (zdo.GetLong("companion_owner", 0L) != playerId) continue;
-                    if (TryReelIn(zdo, ownerPos, threshold)) teleported++;
-                }
+                if (zdo.GetLong("companion_owner", 0L) != playerId) continue;
+                if (TryReelIn(zdo, ownerPos, threshold, "arrival reconcile")) teleported++;
             }
             return teleported;
         }
@@ -175,18 +163,52 @@ namespace FiresCore.Npc.Core
         /// When it does move a follower it claims ZDO ownership first so the write can't lose to closest-peer
         /// ownership flap. Returns true if the companion was moved.
         /// </summary>
-        private static bool TryReelIn(ZDO zdo, Vector3 ownerPos, float threshold)
+        private static bool TryReelIn(ZDO zdo, Vector3 ownerPos, float threshold, string reason)
         {
             if (zdo == null || !zdo.IsValid()) return false;
             if (zdo.GetBool("npc_stationed", false)) return false;
             if (!zdo.GetBool("companion_wasfollowing", false)) return false;
-            if (Vector3.Distance(zdo.GetPosition(), ownerPos) < threshold) return false;
+            float distance = Vector3.Distance(zdo.GetPosition(), ownerPos);
+            if (distance < threshold) return false;
+
+            Vector3 landing = LandingSpot(ownerPos);
+            string name = zdo.GetString("companion_name", zdo.m_uid.ToString());
+
+            // A companion some machine is running is moved BY that machine: its ZSyncTransform writes the instance's
+            // position into the ZDO every tick, so a server-side ZDO write never lands (2026-09-22: five reel-ins of
+            // the same 57 m gap in a row). Only a dormant companion (no owner, or a server owner with no instance) is
+            // moved here.
+            long zdoOwner = zdo.GetOwner();
+            bool runningSomewhere = zdoOwner != 0L
+                && (zdoOwner != ZDOMan.GetSessionID() || (ZNetScene.instance != null && ZNetScene.instance.FindInstance(zdo) != null));
+            if (runningSomewhere)
+            {
+                ZRoutedRpc.instance.InvokeRoutedRPC(zdoOwner, zdo.m_uid, CompanionController.ReelInRpc, landing);
+                Debug.Log($"{LogPrefix} Asked peer {zdoOwner} to bring '{name}' {distance:F0} m to its owner at {landing} ({reason})");
+                return true;
+            }
 
             zdo.SetOwner(ZDOMan.GetSessionID());
-            zdo.SetPosition(ownerPos);
+            zdo.SetPosition(landing);
             zdo.DataRevision++;
             ZDOMan.instance.ForceSendZDO(zdo.m_uid);
+            Debug.Log($"{LogPrefix} Reeled in dormant '{name}' {distance:F0} m to its owner at {landing} ({reason})");
             return true;
+        }
+
+        private const float AirborneOwnerHeight = 2f;
+
+        /// <summary>
+        /// The owner's position, dropped to the floor or ground below when the owner is in the air (flying, jumping
+        /// off a cliff), and never below the water surface. Companions take no fall damage, but dropping them from a
+        /// flying owner's height would rain them down on the player every heartbeat.
+        /// </summary>
+        private static Vector3 LandingSpot(Vector3 ownerPos)
+        {
+            if (ZoneSystem.instance == null) return ownerPos;
+            if (!ZoneSystem.instance.GetSolidHeight(ownerPos, out float ground, 1)) return ownerPos;
+            if (ownerPos.y - ground <= AirborneOwnerHeight) return ownerPos;
+            return new Vector3(ownerPos.x, Mathf.Max(ground, ZoneSystem.instance.m_waterLevel), ownerPos.z);
         }
 
         // ── Server leash heartbeat ───────────────────────────────────────────────────────────────
@@ -199,6 +221,11 @@ namespace FiresCore.Npc.Core
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
             if (ZDOMan.instance == null) return;
+
+            try { CompanionZdoCensus.Tick(); }
+            catch (Exception ex) { Debug.LogWarning($"{LogPrefix} companion census threw: {ex.Message}"); }
+
+            if (!CompanionZdoCensus.Ready) return;
             if (Time.unscaledTime - _lastHeartbeat < HeartbeatIntervalSeconds) return;
             _lastHeartbeat = Time.unscaledTime;
 
@@ -223,27 +250,49 @@ namespace FiresCore.Npc.Core
             }
             if (ownerPositions.Count == 0) return;
 
-            // ONE ZDO scan for all players; look each companion's owner up in the map.
+            // One pass over the census for all players; look each companion's owner up in the map.
             int reeled = 0;
-            var temp = new List<ZDO>();
-            foreach (var prefabName in _companionPrefabNames)
+            CompanionZdoCensus.Collect(HeartbeatCompanions);
+            foreach (var zdo in HeartbeatCompanions)
             {
-                temp.Clear();
-                int idx = 0;
-                while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(prefabName, temp, ref idx)) { }
-
-                foreach (var zdo in temp)
-                {
-                    if (zdo == null || !zdo.IsValid()) continue;
-                    long zdoOwner = zdo.GetLong("companion_owner", 0L);
-                    if (zdoOwner == 0L) continue;
-                    if (!ownerPositions.TryGetValue(zdoOwner, out var pos)) continue; // owner not connected/loaded
-                    if (TryReelIn(zdo, pos, CompanionLeash.SnapDistance)) reeled++;
-                }
+                long zdoOwner = zdo.GetLong("companion_owner", 0L);
+                if (zdoOwner == 0L) continue;
+                if (!ownerPositions.TryGetValue(zdoOwner, out var pos)) continue; // owner not connected/loaded
+                if (TryReelIn(zdo, pos, CompanionLeash.SnapDistance, "leash heartbeat")) reeled++;
             }
 
             if (reeled > 0)
                 Debug.Log($"{LogPrefix} leash heartbeat reeled in {reeled} stranded follower(s)");
+
+            ReportHeartbeat(ownerPositions, reeled);
+        }
+
+        private const float HeartbeatReportSeconds = 10f;
+        private static float _lastHeartbeatReport;
+
+        /// <summary>
+        /// Why the heartbeat did or didn't reel anyone in, while [Debug] CompanionFollowDiagnostics is on. It reports
+        /// the census, the owners it can see and each companion's distance and follow flag, because a follower that
+        /// stays put far from its owner can fail at any one of those.
+        /// </summary>
+        private static void ReportHeartbeat(Dictionary<long, Vector3> ownerPositions, int reeled)
+        {
+            if (Config.ConfigManager.Instance?.configCompanionFollowDiag?.Value != true) return;
+            if (Time.unscaledTime - _lastHeartbeatReport < HeartbeatReportSeconds) return;
+            _lastHeartbeatReport = Time.unscaledTime;
+
+            var report = new System.Text.StringBuilder();
+            report.Append($"{LogPrefix} [LeashDiag] census={HeartbeatCompanions.Count} owners={ownerPositions.Count} reeled={reeled} snap={CompanionLeash.SnapDistance:F0}m");
+            foreach (var zdo in HeartbeatCompanions)
+            {
+                long zdoOwner = zdo.GetLong("companion_owner", 0L);
+                bool ownerHere = ownerPositions.TryGetValue(zdoOwner, out var pos);
+                report.Append($"\n  '{zdo.GetString("companion_name", zdo.m_uid.ToString())}' owner={zdoOwner}{(ownerHere ? "" : " (not loaded)")}")
+                      .Append($" following={zdo.GetBool("companion_wasfollowing", false)} stationed={zdo.GetBool("npc_stationed", false)}")
+                      .Append($" zdoOwnerPeer={zdo.GetOwner()}");
+                if (ownerHere) report.Append($" dist={Vector3.Distance(zdo.GetPosition(), pos):F0}m");
+            }
+            Debug.Log(report.ToString());
         }
 
         // ──────────────────────────────────────────────────────────────────

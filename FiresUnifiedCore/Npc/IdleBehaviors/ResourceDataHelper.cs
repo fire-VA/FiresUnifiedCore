@@ -77,7 +77,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // State
             public bool IsPickable => Type == ResourceType.Pickable || Type == ResourceType.PickableItem;
-            public bool RequiresCombat => Type == ResourceType.Tree || Type == ResourceType.Log || Type == ResourceType.Rock;
+            public bool RequiresCombat => RequiredTool == ToolType.Axe || RequiredTool == ToolType.Pickaxe;
             public bool IsValid => GameObject != null && Type != ResourceType.None;
             
             /// <summary>
@@ -413,17 +413,36 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private static ResourceData CreateDestructibleData(GameObject obj, IDestructible destructible)
         {
+            var worldDestructible = destructible as Destructible;
             return new ResourceData
             {
                 Type = ResourceType.Destructible,
                 Name = GetFriendlyName(obj.name, "Object"),
                 GameObject = obj,
                 Destructible = destructible,
-                RequiredTool = ToolType.Any,
-                MinToolTier = 0,
+                RequiredTool = worldDestructible != null ? GetToolForDamageModifiers(worldDestructible.m_damages) : ToolType.Any,
+                MinToolTier = worldDestructible != null ? worldDestructible.m_minToolTier : 0,
                 InteractionPosition = obj.transform.position,
                 InteractionRadius = 2f
             };
+        }
+        
+        /// <summary>
+        /// The tool a destructible takes damage from (Destructible.cs:77 applies m_damages): anything that accepts weapon
+        /// damage needs no particular tool, one immune to all but chop (stumps) needs an axe, one immune to all but
+        /// pickaxe damage (ore deposits) needs a pickaxe.
+        /// </summary>
+        private static ToolType GetToolForDamageModifiers(HitData.DamageModifiers modifiers)
+        {
+            if (TakesDamage(modifiers.m_blunt) || TakesDamage(modifiers.m_slash) || TakesDamage(modifiers.m_pierce)) return ToolType.Any;
+            if (TakesDamage(modifiers.m_chop)) return ToolType.Axe;
+            if (TakesDamage(modifiers.m_pickaxe)) return ToolType.Pickaxe;
+            return ToolType.Any;
+        }
+
+        private static bool TakesDamage(HitData.DamageModifier modifier)
+        {
+            return modifier != HitData.DamageModifier.Immune && modifier != HitData.DamageModifier.Ignore;
         }
         
         #endregion
@@ -500,82 +519,114 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         /// <summary>
-        /// Checks if a weapon/tool is appropriate for the given tool requirement.
+        /// A tool counts by what it does, not its name: a wielded weapon or tool (1.0 AxeHead1/2 and the Uncooked gold
+        /// axes are Materials) of at least <paramref name="minTier"/> that deals chop damage for axe work or pickaxe
+        /// damage for mining (Scythe and Shovel deal neither).
         /// </summary>
         public static bool IsToolAppropriate(ItemDrop.ItemData item, ToolRequirement requirement, int minTier)
         {
-            if (item == null) return requirement == ToolRequirement.None;
             if (requirement == ToolRequirement.None) return true;
-            
-            int toolTier = item.m_shared?.m_toolTier ?? -1;
-            
-            // CRITICAL: Check PREFAB name, not localized m_name!
-            // m_name is the localization key like "$item_PickaxeBlackMetal" which may not contain "pickaxe"
-            // The prefab name is always in English: "PickaxeBlackMetal", "AxeBronze", etc.
-            string prefabName = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-            string localizedName = item.m_shared?.m_name?.ToLowerInvariant() ?? "";
-            var itemType = item.m_shared?.m_itemType ?? ItemDrop.ItemData.ItemType.None;
-            var skillType = item.m_shared?.m_skillType ?? Skills.SkillType.None;
-            
-            // Combined check - use both prefab name and localized name for robustness
-            string combinedName = prefabName + " " + localizedName;
-            
-            // Check tool tier first
-            if (toolTier < minTier)
-            {
-                // Only log tier failures for tools that otherwise match the requirement
-                bool wouldMatchType = false;
-                if (requirement == ToolRequirement.Pickaxe && 
-                    (combinedName.Contains("pickaxe") || skillType == Skills.SkillType.Pickaxes)) 
-                    wouldMatchType = true;
-                if (requirement == ToolRequirement.Axe && 
-                    (combinedName.Contains("axe") && !combinedName.Contains("pickaxe")) || 
-                    skillType == Skills.SkillType.WoodCutting) 
-                    wouldMatchType = true;
-                
-                if (wouldMatchType)
-                {
-                    Debug.LogWarning($"[ResourceDataHelper] Tool tier too low: {prefabName} (tier {toolTier}) needs tier {minTier}");
-                }
-                return false;
-            }
-            
-            switch (requirement)
-            {
-                case ToolRequirement.Axe:
-                    // Check by skill type first (most reliable)
-                    if (skillType == Skills.SkillType.WoodCutting) return true;
-                    // Check by name - axes work but not pickaxes
-                    if (combinedName.Contains("pickaxe")) return false;
-                    if (combinedName.Contains("axe")) return true;
-                    // Battleaxes work too
-                    if (itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon && combinedName.Contains("axe")) return true;
-                    return false;
-                    
-                case ToolRequirement.Pickaxe:
-                    // Check by skill type first (most reliable)
-                    if (skillType == Skills.SkillType.Pickaxes) return true;
-                    // Check by name
-                    return combinedName.Contains("pickaxe");
-                    
-                case ToolRequirement.Any:
-                    // Any weapon or tool works
-                    return itemType == ItemDrop.ItemData.ItemType.Tool ||
-                           itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
-                           itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
-                           itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft;
-                           
-                default:
-                    return true;
-            }
+            if (item?.m_shared == null || !IsWieldedWeaponOrTool(item)) return false;
+            if (item.m_shared.m_toolTier < minTier) return false;
+            return requirement == ToolRequirement.Any || GetToolDamage(item, requirement) > 0f;
         }
-        
+            
         /// <summary>
         /// Overload that accepts ToolType for external API compatibility.
         /// </summary>
         public static bool IsToolAppropriate(ItemDrop.ItemData item, ToolType toolType, int minTier)
         {
             return IsToolAppropriate(item, (ToolRequirement)toolType, minTier);
+        }
+                
+        public static bool IsWieldedWeaponOrTool(ItemDrop.ItemData item)
+        {
+            var itemType = item.m_shared.m_itemType;
+            return itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
+                   itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
+                   itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
+                   itemType == ItemDrop.ItemData.ItemType.Tool;
+        }
+
+        /// <summary>
+        /// True when <paramref name="candidate"/> is the better tool for the job: higher m_toolTier first, then more of
+        /// the damage that job needs (chop for axes, pickaxe for mining).
+        /// </summary>
+        public static bool IsBetterTool(ItemDrop.ItemData candidate, ItemDrop.ItemData current, ToolType tool)
+        {
+            if (current == null) return true;
+            if (candidate.m_shared.m_toolTier != current.m_shared.m_toolTier)
+                return candidate.m_shared.m_toolTier > current.m_shared.m_toolTier;
+            var requirement = (ToolRequirement)tool;
+            return GetToolDamage(candidate, requirement) > GetToolDamage(current, requirement);
+        }
+            
+        private static float GetToolDamage(ItemDrop.ItemData item, ToolRequirement requirement)
+        {
+            var damage = item.GetDamage();
+            switch (requirement)
+            {
+                case ToolRequirement.Axe:
+                    return damage.m_chop;
+                case ToolRequirement.Pickaxe:
+                    return damage.m_pickaxe;
+                default:
+                    return 0f;
+            }
+        }
+                    
+        /// <summary>
+        /// Takes the item out of <paramref name="slot"/>: onto the first free slot of <paramref name="backSlots"/>, else
+        /// into storage when it has room. Returns false and leaves the item equipped when nothing can take it.
+        /// </summary>
+        public static bool TryStowEquipped(CompanionInventory inventory, CompanionInventory.EquipmentSlot slot, params CompanionInventory.EquipmentSlot[] backSlots)
+        {
+            var item = inventory.GetEquippedItem(slot);
+            if (item == null) return true;
+                           
+            foreach (var backSlot in backSlots)
+            {
+                if (inventory.GetEquippedItem(backSlot) != null) continue;
+                inventory.UnequipSlotSilent(slot);
+                inventory.EquipItemSilent(backSlot, item);
+                return true;
+            }
+
+            var storage = inventory.GetStorageInventory();
+            if (storage == null || !storage.CanAddItem(item)) return false;
+            inventory.UnequipSlotSilent(slot);
+            storage.AddItem(item);
+            return true;
+        }
+        
+        /// <summary>
+        /// Moves <paramref name="tool"/> into the right hand from <paramref name="toolSlot"/> (null: from storage). What the
+        /// hand held goes to a free RightBack (weapons, when <paramref name="holsterWeaponOnBack"/>) or storage; when
+        /// neither can take it the tool goes back where it was and false is returned.
+        /// </summary>
+        public static bool TryEquipInRightHand(CompanionInventory inventory, ItemDrop.ItemData tool, CompanionInventory.EquipmentSlot? toolSlot, bool holsterWeaponOnBack)
+        {
+            var storage = inventory.GetStorageInventory();
+            if (toolSlot.HasValue)
+                inventory.UnequipSlotSilent(toolSlot.Value);
+            else
+                storage.RemoveItem(tool);
+
+            var held = inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
+            bool handFree = held == null || (holsterWeaponOnBack && held.IsWeapon()
+                ? TryStowEquipped(inventory, CompanionInventory.EquipmentSlot.RightHand, CompanionInventory.EquipmentSlot.RightBack)
+                : TryStowEquipped(inventory, CompanionInventory.EquipmentSlot.RightHand));
+            if (!handFree)
+            {
+                if (toolSlot.HasValue)
+                    inventory.EquipItemSilent(toolSlot.Value, tool);
+                else
+                    storage.AddItem(tool);
+                return false;
+            }
+        
+            inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightHand, tool);
+            return true;
         }
         
         /// <summary>
@@ -627,6 +678,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 hitData.m_backstabBonus = weapon.m_shared.m_backstabBonus;
                 hitData.m_blockable = weapon.m_shared.m_blockable;
                 hitData.m_dodgeable = weapon.m_shared.m_dodgeable;
+                // HitData.CheckToolTier compares m_itemWorldLevel with the world level (HitData.cs:303; Attack.cs:1069-1070).
+                hitData.m_itemLevel = (short)weapon.m_quality;
+                hitData.m_itemWorldLevel = (byte)weapon.m_worldLevel;
                 
                 // Apply damage scaling based on resource type
                 // This prevents high-tier tools from one-shotting resources
@@ -660,6 +714,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // Unarmed fallback - minimal damage
                 hitData.m_damage.m_blunt = 5f;
                 hitData.m_skill = Skills.SkillType.Unarmed;
+                hitData.m_itemWorldLevel = (byte)Game.m_worldLevel;
             }
             
             // Set hit location
@@ -697,6 +752,318 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #endregion
         
+        #region Work Swing
+
+        private const string UnarmedAttackTrigger = "unarmed_attack0";
+
+        /// <summary>
+        /// Plays a weapon's primary-attack trigger for a work swing, built the way vanilla Attack.Start builds it
+        /// (Attack.cs:239-253): the chain only continues inside vanilla's 0.2 s window after the previous swing, and a
+        /// hit on a destructible type in m_resetChainIfHit (axes: trees) restarts it (Attack.cs:343-345, 1104-1105).
+        /// </summary>
+        public sealed class AttackChain
+        {
+            private const float ChainWindow = 0.2f;
+
+            private string _animation;
+            private int _nextLevel;
+
+            public string Swing(ZSyncAnimation zanim, Animator animator, ItemDrop.ItemData weapon, float timeSinceLastAttack, DestructibleType target)
+            {
+                string trigger = NextTrigger(weapon, timeSinceLastAttack, target);
+                if (zanim != null)
+                    zanim.SetTrigger(trigger);
+                else if (animator != null)
+                    animator.SetTrigger(HasTrigger(animator, trigger) ? trigger : UnarmedAttackTrigger);
+                return trigger;
+            }
+
+            private string NextTrigger(ItemDrop.ItemData weapon, float timeSinceLastAttack, DestructibleType target)
+            {
+                var attack = weapon?.m_shared?.m_attack;
+                if (attack == null || string.IsNullOrEmpty(attack.m_attackAnimation))
+                {
+                    _animation = null;
+                    return UnarmedAttackTrigger;
+                }
+
+                string animation = attack.m_attackAnimation;
+                bool continuesChain = animation == _animation && timeSinceLastAttack <= ChainWindow;
+                _animation = animation;
+
+                if (attack.m_attackChainLevels > 1)
+                {
+                    int level = continuesChain && _nextLevel < attack.m_attackChainLevels ? _nextLevel : 0;
+                    _nextLevel = (target & attack.m_resetChainIfHit) != DestructibleType.None ? 0 : (level + 1) % attack.m_attackChainLevels;
+                    return animation + level;
+                }
+                if (attack.m_attackRandomAnimations >= 2)
+                    return animation + Random.Range(0, attack.m_attackRandomAnimations);
+                return animation;
+            }
+
+            private static bool HasTrigger(Animator animator, string trigger)
+            {
+                foreach (var parameter in animator.parameters)
+                    if (parameter.type == AnimatorControllerParameterType.Trigger && parameter.name == trigger) return true;
+                return false;
+            }
+        }
+
+        #endregion
+
+        #region Tool Crafting
+
+        private const int CraftQuality = 1;
+        private static readonly List<CraftingStation> StationsInRange = new List<CraftingStation>();
+
+        /// <summary>
+        /// The first of <paramref name="toolPrefabs"/> that suits the job and whose vanilla recipe (ObjectDB.GetRecipe) the
+        /// inventory can pay for. <paramref name="station"/> is the nearest station within <paramref name="stationRadius"/>
+        /// that meets the recipe, or null when the recipe needs none (Player.RequiredCraftingStation).
+        /// </summary>
+        public static Recipe FindCraftableTool(IEnumerable<string> toolPrefabs, ToolType tool, int minTier, Inventory inventory,
+            Vector3 position, float stationRadius, out CraftingStation station)
+        {
+            station = null;
+            if (ObjectDB.instance == null || inventory == null) return null;
+
+            foreach (string prefabName in toolPrefabs)
+            {
+                var itemPrefab = ObjectDB.instance.GetItemPrefab(prefabName);
+                var itemDrop = itemPrefab != null ? itemPrefab.GetComponent<ItemDrop>() : null;
+                if (itemDrop == null || !IsToolAppropriate(itemDrop.m_itemData, tool, minTier)) continue;
+
+                var recipe = ObjectDB.instance.GetRecipe(itemDrop.m_itemData);
+                if (recipe == null || !recipe.m_enabled || !HasCraftingResources(recipe, inventory)) continue;
+
+                if (recipe.GetRequiredStation(CraftQuality) == null) return recipe;
+                station = FindStationForRecipe(recipe, position, stationRadius);
+                if (station != null) return recipe;
+            }
+            return null;
+        }
+
+        public const int NoToolTier = -1;
+
+        /// <summary>The highest m_toolTier among <paramref name="items"/> that suits the job, or <see cref="NoToolTier"/>.</summary>
+        public static int BestToolTier(IEnumerable<ItemDrop.ItemData> items, ToolType tool)
+        {
+            int best = NoToolTier;
+            foreach (var item in items)
+                if (IsToolAppropriate(item, tool, 0) && item.m_shared.m_toolTier > best)
+                    best = item.m_shared.m_toolTier;
+            return best;
+        }
+
+        /// <summary>The highest tier among <paramref name="toolPrefabs"/> the inventory can craft right now, or <see cref="NoToolTier"/>.</summary>
+        public static int BestCraftableToolTier(IEnumerable<string> toolPrefabs, ToolType tool, Inventory inventory, Vector3 position, float stationRadius)
+        {
+            int best = NoToolTier;
+            if (ObjectDB.instance == null) return best;
+            foreach (string prefabName in toolPrefabs)
+            {
+                var itemDrop = ObjectDB.instance.GetItemPrefab(prefabName)?.GetComponent<ItemDrop>();
+                if (itemDrop == null || itemDrop.m_itemData.m_shared.m_toolTier <= best) continue;
+                if (FindCraftableTool(new[] { prefabName }, tool, itemDrop.m_itemData.m_shared.m_toolTier, inventory, position, stationRadius, out _) != null)
+                    best = itemDrop.m_itemData.m_shared.m_toolTier;
+            }
+            return best;
+        }
+
+        /// <summary>A standing tree or log an axe of <paramref name="axeTier"/> can cut (TreeBase/TreeLog.m_minToolTier).</summary>
+        public static bool CanChop(GameObject tree, int axeTier)
+        {
+            if (tree == null) return false;
+            var treeBase = tree.GetComponent<TreeBase>();
+            if (treeBase != null) return treeBase.m_minToolTier <= axeTier;
+            var treeLog = tree.GetComponent<TreeLog>();
+            return treeLog == null || treeLog.m_minToolTier <= axeTier;
+        }
+
+        /// <summary>
+        /// Crafts as InventoryGui.DoCrafting does: station, resources and room for the result are checked before anything
+        /// is spent, and the item is added from its prefab so it keeps m_dropPrefab and the world level (Inventory.cs:88).
+        /// </summary>
+        public static bool CraftTool(Recipe recipe, CraftingStation station, Inventory inventory)
+        {
+            if (!StationMeetsRecipe(recipe, station) || !HasCraftingResources(recipe, inventory)) return false;
+
+            GameObject itemPrefab = recipe.m_item.gameObject;
+            if (!inventory.CanAddItem(itemPrefab, recipe.m_amount)) return false;
+
+            foreach (var requirement in GetCraftCosts(recipe))
+                inventory.RemoveItem(requirement.m_resItem.m_itemData.m_shared.m_name, requirement.GetAmount(CraftQuality));
+            return inventory.AddItem(itemPrefab, recipe.m_amount);
+        }
+
+        private static CraftingStation FindStationForRecipe(Recipe recipe, Vector3 position, float radius)
+        {
+            StationsInRange.Clear();
+            CraftingStation.FindStationsInRange(recipe.GetRequiredStation(CraftQuality).m_name, position, radius, StationsInRange);
+
+            CraftingStation nearest = null;
+            float nearestDistance = float.MaxValue;
+            foreach (var candidate in StationsInRange)
+            {
+                if (!StationMeetsRecipe(recipe, candidate)) continue;
+                float distance = Vector3.Distance(position, candidate.transform.position);
+                if (distance < nearestDistance)
+                {
+                    nearestDistance = distance;
+                    nearest = candidate;
+                }
+            }
+            return nearest;
+        }
+
+        private static bool StationMeetsRecipe(Recipe recipe, CraftingStation station)
+        {
+            var requiredStation = recipe.GetRequiredStation(CraftQuality);
+            if (requiredStation == null) return true;
+            return station != null && station.m_name == requiredStation.m_name
+                && station.GetLevel() >= recipe.GetRequiredStationLevel(CraftQuality);
+        }
+
+        private static bool HasCraftingResources(Recipe recipe, Inventory inventory)
+        {
+            foreach (var requirement in GetCraftCosts(recipe))
+                if (inventory.CountItems(requirement.m_resItem.m_itemData.m_shared.m_name) < requirement.GetAmount(CraftQuality))
+                    return false;
+            return true;
+        }
+
+        /// <summary>
+        /// What a craft at a normal station costs: 1.0 upgrade tokens (m_upgraderResource) ride on recipes but are only
+        /// taken at an upgrader station (Player.cs:1967, 2086).
+        /// </summary>
+        private static IEnumerable<Piece.Requirement> GetCraftCosts(Recipe recipe)
+        {
+            foreach (var requirement in recipe.m_resources)
+                if (requirement.m_resItem != null && !requirement.m_upgraderResource)
+                    yield return requirement;
+        }
+
+        #endregion
+
+        #region World Prefab Data
+
+        private static ZNetScene _indexedScene;
+        private static readonly HashSet<string> TreeStumpPrefabs = new HashSet<string>();
+        private static readonly Dictionary<string, string> SaplingByStumpPrefab = new Dictionary<string, string>();
+        private static readonly HashSet<string> SmeltableItemPrefabs = new HashSet<string>();
+
+        /// <summary>Every item some smelting station converts (the m_conversion inputs of each Smelter prefab).</summary>
+        public static ICollection<string> SmeltableItems
+        {
+            get
+            {
+                EnsurePrefabIndex();
+                return SmeltableItemPrefabs;
+            }
+        }
+
+        /// <summary>A stump a felled tree leaves behind: some TreeBase's m_stubPrefab (a StumpHut or stubbe is not one).</summary>
+        public static bool IsTreeStump(GameObject obj)
+        {
+            if (obj == null) return false;
+            EnsurePrefabIndex();
+            return TreeStumpPrefabs.Contains(Utils.GetPrefabName(obj));
+        }
+
+        /// <summary>The sapling that grows the tree this stump came from (Plant.m_grownPrefabs), or null when none does.</summary>
+        public static string GetSaplingForStump(string stumpPrefabName)
+        {
+            EnsurePrefabIndex();
+            return SaplingByStumpPrefab.TryGetValue(stumpPrefabName, out string sapling) ? sapling : null;
+        }
+
+        public static GameObject FindNearestTreeStump(Vector3 position, float radius)
+        {
+            GameObject closest = null;
+            float closestDistance = float.MaxValue;
+            foreach (var collider in Physics.OverlapSphere(position, radius))
+            {
+                var destructible = collider.GetComponentInParent<Destructible>();
+                if (destructible == null || !IsTreeStump(destructible.gameObject)) continue;
+                float distance = Vector3.Distance(position, destructible.transform.position);
+                if (distance < closestDistance)
+                {
+                    closestDistance = distance;
+                    closest = destructible.gameObject;
+                }
+            }
+            return closest;
+        }
+
+        /// <summary>
+        /// True when mining the object out yields one of <paramref name="itemPrefabs"/>: its own drop table, or that of the
+        /// fractured object a Destructible deposit turns into (Destructible.cs:154-163, rock4_copper -> rock4_copper_frac).
+        /// </summary>
+        public static bool YieldsAnyOf(GameObject obj, ICollection<string> itemPrefabs)
+        {
+            if (DropTableContainsAny(GetMinedDropTable(obj), itemPrefabs)) return true;
+            var destructible = obj.GetComponent<Destructible>();
+            return destructible != null && destructible.m_spawnWhenDestroyed != null
+                && DropTableContainsAny(GetMinedDropTable(destructible.m_spawnWhenDestroyed), itemPrefabs);
+        }
+
+        private static DropTable GetMinedDropTable(GameObject obj)
+        {
+            var mineRock5 = obj.GetComponent<MineRock5>();
+            if (mineRock5 != null) return mineRock5.m_dropItems;
+            var mineRock = obj.GetComponent<MineRock>();
+            if (mineRock != null) return mineRock.m_dropItems;
+            var dropOnDestroyed = obj.GetComponent<DropOnDestroyed>();
+            return dropOnDestroyed != null ? dropOnDestroyed.m_dropWhenDestroyed : null;
+        }
+
+        private static bool DropTableContainsAny(DropTable table, ICollection<string> itemPrefabs)
+        {
+            if (table == null) return false;
+            foreach (var drop in table.m_drops)
+                if (drop.m_item != null && itemPrefabs.Contains(drop.m_item.name)) return true;
+            return false;
+        }
+
+        private static void EnsurePrefabIndex()
+        {
+            var scene = ZNetScene.instance;
+            if (scene == null || scene == _indexedScene) return;
+            _indexedScene = scene;
+            TreeStumpPrefabs.Clear();
+            SaplingByStumpPrefab.Clear();
+            SmeltableItemPrefabs.Clear();
+
+            var saplingByTree = new Dictionary<string, string>();
+            foreach (var prefab in scene.m_prefabs)
+            {
+                if (prefab == null) continue;
+                var plant = prefab.GetComponent<Plant>();
+                if (plant != null)
+                {
+                    foreach (var grown in plant.m_grownPrefabs)
+                        if (grown != null && !saplingByTree.ContainsKey(grown.name))
+                            saplingByTree[grown.name] = prefab.name;
+                }
+                var smelter = prefab.GetComponent<Smelter>();
+                if (smelter != null)
+                    SmeltableItemPrefabs.UnionWith(PieceDataHelper.GetStationInputs(smelter));
+            }
+
+            foreach (var prefab in scene.m_prefabs)
+            {
+                var tree = prefab != null ? prefab.GetComponent<TreeBase>() : null;
+                if (tree == null || tree.m_stubPrefab == null) continue;
+                string stump = tree.m_stubPrefab.name;
+                TreeStumpPrefabs.Add(stump);
+                if (!SaplingByStumpPrefab.ContainsKey(stump) && saplingByTree.TryGetValue(prefab.name, out string sapling))
+                    SaplingByStumpPrefab[stump] = sapling;
+            }
+        }
+
+        #endregion
+
         #region Logging
         
         /// <summary>

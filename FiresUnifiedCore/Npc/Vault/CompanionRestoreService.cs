@@ -226,7 +226,7 @@ namespace FiresCore.Npc.Vault
             int adopted = 0;
             int followersTeleported = 0;
             var temp = new List<ZDO>();
-            foreach (var prefabName in _companionPrefabNames)
+            foreach (var prefabName in Core.CompanionZdoCensus.PrefabNames)
             {
                 temp.Clear();
                 int idx = 0;
@@ -477,16 +477,6 @@ namespace FiresCore.Npc.Vault
             NpcDormancyBridge.Remove(playerId, npcId);
             return true;
         }
-
-        // Companion prefab names this service scans. Mirrors the list
-        // CompanionPatches uses; kept local so we don't take a hard
-        // dependency on internal helpers.
-        private static readonly string[] _companionPrefabNames =
-        {
-            "CompanionNpc",
-            "CompanionNpc_Wild",
-            "BaseNpc",
-        };
 
         /// <summary>
         /// Finds the server-side position of a player's character by matching the playerID stored in each

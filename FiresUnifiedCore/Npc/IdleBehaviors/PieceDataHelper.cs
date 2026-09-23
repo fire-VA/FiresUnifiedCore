@@ -46,7 +46,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Smelter data
             public bool IsSmelter { get; set; }
             public Smelter Smelter { get; set; }
-            public string SmelterType { get; set; } // "Smelter", "Kiln", "Blast Furnace", etc.
+            public string SmelterType { get; set; } // Display label only: "Smelter", "Charcoal Kiln", "Blast Furnace", etc.
             
             // Container data
             public bool HasContainer { get; set; }
@@ -299,48 +299,91 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         /// <summary>
-        /// Gets the smelter type string for logging/display.
-        /// Differentiates between Smelter, Kiln, Blast Furnace, etc.
+        /// Label for logs and status text only. Behaviour reads the Smelter's data through
+        /// <see cref="IsOperableStation"/> and <see cref="IsCharcoalKiln"/>, never this string.
         /// </summary>
         public static string GetSmelterType(Smelter smelter)
         {
             if (smelter == null) return "Unknown";
+            if (IsCharcoalKiln(smelter)) return "Charcoal Kiln";
             
             string prefabName = Utils.GetPrefabName(smelter.gameObject).ToLower();
-            string displayName = smelter.m_name?.ToLower() ?? "";
-            
-            // Check prefab name first (most reliable)
             if (prefabName.Contains("blastfurnace") || prefabName.Contains("blast_furnace"))
                 return "Blast Furnace";
-            if (prefabName.Contains("charcoal_kiln") || prefabName.Contains("charcoalkiln"))
-                return "Charcoal Kiln";
-            if (prefabName.Contains("kiln"))
-                return "Kiln";
             if (prefabName.Contains("smelter"))
                 return "Smelter";
-            if (prefabName.Contains("spinning") || prefabName.Contains("spinningwheel"))
+            if (prefabName.Contains("spinning"))
                 return "Spinning Wheel";
             if (prefabName.Contains("windmill"))
                 return "Windmill";
             if (prefabName.Contains("eitr") || prefabName.Contains("refinery"))
                 return "Eitr Refinery";
             
-            // Fallback to display name
-            if (displayName.Contains("blast"))
-                return "Blast Furnace";
-            if (displayName.Contains("kiln") || displayName.Contains("charcoal"))
-                return "Charcoal Kiln";
-            if (displayName.Contains("smelter"))
-                return "Smelter";
-            if (displayName.Contains("spin"))
-                return "Spinning Wheel";
-            if (displayName.Contains("wind"))
-                return "Windmill";
-            
-            // Final fallback
-            return smelter.m_name ?? "Processing Station";
+            if (string.IsNullOrEmpty(smelter.m_name)) return "Processing Station";
+            return Localization.instance?.Localize(smelter.m_name) ?? smelter.m_name;
         }
         
+        /// <summary>What a charcoal kiln turns its wood into.</summary>
+        public const string CoalPrefab = "Coal";
+        
+        /// <summary>
+        /// A Smelter a companion may run on its own: not a siege machine's engine (the battering ram's wood-burning
+        /// "kiln engine", SiegeMachine.m_engine) and producing something (the bathtub has no conversions).
+        /// </summary>
+        public static bool IsOperableStation(Smelter smelter)
+        {
+            if (smelter == null || smelter.GetComponentInParent<SiegeMachine>() != null) return false;
+            foreach (var conversion in smelter.m_conversion)
+                if (conversion.m_to != null) return true;
+            return false;
+        }
+        
+        /// <summary>
+        /// Charcoal kiln, from its data: no fuel item, and every conversion turns an input into Coal. The 1.0 Frost Kiln
+        /// (fuel Ice, no ore slot, one input-less conversion; fuel-only production, Smelter.cs:346) is not one.
+        /// </summary>
+        public static bool IsCharcoalKiln(Smelter smelter)
+        {
+            if (!IsOperableStation(smelter) || smelter.m_fuelItem != null) return false;
+            foreach (var conversion in smelter.m_conversion)
+                if (conversion.m_from == null || conversion.m_to == null || conversion.m_to.gameObject.name != CoalPrefab)
+                    return false;
+            return true;
+        }
+        
+        /// <summary>The items a Smelter-type station takes: exactly its m_conversion inputs, as vanilla
+        /// Smelter.IsItemAllowed checks them (the charcoal kiln is Wood, FineWood and RoundLog in 1.0).</summary>
+        public static List<string> GetStationInputs(Smelter smelter)
+        {
+            var inputs = new List<string>();
+            if (smelter == null) return inputs;
+            foreach (var conversion in smelter.m_conversion)
+            {
+                if (conversion.m_from == null) continue;
+                string name = conversion.m_from.gameObject.name;
+                if (!inputs.Contains(name)) inputs.Add(name);
+            }
+            return inputs;
+        }
+
+        public static bool StationAccepts(Smelter smelter, string prefabName)
+        {
+            if (smelter == null || string.IsNullOrEmpty(prefabName)) return false;
+            foreach (var conversion in smelter.m_conversion)
+                if (conversion.m_from != null && conversion.m_from.gameObject.name == prefabName)
+                    return true;
+            return false;
+        }
+        
+        public static bool StationProduces(Smelter smelter, string prefabName)
+        {
+            if (smelter == null || string.IsNullOrEmpty(prefabName)) return false;
+            foreach (var conversion in smelter.m_conversion)
+                if (conversion.m_to != null && conversion.m_to.gameObject.name == prefabName)
+                    return true;
+            return false;
+        }
+
         /// <summary>
         /// Gets the appropriate animation for a comfort group.
         /// </summary>

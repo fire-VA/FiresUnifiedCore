@@ -32,7 +32,11 @@ namespace FiresCore.Npc
         // Timing
         private float _lastFoodCheck;
         private float _lastHealingCheck;
-        private float _lastRegenTick;
+        private float _lastDecayTick;
+
+        // Vanilla Player.UpdateFood: each food's health/stamina/eitr is scaled by Pow(time left / burn time, 0.3).
+        private const float FoodDecayExponent = 0.3f;
+        private const float FoodDecayRecalcSeconds = 1f;
         
         // Rate-limited logging for GetFoodHealthBonus
         private float _lastFoodBonusLogTime;
@@ -136,9 +140,6 @@ if (_companion.isDefeated) return;
         {
             if (_inventory == null) return;
 
-            // Check if we need more food (under max food items)
-   if (_activeFoodEffects.Count >= maxFoodItems) return;
-
   // Get storage inventory
             var storageInv = _inventory.GetStorageInventory();
       if (storageInv == null) return;
@@ -148,16 +149,39 @@ if (_companion.isDefeated) return;
           foreach (var item in items.ToList())
       {
        if (!IsFood(item)) continue;
-
-   // Check if we already have this food type active
-         if (_activeFoodEffects.Any(f => f.FoodName == item.m_shared.m_name)) continue;
+                if (!CanEat(item)) continue;
 
         // Consume the food
-        if (ConsumeFood(item, storageInv))
-   {
-    if (_activeFoodEffects.Count >= maxFoodItems) break;
-          }
+                ConsumeFood(item, storageInv);
       }
+        }
+
+        /// <summary>Vanilla Player.CanEat: the same food again only past half its time, otherwise a free slot or a
+        /// food that is itself past half.</summary>
+        private bool CanEat(ItemDrop.ItemData item)
+        {
+            foreach (var effect in _activeFoodEffects)
+            {
+                if (effect.FoodName == item.m_shared.m_name) return CanEatAgain(effect);
+            }
+            foreach (var effect in _activeFoodEffects)
+            {
+                if (CanEatAgain(effect)) return true;
+            }
+            return _activeFoodEffects.Count < maxFoodItems;
+        }
+
+        private static bool CanEatAgain(FoodEffect effect) => effect.Duration > 0f && effect.TimeRemaining < effect.Duration / 2f;
+
+        /// <summary>Vanilla Player.GetMostDepletedFood: the emptiest food that may be replaced.</summary>
+        private FoodEffect MostDepletedFood()
+        {
+            FoodEffect depleted = null;
+            foreach (var effect in _activeFoodEffects)
+            {
+                if (CanEatAgain(effect) && (depleted == null || effect.TimeRemaining < depleted.TimeRemaining)) depleted = effect;
+            }
+            return depleted;
         }
 
         private bool ConsumeFood(ItemDrop.ItemData item, Inventory storageInv)
@@ -179,6 +203,16 @@ FoodName = shared.m_name,
                 TimeRemaining = shared.m_foodBurnTime,
         StartTime = Time.time
             };
+
+            // Vanilla: eating the same food restarts it, and a full belly drops the emptiest food first.
+            var existing = _activeFoodEffects.Find(active => active.FoodName == shared.m_name);
+            if (existing != null) _activeFoodEffects.Remove(existing);
+            else if (_activeFoodEffects.Count >= maxFoodItems)
+            {
+                var depleted = MostDepletedFood();
+                if (depleted == null) return false;
+                _activeFoodEffects.Remove(depleted);
+            }
 
           _activeFoodEffects.Add(effect);
        RecalculateFoodBonuses();
@@ -255,13 +289,15 @@ FoodName = shared.m_name,
      RecalculateFoodBonuses();
            UpdateMaxHealth();
      }
-
-            // Apply health regen from food (every 1 second)
-   if (currentTime - _lastRegenTick >= 1f)
-{
-     _lastRegenTick = currentTime;
-     ApplyFoodHealthRegen();
-         }
+            else if (_activeFoodEffects.Count > 0 && currentTime - _lastDecayTick >= FoodDecayRecalcSeconds)
+            {
+                _lastDecayTick = currentTime;
+                float health = _foodHealthBonus, stamina = _foodStaminaBonus, eitr = _foodEitrBonus;
+                RecalculateFoodBonuses();
+                if (Mathf.Abs(health - _foodHealthBonus) >= 1f || Mathf.Abs(stamina - _foodStaminaBonus) >= 1f || Mathf.Abs(eitr - _foodEitrBonus) >= 1f)
+                    UpdateMaxHealth();
+            }
+            // Food regen is applied by CompanionStats' regeneration, at vanilla's rate.
      }
 
      private void RecalculateFoodBonuses()
@@ -273,9 +309,10 @@ FoodName = shared.m_name,
 
   foreach (var effect in _activeFoodEffects)
          {
-        _foodHealthBonus += effect.HealthBonus;
-       _foodStaminaBonus += effect.StaminaBonus;
-         _foodEitrBonus += effect.EitrBonus;
+            float strength = effect.Duration > 0f ? Mathf.Pow(Mathf.Clamp01(effect.TimeRemaining / effect.Duration), FoodDecayExponent) : 1f;
+        _foodHealthBonus += effect.HealthBonus * strength;
+       _foodStaminaBonus += effect.StaminaBonus * strength;
+         _foodEitrBonus += effect.EitrBonus * strength;
             _foodHealthRegen += effect.HealthRegen;
    }
 
@@ -284,7 +321,7 @@ FoodName = shared.m_name,
        Debug.Log($"[CompanionConsumables] Food bonuses recalculated:");
     Debug.Log($"  - Total HP Bonus: +{_foodHealthBonus:F0}");
         Debug.Log($"  - Total Stamina Bonus: +{_foodStaminaBonus:F0}");
-      Debug.Log($"  - Total Regen: {_foodHealthRegen:F1}/s");
+      Debug.Log($"  - Total Regen: {_foodHealthRegen:F1} per {FoodRegenIntervalSeconds:F0}s");
        }
      }
 
@@ -317,90 +354,130 @@ FoodName = shared.m_name,
     }
         }
 
-        private void ApplyFoodHealthRegen()
-      {
-         if (_character == null || _foodHealthRegen <= 0) return;
-
-  float currentHealth = _character.GetHealth();
-            float maxHealth = GetMaxHealth();
-        
-        // Only heal if not at max health
-     if (currentHealth < maxHealth)
-        {
-      // Regen is per tick (1 second)
-          _character.Heal(_foodHealthRegen, false);  // false = don't show text spam
-     }
-        }
-
   #endregion
 
         #region Healing Consumption
 
+        // What a mead is worth right now. Healing while hurt outranks resisting what is hurting the companion,
+        // which outranks topping up stamina or eitr, which outranks an attack buff in a fight.
+        private const float HealPriority = 4000f;
+        private const float ResistPriority = 3000f;
+        private const float PoolPriority = 2000f;
+        private const float RegenPriority = 1000f;
+        private const float AttackBuffPriority = 500f;
+        private const float StaminaThresholdForMead = 0.3f;
+        private const float EitrThresholdForMead = 0.3f;
+        private const float RecentDamageSeconds = 10f;
+
         private void TryConsumeHealing()
- {
+        {
             if (_inventory == null || _character == null) return;
 
-   // Check if health is below threshold
-         float healthPercent = _character.GetHealthPercentage();
-    if (healthPercent >= healthThresholdForHealing) return;
+            var storageInv = _inventory.GetStorageInventory();
+            var seman = _character.GetSEMan();
+            if (storageInv == null || seman == null) return;
 
-      // Get storage inventory
-     var storageInv = _inventory.GetStorageInventory();
-            if (storageInv == null) return;
-
-    // Find healing items in storage (prioritize by healing amount)
-   var items = storageInv.GetAllItems();
-         var healingItems = items
-     .Where(IsHealingItem)
-           .OrderByDescending(GetHealingAmount)
-      .ToList();
-
-   foreach (var item in healingItems)
-       {
-         if (ConsumeHealingItem(item, storageInv))
-      {
-          break; // Only consume one healing item at a time
-             }
-     }
+            ItemDrop.ItemData best = null;
+            float bestScore = 0f;
+            foreach (var item in storageInv.GetAllItems())
+            {
+                if (!(ConsumeEffect(item) is SE_Stats effect) || !CanConsume(seman, effect)) continue;
+                float score = MeadScore(effect);
+                if (score > bestScore)
+                {
+                    best = item;
+                    bestScore = score;
+                }
+            }
+            if (best != null) ConsumeHealingItem(best, storageInv, seman);
         }
 
-        private bool ConsumeHealingItem(ItemDrop.ItemData item, Inventory storageInv)
+        /// <summary>
+        /// What this mead is worth to the companion right now; 0 means leave it in the bag. Read from the effect's own
+        /// values, so any mead works: healing when hurt, a resistance against what is hurting it, stamina or eitr when
+        /// low, and an attack buff while fighting.
+        /// </summary>
+        private float MeadScore(SE_Stats effect)
         {
-            if (item == null || _character == null) return false;
+            float score = 0f;
 
- var shared = item.m_shared;
-  if (shared == null) return false;
-
-          float healAmount = GetHealingAmount(item);
-            if (healAmount <= 0) return false;
-
-     // Apply healing
-   _character.Heal(healAmount, true);
-
-     // Remove one from stack
-   if (item.m_stack > 1)
+            if (_character.GetHealthPercentage() < healthThresholdForHealing)
             {
-     item.m_stack--;
+                float heal = effect.m_healthUpFront + effect.m_healthOverTime;
+                if (heal > 0f) score += HealPriority + heal;
+                else if (effect.m_healthRegenMultiplier > 1f) score += RegenPriority;
             }
-     else
-     {
-       storageInv.RemoveItem(item);
-    }
 
-            // Save inventory changes
+            if (_stats != null && _stats.MaxStamina > 0f && _stats.CurrentStamina / _stats.MaxStamina < StaminaThresholdForMead)
+            {
+                if (effect.m_staminaUpFront + effect.m_staminaOverTime > 0f) score += PoolPriority;
+                else if (effect.m_staminaRegenMultiplier > 1f) score += RegenPriority;
+            }
+
+            if (_stats != null && _stats.MaxEitr > 0f && _stats.CurrentEitr / _stats.MaxEitr < EitrThresholdForMead)
+            {
+                if (effect.m_eitrUpFront + effect.m_eitrOverTime > 0f) score += PoolPriority;
+                else if (effect.m_eitrRegenMultiplier > 1f) score += RegenPriority;
+            }
+
+            if (effect.m_mods != null)
+            {
+                foreach (var mod in effect.m_mods)
+                {
+                    bool resists = mod.m_modifier == HitData.DamageModifier.Resistant
+                        || mod.m_modifier == HitData.DamageModifier.VeryResistant
+                        || mod.m_modifier == HitData.DamageModifier.Immune;
+                    if (resists && IsThreatenedBy(mod.m_type)) score += ResistPriority;
+                }
+            }
+
+            bool inCombat = _companion?.GetCombatMovement()?.IsInCombat ?? false;
+            if (inCombat && (effect.m_damageModifier > 1f || effect.m_modifyAttackSkill != Skills.SkillType.None)) score += AttackBuffPriority;
+
+            return score;
+        }
+
+        /// <summary>True when the companion carries that damage type as a debuff or took it in the last few seconds.</summary>
+        private bool IsThreatenedBy(HitData.DamageType type)
+        {
+            var seman = _character.GetSEMan();
+            if (seman != null)
+            {
+                if (type == HitData.DamageType.Fire && seman.HaveStatusEffect(SEMan.s_statusEffectBurning)) return true;
+                if (type == HitData.DamageType.Frost && seman.HaveStatusEffect(SEMan.s_statusEffectFrost)) return true;
+                if (type == HitData.DamageType.Poison && seman.HaveStatusEffect(SEMan.s_statusEffectPoison)) return true;
+            }
+
+            var combat = _companion?.GetComponent<CompanionCombat>();
+            if (combat == null || combat.LastDamageTakenTime < 0f || Time.time - combat.LastDamageTakenTime > RecentDamageSeconds) return false;
+            var taken = combat.LastDamageTaken;
+            switch (type)
+            {
+                case HitData.DamageType.Blunt: return taken.m_blunt > 0f;
+                case HitData.DamageType.Slash: return taken.m_slash > 0f;
+                case HitData.DamageType.Pierce: return taken.m_pierce > 0f;
+                case HitData.DamageType.Fire: return taken.m_fire > 0f;
+                case HitData.DamageType.Frost: return taken.m_frost > 0f;
+                case HitData.DamageType.Lightning: return taken.m_lightning > 0f;
+                case HitData.DamageType.Poison: return taken.m_poison > 0f;
+                case HitData.DamageType.Spirit: return taken.m_spirit > 0f;
+                default: return false;
+            }
+        }
+
+        /// <summary>Drinks a mead the way a player does: its status effect goes on the companion's SEMan.</summary>
+        private void ConsumeHealingItem(ItemDrop.ItemData item, Inventory storageInv, SEMan seman)
+        {
+            seman.AddStatusEffect(item.m_shared.m_consumeStatusEffect, true);
+
+            if (item.m_stack > 1) item.m_stack--;
+            else storageInv.RemoveItem(item);
             _inventory.SaveToZDO();
 
-       if (VerboseLogging)
-        {
- string itemName = Localization.instance?.Localize(shared.m_name) ?? shared.m_name;
-       Debug.Log($"[CompanionConsumables] {_companion.companionName} used {itemName} - Healed {healAmount:F0} HP");
-            }
-
-       // Show feedback
-        ShowConsumptionEffect(item);
-
-       return true;
-    }
+            if (VerboseLogging)
+                Debug.Log($"[CompanionConsumables] {_companion.companionName} drank {Localization.instance?.Localize(item.m_shared.m_name) ?? item.m_shared.m_name}");
+            ShowConsumptionEffect(item);
+        }
 
  #endregion
 
@@ -419,73 +496,16 @@ FoodName = shared.m_name,
        return shared.m_food > 0 || shared.m_foodStamina > 0 || shared.m_foodEitr > 0;
         }
 
-        private bool IsHealingItem(ItemDrop.ItemData item)
-      {
-          if (item?.m_shared == null) return false;
-      
-            var shared = item.m_shared;
-       
-   // Check if it's a consumable
-   if (shared.m_itemType != ItemDrop.ItemData.ItemType.Consumable) return false;
-          
-            // Has healing effect (status effect that heals)
-            if (shared.m_consumeStatusEffect != null)
-            {
-    var effect = shared.m_consumeStatusEffect;
-        if (effect is SE_Stats seStats)
-                {
- if (seStats.m_healthRegenMultiplier > 1f) return true;
-        }
-       
-           string effectName = effect.name.ToLower();
-       if (effectName.Contains("heal") || effectName.Contains("health") || effectName.Contains("potion"))
-       {
-return true;
-       }
-    }
-
-       // Check item name patterns
-            string itemName = shared.m_name.ToLower();
-   if (itemName.Contains("heal") || itemName.Contains("health") || itemName.Contains("medkit") || 
-              itemName.Contains("bandage") || itemName.Contains("potion"))
-   {
-     // But not food items
-      if (shared.m_food <= 0 && shared.m_foodStamina <= 0)
-       {
-         return true;
-                }
-}
-
-      return false;
+        /// <summary>A non-food consumable's status effect (meads); null for anything else.</summary>
+        private StatusEffect ConsumeEffect(ItemDrop.ItemData item)
+        {
+            if (item?.m_shared == null || item.m_shared.m_itemType != ItemDrop.ItemData.ItemType.Consumable || IsFood(item)) return null;
+            return item.m_shared.m_consumeStatusEffect;
         }
 
-        private float GetHealingAmount(ItemDrop.ItemData item)
-     {
-            if (item?.m_shared == null) return 0f;
-
-            var shared = item.m_shared;
-  float healing = 0f;
-
-    // Check consume status effect
-            if (shared.m_consumeStatusEffect != null)
-      {
-          var effect = shared.m_consumeStatusEffect;
-           if (effect is SE_Stats seStats)
-    {
- if (seStats.m_healthRegenMultiplier > 1f)
-           {
-             healing += (seStats.m_healthRegenMultiplier - 1f) * 50f;
-  }
-       }
-  }
-
-            if (healing <= 0)
-       {
-        healing = 25f + (item.m_quality * 10f);
-       }
-
-            return healing;
-        }
+        /// <summary>Vanilla Player.CanConsumeItem: not while the same effect, or one of its category, is active.</summary>
+        private static bool CanConsume(SEMan seman, StatusEffect effect) =>
+            !seman.HaveStatusEffect(effect.NameHash()) && !seman.HaveStatusEffectCategory(effect.m_category);
 
      #endregion
 
@@ -519,6 +539,12 @@ return true;
    /// Gets the health regen rate from active food effects.
     /// </summary>
         public float GetFoodHealthRegen() => _foodHealthRegen;
+
+        /// <summary>Vanilla heals the food regen total once every this many seconds (Player.UpdateFood).</summary>
+        public const float FoodRegenIntervalSeconds = 10f;
+
+        /// <summary>Food regeneration in health per second.</summary>
+        public float GetFoodHealthRegenPerSecond() => _foodHealthRegen / FoodRegenIntervalSeconds;
 
         /// <summary>
         /// Gets the base max health (without food bonuses).
@@ -566,30 +592,14 @@ return true;
 
         #region Visual Feedback
 
+        private const string EatSound = "sfx_eat";
+
+        /// <summary>The player's eating sound (Player.m_consumeItemEffects is sfx_eat only; vanilla has no eating visual).
+        /// Owner-only code, so one networked copy, and only near a player.</summary>
         private void ShowConsumptionEffect(ItemDrop.ItemData item)
         {
-      if (item?.m_shared == null) return;
-
-       var pos = transform.position + Vector3.up * 1.5f;
-
-   try
-   {
-       var effectPrefab = ZNetScene.instance?.GetPrefab("vfx_creature_eat");
-   if (effectPrefab != null)
-         {
-           Instantiate(effectPrefab, pos, Quaternion.identity);
-            }
-
-        var soundPrefab = ZNetScene.instance?.GetPrefab("sfx_creature_eat");
-         if (soundPrefab != null)
-        {
-     Instantiate(soundPrefab, pos, Quaternion.identity);
-      }
-      }
-  catch
-         {
-         // Effects are optional
-            }
+            if (item?.m_shared == null) return;
+            Archetypes.AbilityFXManager.SpawnSound(EatSound, transform.position + Vector3.up * 1.5f);
         }
 
         #endregion

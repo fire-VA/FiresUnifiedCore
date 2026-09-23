@@ -23,7 +23,37 @@ namespace FiresCore.Npc.Archetypes
         
         // Fallback cleanup duration if effect doesn't self-destruct
         private const float FallbackCleanupDuration = 10f;
-        
+
+        private static int _localCopyDepth;
+
+        /// <summary>
+        /// Every client runs routed-RPC ability code and spawns its own copy of the effect, so inside this scope a
+        /// spawn skips its ZNetView (vanilla's trick for visual copies) and only happens near this machine's player.
+        /// Outside it, the companion's owner spawns once, the copy is networked, and it needs any player nearby.
+        /// </summary>
+        public static LocalCopyScope LocalCopies()
+        {
+            _localCopyDepth++;
+            return new LocalCopyScope();
+        }
+
+        public struct LocalCopyScope : System.IDisposable
+        {
+            public void Dispose() => _localCopyDepth--;
+        }
+
+        private static bool ShouldSpawnAt(Vector3 position) =>
+            _localCopyDepth > 0 ? Core.NpcFxRange.NearLocalPlayer(position) : Core.NpcFxRange.NearAnyPlayer(position);
+
+        private static GameObject CreateInstance(GameObject prefab, Vector3 position, Quaternion rotation)
+        {
+            if (_localCopyDepth == 0) return Object.Instantiate(prefab, position, rotation);
+            bool previous = ZNetView.m_forceDisableInit;
+            ZNetView.m_forceDisableInit = true;
+            try { return Object.Instantiate(prefab, position, rotation); }
+            finally { ZNetView.m_forceDisableInit = previous; }
+        }
+
         /// <summary>
         /// Tracks a spawned effect for cleanup.
         /// </summary>
@@ -81,7 +111,7 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>Berserker mead visual for rage state [Continuous]</summary>
         public const string FX_BERSERK_RAGE = "vfx_MeadBzerker";
         /// <summary>Fire spray for berserker burst [Duration:5.0s]</summary>
-        public const string FX_BERSERK_FIRE = "vfx_spray_fire";
+        public const string FX_BERSERK_FIRE = "vfx_FireballHit";
         /// <summary>Eikthyr stomp for Warcry [Duration:10.0s]</summary>
         public const string FX_WARCRY = "fx_eikthyr_stomp";
         /// <summary>Troll ground slam for heavy attack [Duration:5.0s]</summary>
@@ -102,9 +132,9 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>Poison aura [Continuous]</summary>
         public const string FX_POISON_APPLY = "vfx_Poison";
         /// <summary>Poison spray attack [Duration:5.0s]</summary>
-        public const string FX_POISON_SPRAY = "vfx_spray_poison";
+        public const string FX_POISON_SPRAY = "vfx_BombBlob_explode_poison";
         /// <summary>Poison explosion for backstab [Duration:8.0s]</summary>
-        public const string FX_POISON_BURST = "vfx_poisonbolt_explosion";
+        public const string FX_POISON_BURST = "vfx_poisonarrow_hit";
         /// <summary>Blob attack for caltrops [Duration:5.0s]</summary>
         public const string FX_CALTROPS = "vfx_blob_attack";
         
@@ -130,15 +160,15 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>Staff shield for Arcane Shield [Continuous]</summary>
         public const string FX_ARCANE_SHIELD = "vfx_StaffShield";
         /// <summary>Fireball explosion [Duration:8.0s]</summary>
-        public const string FX_FIRE_BURST = "vfx_fireball_explosion";
+        public const string FX_FIRE_BURST = "fx_fireball_staff_explosion";
         /// <summary>Staff fireball explosion [Duration:8.0s]</summary>
         public const string FX_FIRE_STAFF = "fx_fireball_staff_explosion";
         /// <summary>Frostbolt explosion [Duration:8.0s]</summary>
-        public const string FX_ICE_BURST = "vfx_frostbolt_explosion";
+        public const string FX_ICE_BURST = "fx_DvergerMage_Ice_hit";
         /// <summary>Fenring ice nova [Duration:6.0s]</summary>
         public const string FX_ICE_NOVA = "fx_fenring_icenova";
         /// <summary>Thunder explosion [Duration:8.0s]</summary>
-        public const string FX_LIGHTNING_BURST = "vfx_thunderbolt_explosion";
+        public const string FX_LIGHTNING_BURST = "fx_JotunWitch_LightningBolt_Explosion";
         /// <summary>Chain lightning for AoE [Duration:3.0s]</summary>
         public const string FX_CHAIN_LIGHTNING = "fx_chainlightning_hit";
         /// <summary>Fire skeleton nova for fire mage [Duration:6.0s]</summary>
@@ -151,9 +181,9 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>Eikthyr forward shockwave for Holy Smite [Duration:10.0s]</summary>
         public const string FX_HOLY_SMITE = "fx_eikthyr_forwardshockwave";
         /// <summary>Spirit bolt for holy damage [Duration:8.0s]</summary>
-        public const string FX_HOLY_BOLT = "vfx_spiritbolt_explosion";
+        public const string FX_HOLY_BOLT = "vfx_ghost_hit";
         /// <summary>Spirit spray for consecration [Duration:5.0s]</summary>
-        public const string FX_CONSECRATE = "vfx_spray_spirit";
+        public const string FX_CONSECRATE = "fx_DvergerMage_Support_hit";
         /// <summary>Himminafl AoE for large consecration [Duration:10.0s]</summary>
         public const string FX_CONSECRATE_LARGE = "fx_himminafl_aoe";
         /// <summary>Goblin king nova as backup [Duration:10.0s]</summary>
@@ -189,7 +219,7 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>Adrenaline burst [Duration:4.0s]</summary>
         public const string FX_ADRENALINE = "fx_Adrenaline1";
         /// <summary>Taunted visual indicator [Duration:3.0s]</summary>
-        public const string FX_TAUNTED = "vfx_taunted_bal";
+        public const string FX_TAUNTED = "fx_crit";
         
         #endregion
         
@@ -362,7 +392,9 @@ namespace FiresCore.Npc.Archetypes
                 return null;
             }
 
-            var instance = Object.Instantiate(prefab, position, Quaternion.identity);
+            if (!ShouldSpawnAt(position)) return null;
+
+            var instance = CreateInstance(prefab, position, Quaternion.identity);
             ForceSpatial3D(instance);
 
             // Track so CleanupExpiredEffects can catch any edge-case continuous SFX.
@@ -443,7 +475,9 @@ namespace FiresCore.Npc.Archetypes
                 return null;
             }
 
-            var instance = Object.Instantiate(prefab, position, rotation ?? Quaternion.identity);
+            if (!ShouldSpawnAt(position)) return null;
+
+            var instance = CreateInstance(prefab, position, rotation ?? Quaternion.identity);
             ForceSpatial3D(instance);
 
             if (scale != 1f)
@@ -473,7 +507,9 @@ namespace FiresCore.Npc.Archetypes
                 return null;
             }
 
-            var instance = Object.Instantiate(prefab, character.transform.position, Quaternion.identity);
+            if (!ShouldSpawnAt(character.transform.position)) return null;
+
+            var instance = CreateInstance(prefab, character.transform.position, Quaternion.identity);
             // SetParent intentionally removed — see method docstring.
             ForceSpatial3D(instance);
 

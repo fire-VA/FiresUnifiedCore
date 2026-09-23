@@ -22,6 +22,15 @@ namespace FiresCore.Npc.Core
         /// materialise somewhere new. Tighter than the leash because it's an instant relocation, not a drift.</summary>
         public const float ArrivalReelInDistance = 30f;
 
+        /// <summary>How far the owner may move from where they stood when a FOLLOWING companion settled into a seat
+        /// or a chore before the companion drops it and gets back on their heels. Measured against the owner's own
+        /// displacement, not the gap, so a companion working away from a stationary owner is never yanked back.</summary>
+        public const float BusyBreakDistance = 20f;
+
+        /// <summary>Seconds between <see cref="ShouldBreakForFollow"/> checks; it resolves the owner out of the
+        /// player list, which is too much to repeat per companion per frame.</summary>
+        public const float BusyBreakCheckInterval = 0.5f;
+
         /// <summary>Seconds of committed run-back before we judge "they can't close it" (blocked path / outpaced).</summary>
         public const float RunBackWindow = 6f;
 
@@ -48,6 +57,27 @@ namespace FiresCore.Npc.Core
             bool windowElapsed = secondsLeashed >= RunBackWindow;
             float closed = startDistance - bestDistance;   // positive = making progress inward
             return windowElapsed && closed < ProgressRequired;
+        }
+
+        /// <summary>
+        /// Must a busy follower drop what it is doing and go after its owner? A seat and a chore each sit behind
+        /// early-outs that stop the follow FSM, the client run-back and the crouch mirror, so without this a
+        /// companion that settled in while the owner was AFK never followed again however far they went.
+        /// True when the owner has moved <see cref="BusyBreakDistance"/> from <paramref name="ownerAnchor"/> — where
+        /// they stood when the companion settled in — or when the gap has already reached <see cref="LeashDistance"/>.
+        /// Anchoring on the owner's displacement rather than the gap means a companion working its way out from a
+        /// stationary owner is never yanked back mid-chore. Stay mode, stationed NPCs and an owner who isn't loaded
+        /// on this peer all answer false: a stay companion's work IS the point, and an absent owner is a visibility
+        /// gap the server leash owns. Callers throttle to <see cref="BusyBreakCheckInterval"/>.
+        /// </summary>
+        public static bool ShouldBreakForFollow(CompanionController companion, Vector3 ownerAnchor)
+        {
+            if (companion == null || !companion.ShouldBeFollowing) return false;
+            var owner = companion.GetOwner();
+            if (owner == null) return false;
+            Vector3 ownerPos = owner.transform.position;
+            if (Vector3.Distance(ownerPos, ownerAnchor) > BusyBreakDistance) return true;
+            return Vector3.Distance(companion.transform.position, ownerPos) > LeashDistance;
         }
 
         /// <summary>

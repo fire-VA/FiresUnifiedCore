@@ -43,7 +43,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Tank
             
             // VFX
             AbilityFXManager.SpawnEffect("fx_shield_start", m_character.transform.position, null, 2f);
-            AbilityFXManager.SpawnEffect("vfx_spiritbolt_explosion", m_character.transform.position, null, 1.5f);
+            AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character.transform.position, null, 1.5f);
         }
         
         private void HealNearbyAllies()

@@ -9,45 +9,15 @@ namespace FiresCore.Npc.IdleBehaviors
     /// </summary>
     public partial class ResourceGatheringBehavior
     {
-        #region Ore Detection Prefabs
-        
-        private static readonly Dictionary<string, int> OreDepositPrefabs = new Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase)
-        {
-            { "MineRock_Copper", 0 },
-            { "MineRock_Stone", 0 },
-            { "MineRock_Iron", 1 },
-            { "rock4_copper_frac", 2 },
-            { "mudpile_frac", 3 },
-            { "mudpile2_frac", 3 },
-            { "mudpile_old", 0 },
-            { "MineRock_Meteorite", 3 },
-            { "LeviathanLava", 3 },
-            { "FlametalRockstand_frac", 0 },
-            { "gold_Rock_frac_bal", 3 },
-            { "rock_nickel_frac_bal", 3 },
-            { "rock_nickel_nomoss_frac_bal", 3 },
-            { "iceLump_frac_bal", 3 },
-            { "silvervein_frac", 4 },
-            { "rock3_silver_frac", 4 },
-            { "rock_silver_small_frac_bal", 4 },
-            { "iceblock_rock_frac_bal", 4 },
-            { "coal_rock1_frac_bal", 1 },
-            { "coal_rock_nomoss_frac_bal", 2 },
-        };
-        
-        private static readonly string[] OreNamePatterns = new string[]
-        {
-            "copper", "tin", "iron", "silver", "obsidian", "blackmetal", "flametal",
-            "ore", "mudpile", "coal", "nickel", "gold"
-        };
-        
-        #endregion
-        
         /// <summary>
-        /// Finds a nearby mineable ore deposit.
+        /// Nearest deposit mined with a pickaxe (MineRock, MineRock5, or a fresh Destructible deposit such as rock4_copper
+        /// or MineRock_Tin) that yields one of <paramref name="wantedDrops"/> and needs no higher tier than
+        /// <paramref name="maxToolTier"/>, so an unmineable vein (1.0 goldvein, tier 5) never blocks the ones that can be mined.
         /// </summary>
-        private GameObject FindNearbyOreDeposit(Vector3 position, float radius)
+        private GameObject FindNearbyOreDeposit(Vector3 position, float radius, ICollection<string> wantedDrops, int maxToolTier)
         {
+            if (maxToolTier == NoObtainableTool || wantedDrops.Count == 0) return null;
+
             var colliders = Physics.OverlapSphere(position, radius);
             float closestDist = float.MaxValue;
             GameObject closest = null;
@@ -57,48 +27,23 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 if (collider == null) continue;
                 
-                var mineRock = collider.GetComponent<MineRock>() ?? collider.GetComponentInParent<MineRock>();
-                var mineRock5 = collider.GetComponent<MineRock5>() ?? collider.GetComponentInParent<MineRock5>();
+                var depositComponent = (Component)collider.GetComponentInParent<MineRock5>()
+                    ?? (Component)collider.GetComponentInParent<MineRock>()
+                    ?? collider.GetComponentInParent<Destructible>();
+                if (depositComponent == null) continue;
                 
-                GameObject target = null;
-                if (mineRock != null) target = mineRock.gameObject;
-                else if (mineRock5 != null) target = mineRock5.gameObject;
+                var target = depositComponent.gameObject;
+                if (!processed.Add(target)) continue;
                 
-                if (target == null) continue;
-                if (processed.Contains(target)) continue;
-                processed.Add(target);
+                if (!ResourceDataHelper.YieldsAnyOf(target, wantedDrops)) continue;
+                var deposit = ResourceDataHelper.GetResourceData(target);
+                if (deposit == null || deposit.RequiredTool != ResourceDataHelper.ToolType.Pickaxe || deposit.MinToolTier > maxToolTier) continue;
                 
-                string prefabName = target.name;
-                if (prefabName.EndsWith("(Clone)"))
-                    prefabName = prefabName.Substring(0, prefabName.Length - 7).Trim();
-                
-                bool isOreDeposit = false;
-                
-                if (OreDepositPrefabs.ContainsKey(prefabName))
+                float dist = Vector3.Distance(position, target.transform.position);
+                if (dist < closestDist)
                 {
-                    isOreDeposit = true;
-                }
-                else
-                {
-                    string nameLower = prefabName.ToLowerInvariant();
-                    foreach (string pattern in OreNamePatterns)
-                    {
-                        if (nameLower.Contains(pattern))
-                        {
-                            isOreDeposit = true;
-                            break;
-                        }
-                    }
-                }
-                
-                if (isOreDeposit)
-                {
-                    float dist = Vector3.Distance(position, target.transform.position);
-                    if (dist < closestDist)
-                    {
-                        closestDist = dist;
-                        closest = target;
-                    }
+                    closestDist = dist;
+                    closest = target;
                 }
             }
             
@@ -111,10 +56,10 @@ namespace FiresCore.Npc.IdleBehaviors
             // We need to save the stump info while the GameObject still exists
             if (_targetResource != null && _targetResource.GameObject != null && !_wasTargetingStump)
             {
-                if (IsStump(_targetResource))
+                if (ResourceDataHelper.IsTreeStump(_targetResource.GameObject))
                 {
                     _wasTargetingStump = true;
-                    _targetStumpName = _targetResource.GameObject.name;
+                    _targetStumpName = Utils.GetPrefabName(_targetResource.GameObject);
                     _targetStumpPosition = _targetResource.InteractionPosition;
                     
                     if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
@@ -452,57 +397,13 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_zanim == null && _animator == null) return;
             
-            string trigger = "unarmed_attack0";
-            
-            if (weapon != null)
-            {
-                string weaponName = weapon.m_shared.m_name?.ToLowerInvariant() ?? "";
-                string prefabName = weapon.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-                
-                if (weaponName.Contains("pickaxe") || prefabName.Contains("pickaxe"))
-                {
-                    trigger = "swing_pickaxe";
-                }
-                else if (weaponName.Contains("axe") || prefabName.Contains("axe"))
-                {
-                    int comboIndex = Random.Range(0, 3);
-                    trigger = $"swing_axe{comboIndex}";
-                }
-            }
+            var targetType = _targetResource?.Destructible?.GetDestructibleType() ?? DestructibleType.Default;
+            string trigger = _swingChain.Swing(_zanim, _animator, weapon, _character.GetTimeSinceLastAttack(), targetType);
             
             if (VerboseLogging)
                 Debug.Log($"[ResourceGathering] {Companion.companionName} playing animation: {trigger}");
-            
-            if (_zanim != null)
-            {
-                _zanim.SetTrigger(trigger);
-            }
-            else if (_animator != null)
-            {
-                bool hasParam = false;
-                foreach (var param in _animator.parameters)
-                {
-                    if (param.name == trigger)
-                    {
-                        hasParam = true;
-                        break;
-                    }
-                }
-                
-                if (hasParam)
-                {
-                    _animator.SetTrigger(trigger);
-                }
-                else
-                {
-                    if (trigger.StartsWith("swing_axe"))
-                        _animator.SetTrigger("swing_axe");
-                    else
-                        _animator.SetTrigger("unarmed_attack0");
-                }
-            }
         }
-        
+                
         private void ApplyFallbackMineRock5Damage(MineRock5 rock, HitData hitData)
         {
             if (rock == null) return;

@@ -755,9 +755,7 @@ Context.Animator.SetFloat("drawpercent", 0f);
             {
    Context.Animator.SetTrigger(animTrigger);
    }
-            
-    Context.BroadcastRPC("RPC_CompanionAttack", animTrigger, (int)Context.WeaponAnimationState);
-      
+
             if (CompanionCombat.VerboseLogging)
    {
                 Debug.Log($"[BowBehavior] SHOT FIRED at {_bowTarget.m_name}, " +
@@ -776,7 +774,7 @@ Context.Animator.SetFloat("drawpercent", 0f);
             if (stats != null)
             {
                 float baseCost = Context.CurrentAttack?.m_attackStamina ?? 20f;
-                float adjustedCost = stats.GetStaminaCost(baseCost, Skills.SkillType.Bows);
+                float adjustedCost = stats.GetAttackStaminaCost(baseCost, Skills.SkillType.Bows);
                 
                 if (!stats.UseStamina(adjustedCost))
                 {
@@ -789,7 +787,9 @@ Context.Animator.SetFloat("drawpercent", 0f);
                     Debug.Log($"[BowBehavior] Consumed {adjustedCost:F1} stamina for shot");
             }
             
-            GameObject projectilePrefab = Context.AttackProjectile ?? GetArrowProjectile();
+            // Vanilla bows carry no projectile of their own: the arrow brings it, and adds its damage.
+            var ammo = Context.Inventory?.FindAmmoFor(Context.CurrentWeapon);
+            GameObject projectilePrefab = ammo?.m_shared.m_attack.m_attackProjectile ?? Context.AttackProjectile ?? GetArrowProjectile();
             if (projectilePrefab == null)
             {
                 if (CompanionCombat.VerboseLogging)
@@ -837,7 +837,8 @@ Context.Animator.SetFloat("drawpercent", 0f);
             if (projectile != null)
             {
                 HitData hitData = Context.CreateHitData(target, drawPercentage);
-                
+                if (ammo != null) hitData.m_damage.Add(ammo.GetDamage());
+
                 projectile.Setup(
                     Context.Character,
                     direction * velocity,

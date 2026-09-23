@@ -27,6 +27,9 @@ namespace FiresCore.Npc.Combat
         private const float LowHealthFraction = 0.3f;
         private const float MinScoreDifferenceToSwap = 0.15f;
 
+        // StaffShield's buff (staff_shield_aoe m_statusEffect; status_effects.tsv: Staff_shield, SE_Shield).
+        private static readonly int StaffShieldEffectHash = "Staff_shield".GetStableHashCode();
+
         private const float PointBlankMeleeBonus = 0.6f;
         private const float CloseRangeMeleeBonus = 0.4f;
         private const float CloseRangeRangedBonus = 0.1f;
@@ -96,6 +99,7 @@ public float swapConfidenceThreshold = 0.7f;
         private CompanionCombatMovement _movement;
         private CompanionAI _companionAI;
   private Character _character;
+        private ZNetView _nview;
 
  // State
  private float _lastSwapTime = -100f;
@@ -157,6 +161,7 @@ public bool IsRanged;
             _movement = GetComponent<CompanionCombatMovement>();
             _companionAI = GetComponent<CompanionAI>();
             _character = GetComponent<Character>();
+            _nview = GetComponent<ZNetView>();
     }
 
      private void Start()
@@ -170,6 +175,8 @@ public bool IsRanged;
             // Allow both tamed AND wild companions to swap weapons
             if (_companion == null) return;
             if (_combat == null || _inventory == null) return;
+            // Swaps rewrite the inventory; only the ZDO owner may do that.
+            if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
 
             // Don't evaluate while attacking or dodging
             if (_combat.IsAttacking() || _combat.IsDodging()) return;
@@ -363,19 +370,8 @@ public bool IsRanged;
             
             var seman = character.GetSEMan();
             if (seman == null) return true;
-            
-            // Check for common shield effect names
-            string[] shieldEffects = { "SE_Shield", "Shield", "SE_StaffShield", "StaffShield" };
-            foreach (var effectName in shieldEffects)
-            {
-                int hash = effectName.GetStableHashCode();
-                if (seman.HaveStatusEffect(hash))
-                {
-                    return true;
-                }
-            }
-            
-            return false;
+
+            return seman.HaveStatusEffect(StaffShieldEffectHash);
         }
         
         /// <summary>
@@ -530,12 +526,8 @@ public bool IsRanged;
             
             foreach (var item in storageInv.GetAllItems())
             {
-                if (item?.m_shared == null) continue;
-                if (!item.IsWeapon()) continue;
-                
-                // Skip shields - they're not weapons for swapping purposes
-                if (item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Shield) continue;
-                
+                if (!CompanionCombat.IsCombatWeapon(item)) continue;
+
                 // Skip tools (pickaxes, axes) - they're for gathering, not combat
                 if (IsGatheringTool(item)) continue;
                 
@@ -663,12 +655,8 @@ public bool IsRanged;
         private void ScanSlot(CompanionInventory.EquipmentSlot slot, CompanionInventory.EquipmentSlot backSlot)
         {
             var item = _inventory.GetEquippedItem(slot);
-            if (item?.m_shared == null) return;
-            if (!item.IsWeapon()) return;
-            
-            // Skip shields
-            if (item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Shield) return;
-            
+            if (!CompanionCombat.IsCombatWeapon(item)) return;
+
             // Skip tools (pickaxes, axes) - they're for gathering, not combat
             if (IsGatheringTool(item)) return;
 
@@ -761,8 +749,8 @@ public bool IsRanged;
            item.m_shared.m_skillType == Skills.SkillType.BloodMagic)
            return true;
        
-       // Check if the attack spawns a projectile (catches other magic weapons)
-       if (item.m_shared.m_attack?.m_attackProjectile != null)
+       // Only the attack type counts: AtgeirBronze/AtgeirGold keep a leftover m_attackProjectile on a melee swing.
+       if (item.m_shared.m_attack?.m_attackType == Attack.AttackType.Projectile)
            return true;
        
        // Check name for staff indicators

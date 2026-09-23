@@ -187,6 +187,10 @@ namespace FiresCore.Npc.AI
                 if (VerboseLogging)
                     Debug.Log($"[CompanionAI] {m_character?.m_name} sneak={shouldSneak} (mirroring owner)");
             }
+
+            // VikHavn prone: crawl beside a prone owner, at the owner's crawl speed.
+            if (shouldSneak && _stance != null)
+                _stance.SetProne(_isOwnerProne, _ownerProneSpeed);
             
             // MOVEMENT STATE SYNC: Set the companion's walk/run flags on Character
             // so Valheim's UpdateWalking() picks the correct speed tier and animation.
@@ -287,9 +291,11 @@ namespace FiresCore.Npc.AI
             var authority = GetMovementAuthority();
             authority?.ReleaseAuthority(AIAuthorityOwner);
 
-            // Clear the pathfinding waypoint list so BaseAI doesn't fight us
+            // Clear the pathfinding waypoint list so BaseAI doesn't fight us; without also forgetting the cached
+            // search, a MoveTo inside FindPath's cache window reads the empty path as "arrived".
             if (m_path != null)
                 m_path.Clear();
+            InvalidatePathCache();
 
             StopMoving();
         }
@@ -316,6 +322,8 @@ namespace FiresCore.Npc.AI
             if (_ownerPlayer != null)
             {
                 _isOwnerSneaking = _ownerPlayer.IsCrouching();
+                _isOwnerProne = _isOwnerSneaking && Movement.CompanionStance.IsPlayerProne(_ownerPlayer);
+                if (_isOwnerProne) _ownerProneSpeed = Movement.CompanionStance.PlayerProneSpeedMultiplier(_ownerPlayer);
                 _isOwnerWalking = _ownerPlayer.IsWalking();
                 _isOwnerRunning = _ownerPlayer.IsRunning();
 

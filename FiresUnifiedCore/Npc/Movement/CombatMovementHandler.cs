@@ -611,17 +611,24 @@ namespace FiresCore.Npc.Movement
         
         #region Owner Distance Checking
         
+        /// <summary>No owner, so no leash. A wild companion is not infinitely far from an owner, it has none.</summary>
+        public const float NoOwner = -1f;
+
+        /// <summary>Is there an owner to be leashed to at all? Every predicate below is meaningless without one.</summary>
+        private static bool Leashed(float distance) => distance >= 0f;
+
         /// <summary>
-        /// Gets the current distance to the owner.
-        /// Returns float.MaxValue if no owner.
+        /// Distance to the owner, or <see cref="NoOwner"/> when this companion has none. This used to return
+        /// float.MaxValue, which read as "too far" in every predicate below: an ownerless companion abandoned
+        /// combat on EVERY evaluation, so wild companions could never fight and re-ran the decision each frame.
         /// </summary>
         public float GetDistanceToOwner()
         {
             var owner = _companion?.GetOwner();
-            if (owner == null) return float.MaxValue;
+            if (owner == null) return NoOwner;
             return Vector3.Distance(_transform.position, owner.transform.position);
         }
-        
+
         /// <summary>
         /// Checks if we're too far from the owner and should abandon combat pursuit.
         /// ALL archetypes use the same distance - tanks protect the group by staying CLOSE.
@@ -629,25 +636,25 @@ namespace FiresCore.Npc.Movement
         public bool IsTooFarFromOwner()
         {
             float dist = GetDistanceToOwner();
-            return dist > MaxOwnerDistance;
+            return Leashed(dist) && dist > MaxOwnerDistance;
         }
-        
+
         /// <summary>
         /// Checks if we're at the leash distance and should avoid moving further from owner.
         /// </summary>
         public bool IsAtLeashDistance()
         {
             float dist = GetDistanceToOwner();
-            return dist > OwnerLeashDistance;
+            return Leashed(dist) && dist > OwnerLeashDistance;
         }
-        
+
         /// <summary>
         /// Checks if we should actively return to the owner.
         /// </summary>
         public bool ShouldReturnToOwner()
         {
             float dist = GetDistanceToOwner();
-            return dist > OwnerReturnDistance;
+            return Leashed(dist) && dist > OwnerReturnDistance;
         }
         
         /// <summary>
@@ -715,7 +722,12 @@ namespace FiresCore.Npc.Movement
         public OwnerDistanceRecommendation EvaluateOwnerDistance()
         {
             float dist = GetDistanceToOwner();
-            
+
+            // An ownerless companion (wild, or an owner who isn't loaded on this peer) has no leash to break, so
+            // combat proceeds on its own terms. Without this it recommended AbandonCombat every single frame.
+            if (!Leashed(dist))
+                return OwnerDistanceRecommendation.ContinueCombat;
+
             if (dist > MaxOwnerDistance)
                 return OwnerDistanceRecommendation.AbandonCombat;
             

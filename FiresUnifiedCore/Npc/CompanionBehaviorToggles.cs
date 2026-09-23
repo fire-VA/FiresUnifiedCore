@@ -25,6 +25,7 @@ namespace FiresCore.Npc
         public const string KEY_HUNTING  = "companion_hunt_enabled";      // attacks neutral wildlife (deer/boar/etc.) on sight
         public const string KEY_FISHING  = "companion_fishing_enabled";   // fishing behavior
         public const string KEY_REPAIR   = "companion_repair_enabled";    // building repair behavior
+        public const string KEY_WANDER   = "companion_wander_enabled";    // idle wandering (stationed NPCs use CompanionNpcModule.allowIdleWandering)
 
         // readers
         public static bool IsGatherEnabled(CompanionController companion)   => Read(companion, KEY_GATHER);
@@ -36,6 +37,7 @@ namespace FiresCore.Npc
         public static bool IsLootEnabled(CompanionController companion)     => Read(companion, KEY_LOOT);
         public static bool IsFishingEnabled(CompanionController companion)  => Read(companion, KEY_FISHING);
         public static bool IsRepairEnabled(CompanionController companion)   => Read(companion, KEY_REPAIR);
+        public static bool IsWanderEnabled(CompanionController companion)   => Read(companion, KEY_WANDER);
         // Hunting defaults to TRUE so wild / freshly-tamed companions still
         // pursue prey on sight. The radial "Hunt" toggle lets the owner
         // disable it on companions that should ignore neutral wildlife.

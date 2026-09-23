@@ -121,7 +121,211 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         #endregion
-        
+
+        #region Chest Write Access
+
+        /// <summary>
+        /// The one gate for writing to a chest (deposits, pulls, organizing). Claims the chest for this machine when
+        /// <see cref="OwnerMayWrite"/> passes: Container.OnContainerChanged only saves on the owner (Container.cs:362), so a
+        /// non-owner's AddItem/RemoveItem is reverted on the next Load. Write through Inventory.AddItem/RemoveItem only.
+        /// </summary>
+        public static bool TryClaimForWrite(Container chest, long ownerPlayerId)
+        {
+            if (!OwnerMayWrite(chest, ownerPlayerId)) return false;
+            if (!chest.m_nview.IsOwner())
+            {
+                chest.m_nview.ClaimOwnership();
+                chest.Load();
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// <see cref="TryClaimForWrite(Container, long)"/> for a companion's chest work, with <see cref="ChestOwnerIdFor"/>'s
+        /// rights. Only the machine owning the companion writes, since only its copy of the companion's inventory is saved.
+        /// </summary>
+        public static bool TryClaimForWrite(Container chest, CompanionController companion)
+        {
+            var companionView = companion != null ? companion.GetComponent<ZNetView>() : null;
+            return companionView != null && companionView.IsOwner() && TryClaimForWrite(chest, ChestOwnerIdFor(companion));
+        }
+
+        /// <summary>
+        /// Whose chest rights a companion uses: its owner's (<see cref="CompanionController.ownerPlayerId"/>), or for a
+        /// static placed NPC without one, those of the admin who placed it (its Piece creator).
+        /// </summary>
+        public static long ChestOwnerIdFor(CompanionController companion)
+        {
+            if (companion.ownerPlayerId != 0L || !companion.isStaticPlacement) return companion.ownerPlayerId;
+            var piece = companion.GetComponent<Piece>();
+            return piece != null ? piece.GetCreator() : 0L;
+        }
+
+        /// <summary>The ward check for work at a point (harvesting, repairing), answered for the companion's owner.</summary>
+        public static bool WardsAllow(Vector3 position, CompanionController companion)
+            => companion != null && WardsAllow(position, ChestOwnerIdFor(companion));
+
+        /// <summary><see cref="TryClaimForWrite(Container, CompanionController)"/> for the companion that owns <paramref name="companionStorage"/>.</summary>
+        public static bool TryClaimForWrite(Container chest, Inventory companionStorage)
+        {
+            return TryClaimForWrite(chest, FindCompanionByStorage(companionStorage));
+        }
+
+        /// <summary>
+        /// The checks of <see cref="TryClaimForWrite(Container, long)"/> without claiming: a valid chest nobody has open
+        /// (the ZDO's InUse; Container.IsInUse is only the owner's local flag), Container.CheckAccess's privacy
+        /// (Container.cs:198) and the ward check Container.Interact makes, both answered for the owner.
+        /// </summary>
+        public static bool OwnerMayWrite(Container chest, long ownerPlayerId)
+        {
+            ZNetView chestView = chest != null ? chest.m_nview : null;
+            return chestView != null && chestView.IsValid()
+                && chestView.GetZDO().GetInt(ZDOVars.s_inUse) != 1
+                && PrivacyAllows(chest, ownerPlayerId)
+                && (!chest.m_checkGuardStone || WardsAllow(chest.transform.position, ownerPlayerId));
+        }
+
+        private static bool PrivacyAllows(Container chest, long playerId)
+        {
+            switch (chest.m_privacy)
+            {
+                case Container.PrivacySetting.Public:
+                    return true;
+                case Container.PrivacySetting.Private:
+                    return chest.m_piece != null && chest.m_piece.GetCreator() == playerId;
+                default:
+                    return false;
+            }
+        }
+
+        // PrivateArea.CheckAccess (PrivateArea.cs:325) for the given player instead of Player.m_localPlayer, which is null
+        // on a dedicated server and not necessarily the companion's owner: open unless enabled wards cover the point and
+        // none of them has the player as creator or permitted.
+        private static bool WardsAllow(Vector3 position, long playerId)
+        {
+            bool covered = false;
+            foreach (var area in PrivateArea.m_allAreas)
+            {
+                if (!area.IsEnabled() || !area.IsInside(position, 0f)) continue;
+                if (area.m_piece.GetCreator() == playerId || area.IsPermitted(playerId)) return true;
+                covered = true;
+            }
+            return !covered;
+        }
+
+        private static CompanionController FindCompanionByStorage(Inventory storage)
+        {
+            if (storage == null) return null;
+            foreach (var companion in CompanionController.AllCompanions)
+            {
+                var companionInventory = companion != null ? companion.GetComponent<CompanionInventory>() : null;
+                if (companionInventory != null && companionInventory.GetStorageInventory() == storage) return companion;
+            }
+            return null;
+        }
+
+        #endregion
+
+        #region Item Moves
+
+        /// <summary>Units of <paramref name="item"/> vanilla CanAddItem counts as fitting (Inventory.cs:81).</summary>
+        public static int GetAddableAmount(Inventory destination, ItemDrop.ItemData item)
+        {
+            return destination.FindFreeStackSpace(item.m_shared.m_name, item.m_worldLevel)
+                + destination.GetEmptySlots() * item.m_shared.m_maxStackSize;
+        }
+
+        /// <summary>
+        /// Adds a copy of up to <paramref name="amount"/> units of <paramref name="item"/> and returns how many landed.
+        /// Vanilla AddItem keeps the object it is given and can fill stacks before failing (Inventory.cs:98), so a false
+        /// return still moved the units that are no longer on the copy.
+        /// </summary>
+        public static int AddCopy(Inventory destination, ItemDrop.ItemData item, int amount)
+        {
+            amount = Mathf.Min(amount, item.m_stack);
+            if (amount <= 0 || !destination.CanAddItem(item, amount)) return 0;
+            var copy = ItemDataHelper.CloneItem(item, amount);
+            int copied = copy.m_stack;
+            return destination.AddItem(copy) ? copied : copied - copy.m_stack;
+        }
+
+        /// <summary>Moves up to <paramref name="amount"/> units between inventories, removing from the source exactly what arrived.</summary>
+        public static int MoveItem(Inventory source, Inventory destination, ItemDrop.ItemData item, int amount)
+        {
+            int moved = AddCopy(destination, item, amount);
+            if (moved > 0) source.RemoveItem(item, moved);
+            return moved;
+        }
+
+        #endregion
+
+        #region Loose Items
+
+        private const string ItemLayerName = "item";
+        private static int s_itemLayerMask;
+
+        /// <summary>
+        /// Loose ItemDrops within <paramref name="radius"/> that a companion may take, found and filtered like
+        /// Player.AutoPickup (Player.cs:1185): the item layer, the ItemDrop on the collider's rigidbody (item colliders sit
+        /// on child objects) or behind its FloatingTerrainDummy, auto-pickup items only, no pieces, nothing stuck in tar,
+        /// and the item data loaded from the ZDO.
+        /// </summary>
+        public static List<ItemDrop> FindLooseItems(Vector3 center, float radius)
+        {
+            if (s_itemLayerMask == 0) s_itemLayerMask = LayerMask.GetMask(ItemLayerName);
+
+            var drops = new List<ItemDrop>();
+            foreach (var collider in Physics.OverlapSphere(center, radius, s_itemLayerMask))
+            {
+                var drop = ResolveItemDrop(collider);
+                if (drop == null || drops.Contains(drop) || !IsLooseItem(drop)) continue;
+                drop.Load();
+                drops.Add(drop);
+            }
+            return drops;
+        }
+
+        /// <summary>
+        /// Takes a loose item into a companion's storage like Humanoid.Pickup (Humanoid.cs:402): only while this machine
+        /// owns the drop (ownership is requested otherwise), with fresh item data, adding a copy, and destroying the world
+        /// item only once all of it landed; what did not fit stays on the ground. Returns the units taken.
+        /// </summary>
+        public static int TryTakeLooseItem(ItemDrop drop, Inventory storage)
+        {
+            if (drop == null || storage == null || !IsLooseItem(drop)) return 0;
+            if (!drop.CanPickup())
+            {
+                drop.RequestOwn();
+                return 0;
+            }
+
+            drop.Load();
+            int stack = drop.m_itemData.m_stack;
+            int taken = AddCopy(storage, drop.m_itemData, stack);
+            if (taken == stack) ZNetScene.instance.Destroy(drop.gameObject);
+            else if (taken > 0) drop.SetStack(stack - taken);
+            return taken;
+        }
+
+        private static ItemDrop ResolveItemDrop(Collider collider)
+        {
+            Rigidbody body = collider.attachedRigidbody;
+            if (body == null) return collider.GetComponentInParent<ItemDrop>();
+
+            var drop = body.GetComponent<ItemDrop>();
+            if (drop != null) return drop;
+            var floatingDummy = body.GetComponent<FloatingTerrainDummy>();
+            return floatingDummy != null && floatingDummy.m_parent != null ? floatingDummy.m_parent.GetComponent<ItemDrop>() : null;
+        }
+
+        private static bool IsLooseItem(ItemDrop drop)
+        {
+            var dropView = drop.GetComponent<ZNetView>();
+            return drop.m_autoPickup && !drop.IsPiece() && dropView != null && dropView.IsValid() && !drop.InTar();
+        }
+
+        #endregion
+
         #region Smart Deposit Logic
         
         /// <summary>
@@ -302,14 +506,14 @@ namespace FiresCore.Npc.IdleBehaviors
             // Sort chests by distance
             chests = chests.OrderBy(c => Vector3.Distance(companionPosition, c.transform.position)).ToList();
             
-            // Get items to deposit (excluding equipment, food, weapons)
-            var itemsToDeposit = GetDepositableItems(storageInv);
+            // Get items to deposit (excluding equipment, food, weapons, ammo for the equipped bow)
+            var itemsToDeposit = GetDepositableItems(companionInventory);
             if (itemsToDeposit.Count == 0)
             {
                 result.Message = "Nothing to deposit";
                 return result;
             }
-            
+
             // Find the best chest to start with
             result.TargetChest = FindBestDepositChest(companionPosition, chests, storageInv);
             if (result.TargetChest != null)
@@ -317,48 +521,19 @@ namespace FiresCore.Npc.IdleBehaviors
                 result.ChestPosition = result.TargetChest.transform.position;
                 result.DistanceToChest = Vector3.Distance(companionPosition, result.ChestPosition);
             }
-            
-            // Deposit items
+
+            var companion = companionInventory.GetComponent<CompanionController>();
             int deposited = 0;
             foreach (var item in itemsToDeposit)
             {
                 if (item == null) continue;
-                
-                // First: try to find a chest that already has this item type
-                Container targetChest = FindChestWithItem(chests, item);
-                
-                // Second: try any chest with room
-                if (targetChest == null)
-                {
-                    foreach (var chest in chests)
-                    {
-                        if (chest == null) continue;
-                        var chestInv = chest.GetInventory();
-                        if (chestInv != null && chestInv.CanAddItem(item))
-                        {
-                            targetChest = chest;
-                            break;
-                        }
-                    }
-                }
-                
-                if (targetChest != null)
-                {
-                    var chestInv = targetChest.GetInventory();
-                    if (chestInv != null && chestInv.CanAddItem(item))
-                    {
-                        // Use ItemDataHelper for safe cloning that preserves all item data
-                        var clone = ItemDataHelper.CloneItem(item);
-                        if (clone == null) continue;
-                        
-                        chestInv.AddItem(clone);
-                        storageInv.RemoveItem(item);
-                        deposited++;
-                        
-                        if (CompanionIdleBehavior.VerboseLogging)
-                            Debug.Log($"[ChestHelper] Deposited {item.m_shared?.m_name} to chest");
-                    }
-                }
+
+                Container targetChest = ClaimChestFor(chests, item, companion);
+                if (targetChest == null || MoveItem(storageInv, targetChest.GetInventory(), item, item.m_stack) == 0) continue;
+                deposited++;
+
+                if (CompanionIdleBehavior.VerboseLogging)
+                    Debug.Log($"[ChestHelper] Deposited {item.m_shared?.m_name} to chest");
             }
             
             result.ItemsDeposited = deposited;
@@ -409,10 +584,43 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 depositable.Add(item);
             }
-            
+
             return depositable;
         }
-        
+
+        /// <summary><see cref="GetDepositableItems(Inventory)"/> for a companion, which also keeps the ammo its bow or crossbow fires.</summary>
+        public static List<ItemDrop.ItemData> GetDepositableItems(CompanionInventory companionInventory)
+        {
+            var depositable = GetDepositableItems(companionInventory?.GetStorageInventory());
+            depositable.RemoveAll(item => IsAmmoForEquippedWeapon(companionInventory, item));
+            return depositable;
+        }
+
+        private static readonly CompanionInventory.EquipmentSlot[] WeaponSlots =
+        {
+            CompanionInventory.EquipmentSlot.RightHand,
+            CompanionInventory.EquipmentSlot.LeftHand,
+            CompanionInventory.EquipmentSlot.RightBack,
+            CompanionInventory.EquipmentSlot.LeftBack
+        };
+
+        /// <summary>True for ammo that an equipped bow or crossbow of the companion fires (same m_ammoType).</summary>
+        public static bool IsAmmoForEquippedWeapon(CompanionInventory companionInventory, ItemDrop.ItemData item)
+        {
+            if (companionInventory == null || item?.m_shared == null) return false;
+            var itemType = item.m_shared.m_itemType;
+            if (itemType != ItemDrop.ItemData.ItemType.Ammo && itemType != ItemDrop.ItemData.ItemType.AmmoNonEquipable) return false;
+
+            foreach (var slot in WeaponSlots)
+            {
+                var weapon = companionInventory.GetEquippedItem(slot);
+                if (weapon != null && weapon.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow
+                    && !string.IsNullOrEmpty(weapon.m_shared.m_ammoType) && weapon.m_shared.m_ammoType == item.m_shared.m_ammoType)
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>
         /// Checks if a container has stack space for any of the given items.
         /// </summary>
@@ -499,21 +707,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (collider == null) continue;
                 
                 var container = collider.GetComponent<Container>() ?? collider.GetComponentInParent<Container>();
-                if (container == null) continue;
-                
-                // Only use accessible containers
-                var nview = container.GetComponent<ZNetView>();
-                if (nview == null || !nview.IsValid()) continue;
-                
-                // Skip if already in list
-                if (result.Contains(container)) continue;
-                
+                if (container == null || result.Contains(container) || !ContainerRegistry.IsPlayerStorage(container)) continue;
+
                 result.Add(container);
             }
-            
+
             return result;
         }
-        
+
         /// <summary>
         /// Pulls items of a specific type from nearby chests into an inventory.
         /// Matches by prefab name (case-insensitive contains match).
@@ -525,113 +726,54 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <returns>Number of items pulled</returns>
         public static int PullItemsFromChests(List<Container> chests, Inventory destInventory, string itemNamePattern, int maxAmount)
         {
-            if (chests == null || destInventory == null || string.IsNullOrEmpty(itemNamePattern)) 
+            if (chests == null || destInventory == null || string.IsNullOrEmpty(itemNamePattern))
                 return 0;
-            
-            int totalPulled = 0;
+
             string pattern = itemNamePattern.ToLowerInvariant();
-            
-            foreach (var container in chests)
-            {
-                if (container == null) continue;
-                if (totalPulled >= maxAmount) break;
-                
-                var containerInv = container.GetInventory();
-                if (containerInv == null) continue;
-                
-                // Get a copy of items to avoid modification during iteration
-                var items = new List<ItemDrop.ItemData>(containerInv.GetAllItems());
-                
-                foreach (var item in items)
-                {
-                    if (item == null) continue;
-                    if (totalPulled >= maxAmount) break;
-                    
-                    // Match by prefab name or shared name
-                    string prefabName = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-                    string sharedName = item.m_shared?.m_name?.ToLowerInvariant() ?? "";
-                    
-                    if (prefabName.Contains(pattern) || sharedName.Contains(pattern))
-                    {
-                        int toMove = Mathf.Min(item.m_stack, maxAmount - totalPulled);
-                        
-                        if (destInventory.CanAddItem(item, toMove))
-                        {
-                            // Use ItemDataHelper for safe cloning that preserves all item data
-                            var clone = ItemDataHelper.CloneForPartialTransfer(item, toMove);
-                            if (clone == null)
-                            {
-                                if (CompanionIdleBehavior.VerboseLogging)
-                                    Debug.LogWarning($"[ChestHelper] Failed to clone {item.m_shared?.m_name}");
-                                continue;
-                            }
-                            
-                            if (destInventory.AddItem(clone))
-                            {
-                                containerInv.RemoveItem(item, toMove);
-                                totalPulled += toMove;
-                                
-                                if (CompanionIdleBehavior.VerboseLogging)
-                                    Debug.Log($"[ChestHelper] Pulled {toMove}x {item.m_shared?.m_name} from chest");
-                            }
-                        }
-                    }
-                }
-            }
-            
-            return totalPulled;
+            return PullMatchingItems(chests, destInventory, maxAmount, item =>
+                (item.m_dropPrefab?.name?.ToLowerInvariant() ?? "").Contains(pattern)
+                || (item.m_shared?.m_name?.ToLowerInvariant() ?? "").Contains(pattern));
         }
-        
+
         /// <summary>
         /// Pulls items by exact prefab name from nearby chests.
         /// </summary>
         public static int PullItemsByPrefabName(List<Container> chests, Inventory destInventory, string prefabName, int maxAmount)
         {
-            if (chests == null || destInventory == null || string.IsNullOrEmpty(prefabName)) 
+            if (chests == null || destInventory == null || string.IsNullOrEmpty(prefabName))
                 return 0;
-            
+
+            return PullMatchingItems(chests, destInventory, maxAmount, item =>
+                item.m_dropPrefab != null && item.m_dropPrefab.name.Equals(prefabName, System.StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Moves up to <paramref name="maxAmount"/> matching units out of the chests into a companion's storage, claiming each
+        /// chest before reading its items (the claim can reload them).
+        /// </summary>
+        private static int PullMatchingItems(List<Container> chests, Inventory destInventory, int maxAmount, System.Func<ItemDrop.ItemData, bool> matches)
+        {
+            var companion = FindCompanionByStorage(destInventory);
             int totalPulled = 0;
-            
+
             foreach (var container in chests)
             {
-                if (container == null) continue;
                 if (totalPulled >= maxAmount) break;
-                
-                var containerInv = container.GetInventory();
-                if (containerInv == null) continue;
-                
-                var items = new List<ItemDrop.ItemData>(containerInv.GetAllItems());
-                
-                foreach (var item in items)
+
+                var containerInv = container != null ? container.GetInventory() : null;
+                if (containerInv == null || !containerInv.GetAllItems().Any(matches) || !TryClaimForWrite(container, companion)) continue;
+
+                foreach (var item in new List<ItemDrop.ItemData>(containerInv.GetAllItems()))
                 {
-                    if (item == null) continue;
                     if (totalPulled >= maxAmount) break;
-                    
-                    string itemPrefab = item.m_dropPrefab?.name ?? "";
-                    
-                    if (itemPrefab.Equals(prefabName, System.StringComparison.OrdinalIgnoreCase))
-                    {
-                        int toMove = Mathf.Min(item.m_stack, maxAmount - totalPulled);
-                        
-                        if (destInventory.CanAddItem(item, toMove))
-                        {
-                            // Use ItemDataHelper for safe cloning that preserves all item data
-                            var clone = ItemDataHelper.CloneForPartialTransfer(item, toMove);
-                            if (clone == null) continue;
-                            
-                            if (destInventory.AddItem(clone))
-                            {
-                                containerInv.RemoveItem(item, toMove);
-                                totalPulled += toMove;
-                            }
-                        }
-                    }
+                    if (matches(item))
+                        totalPulled += MoveItem(containerInv, destInventory, item, maxAmount - totalPulled);
                 }
             }
-            
+
             return totalPulled;
         }
-        
+
         /// <summary>
         /// Deposits items from an inventory to nearby chests.
         /// Prioritizes chests that already contain matching items (for proper stacking).
@@ -642,79 +784,51 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <returns>Number of items deposited</returns>
         public static int DepositToChests(List<Container> chests, Inventory sourceInventory, string itemFilter = null)
         {
-            if (chests == null || sourceInventory == null) 
+            if (chests == null || sourceInventory == null)
                 return 0;
-            
+
+            var companion = FindCompanionByStorage(sourceInventory);
+            string filter = itemFilter?.ToLowerInvariant();
             int totalDeposited = 0;
-            
-            // Get items to deposit
-            var itemsToDeposit = new List<ItemDrop.ItemData>(sourceInventory.GetAllItems());
-            
-            foreach (var item in itemsToDeposit)
+
+            foreach (var item in new List<ItemDrop.ItemData>(sourceInventory.GetAllItems()))
             {
                 if (item == null) continue;
-                
-                // Apply filter if specified
-                if (!string.IsNullOrEmpty(itemFilter))
+
+                if (!string.IsNullOrEmpty(filter))
                 {
                     string prefabName = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
                     string sharedName = item.m_shared?.m_name?.ToLowerInvariant() ?? "";
-                    string filter = itemFilter.ToLowerInvariant();
-                    
                     if (!prefabName.Contains(filter) && !sharedName.Contains(filter))
                         continue;
                 }
-                
-                // First pass: Try to find a chest that already has this item type (for stacking)
-                Container targetChest = FindChestWithItem(chests, item);
-                
-                if (targetChest != null)
-                {
-                    var containerInv = targetChest.GetInventory();
-                    if (containerInv != null && containerInv.CanAddItem(item))
-                    {
-                        // Use ItemDataHelper for safe cloning that preserves all item data
-                        var clone = ItemDataHelper.CloneItem(item);
-                        if (clone == null) continue;
-                        
-                        containerInv.AddItem(clone);
-                        sourceInventory.RemoveItem(item);
-                        totalDeposited++;
-                        
-                        if (CompanionIdleBehavior.VerboseLogging)
-                            Debug.Log($"[ChestHelper] Deposited {item.m_shared?.m_name} to chest (stacked)");
-                        
-                        continue;
-                    }
-                }
-                
-                // Second pass: Find any chest with room
-                foreach (var container in chests)
-                {
-                    if (container == null) continue;
-                    
-                    var containerInv = container.GetInventory();
-                    if (containerInv == null) continue;
-                    
-                    if (containerInv.CanAddItem(item))
-                    {
-                        // Use ItemDataHelper for safe cloning that preserves all item data
-                        var clone = ItemDataHelper.CloneItem(item);
-                        if (clone == null) continue;
-                        
-                        containerInv.AddItem(clone);
-                        sourceInventory.RemoveItem(item);
-                        totalDeposited++;
-                        
-                        if (CompanionIdleBehavior.VerboseLogging)
-                            Debug.Log($"[ChestHelper] Deposited {item.m_shared?.m_name} to chest");
-                        
-                        break;
-                    }
-                }
+
+                Container targetChest = ClaimChestFor(chests, item, companion);
+                if (targetChest == null || MoveItem(sourceInventory, targetChest.GetInventory(), item, item.m_stack) == 0) continue;
+                totalDeposited++;
+
+                if (CompanionIdleBehavior.VerboseLogging)
+                    Debug.Log($"[ChestHelper] Deposited {item.m_shared?.m_name} to chest");
             }
-            
+
             return totalDeposited;
+        }
+
+        /// <summary>
+        /// A chest from <paramref name="chests"/> with room for <paramref name="item"/>, claimed for the companion; one
+        /// already holding the item is preferred so it stacks.
+        /// </summary>
+        private static Container ClaimChestFor(List<Container> chests, ItemDrop.ItemData item, CompanionController companion)
+        {
+            Container stackingChest = FindChestWithItem(chests, item);
+            if (stackingChest != null && TryClaimForWrite(stackingChest, companion)) return stackingChest;
+
+            foreach (var chest in chests)
+            {
+                var chestInv = chest != null ? chest.GetInventory() : null;
+                if (chestInv != null && chestInv.CanAddItem(item) && TryClaimForWrite(chest, companion)) return chest;
+            }
+            return null;
         }
         
         /// <summary>
@@ -917,36 +1031,6 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         /// <summary>
-        /// Checks if an item is valid wood for kilns - NOT an arrow, weapon, or tool.
-        /// Kilns accept: Wood, RoundLog, FineWood, ElderBark, YggdrasilWood
-        /// </summary>
-        public static bool IsValidWoodForKiln(string prefabName)
-        {
-            if (string.IsNullOrEmpty(prefabName)) return false;
-            
-            // First check exclusions - if it contains any excluded pattern, it's not valid
-            foreach (var excluded in ExcludedFromFuel)
-            {
-                if (prefabName.IndexOf(excluded, System.StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    return false;
-                }
-            }
-            
-            // Valid wood types for kilns (exact match)
-            string[] kilnWoodTypes = { "Wood", "RoundLog", "FineWood", "ElderBark", "YggdrasilWood" };
-            foreach (var wood in kilnWoodTypes)
-            {
-                if (prefabName.Equals(wood, System.StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-            
-            return false;
-        }
-        
-        /// <summary>
         /// Common ore item names used by smelters.
         /// </summary>
         public static readonly string[] OreItems = new[]
@@ -963,6 +1047,17 @@ namespace FiresCore.Npc.IdleBehaviors
             "Chitin"
         };
         
+        /// <summary>Count by prefab name. Vanilla Inventory.HaveItem/CountItems match the $item token, not the prefab.</summary>
+        public static int CountPrefabInInventory(Inventory inventory, string prefabName)
+        {
+            if (inventory == null || string.IsNullOrEmpty(prefabName)) return 0;
+            int total = 0;
+            foreach (var item in inventory.GetAllItems())
+                if (item?.m_dropPrefab != null && item.m_dropPrefab.name.Equals(prefabName, System.StringComparison.OrdinalIgnoreCase))
+                    total += item.m_stack;
+            return total;
+        }
+
         /// <summary>
         /// Searches all nearby chests for a specific item and returns the total count available.
         /// Useful for checking if there's enough material before starting an operation.

@@ -98,6 +98,7 @@ namespace FiresCore.Npc
 
         // Weapon state
         private WeaponType _weaponType = WeaponType.Unarmed;
+        private ItemDrop.ItemData _activeWeapon;
 
         // Threat tracking
         private float _lastThreatUpdate;
@@ -172,12 +173,10 @@ namespace FiresCore.Npc
      private void Start()
         {
             if (_nview != null)
- {
-        _nview.Register<string, int>("RPC_CompanionAttack", RPC_CompanionAttack);
-      _nview.Register<bool>("RPC_CompanionBlock", RPC_CompanionBlock);
-     _nview.Register<bool>("RPC_CompanionBowAim", RPC_CompanionBowAim);
-     _nview.Register("RPC_CompanionDodge", RPC_CompanionDodge);
- }
+            {
+                _nview.Register<bool>("RPC_CompanionBlock", RPC_CompanionBlock);
+                _nview.Register<bool>("RPC_CompanionBowAim", RPC_CompanionBowAim);
+            }
 
       // Subscribe to equipment changes
   if (_equipmentData != null)
@@ -321,22 +320,23 @@ if (characterInParent == null)
             // Allow both tamed and wild companions to fight
             // Wild companions need to defend themselves against hostile creatures
             if (_companion == null) return;
-       if (_nview == null || !_nview.IsValid()) return;
+            if (_nview == null || !_nview.IsValid()) return;
             if (_companion.isDefeated) return;
 
-        UpdateCombat();
-        UpdateThreatDetection();
+            _equipmentData?.UpdateFoodTimers();
 
-     // Update behaviors
-        _activeBehavior?.Update();
-     _blockingBehavior?.Update(_activeBehavior?.IsAttacking ?? false, _dodgeBehavior?.IsDodging ?? false, _weaponType);
-  _dodgeBehavior?.Update(_activeBehavior?.IsAttacking ?? false, _weaponType, CancelBowDrawIfNeeded);
+            // Combat is the ZDO owner's job; any other machine would duplicate swings, projectiles and swaps.
+            if (!_nview.IsOwner()) return;
 
-       UpdateOpportunisticAttacks();
-          
-    // Update food timers
-        _equipmentData?.UpdateFoodTimers();
-     }
+            UpdateCombat();
+            UpdateThreatDetection();
+
+            _activeBehavior?.Update();
+            _blockingBehavior?.Update(_activeBehavior?.IsAttacking ?? false, _dodgeBehavior?.IsDodging ?? false, _weaponType);
+            _dodgeBehavior?.Update(_activeBehavior?.IsAttacking ?? false, _weaponType, CancelBowDrawIfNeeded);
+
+            UpdateOpportunisticAttacks();
+        }
 
         private void InitializeCombatSystem()
         {
@@ -357,29 +357,12 @@ if (characterInParent == null)
                 EquipmentData = _equipmentData,
                 ThreatAnalyzer = _threatAnalyzer,
 
-                // Copy settings
+                // Weapon-owned from here on: behaviours' ConfigureAI and RefreshFromEquipmentData rewrite these.
                 BaseAttackCooldown = baseAttackCooldown,
                 AttackRange = attackRange,
-                AttackAngle = attackAngle,
-                UseNativeAttackSystem = useNativeAttackSystem,
-                RangedAttackRange = rangedAttackRange,
-                RangedMinRange = rangedMinRange,
-                DefaultBowDrawTime = defaultBowDrawTime,
-                DefaultCrossbowReloadTime = defaultCrossbowReloadTime,
-                BowAimHoldTime = bowAimHoldTime,
-                EarlyReleaseMinDraw = earlyReleaseMinDraw,
-                EarlyReleaseThreatRange = earlyReleaseThreatRange,
-                RangedRetreatRange = rangedRetreatRange,
-                BlockChance = blockChance,
-                ParryWindow = parryWindow,
-                ParryChance = parryChance,
-                BlockDamageReduction = blockDamageReduction,
-                ParryDamageReduction = parryDamageReduction,
-                DodgeChance = dodgeChance,
-                DodgeCooldown = dodgeCooldown,
-                DodgeDistance = dodgeDistance,
-                DodgeThreatRange = dodgeThreatRange
+                AttackAngle = attackAngle
             };
+            RefreshCombatContext();
 
           // Create support behaviors first so we can wire them up
             _dodgeBehavior = new DodgeBehavior();
@@ -423,6 +406,33 @@ if (characterInParent == null)
             // No-op — see field-region comment for why.
         }
 
+        /// <summary>
+        /// Copies this component's tunables into the combat context the behaviours read, so values an archetype
+        /// changes after Awake (block/parry chance and the rest) reach them. Attack range, angle and cooldown are
+        /// not copied: the equipped weapon owns them in the context.
+        /// </summary>
+        public void RefreshCombatContext()
+        {
+            _context.UseNativeAttackSystem = useNativeAttackSystem;
+            _context.RangedAttackRange = rangedAttackRange;
+            _context.RangedMinRange = rangedMinRange;
+            _context.DefaultBowDrawTime = defaultBowDrawTime;
+            _context.DefaultCrossbowReloadTime = defaultCrossbowReloadTime;
+            _context.BowAimHoldTime = bowAimHoldTime;
+            _context.EarlyReleaseMinDraw = earlyReleaseMinDraw;
+            _context.EarlyReleaseThreatRange = earlyReleaseThreatRange;
+            _context.RangedRetreatRange = rangedRetreatRange;
+            _context.BlockChance = blockChance;
+            _context.ParryWindow = parryWindow;
+            _context.ParryChance = parryChance;
+            _context.BlockDamageReduction = blockDamageReduction;
+            _context.ParryDamageReduction = parryDamageReduction;
+            _context.DodgeChance = dodgeChance;
+            _context.DodgeCooldown = dodgeCooldown;
+            _context.DodgeDistance = dodgeDistance;
+            _context.DodgeThreatRange = dodgeThreatRange;
+        }
+
         #endregion
 
   #region Combat Update
@@ -430,34 +440,32 @@ if (characterInParent == null)
         // ...existing OnEquipmentDataChanged method...
         private void OnEquipmentDataChanged()
         {
-   if (_equipmentData == null) return;
+            if (_equipmentData == null) return;
 
-         // Determine weapon type from animation state
-       WeaponType newType = DetermineWeaponTypeFromAnimState(_equipmentData.WeaponAnimationState);
-       
-   if (newType != _weaponType)
-        {
-         _weaponType = newType;
+            var weapon = _equipmentData.WeaponItem;
+            WeaponType newType = DetermineWeaponType(weapon);
 
-          // Switch behavior
-         _activeBehavior?.OnDeactivate();
-   _activeBehavior = _behaviors.TryGetValue(newType, out var behavior) ? behavior : _behaviors[WeaponType.Unarmed];
-     _activeBehavior.OnActivate();
-       _activeBehavior.UpdateAttackData();
+            // Any weapon change re-arms the behaviour, even between two weapons of the same type.
+            if (newType != _weaponType || weapon != _activeWeapon)
+            {
+                _weaponType = newType;
+                _activeWeapon = weapon;
 
-      // Update animation state
-      UpdateAnimationState();
+                _activeBehavior?.OnDeactivate();
+                _activeBehavior = _behaviors.TryGetValue(newType, out var behavior) ? behavior : _behaviors[WeaponType.Unarmed];
+                _activeBehavior.OnActivate();
+                _activeBehavior.UpdateAttackData();
             }
-            
-          // Refresh context from equipment data
+
+            UpdateAnimationState();
             _context.RefreshFromEquipmentData();
 
             if (VerboseLogging)
-  {
-        Debug.Log($"[CompanionCombat] Equipment changed - Weapon: {_equipmentData.WeaponShared?.m_name ?? "Unarmed"}, " +
-   $"Type: {_weaponType}, ChainLevels: {_equipmentData.AttackChainLevels}, " +
-                    $"HasSecondary: {_equipmentData.SecondaryAttack != null}");
-        }
+            {
+                Debug.Log($"[CompanionCombat] Equipment changed - Weapon: {_equipmentData.WeaponShared?.m_name ?? "Unarmed"}, " +
+                    $"Type: {_weaponType}, ChainLevels: {_equipmentData.AttackChainLevels}, " +
+                    $"HasSecondary: {HasSecondaryAttack()}");
+            }
         }
 
         private void UpdateCombat()
@@ -496,12 +504,9 @@ if (characterInParent == null)
                         // The companion will continue approaching and attack once in position
                         return;
                     }
-                    
-                    if (_nview != null && _nview.IsOwner())
-                    {
-                        _blockingBehavior.StopBlocking();
-                        _activeBehavior.ExecuteAttack(target);
-                    }
+
+                    _blockingBehavior.StopBlocking();
+                    _activeBehavior.ExecuteAttack(target);
                 }
             }
         }
@@ -707,7 +712,7 @@ if (characterInParent == null)
             var leftBack = _inventory?.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack);
             
             // Check for melee on right back
-            if (rightBack != null && rightBack.IsWeapon() && !IsShield(rightBack) && !IsBow(rightBack) && !IsRangedItem(rightBack))
+            if (IsCombatWeapon(rightBack) && !IsBow(rightBack) && !IsRangedItem(rightBack))
             {
                 Debug.Log($"[CompanionCombat] Equipping melee from RightBack: {rightBack.m_shared?.m_name}");
                 
@@ -727,7 +732,7 @@ if (characterInParent == null)
             }
             
             // Check for ranged on left back
-            if (leftBack != null && (IsBow(leftBack) || IsRangedItem(leftBack)))
+            if (IsCombatWeapon(leftBack) && (IsBow(leftBack) || IsRangedItem(leftBack)))
             {
                 Debug.Log($"[CompanionCombat] Equipping ranged from LeftBack: {leftBack.m_shared?.m_name}");
                 
@@ -738,7 +743,7 @@ if (characterInParent == null)
             }
             
             // Check for ranged on right back (unusual but possible)
-            if (rightBack != null && (IsBow(rightBack) || IsRangedItem(rightBack)))
+            if (IsCombatWeapon(rightBack) && (IsBow(rightBack) || IsRangedItem(rightBack)))
             {
                 Debug.Log($"[CompanionCombat] Equipping ranged from RightBack: {rightBack.m_shared?.m_name}");
                 
@@ -749,7 +754,7 @@ if (characterInParent == null)
             }
             
             // Check for melee on left back (unusual but possible)
-            if (leftBack != null && leftBack.IsWeapon() && !IsShield(leftBack) && !IsBow(leftBack) && !IsRangedItem(leftBack))
+            if (IsCombatWeapon(leftBack) && !IsBow(leftBack) && !IsRangedItem(leftBack))
             {
                 Debug.Log($"[CompanionCombat] Equipping melee from LeftBack: {leftBack.m_shared?.m_name}");
                 
@@ -778,9 +783,8 @@ if (characterInParent == null)
 
         /// <summary>
         /// Final fallback when neither WeaponSwapManager nor back slots produced a
-        /// weapon: scan storage for any usable weapon and equip it. Returns true if
-        /// something was equipped. Permissive — accepts any item that <c>IsWeapon()</c>
-        /// reports true for, minus shields and gathering tools, minus broken types.
+        /// weapon: scan storage for any combat weapon that is not a gathering tool and
+        /// equip it. Returns true if something was equipped.
         /// </summary>
         private bool TryEquipFirstWeaponFromStorage()
         {
@@ -792,9 +796,7 @@ if (characterInParent == null)
 
             foreach (var item in storage.GetAllItems())
             {
-                if (item?.m_shared == null) continue;
-                if (!item.IsWeapon()) continue;
-                if (item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Shield) continue;
+                if (!IsCombatWeapon(item)) continue;
                 if (IsGatheringToolItem(item)) continue;
 
                 bool isRanged = IsBow(item) || IsRangedItem(item);
@@ -864,48 +866,37 @@ if (characterInParent == null)
             if (item.m_shared.m_attack?.m_requiresReload == true) return true;
             if (item.m_shared.m_skillType == Skills.SkillType.ElementalMagic) return true;
             if (item.m_shared.m_skillType == Skills.SkillType.BloodMagic) return true;
-            if (item.m_shared.m_attack?.m_attackProjectile != null) return true;
-            
+            // Only the attack type counts: AtgeirBronze/AtgeirGold keep a leftover m_attackProjectile on a melee swing.
+            if (item.m_shared.m_attack?.m_attackType == Attack.AttackType.Projectile) return true;
+
             return false;
         }
-        
+
         /// <summary>
-        /// Checks if the currently equipped weapon is a gathering tool (pickaxe, axe) and
-        /// swaps to a real combat weapon if one is available.
+        /// In a fight, swaps a gathering tool (pickaxe, axe, tool) or a non-combat item (farming tool, tankard,
+        /// lantern) in hand for a real combat weapon if one is available.
         /// </summary>
         private void CheckAndSwapFromGatheringTool()
         {
             if (_weaponSwapManager == null || !enableWeaponSwapping) return;
-            
+
             // Only check when we have a target
             var target = _companionAI?.GetTargetCreature();
             if (target == null || target.IsDead()) return;
-            
-            // Check if current weapon is a gathering tool
+
             var currentWeapon = _equipmentData?.WeaponItem;
             if (currentWeapon == null) return;
-            
-            // Check if it's a tool type or has gathering skill
-            bool isGatheringTool = false;
+
             var itemType = currentWeapon.m_shared?.m_itemType ?? ItemDrop.ItemData.ItemType.None;
             var skillType = currentWeapon.m_shared?.m_skillType ?? Skills.SkillType.None;
-            
-            // Tools are for gathering
-            if (itemType == ItemDrop.ItemData.ItemType.Tool)
-            {
-                isGatheringTool = true;
-            }
-            // Pickaxes and WoodCutting are gathering skills
-            else if (skillType == Skills.SkillType.Pickaxes || skillType == Skills.SkillType.WoodCutting)
-            {
-                isGatheringTool = true;
-            }
-            
-            if (isGatheringTool)
+            bool isGatheringTool = itemType == ItemDrop.ItemData.ItemType.Tool
+                || skillType == Skills.SkillType.Pickaxes || skillType == Skills.SkillType.WoodCutting;
+
+            if (isGatheringTool || !IsCombatWeapon(currentWeapon))
             {
                 if (VerboseLogging)
                 {
-                    Debug.Log($"[CompanionCombat] {_companion?.companionName} has gathering tool equipped during combat, trying to swap to combat weapon");
+                    Debug.Log($"[CompanionCombat] {_companion?.companionName} has a gathering tool or non-combat item equipped during combat, trying to swap to combat weapon");
                 }
                 
                 // Try to swap to melee first, then ranged
@@ -986,27 +977,76 @@ if (characterInParent == null)
    }
       }
 
-        // ...existing DetermineWeaponTypeFromAnimState...
-        private WeaponType DetermineWeaponTypeFromAnimState(ItemDrop.ItemData.AnimationState animState)
+        /// <summary>
+        /// Picks the behaviour for the weapon in hand. Non-combat items fight unarmed; magic weapons are staves before
+        /// any animation-state mapping (StaffLightning uses the Crossbow state); knives and fist weapons use the
+        /// Unarmed state but swing their own attack.
+        /// </summary>
+        private static WeaponType DetermineWeaponType(ItemDrop.ItemData weapon)
         {
-    return animState switch
- {
-            ItemDrop.ItemData.AnimationState.Unarmed => WeaponType.Unarmed,
-      ItemDrop.ItemData.AnimationState.OneHanded => WeaponType.OneHandedMelee,
-    ItemDrop.ItemData.AnimationState.TwoHandedClub => WeaponType.TwoHandedMelee,
-            ItemDrop.ItemData.AnimationState.TwoHandedAxe => WeaponType.TwoHandedMelee,
-             ItemDrop.ItemData.AnimationState.Greatsword => WeaponType.TwoHandedMelee,
+            if (!IsCombatWeapon(weapon)) return WeaponType.Unarmed;
+            if (IsMagicWeapon(weapon)) return WeaponType.Staff;
+
+            return weapon.m_shared.m_animationState switch
+            {
+                ItemDrop.ItemData.AnimationState.Unarmed => weapon.IsTwoHanded() ? WeaponType.TwoHandedMelee : WeaponType.OneHandedMelee,
+                ItemDrop.ItemData.AnimationState.OneHanded => WeaponType.OneHandedMelee,
+                ItemDrop.ItemData.AnimationState.TwoHandedClub => WeaponType.TwoHandedMelee,
+                ItemDrop.ItemData.AnimationState.TwoHandedAxe => WeaponType.TwoHandedMelee,
+                ItemDrop.ItemData.AnimationState.Greatsword => WeaponType.TwoHandedMelee,
                 ItemDrop.ItemData.AnimationState.Atgeir => WeaponType.TwoHandedMelee,
-            ItemDrop.ItemData.AnimationState.Knives => WeaponType.OneHandedMelee,
-    ItemDrop.ItemData.AnimationState.DualAxes => WeaponType.TwoHandedMelee,
-       ItemDrop.ItemData.AnimationState.Scythe => WeaponType.TwoHandedMelee,
-       ItemDrop.ItemData.AnimationState.Bow => WeaponType.Bow,
-  ItemDrop.ItemData.AnimationState.Crossbow => WeaponType.Crossbow,
-     ItemDrop.ItemData.AnimationState.Staves => WeaponType.Staff,
-    ItemDrop.ItemData.AnimationState.MagicItem => WeaponType.Staff,
- ItemDrop.ItemData.AnimationState.Torch => WeaponType.OneHandedMelee,
-     _ => WeaponType.Unarmed
-   };
+                ItemDrop.ItemData.AnimationState.Knives => WeaponType.OneHandedMelee,
+                ItemDrop.ItemData.AnimationState.DualAxes => WeaponType.TwoHandedMelee,
+                ItemDrop.ItemData.AnimationState.Scythe => WeaponType.TwoHandedMelee,
+                ItemDrop.ItemData.AnimationState.Bow => WeaponType.Bow,
+                ItemDrop.ItemData.AnimationState.Crossbow => WeaponType.Crossbow,
+                ItemDrop.ItemData.AnimationState.Staves => WeaponType.Staff,
+                ItemDrop.ItemData.AnimationState.MagicItem => WeaponType.Staff,
+                ItemDrop.ItemData.AnimationState.Torch => WeaponType.OneHandedMelee,
+                _ => WeaponType.Unarmed
+            };
+        }
+
+        /// <summary>
+        /// A weapon a companion may fight with: a weapon-skill item that deals damage, or a magic staff whose effect
+        /// lives in its projectile, summon or buff. Farming tools, tankards, lanterns, bombs, fishing rods and the
+        /// grappling hook are not.
+        /// </summary>
+        public static bool IsCombatWeapon(ItemDrop.ItemData item)
+        {
+            if (item?.m_shared == null || !item.IsWeapon() || !item.HavePrimaryAttack()) return false;
+            if (!IsWeaponSkill(item.m_shared.m_skillType)) return false;
+            if (item.GetDamage().GetTotalDamage() > 0f) return true;
+            return IsMagicWeapon(item) && item.m_shared.m_attack.m_attackProjectile != null;
+        }
+
+        public static bool IsMagicWeapon(ItemDrop.ItemData item)
+        {
+            var skill = item?.m_shared?.m_skillType;
+            return skill == Skills.SkillType.ElementalMagic || skill == Skills.SkillType.BloodMagic;
+        }
+
+        private static bool IsWeaponSkill(Skills.SkillType skill)
+        {
+            switch (skill)
+            {
+                case Skills.SkillType.Swords:
+                case Skills.SkillType.Knives:
+                case Skills.SkillType.Clubs:
+                case Skills.SkillType.Polearms:
+                case Skills.SkillType.Spears:
+                case Skills.SkillType.Axes:
+                case Skills.SkillType.Bows:
+                case Skills.SkillType.Crossbows:
+                case Skills.SkillType.ElementalMagic:
+                case Skills.SkillType.BloodMagic:
+                case Skills.SkillType.Unarmed:
+                case Skills.SkillType.Pickaxes:
+                case Skills.SkillType.WoodCutting:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         private bool IsBow(ItemDrop.ItemData item)
@@ -1217,6 +1257,17 @@ _currentThreat = newThreat;
     {
         _lastDamageReceivedTime = Time.time;
     }
+
+        /// <summary>The damage types of the last hit taken, and when: what the companion needs resisting right now.</summary>
+        public HitData.DamageTypes LastDamageTaken { get; private set; }
+        public float LastDamageTakenTime { get; private set; } = -1f;
+
+        internal void RecordIncoming(HitData hit)
+        {
+            if (hit == null) return;
+            LastDamageTaken = hit.m_damage;
+            LastDamageTakenTime = Time.time;
+        }
         
     /// <summary>
     /// Checks if the companion is currently doing a player command or sub-behavior (chore).
@@ -1289,6 +1340,7 @@ if (character == _character) continue;
             if (target == null) return false;
             if (target.IsDead()) return false;
             if (target == _character) return false;
+            if (target.m_aiSkipTarget) return false;
             if (target.IsTamed()) return false;
             if (target.IsPlayer()) return false;
 
@@ -1318,12 +1370,6 @@ if (character == _character) continue;
 
     #region RPCs
 
-        private void RPC_CompanionAttack(long sender, string animTrigger, int attackIndex)
-        {
-  if (_nview != null && _nview.IsOwner()) return;
- _context.PlayAttackAnimation(animTrigger, attackIndex);
-        }
-
         private void RPC_CompanionBlock(long sender, bool blocking)
         {
             _blockingBehavior?.HandleBlockRPC(blocking);
@@ -1343,11 +1389,6 @@ if (character == _character) continue;
             }
       }
 
-        private void RPC_CompanionDodge(long sender)
-        {
-     _dodgeBehavior?.HandleDodgeRPC();
-        }
-
       #endregion
 
         #region Public API
@@ -1358,9 +1399,9 @@ if (character == _character) continue;
         /// <summary>Gets the current weapon item.</summary>
         public ItemDrop.ItemData GetCurrentWeapon() => _equipmentData?.WeaponItem;
 
-        public bool IsAttacking() => _activeBehavior?.IsAttacking ?? false ||
-         (_activeBehavior is BowBehavior bow && bow.IsBowDrawing) ||
-      (_activeBehavior is CrossbowBehavior xbow && xbow.IsReloading);
+        public bool IsAttacking() => (_activeBehavior?.IsAttacking ?? false) ||
+            (_activeBehavior is BowBehavior bow && bow.IsBowDrawing) ||
+            (_activeBehavior is CrossbowBehavior xbow && xbow.IsReloading);
 
         public bool IsBlocking() => _blockingBehavior?.IsBlocking ?? false;
 
@@ -1414,12 +1455,6 @@ if (character == _character) continue;
        _blockingBehavior?.StopBlocking();
         }
 
-        /// <summary>Calculates damage reduction using equipment armor.</summary>
-        public float CalculateDamageReduction(float damage)
-        {
-          return _equipmentData?.CalculateDamageReduction(damage) ?? damage;
-        }
-
         /// <summary>Forces equipment data refresh.</summary>
    public void ReconfigureAIForWeapon()
         {
@@ -1461,7 +1496,7 @@ if (character == _character) continue;
         public int GetMaxChainLevel() => _equipmentData?.AttackChainLevels ?? 1;
    
         /// <summary>Returns true if current weapon has a secondary attack.</summary>
-        public bool HasSecondaryAttack() => _equipmentData?.SecondaryAttack != null;
+        public bool HasSecondaryAttack() => GetCurrentWeapon()?.HaveSecondaryAttack() ?? false;
         
    // ===== NEW WEAPON SWAP API =====
         

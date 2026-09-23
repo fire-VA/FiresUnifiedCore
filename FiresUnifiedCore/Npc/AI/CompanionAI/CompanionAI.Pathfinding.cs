@@ -15,6 +15,7 @@ namespace FiresCore.Npc.AI
         #region Movement Authority
         
         private const string AIAuthorityOwner = "CompanionAI";
+        private const float AshlandsSeaMinDepth = 0.3f;
         
         /// <summary>
         /// Gets the movement authority from the companion controller.
@@ -308,31 +309,21 @@ namespace FiresCore.Npc.AI
             }
         }
         
+        /// <summary>BaseAI.FindPath returns its cached result for 1-5 s (BaseAI.cs:711-716); forgetting the last search
+        /// time makes the next MoveTo path again.</summary>
+        internal void InvalidatePathCache() => m_lastFindPathTime = float.NegativeInfinity;
+
         private void ForcePathRecalculation()
         {
             if (Time.time - _lastPathRecalcTime < PathRecalcInterval)
                 return;
                 
             _lastPathRecalcTime = Time.time;
-            
-            try
+            InvalidatePathCache();
+
+            if (VerboseLogging)
             {
-                var pathTimerField = typeof(BaseAI).GetField("m_pathTimer",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (pathTimerField != null)
-                {
-                    pathTimerField.SetValue(this, 999f);
-                }
-                
-                if (VerboseLogging)
-                {
-                    Debug.Log($"[CompanionAI] {m_character?.m_name} forcing path recalculation");
-                }
-            }
-            catch (Exception ex)
-            {
-                if (VerboseLogging)
-                    Debug.LogWarning($"[CompanionAI] Failed to force path recalc: {ex.Message}");
+                Debug.Log($"[CompanionAI] {m_character?.m_name} forcing path recalculation");
             }
         }
         
@@ -434,14 +425,9 @@ namespace FiresCore.Npc.AI
                     Debug.Log($"[CompanionAI] {m_character?.m_name} attempting to jump over obstacle");
                 }
                 
-                try
-                {
-                    var jumpMethod = typeof(Character).GetMethod("Jump",
-                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                        System.Reflection.BindingFlags.Instance);
-                    jumpMethod?.Invoke(m_character, null);
-                }
-                catch { }
+                // 1.0 Character.Jump pulls the local player's grappling hook when the jumper is airborne or attacking.
+                if (m_character.IsOnGround() && !m_character.InAttack())
+                    m_character.Jump();
             }
         }
         
@@ -523,26 +509,24 @@ namespace FiresCore.Npc.AI
 
         private Combat.TerrainAwareness.HazardType CheckTeleportPositionSafety(Vector3 pos)
         {
-            if (WorldGenerator.instance != null)
+            var zones = ZoneSystem.instance;
+            if (zones != null)
             {
-                Heightmap.Biome biome = WorldGenerator.instance.GetBiome(pos);
-                if (biome == Heightmap.Biome.AshLands)
+                // 1.0 Ashlands lava is terrain paint; the Ashlands sea itself burns.
+                if (zones.IsLava(pos))
+                    return Combat.TerrainAwareness.HazardType.Lava;
+
+                if (zones.GetGroundHeight(pos, out float groundHeight))
                 {
-                    try
+                    if (WorldGenerator.instance != null && WorldGenerator.instance.GetBiome(pos) == Heightmap.Biome.AshLands)
                     {
                         WaterVolume waterVolume = null;
-                        float waterLevel = Floating.GetWaterLevel(pos, ref waterVolume);
-                        float groundHeight = pos.y;
-                        if (ZoneSystem.instance != null)
-                        {
-                            ZoneSystem.instance.GetGroundHeight(pos, out groundHeight);
-                        }
-                        if (waterLevel > groundHeight + 0.3f)
-                        {
+                        if (Floating.GetWaterLevel(pos, ref waterVolume) > groundHeight + AshlandsSeaMinDepth)
                             return Combat.TerrainAwareness.HazardType.Lava;
-                        }
                     }
-                    catch { }
+
+                    if (Floating.GetLiquidLevel(pos, 1f, LiquidType.Tar) > groundHeight)
+                        return Combat.TerrainAwareness.HazardType.Tar;
                 }
             }
             
@@ -551,13 +535,8 @@ namespace FiresCore.Npc.AI
             {
                 if (collider == null) continue;
                 string objName = collider.gameObject.name.ToLower();
-                
-                if (objName.Contains("lava") || objName.Contains("magma"))
-                    return Combat.TerrainAwareness.HazardType.Lava;
                 if (objName.Contains("fire") || objName.Contains("campfire"))
                     return Combat.TerrainAwareness.HazardType.Fire;
-                if (objName.Contains("tar"))
-                    return Combat.TerrainAwareness.HazardType.Tar;
             }
             
             return Combat.TerrainAwareness.HazardType.None;

@@ -31,7 +31,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // before it burns is time-critical so beat all priority-0 tasks.
                 var stations = FindCookingStations();
                 foreach (var station in stations)
-                    if (HasDoneItems(station) || HasBurnedItems(station)) return 50;
+                    if (HasFinishedFood(station)) return 50;
                 return 0;
             }
         }
@@ -61,11 +61,12 @@ namespace FiresCore.Npc.IdleBehaviors
         private const float TendCheckIntervalUrgent = 0.3f; // when food is done/burning, react fast
         private const float IdleGiveUpTime    = 40f;   // bail if nothing happens this long
 
-        // slotstatus ZDO values used by Valheim's CookingStation
-        private const int StatusEmpty  = 0;
-        private const int StatusCooking = 1;
-        private const int StatusDone   = 2;
-        private const int StatusBurned = 3;
+        // CookingStation.SetSlot keys: "slot{i}" holds the item prefab name ("" = empty), "slotstatus{i}" its Status.
+        private const string SlotItemKey   = "slot";
+        private const string SlotStatusKey = "slotstatus";
+        private const int StatusNotDone = (int)CookingStation.Status.NotDone;
+        private const int StatusDone    = (int)CookingStation.Status.Done;
+        private const int StatusBurnt   = (int)CookingStation.Status.Burnt;
 
         // state
 
@@ -85,6 +86,8 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // Stations that failed pathfinding this session — skipped in Scanning until behavior restarts.
         private HashSet<CookingStation> _failedStations = new HashSet<CookingStation>();
+
+        private readonly FinishedFoodCollector _foodCollector = new FinishedFoodCollector();
 
         // Set by the command system (Shift+MMB on a CookingStation) to force this
         // companion onto a specific station. Bypasses the toggle and the
@@ -179,12 +182,12 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 var commandedStation = _commandedTarget.GetComponent<CookingStation>()
                                     ?? _commandedTarget.GetComponentInParent<CookingStation>();
-                if (commandedStation != null)
+                if (commandedStation != null && TakesFoodDirectly(commandedStation))
                 {
                     LogVerbose("CanStart: TRUE — commanded cooking station");
                     return true;
                 }
-                // Target lost its station component (destroyed, replaced); drop the command.
+                // No station we can feed directly (destroyed, replaced, switch-fed); drop the command.
                 _commandedTarget = null;
             }
 
@@ -202,7 +205,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Check if any station already has food we should collect first.
             foreach (var station in stations)
             {
-                if (HasDoneItems(station) || HasBurnedItems(station))
+                if (HasFinishedFood(station))
                 {
                     LogVerbose("CanStart: TRUE - station has finished/burned food to collect");
                     return true;
@@ -251,6 +254,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _tendTimer      = 0f;
             _idleTimer      = 0f;
             _pendingCollectTime = -1f;
+            _foodCollector.Begin();
             _toDeposit.Clear();
             _depositChests.Clear();
             _depositIndex = 0;
@@ -318,7 +322,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         /// <summary>
         /// Harmony patch: postfix on <c>CookingStation.UpdateCooking</c>.  Detects
-        /// any slot that has just transitioned to Done (status 2) and pings every
+        /// any slot that has just transitioned to Status.Done and pings every
         /// active <see cref="CompanionCookingBehavior"/> tending that station so
         /// it pulls the food off the fire before it can burn.
         /// </summary>
@@ -349,7 +353,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 var zdo = nview.GetZDO();
                 for (int i = 0; i < slotCount; i++)
                 {
-                    int status = zdo.GetInt("slotstatus" + i, StatusEmpty);
+                    int status = zdo.GetInt(SlotStatusKey + i);
                     if (status == StatusDone && prev[i] != StatusDone)
                     {
                         anyNewlyDone = true;
@@ -419,7 +423,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 if (_failedStations.Contains(station)) continue;
                 if (!IsReachable(station.transform.position)) { _failedStations.Add(station); continue; }
-                if (HasDoneItems(station) || HasBurnedItems(station))
+                if (HasFinishedFood(station))
                 {
                     // EARLY RESERVATION so other companions don't pick the same station.
                     if (!InteractableOccupancyManager.TryOccupy(station.gameObject, Character, MaxCookTime))
@@ -561,7 +565,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
 
                 // If there is already finished/burned food, go collect first.
-                if (HasDoneItems(_currentStation) || HasBurnedItems(_currentStation))
+                if (HasFinishedFood(_currentStation))
                 {
                     SetPhase(CookPhase.Tending);
                     _tendTimer = 0f;
@@ -584,6 +588,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
             StopMovement();
             FaceTarget(_currentStation.transform.position);
+
+            // The fill loop reads slot state locally; as a non-owner it would keep sending items the owner drops.
+            if (!OwnStation(_currentStation)) return false;
 
             var storage = GetStorageInventory();
             if (storage == null)
@@ -651,7 +658,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // Use a tight interval whenever something is finished - done food has a
                 // limited grace period before it burns, so we want to grab it ASAP.
                 // When nothing is done yet, fall back to the normal interval to save work.
-                float interval = (HasDoneItems(_currentStation) || HasBurnedItems(_currentStation))
+                float interval = HasFinishedFood(_currentStation)
                     ? TendCheckIntervalUrgent
                     : TendCheckInterval;
 
@@ -668,20 +675,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            // CRITICAL: CookingStation.Interact() returns false and internally calls
-            // ClaimOwnership() the first time this machine doesn't own the station ZDO.
-            // Without pre-claiming here, the interact loop always breaks on the first
-            // call (pickups==0), then the idle-guard below immediately fires because
-            // anyCooking=false (food is DONE=2, not COOKING=1) and haveMore=false
-            // (no raw food left), causing the companion to walk away and leave the
-            // finished food to burn.  Yield one tick after claiming so ownership
-            // propagates before we try to interact.
-            if (!nview.IsOwner())
+            if (!OwnStation(_currentStation))
             {
-                nview.ClaimOwnership();
                 LogVerbose("Claimed station ZDO ownership - yielding one tick before collecting");
                 return false;
             }
+
+            if (_foodCollector.PickUpDrops(_currentStation, GetStorageInventory()) > 0)
+                SaveInventory();
 
             bool actedThisTick = false;
 
@@ -689,10 +690,11 @@ namespace FiresCore.Npc.IdleBehaviors
             // Higher cooking skill = more reliable collection.  At low skill the
             // companion has a chance to "fumble" any given Done item - we simply
             // skip it on this pass and the next Update will see it has tipped
-            // into Burnt status (still collected, but yields wood instead of
+            // into Burnt status (still collected, but yields coal instead of
             // food).  Burned slots are always cleared so we free the slot.
-            int doneCount   = CountSlotsWithStatus(_currentStation, StatusDone);
-            int burnedCount = CountSlotsWithStatus(_currentStation, StatusBurned);
+            var slots       = CountSlots(_currentStation);
+            int doneCount   = slots.Done;
+            int burnedCount = slots.Burnt;
 
             float skill = GetCookingSkill();
             float fumblePerItem = ComputeCookingFumbleChance(skill);
@@ -709,10 +711,10 @@ namespace FiresCore.Npc.IdleBehaviors
             if (targetPickups > MaxPickupsPerTick) targetPickups = MaxPickupsPerTick;
 
             int pickups = 0;
-            while (pickups < targetPickups && (HasDoneItems(_currentStation) || HasBurnedItems(_currentStation)))
+            while (pickups < targetPickups && HasFinishedFood(_currentStation))
             {
-                if (!_currentStation.Interact(Humanoid, false, false))
-                    break; // inventory full or station refused - stop trying
+                if (!_foodCollector.CollectOne(_currentStation, Humanoid))
+                    break; // station refused - stop trying
 
                 _itemsCooked++;
                 pickups++;
@@ -758,7 +760,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // mid-cook and walked away, leaving everything to burn.
             bool anyCooking       = AnySlotCooking(_currentStation);
             bool haveMore         = storage != null && HasRawFoodForStation(_currentStation, storage);
-            bool stillNeedCollect = HasDoneItems(_currentStation) || HasBurnedItems(_currentStation);
+            bool stillNeedCollect = HasFinishedFood(_currentStation) || _foodCollector.HasDropsOnGround;
 
             if (actedThisTick || anyCooking || stillNeedCollect)
             {
@@ -830,7 +832,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (TimeInCurrentPhase < 0.1f) PlayInteractAnimation();
             if (TimeInCurrentPhase < 0.5f) return false;
 
-            var chestInv = chest.GetInventory();
+            var chestInv = ChestHelper.TryClaimForWrite(chest, Companion) ? chest.GetInventory() : null;
             var storage  = GetStorageInventory();
             if (chestInv == null || storage == null) { AdvanceToNextChest(); return false; }
 
@@ -841,24 +843,17 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 if (item == null) continue;
                 if (!IsCookedFood(item)) continue;
-                if (!chestInv.CanAddItem(item)) continue;
+                int stack = item.m_stack;
+                if (ChestHelper.MoveItem(storage, chestInv, item, stack) != stack) continue;
 
-                var clone = item.Clone();
-                if (chestInv.AddItem(clone))
-                {
-                    storage.RemoveItem(item);
-                    _toDeposit.Remove(item);
-                    _itemsDeposited++;
-                    depositedAny = true;
-                    LogVerbose($"Deposited {item.m_shared.m_name} to chest");
-                }
+                _toDeposit.Remove(item);
+                _itemsDeposited++;
+                depositedAny = true;
+                LogVerbose($"Deposited {item.m_shared.m_name} to chest");
             }
 
             if (depositedAny)
-            {
                 SaveInventory();
-                SmartStorageOrganizer.SaveContainer(chest);
-            }
 
             if (_toDeposit.Count == 0)
                 SetPhase(CookPhase.Complete);
@@ -981,6 +976,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 var station = collider.GetComponent<CookingStation>()
                            ?? collider.GetComponentInParent<CookingStation>();
                 if (station == null || seen.Contains(station)) continue;
+                if (!TakesFoodDirectly(station)) continue;
                 if (!InteractableOccupancyManager.CanUseInteractable(station.gameObject, Character)) continue;
                 seen.Add(station);
                 result.Add(station);
@@ -1001,60 +997,77 @@ namespace FiresCore.Npc.IdleBehaviors
             }
         }
 
+        // helpers - station rules (shared with FireTendingBehaviorV2)
+
+        /// <summary>Interact/UseItem refuse stations fed through an add-food switch (oven, FrostFoundry; CookingStation.cs:485,527).</summary>
+        internal static bool TakesFoodDirectly(CookingStation station) => station.m_addFoodSwitch == null;
+
+        /// <summary>
+        /// True when this machine owns the station; otherwise claims it and returns false so the caller acts next tick,
+        /// when slot changes and spawned drops happen here instead of on another peer.
+        /// </summary>
+        internal static bool OwnStation(CookingStation station)
+        {
+            var nview = station.GetComponent<ZNetView>();
+            if (nview == null || !nview.IsValid()) return false;
+            if (nview.IsOwner()) return true;
+            nview.ClaimOwnership();
+            return false;
+        }
+
+        internal static float SlowestCookTime(CookingStation station)
+        {
+            float slowest = 0f;
+            foreach (var conversion in station.m_conversion)
+                slowest = Mathf.Max(slowest, conversion.m_cookTime);
+            return slowest;
+        }
+
+        private static bool IsStationOutput(CookingStation station, GameObject prefab)
+        {
+            if (prefab == null) return false;
+            if (prefab.name == station.m_overCookedItem.name) return true;
+            foreach (var conversion in station.m_conversion)
+                if (conversion.m_to.name == prefab.name) return true;
+            return false;
+        }
+
         // helpers - slot state
 
-        private bool HasFreeSlot(CookingStation station)
+        private struct SlotCounts
         {
-            if (station == null) return false;
-            var nview = station.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return false;
+            public int Free, Cooking, Done, Burnt;
+        }
 
+        private static SlotCounts CountSlots(CookingStation station)
+        {
+            var counts = new SlotCounts();
+            var nview = station != null ? station.GetComponent<ZNetView>() : null;
+            if (nview == null || !nview.IsValid()) return counts;
+
+            var zdo = nview.GetZDO();
             for (int i = 0; i < station.m_slots.Length; i++)
             {
-                int status = nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty);
-                if (status == StatusEmpty) return true;
+                if (zdo.GetString(SlotItemKey + i) == "") { counts.Free++; continue; }
+                switch (zdo.GetInt(SlotStatusKey + i))
+                {
+                    case StatusNotDone: counts.Cooking++; break;
+                    case StatusDone:    counts.Done++;    break;
+                    case StatusBurnt:   counts.Burnt++;   break;
+                }
             }
-            return false;
+            return counts;
         }
 
-        private bool HasDoneItems(CookingStation station)
+        internal static bool HasFreeSlot(CookingStation station) => CountSlots(station).Free > 0;
+
+        internal static bool HasFinishedFood(CookingStation station)
         {
-            if (station == null) return false;
-            var nview = station.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return false;
-
-            for (int i = 0; i < station.m_slots.Length; i++)
-                if (nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty) == StatusDone)
-                    return true;
-            return false;
+            var slots = CountSlots(station);
+            return slots.Done + slots.Burnt > 0;
         }
 
-        private bool HasBurnedItems(CookingStation station)
-        {
-            if (station == null) return false;
-            var nview = station.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return false;
-
-            for (int i = 0; i < station.m_slots.Length; i++)
-                if (nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty) == StatusBurned)
-                    return true;
-            return false;
-        }
-
-        private bool AnySlotCooking(CookingStation station)
-        {
-            if (station == null) return false;
-            var nview = station.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return false;
-
-            for (int i = 0; i < station.m_slots.Length; i++)
-            {
-                int status = nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty);
-                if (status == StatusCooking || status == StatusDone)
-                    return true;
-            }
-            return false;
-        }
+        private static bool AnySlotCooking(CookingStation station) => CountSlots(station).Cooking > 0;
 
         // helpers - raw food
 
@@ -1104,7 +1117,7 @@ namespace FiresCore.Npc.IdleBehaviors
         }
 
         /// <summary>Is this item raw input for any cooking conversion the station supports?</summary>
-        private bool IsRawFor(CookingStation station, ItemDrop.ItemData item)
+        internal static bool IsRawFor(CookingStation station, ItemDrop.ItemData item)
         {
             if (station?.m_conversion == null || item == null) return false;
             string prefab = item.m_dropPrefab?.name ?? "";
@@ -1168,12 +1181,12 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (chest == null || station == null) return 0;
 
+            int freeSlots = CountSlots(station).Free;
+            if (freeSlots <= 0 || !ChestHelper.TryClaimForWrite(chest, Companion)) return 0;
+
             var chestInv  = chest.GetInventory();
             var storage   = GetStorageInventory();
             if (chestInv == null || storage == null) return 0;
-
-            int freeSlots = CountFreeSlots(station);
-            if (freeSlots <= 0) return 0;
 
             int pulled = 0;
             var items  = new List<ItemDrop.ItemData>(chestInv.GetAllItems());
@@ -1182,54 +1195,13 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 if (pulled >= freeSlots) break;
                 if (item == null || !IsRawFor(station, item)) continue;
-
-                // Pull one at a time.
-                int toPull = Mathf.Min(item.m_stack, freeSlots - pulled);
-                for (int pullIndex = 0; pullIndex < toPull; pullIndex++)
-                {
-                    var clone = item.Clone();
-                    clone.m_stack = 1;
-                    if (!storage.AddItem(clone)) break;
-                    chestInv.RemoveOneItem(item);
-                    pulled++;
-                }
+                pulled += ChestHelper.MoveItem(chestInv, storage, item, Mathf.Min(item.m_stack, freeSlots - pulled));
             }
 
             if (pulled > 0)
-            {
                 SaveInventory();
-                SmartStorageOrganizer.SaveContainer(chest);
-            }
 
             return pulled;
-        }
-
-        private int CountFreeSlots(CookingStation station)
-        {
-            if (station == null) return 0;
-            var nview = station.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return 0;
-
-            int free = 0;
-            for (int i = 0; i < station.m_slots.Length; i++)
-                if (nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty) == StatusEmpty)
-                    free++;
-            return free;
-        }
-
-        // slot status counter
-
-        private int CountSlotsWithStatus(CookingStation station, int targetStatus)
-        {
-            if (station == null) return 0;
-            var nview = station.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return 0;
-
-            int count = 0;
-            for (int i = 0; i < station.m_slots.Length; i++)
-                if (nview.GetZDO().GetInt("slotstatus" + i, StatusEmpty) == targetStatus)
-                    count++;
-            return count;
         }
 
         // cooking skill (custom, stored on companion ZDO)
@@ -1285,6 +1257,83 @@ namespace FiresCore.Npc.IdleBehaviors
             float skillFactor = Mathf.Clamp01(skill / 80f);
             float ease = 1f - (skillFactor * skillFactor);
             return 0.25f * ease;
+        }
+
+        /// <summary>
+        /// Takes finished food off a station for a companion and carries the drops into its storage: vanilla spawns the
+        /// output on the ground (CookingStation.SpawnItem:391) and its OnInteract credits the local player.
+        /// </summary>
+        internal sealed class FinishedFoodCollector
+        {
+            private const string RemoveDoneItemRpc = "RPC_RemoveDoneItem";
+            private const int ItemsPerCollect = 1;
+            private const string ItemLayerName = "item";
+            private const float DropSearchRadius = 4f;
+            private const float DropPickupGiveUpTime = 3f;
+
+            private static int s_itemLayerMask;
+
+            private long _sessionStartTicks;
+            private float _lastCollectTime;
+            private int _dropsOnGround;
+
+            public bool HasDropsOnGround => _dropsOnGround > 0 && Time.time - _lastCollectTime < DropPickupGiveUpTime;
+
+            public void Begin()
+            {
+                _sessionStartTicks = ZNet.instance.GetTime().Ticks;
+                _dropsOnGround = 0;
+            }
+
+            public bool CollectOne(CookingStation station, Humanoid companion)
+            {
+                if (!HasFinishedFood(station)) return false;
+                if (Player.m_localPlayer != null)
+                {
+                    if (!station.Interact(companion, false, false)) return false;
+                }
+                else
+                {
+                    // OnInteract (CookingStation.cs:493) dereferences the local player; a dedicated server has none.
+                    station.GetComponent<ZNetView>().InvokeRPC(RemoveDoneItemRpc, companion.transform.position, ItemsPerCollect);
+                }
+                _dropsOnGround++;
+                _lastCollectTime = Time.time;
+                return true;
+            }
+
+            public int PickUpDrops(CookingStation station, Inventory storage)
+            {
+                if (_dropsOnGround == 0 || storage == null) return 0;
+                if (s_itemLayerMask == 0) s_itemLayerMask = LayerMask.GetMask(ItemLayerName);
+
+                int pickedUp = 0;
+                foreach (var collider in Physics.OverlapSphere(station.transform.position, DropSearchRadius, s_itemLayerMask))
+                {
+                    var drop = collider.GetComponentInParent<ItemDrop>();
+                    if (drop == null || !IsDropFromThisSession(station, drop)) continue;
+                    if (!drop.CanPickup(false))
+                    {
+                        drop.RequestOwn();
+                        continue;
+                    }
+
+                    drop.Load();
+                    if (!storage.CanAddItem(drop.m_itemData) || !storage.AddItem(drop.m_itemData)) continue;
+                    ZNetScene.instance.Destroy(drop.gameObject);
+                    pickedUp++;
+                    if (--_dropsOnGround == 0) break;
+                }
+                return pickedUp;
+            }
+
+            private bool IsDropFromThisSession(CookingStation station, ItemDrop drop)
+            {
+                var nview = drop.GetComponent<ZNetView>();
+                return nview != null && nview.IsValid()
+                    && nview.GetZDO().GetLong(ZDOVars.s_spawnTime) >= _sessionStartTicks
+                    && IsStationOutput(station, drop.m_itemData.m_dropPrefab);
+            }
         }
     }
 }

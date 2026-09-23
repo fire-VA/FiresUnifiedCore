@@ -22,7 +22,7 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.2.37";
+        public const string PluginVersion = "0.2.80";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -56,6 +56,10 @@ namespace FiresCore
                 // Env-box config popup: Hud.Update Esc/cursor driver + logout guard touch client-only UI. Skip headless.
                 "FiresCore.UI.EnvironmentBoxPanel+Hud_Update_Patch",
                 "FiresCore.UI.EnvironmentBoxPanel+ZNet_Shutdown_PanelGuard",
+                // Config-window menu entry: clones the FejdStartup/Menu Settings button, both client-only.
+                "FiresCore.UI.ConfigMenuButton+FejdStartup_Start_AddEntry",
+                "FiresCore.UI.ConfigMenuButton+Menu_Start_AddEntry",
+                "FiresCore.UI.ConfigMenuButton+Menu_UpdateNavigation_AddEntry",
             };
 
         protected override void Setup()
@@ -69,6 +73,12 @@ namespace FiresCore
             FiresCore.Storage.FiresConfigPaths.Migrate();
 
             FiresCore.Logging.StatusBanner.BindConfig(Config);
+            FiresCore.Logging.BepInExLogSuppressionPatch.BindConfig(Config);
+            FiresCore.Logging.LoadSummary.BindConfig(Config);
+            FiresCore.Logging.RateLimitedLogHandler.BindConfig(Config);
+            FiresCore.IO.FileWatchHubConfig.Initialize(Harmony, Config);
+            FiresCore.Lifecycle.CollisionCallbackReuse.Initialize(Config);
+            FiresCore.Lifecycle.GroundDataThrottle.Initialize(Config);
             InstallLogFilter();
             InitializeConfigAndSync();
 
@@ -81,10 +91,12 @@ namespace FiresCore
             bool guardsClientSide = SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null;
             FiresCore.Diagnostics.CharacterListLeakGuard.Register(Harmony, guardsClientSide);
             FiresCore.Diagnostics.VisEquipmentDropPrefabHeal.Register(Harmony);
+            FiresCore.Diagnostics.PathfindingStats.Register(Harmony);
 
             // Bind the Fires config window's own appearance (font/opacity/accent) into Core's config and
             // register it, so an "Appearance" section shows right in the window and restyles live.
             FiresCore.UI.FiresConfigUI.BindAppearance(Config);
+            FiresCore.UI.ConfigHiddenSettings.Initialize(configSync);
 
             // Auto-engage the shared text-capture gate whenever a UI text field is focused, so typing into any
             // Fires field stops leaking keystrokes to vanilla / other-mod hotkeys (e.g. a 'g' firing another
@@ -98,7 +110,7 @@ namespace FiresCore
                 FiresCore.UI.ContextMenu.ContextMenuConfig.Initialize(Config);
                 FiresCore.UI.ContextMenu.FiresContextMenuDriver.Ensure();
 
-                // Core's own sections for the shared help panel (registration only — the
+                // Core's own sections for the shared help panel (registration only â€” the
                 // panel is created by whichever mod calls HelpPanel.Initialize).
                 try { FiresCore.Help.FiresCoreHelpContent.Register(); }
                 catch (System.Exception ex) { Debug.LogWarning($"[{PluginName}] Help content registration failed: {ex.Message}"); }
@@ -172,7 +184,7 @@ namespace FiresCore
             FiresCore.UI.GroupHud.GroupHudConfig.Initialize(Config);
             FiresCore.Bridge.GroupHudBridge.IsBlockingUiOpen = FiresCore.Bridge.ModUiRegistry.IsAnyOpen;
 
-            // HuntList: server-synced, admin-editable list of passive "hunt-only" prey (deer/boar/…)
+            // HuntList: server-synced, admin-editable list of passive "hunt-only" prey (deer/boar/â€¦)
             // that companions ignore unless Hunt is toggled on or the creature attacks first.
             FiresCore.Npc.HuntListConfig.Initialize(Config);
             FiresCore.Npc.HuntListConfig.BindToSync(configSync);

@@ -143,9 +143,6 @@ namespace FiresCore.Npc
             {
                 if (__instance != Player.m_localPlayer) return;
 
-                // DIAG (login-freeze)
-                Debug.Log("[LoginFreeze][DIAG] ENTER CompanionPatches.Player_OnSpawned_Postfix");
-
                 // Re-register NPC data sync RPCs if needed (they go stale
                 // after logout/login because ZRoutedRpc.instance gets
                 // destroyed during scene transition).
@@ -163,9 +160,6 @@ namespace FiresCore.Npc
                 SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_RESPAWN;
 
                 __instance.StartCoroutine(ReconcileFollowersAfterArrival(__instance));
-
-                // DIAG (login-freeze)
-                Debug.Log("[LoginFreeze][DIAG] EXIT CompanionPatches.Player_OnSpawned_Postfix (ReconcileFollowersAfterArrival coroutine started)");
             }
             catch (Exception ex)
             {
@@ -214,12 +208,7 @@ namespace FiresCore.Npc
 
             if (player == null || Player.m_localPlayer != player) yield break;
 
-            // DIAG (login-freeze): bracket the reconcile dispatch + coroutine end so
-            // we know the OLD char repro freezes AFTER the reconcile coroutine itself
-            // returns (i.e. in subsequent Update ticks, not inside the dispatch path).
-            Debug.Log("[CompanionPatches][DIAG] ReconcileFollowersAfterArrival: about to dispatch reconcile RPC");
             Core.CompanionTeleportService.RequestReconcileFollowers(player);
-            Debug.Log("[CompanionPatches][DIAG] ReconcileFollowersAfterArrival: reconcile dispatched, coroutine ending");
         }
 
 
@@ -431,7 +420,7 @@ namespace FiresCore.Npc
             if (persistent && ZDOMan.instance != null)
             {
                 var scanBuf = new List<ZDO>();
-                foreach (var prefabName in _companionPrefabNamesForScan)
+                foreach (var prefabName in Core.CompanionZdoCensus.PrefabNames)
                 {
                     scanBuf.Clear();
                     int idx = 0;
@@ -1026,16 +1015,6 @@ namespace FiresCore.Npc
             return null;
         }
 
-        // Companion prefabs we care about for the ZDO scan. Must match every
-        // prefab name a CompanionController-bearing instance can be cloned
-        // from. Update this list when a new variant is added.
-        private static readonly string[] _companionPrefabNamesForScan =
-        {
-            "CompanionNpc",
-            "CompanionNpc_Wild",
-            "BaseNpc",
-        };
-
         /// <summary>
         /// True if a companion with this id exists anywhere in the world,
         /// loaded OR not. Live CompanionController lookup first (cheap,
@@ -1054,7 +1033,7 @@ namespace FiresCore.Npc
             if (ZDOMan.instance == null) return false;
 
             var temp = new List<ZDO>();
-            foreach (var prefabName in _companionPrefabNamesForScan)
+            foreach (var prefabName in Core.CompanionZdoCensus.PrefabNames)
             {
                 temp.Clear();
                 int idx = 0;
@@ -1088,7 +1067,7 @@ namespace FiresCore.Npc
             // companion_id -> [zdo, zdo, ...]
             var byId = new Dictionary<string, List<ZDO>>();
             var temp = new List<ZDO>();
-            foreach (var prefabName in _companionPrefabNamesForScan)
+            foreach (var prefabName in Core.CompanionZdoCensus.PrefabNames)
             {
                 temp.Clear();
                 int idx = 0;
@@ -1930,38 +1909,13 @@ namespace FiresCore.Npc
                 var companion = __instance.GetComponent<CompanionController>();
                 if (companion == null) return true; // Not our companion
 
-                // FIRE IMMUNITY: Companions that SPAWNED in Ashlands are permanently immune to fire damage
-                // This is a benefit of recruiting Ashlands companions - they retain fire immunity after taming
-                // Check spawn biome from ZDO, not current location
-                if (hit != null && hit.m_damage.m_fire > 0)
+                // Companions that spawned in Ashlands keep fire immunity after taming. Vanilla's own immunity
+                // (base m_damageModifiers.m_fire) zeroes the fire in the resistance pass and keeps Burning off.
+                if (hit != null && hit.m_damage.m_fire > 0 && __instance.m_damageModifiers.m_fire != HitData.DamageModifier.Immune)
                 {
                     var nview = __instance.GetComponent<ZNetView>();
                     if (nview != null && CompanionRandomLoadout.HasFireImmunity(nview))
-                    {
-                        // Nullify fire damage for Ashlands-spawned companions
-                        hit.m_damage.m_fire = 0f;
-
-                        // If there's no other damage, skip this hit entirely
-                        if (hit.GetTotalDamage() <= 0.1f)
-                        {
-                            return false; // Block zero-damage hit
-                        }
-                    }
-                }
-
-                // EQUIPPED-GEAR MITIGATION: companions track gear in CompanionEquipmentData, not on Humanoid
-                // slots, so vanilla GetBodyArmor/GetDamageModifiers never sees it (and the old m_armorSkin
-                // write was a no-op, leaving companions with ZERO armor). Apply gear resistances then armor
-                // here - vanilla HitData order (resistance before armor) - so equipped gear actually mitigates.
-                if (hit != null && hit.GetTotalDamage() > 0f)
-                {
-                    var equip = __instance.GetComponent<CompanionEquipmentData>();
-                    if (equip != null)
-                    {
-                        hit.ApplyResistance(equip.BuildDamageModifiers(), out _);
-                        float armor = equip.GetEffectiveArmor();
-                        if (armor > 0f) hit.ApplyArmor(armor);
-                    }
+                        __instance.m_damageModifiers.m_fire = HitData.DamageModifier.Immune;
                 }
 
                 // IMPORTANT: Notify NpcModule that this NPC was directly attacked
@@ -1991,6 +1945,10 @@ namespace FiresCore.Npc
                     Debug.Log($"[CompanionPatches] Blocked damage to {companion.GetDisplayName()} from owner");
                     return false; // Block damage
                 }
+
+                // Block and gear armor apply where vanilla blocks and armors a player, around its resistance pass.
+                if (hit != null && hit.GetTotalDamage() > 0f)
+                    Combat.CompanionStatHooks.BeginIncomingHit(__instance, hit);
 
                 return true; // Allow normal damage processing
             }
@@ -2048,6 +2006,8 @@ namespace FiresCore.Npc
             }
         }
 
+        private const string RetaliationSwingTrigger = "unarmed_attack0";
+
         /// <summary>
         /// Coroutine to delay retaliation attack so the stumble plays first.
         /// </summary>
@@ -2072,31 +2032,11 @@ namespace FiresCore.Npc
                 character.transform.rotation = Quaternion.LookRotation(toAttacker);
             }
 
-            // Trigger a single attack animation (but deal no damage to owner)
+            // One swing's animation only, never a hit on the owner: the trigger without an Attack plays the swing, while
+            // Humanoid.StartAttack would run a real attack now that NPCs carry vanilla's unarmed weapon.
             var zanim = character.GetComponent<ZSyncAnimation>();
             if (zanim != null)
-            {
-                // Try common attack triggers
-                zanim.SetTrigger("attack");
-            }
-
-            // Also try via Humanoid if available
-            var humanoid = character as Humanoid;
-            if (humanoid != null)
-            {
-                // Get the current weapon
-                var weapon = humanoid.GetCurrentWeapon();
-                if (weapon != null)
-                {
-                    // Start the attack animation
-                    humanoid.StartAttack(null, false);
-                }
-                else
-                {
-                    // Unarmed - still try to attack
-                    humanoid.StartAttack(null, false);
-                }
-            }
+                zanim.SetTrigger(RetaliationSwingTrigger);
 
             Debug.Log($"[CompanionPatches] {companion.GetDisplayName()} retaliated against owner");
         }
@@ -2801,20 +2741,59 @@ namespace FiresCore.Npc
                    "StaticNpc"
                };
 
+        // Name verdicts per instance, in two generations: when the live one fills, it becomes the old one and a fresh
+        // one starts, so filling up costs one extra lookup instead of re-reading every live humanoid's name.
+        private static Dictionary<int, bool> _ourPrefabNameMatch = new Dictionary<int, bool>();
+        private static Dictionary<int, bool> _ourPrefabNameMatchOld = new Dictionary<int, bool>();
+        private const int MaxCachedPrefabNames = 20000;
+
+        /// <summary>
+        /// Runs every frame for every humanoid (VisEquipment patches), so it must not allocate. Our NPCs answer on
+        /// their components, which every NPC prefab carries from the bake; only a humanoid that is none of ours
+        /// reaches the name test, whose verdict is cached per instance because reading go.name marshals a fresh
+        /// string every read.
+        /// </summary>
         private static bool IsOurPrefab(GameObject go)
         {
             if (go == null) return false;
-            string name = go.name;
-            foreach (var prefabName in _ourPrefabNames)
-            {
-                if (name.Equals(prefabName, StringComparison.OrdinalIgnoreCase) ||
-                    name.StartsWith(prefabName + "(", StringComparison.OrdinalIgnoreCase) ||
-                    name.StartsWith(prefabName + " (", StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
             return go.GetComponent<CompanionController>() != null
                 || go.GetComponent<NpcVisEquipment>() != null
-                || FiresCore.Bridge.NpcInteractionBridge.HasInteractionController(go);
+                || FiresCore.Bridge.NpcInteractionBridge.HasInteractionController(go)
+                || HasCachedOurPrefabName(go);
+        }
+
+        /// <summary>The name verdict for a humanoid that carries none of our components (ghosts and legacy clones).</summary>
+        private static bool HasCachedOurPrefabName(GameObject go)
+        {
+            int id = go.GetInstanceID();
+            if (_ourPrefabNameMatch.TryGetValue(id, out bool named)) return named;
+            if (_ourPrefabNameMatchOld.TryGetValue(id, out named))
+            {
+                _ourPrefabNameMatch[id] = named;
+                return named;
+            }
+
+            if (_ourPrefabNameMatch.Count >= MaxCachedPrefabNames)
+            {
+                _ourPrefabNameMatchOld = _ourPrefabNameMatch;
+                _ourPrefabNameMatch = new Dictionary<int, bool>();
+            }
+            named = HasOurPrefabName(go.name);
+            _ourPrefabNameMatch[id] = named;
+            return named;
+        }
+
+        // The prefab name itself, or followed by "(" or " (", ignoring case.
+        private static bool HasOurPrefabName(string name)
+        {
+            foreach (string prefab in _ourPrefabNames)
+            {
+                if (!name.StartsWith(prefab, StringComparison.OrdinalIgnoreCase)) continue;
+                int n = prefab.Length;
+                if (name.Length == n || name[n] == '(' || (name[n] == ' ' && name.Length > n + 1 && name[n + 1] == '('))
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -3033,8 +3012,9 @@ namespace FiresCore.Npc
                 if (idx < 0 || idx >= models.Length) return false;
                 var mesh = models[idx].m_mesh;
                 if (mesh == null) return false;
-                // Incompatible = the skeleton can't skin it (bindpose count) OR Unity already rejected
-                // this exact pairing at skin time this session (NpcBodyMeshGuard tripwire). The second
+                // Incompatible = the skeleton can't skin it (bindpose count), its vertex layout differs from the
+                // vanilla Player mesh of the same name, OR Unity already rejected this exact pairing at skin time
+                // this session (NpcBodyMeshGuard tripwire). The last
                 // check is what keeps vanilla UpdateBaseModel from re-assigning a rejected mesh every
                 // frame after the guard healed the renderer — vanilla re-assigns whenever
                 // sharedMesh != m_models[idx].m_mesh, so without it the heal would be fought forever.
@@ -3272,36 +3252,17 @@ namespace FiresCore.Npc
 
 
         /// <summary>
-        /// Gives crouching companions a proper stealth factor so vanilla BaseAI.CanSenseTarget
-        /// scales back their detection range the same way it does for crouching players.
-        /// Without this, companions always return 1f (fully visible) even while sneaking
-        /// alongside the player, so enemies ignore the crouch entirely.
-        ///
-        /// Formula mirrors Player.UpdateStealth with skill = 0 (companions are not skilled
-        /// sneakers). Tamed and wild companions both benefit - a following companion that
-        /// crouches with its owner should actually be harder to detect.
+        /// Gives crouching companions a stealth factor so vanilla BaseAI.CanSenseTarget shrinks their detection range as it
+        /// does for crouching players; Character.GetStealthFactor returns 1 for every non-player. The replicated crouch
+        /// bool is the companion's crouch state on every machine, and CompanionStance applies Player.UpdateStealth's formula
+        /// with the companion's Sneak skill, its status effects and VikHavn prone.
         /// </summary>
         [HarmonyPatch(typeof(Character), nameof(Character.GetStealthFactor))]
         [HarmonyPostfix]
         public static void Character_GetStealthFactor_Postfix(Character __instance, ref float __result)
         {
-            try
-            {
-                if (__instance.GetComponent<CompanionController>() == null) return;
-                // Character.IsCrouching() is virtual-false for every non-player — the replicated
-                // "crouching" animator bool (set by CompanionAI.SetCompanionCrouch through
-                // ZSyncAnimation) is the companion's real crouch state on every machine.
-                var animator = __instance.m_animator;
-                if (animator == null || !animator.GetBool(CompanionAI.CrouchingAnimHash)) return;
-
-                float lightFactor = StealthSystem.instance != null
-                    ? StealthSystem.instance.GetLightFactor(__instance.GetCenterPoint())
-                    : 0.5f;
-
-                // Skill = 0  →  lerp factor 0, so result = 0.5 + lightFactor * 0.5
-                __result = Mathf.Clamp01(0.5f + lightFactor * 0.5f);
-            }
-            catch { /* never break vanilla stealth code */ }
+            if (Movement.CompanionStance.TryGet(__instance, out var stance) && stance.IsCrouching)
+                __result = stance.StealthFactor();
         }
 
         /// <summary>

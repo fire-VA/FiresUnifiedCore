@@ -96,7 +96,6 @@ public class StaminaManager : MonoBehaviour
         #region Components
 
         private CompanionController _companion;
-        private Character _character;
         private CompanionEquipmentData _equipmentData;
         private CompanionProgression _progression;
         private CompanionStats _companionStats;  // THIS is where stamina is actually tracked!
@@ -171,7 +170,6 @@ public class StaminaManager : MonoBehaviour
         private void Awake()
         {
             _companion = GetComponent<CompanionController>();
-            _character = GetComponent<Character>();
             _equipmentData = GetComponent<CompanionEquipmentData>();
             _progression = GetComponent<CompanionProgression>();
             _companionStats = GetComponent<CompanionStats>();  // Get the ACTUAL stamina tracker
@@ -896,29 +894,8 @@ public class StaminaManager : MonoBehaviour
                 }
             }
             
-            // Last resort fallback: Try Character reflection (shouldn't be needed)
-            if (_character == null) return;
-      
-            try
-            {
-                var staminaField = typeof(Character).GetField("m_stamina", 
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                var maxStaminaField = typeof(Character).GetField("m_maxStamina", 
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-          
-                if (staminaField != null)
-                    _currentStamina = (float)staminaField.GetValue(_character);
-                if (maxStaminaField != null)
-                    _maxStamina = (float)maxStaminaField.GetValue(_character);
-                
-                if (_maxStamina <= 0) _maxStamina = 100f;
-                if (_currentStamina <= 0) _currentStamina = _maxStamina;
-            }
-            catch
-            {
-                _maxStamina = 100f;
-                _currentStamina = _maxStamina;
-            }
+            if (_maxStamina <= 0) _maxStamina = 100f;
+            if (_currentStamina <= 0) _currentStamina = _maxStamina;
         }
 
         private void UpdateCostsFromEquipment()
