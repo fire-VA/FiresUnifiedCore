@@ -72,6 +72,9 @@ namespace FiresCore.Npc.Combat
         private CompanionCombatMovement _combatMovement;
         private Character _character;
 
+        /// <summary>Set on a non-companion body, which has no CompanionController to gate on.</summary>
+        private FiresCore.Npc.Combat.Agent.ICombatAgent _agent;
+
         #endregion
 
         #region State
@@ -213,6 +216,7 @@ namespace FiresCore.Npc.Combat
             _companion = GetComponent<CompanionController>();
             _combatMovement = GetComponent<CompanionCombatMovement>();
             _character = GetComponent<Character>();
+            _agent = GetComponent<FiresCore.Npc.Combat.Agent.ICombatAgent>();
 
             InitializeDirectionSamples();
         }
@@ -220,7 +224,7 @@ namespace FiresCore.Npc.Combat
         private void Update()
         {
             // Allow both tamed AND wild companions to use terrain awareness
-            if (_companion == null) return;
+            if (_companion == null && _agent == null) return;
 
             // Throttled scanning
             if (Time.time - _lastScanTime >= scanInterval)

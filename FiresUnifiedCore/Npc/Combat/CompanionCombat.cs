@@ -356,6 +356,7 @@ if (characterInParent == null)
                 Transform = transform,
                 EquipmentData = _equipmentData,
                 ThreatAnalyzer = _threatAnalyzer,
+                Agent = FiresCore.Npc.Combat.Agent.CombatAgents.Ensure(gameObject),
 
                 // Weapon-owned from here on: behaviours' ConfigureAI and RefreshFromEquipmentData rewrite these.
                 BaseAttackCooldown = baseAttackCooldown,
@@ -405,6 +406,12 @@ if (characterInParent == null)
         {
             // No-op — see field-region comment for why.
         }
+
+        /// <summary>The blocking behaviour, for CompanionAgent's ICombatAgent block calls.</summary>
+        public BlockingBehavior GetBlockingBehavior() => _blockingBehavior;
+
+        /// <summary>The dodge behaviour, for CompanionAgent's ICombatAgent dodge calls.</summary>
+        public DodgeBehavior GetDodgeBehavior() => _dodgeBehavior;
 
         /// <summary>
         /// Copies this component's tunables into the combat context the behaviours read, so values an archetype

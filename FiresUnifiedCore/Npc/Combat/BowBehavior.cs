@@ -204,7 +204,7 @@ namespace FiresCore.Npc.Combat
                 }
             }
             
-            var target = Context.CompanionAI?.GetTargetCreature();
+            var target = Context.Agent?.Target;
             
             if (target == null || target.IsDead())
             {
@@ -376,7 +376,7 @@ private void DecideNextAction(Character target)
             // so pathfinding tries to route around the obstacle.  After
             // LosRepositionTimeout seconds of failed LOS we tell the AI to
             // blacklist this target temporarily so it picks something else.
-            if (Context.CompanionAI != null && !Context.CompanionAI.HasClearShotTo(target))
+            if (Context.Agent != null && !Context.Agent.HasClearShotTo(target))
             {
                 if (_losTarget != target)
                 {
@@ -391,7 +391,7 @@ private void DecideNextAction(Character target)
                     {
                         Debug.Log($"[BowBehavior] No LOS to {target.m_name} for {blockedFor:F1}s - blacklisting and re-acquiring");
                     }
-                    Context.CompanionAI.BlacklistTargetForLineOfSight(target);
+                    Context.Agent.BlacklistTargetForLineOfSight(target);
                     SetPhase(RangedCombatPhase.Idle);
                     RequestMovement(MovementRequest.None, Vector3.zero);
                     _losTarget = null;
@@ -701,7 +701,7 @@ Context.Animator.SetFloat("drawpercent", 0f);
            // Only abort-and-reposition for a blocked shot at RANGE (obstacle between us in a dungeon, etc). At
            // point-blank the target is right in our face — LOS is effectively clear and canceling would just feed
            // the useless-up-close loop, so we commit and fire regardless.
-           if (Context.CompanionAI != null && _lastKnownTargetDistance > CloseRange && !Context.CompanionAI.HasClearShotToCurrentTarget())
+           if (Context.Agent != null && _lastKnownTargetDistance > CloseRange && !Context.Agent.HasClearShotToCurrentTarget())
            {
                if (CompanionCombat.VerboseLogging)
                {
@@ -770,7 +770,7 @@ Context.Animator.SetFloat("drawpercent", 0f);
         private void SpawnArrowProjectile(Character target, float drawPercentage)
         {
             // Check and consume stamina for the bow shot
-            var stats = Context.Companion?.GetStats();
+            var stats = Context.Agent?.Stamina;
             if (stats != null)
             {
                 float baseCost = Context.CurrentAttack?.m_attackStamina ?? 20f;
@@ -817,7 +817,7 @@ Context.Animator.SetFloat("drawpercent", 0f);
             arcHeight = Mathf.Clamp(arcHeight, 0f, 0.5f); // Cap at 0.5 to prevent extreme angles
             
             // Add skill-based accuracy variation
-            float skillLevel = Context.CompanionSkills?.GetSkillLevel(global::Skills.SkillType.Bows) ?? 0f;
+            float skillLevel = Context.Agent?.Skills?.GetSkillLevel(global::Skills.SkillType.Bows) ?? 0f;
             float accuracyBonus = Mathf.Lerp(0.02f, 0f, skillLevel / 100f); // Less wobble at higher skill
             float randomSpread = UnityEngine.Random.Range(-accuracyBonus, accuracyBonus);
             
@@ -849,7 +849,7 @@ Context.Animator.SetFloat("drawpercent", 0f);
                 );
             }
             
-            Context.CompanionSkills?.RaiseSkill(global::Skills.SkillType.Bows, 1f);
+            Context.Agent?.Skills?.RaiseSkill(global::Skills.SkillType.Bows, 1f);
         }
     
         private Vector3 PredictTargetPosition(Character target, Vector3 firePos)

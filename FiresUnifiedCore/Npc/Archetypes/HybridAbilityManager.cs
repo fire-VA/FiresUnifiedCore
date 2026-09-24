@@ -633,7 +633,7 @@ namespace FiresCore.Npc.Archetypes
                 float dist = Vector3.Distance(_character.transform.position, character.transform.position);
                 if (dist <= range)
                 {
-                    character.Heal(amount, true);
+                    AbilityHeals.Apply(_character, character, amount, true);
                     AbilityFXManager.SpawnEffect("fx_creature_tamed", character.transform.position, null, 0.4f);
                 }
             }

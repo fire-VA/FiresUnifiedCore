@@ -571,9 +571,6 @@ namespace FiresCore.Utilities
             ApplyBiomeShaders();
 
             // (the provider's OnBoxEnter above performs the terrain + clutter refresh.)
-
-            // Apply snow to building pieces (Mountain/DeepNorth)
-            ApplySnowToBuildingPieces();
         }
 
         private void OnPlayerExit()
@@ -602,9 +599,6 @@ namespace FiresCore.Utilities
 
             // Restore time of day
             RestoreTime();
-
-            // Remove snow from building pieces (before restoring shaders)
-            RemoveSnowFromBuildingPieces();
 
             // Restore biome shader effects
             RestoreBiomeShaders();
@@ -1228,53 +1222,6 @@ namespace FiresCore.Utilities
                 BoxSize.z * scale.z
             );
             return new Bounds(transform.position, scaledSize);
-        }
-
-        #endregion
-
-        #region Building Piece Snow
-
-        /// <summary>
-        /// Applies snow tinting to building pieces within this box (for Mountain/DeepNorth biomes).
-        /// Routes through the terrain provider (FAT) which only affects exposed pieces (no roof coverage).
-        /// </summary>
-        private void ApplySnowToBuildingPieces()
-        {
-            if (!BiomeRequiresSnowShader(ForcedBiome)) return;
-
-            try
-            {
-                // Use our instance ID as the "territory ID" for tracking
-                int boxId = GetInstanceID();
-
-                // Get box world bounds
-                Bounds bounds = GetWorldBounds();
-                Vector3 min = bounds.min;
-                Vector3 max = bounds.max;
-
-                // Apply snow to exposed pieces within our bounds via the provider (FAT). No-op without one.
-                EnvironmentBoxBridge.ApplySnowToPieces(boxId, new Bounds((min + max) * 0.5f, max - min));
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[EnvironmentBox] Failed to apply snow to building pieces: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Removes snow tinting from building pieces when exiting.
-        /// </summary>
-        private void RemoveSnowFromBuildingPieces()
-        {
-            try
-            {
-                int boxId = GetInstanceID();
-                EnvironmentBoxBridge.RemoveSnowFromPieces(boxId);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[EnvironmentBox] Failed to remove snow from building pieces: {ex.Message}");
-            }
         }
 
         #endregion

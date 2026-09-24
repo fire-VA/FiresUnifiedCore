@@ -121,7 +121,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Monk
                     float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                     if (dist <= HealRange)
                     {
-                        character.Heal(HealOnHit, true);
+                        AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealOnHit, true);
                     }
                 }
             }
@@ -495,7 +495,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Monk
             _lastTouchTime = Time.time;
             _remainingTouches--;
             
-            target.Heal(HealPerTouch, true);
+            AbilityHeals.Apply(SourceCharacter ?? m_character, target, HealPerTouch, true);
             target.AddStamina(StaminaRestore);
             
             // Cleanse debuffs

@@ -112,8 +112,9 @@ namespace FiresCore.Pieces
         }
 
         /// <summary>
-        /// Whether a node of the prefab is switched on in a copy showing this look: the wear models follow the look, every
-        /// other object stays the way the prefab ships it.
+        /// Whether a node of the prefab is switched on in a copy showing this look: the wear models follow the look, the
+        /// 1.0 snow caps are always off (see <see cref="IsSnowCap"/>), and every other object stays the way the prefab
+        /// ships it.
         /// </summary>
         public static bool IsShown(GameObject prefab, WearLook look, Transform node)
         {
@@ -170,8 +171,22 @@ namespace FiresCore.Pieces
                 if (node == wear.m_new) return look.ShowsNewModel;
                 if (node == wear.m_worn) return look.ShowsWornModel;
                 if (node == wear.m_broken) return look.ShowsBrokenModel;
+                if (IsSnowCap(node, wear)) return false;
             }
             return node.activeSelf;
+        }
+
+        // Valheim 1.0's snow caps are never on in a fresh copy, whatever the prefab ships them as. WearNTear.Awake
+        // switches m_snow, m_snowWorn and m_snowBroken off unconditionally before anything else, and only
+        // UpdateSnowVisual turns one back on, above a 0.25 snow buildup that lives on the ZDO. A copy being
+        // reproduced from a look alone - a blueprint, a baked mesh - carries no buildup, so the faithful answer is
+        // off. Reading activeSelf here would bake a permanent snow cap onto every copy of a prefab that happens to
+        // ship them enabled, and it would never melt, because a combined mesh has no renderer to switch.
+        private static bool IsSnowCap(GameObject node, WearNTear wear)
+        {
+            return (wear.m_snow != null && node == wear.m_snow.gameObject)
+                || (wear.m_snowWorn != null && node == wear.m_snowWorn.gameObject)
+                || (wear.m_snowBroken != null && node == wear.m_snowBroken.gameObject);
         }
 
         private static string ReadString(ZDO zdo, int key) => zdo.GetString(key, out string value) ? value : null;

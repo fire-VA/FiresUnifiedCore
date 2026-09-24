@@ -242,7 +242,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Tank
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= AuraRange)
                 {
-                    character.Heal(HealPerSecond, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealPerSecond, true);
                 }
             }
         }

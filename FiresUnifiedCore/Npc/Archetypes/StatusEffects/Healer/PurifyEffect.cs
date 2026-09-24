@@ -79,7 +79,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Healer
                 _lastTickTime = Time.time;
                 
                 // Heal the character
-                m_character.Heal(HealPerTick, true);
+                AbilityHeals.Apply(SourceCharacter ?? m_character, m_character, HealPerTick, true);
                 
                 if (VerboseLogging)
                 {

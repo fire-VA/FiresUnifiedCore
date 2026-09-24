@@ -48,7 +48,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Berserker
             // Lifesteal
             float totalDamage = hitData.GetTotalDamage();
             float healAmount = totalDamage * LifestealPercent;
-            m_character?.Heal(healAmount, true);
+            AbilityHeals.Apply(SourceCharacter ?? m_character, m_character, healAmount, true);
         }
         
         public static bool Apply(Character target, float duration)
@@ -369,7 +369,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Berserker
             float totalDamage = hitData.GetTotalDamage();
             
             // Self heal
-            m_character?.Heal(totalDamage * LifestealPercent, true);
+            AbilityHeals.Apply(SourceCharacter ?? m_character, m_character, totalDamage * LifestealPercent, true);
             
             // Heal nearby allies
             if (m_character != null)
@@ -385,7 +385,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Berserker
                     float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                     if (dist <= HealRange)
                     {
-                        character.Heal(allyHeal, true);
+                        AbilityHeals.Apply(SourceCharacter ?? m_character, character, allyHeal, true);
                     }
                 }
             }

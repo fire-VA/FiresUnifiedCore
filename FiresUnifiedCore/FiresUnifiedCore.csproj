@@ -167,6 +167,13 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="FiresUnifiedCore.cs" />
+    <Compile Include="Classes\ClassAbility.cs" />
+    <Compile Include="Classes\ClassAbilityRegistry.cs" />
+    <Compile Include="Classes\ClassProgressState.cs" />
+    <Compile Include="Classes\LuckModel.cs" />
+    <Compile Include="Classes\ProgressionEngine.cs" />
+    <Compile Include="Classes\ProgressionSettings.cs" />
+    <Compile Include="Classes\XpSources.cs" />
     <Compile Include="Debug\SleepDiag.cs" />
     <Compile Include="Terrain\HeightmapOverrideConfig.cs" />
     <Compile Include="Terrain\HeightmapOverrideLimits.cs" />
@@ -182,6 +189,7 @@
     <Compile Include="Bridge\ZdoExtraDataAccess.cs" />
     <Compile Include="Bridge\NpcCompanionBridge.cs" />
     <Compile Include="Bridge\CompanionBridge.cs" />
+    <Compile Include="Bridge\AchievementBridge.cs" />
     <Compile Include="Bridge\DiscordSink.cs" />
     <Compile Include="Bridge\EnvironmentBoxBridge.cs" />
     <Compile Include="Bridge\FiresDungeonBridge.cs" />
@@ -193,6 +201,7 @@
     <Compile Include="Bridge\LeaderboardBridge.cs" />
     <Compile Include="Bridge\ServerPushBridge.cs" />
     <Compile Include="Bridge\PlayerAppearanceBridge.cs" />
+    <Compile Include="Appearance\CharacterSnowCover.cs" />
     <Compile Include="Appearance\PlayerAppearanceCapture.cs" />
     <Compile Include="Bridge\NpcModeBridge.cs" />
     <Compile Include="Bridge\CompanionEventBridge.cs" />
@@ -286,6 +295,16 @@
     <Compile Include="Npc\Animation\CompanionAnimationController.cs" />
     <Compile Include="Npc\Animation\PlayerAnimationCatalog.cs" />
     <Compile Include="Npc\Archetypes\AbilityFXManager.cs" />
+    <Compile Include="Npc\Archetypes\Effects\FxTint.cs" />
+    <Compile Include="Npc\Archetypes\Effects\GroundHeightSampler.cs" />
+    <Compile Include="Npc\Archetypes\Effects\GroundRing.cs" />
+    <Compile Include="Npc\Archetypes\Effects\GroundRingConfig.cs" />
+    <Compile Include="Npc\Archetypes\Effects\GroundRingManager.cs" />
+    <Compile Include="Npc\Archetypes\Effects\GroundRingPalette.cs" />
+    <Compile Include="Npc\Archetypes\Effects\GroundRingSegmentSource.cs" />
+    <Compile Include="Npc\Archetypes\Effects\GroundRingVisibility.cs" />
+    <Compile Include="Npc\Archetypes\Effects\SanctuaryWaterDrop.cs" />
+    <Compile Include="Npc\Archetypes\AbilityHeals.cs" />
     <Compile Include="Npc\Archetypes\AbilityRPCManager.cs" />
     <Compile Include="Npc\Archetypes\AbilityUnlockSystem.cs" />
     <Compile Include="Npc\Archetypes\ArchetypeAbilitySystem.cs" />
@@ -345,6 +364,17 @@
     <Compile Include="Npc\Combat\BlockingBehavior.cs" />
     <Compile Include="Npc\Combat\BowBehavior.cs" />
     <Compile Include="Npc\Combat\CombatContext.cs" />
+    <Compile Include="Npc\Combat\Agent\CombatAgentCapability.cs" />
+    <Compile Include="Npc\Combat\Agent\ICombatAgent.cs" />
+    <Compile Include="Npc\Combat\Agent\AnimatorCapabilityProbe.cs" />
+    <Compile Include="Npc\Combat\Agent\CompanionAgent.cs" />
+    <Compile Include="Npc\Combat\Agent\CombatAgents.cs" />
+    <Compile Include="Npc\Combat\Agent\ICombatStamina.cs" />
+    <Compile Include="Npc\Combat\Agent\CompanionStaminaAdapter.cs" />
+    <Compile Include="Npc\Combat\Agent\CompanionSkillsAdapter.cs" />
+    <Compile Include="Npc\Combat\Agent\ICombatTelegraph.cs" />
+    <Compile Include="Npc\Combat\Agent\GroundRingTelegraph.cs" />
+    <Compile Include="Npc\Combat\Agent\CombatTelegraphs.cs" />
     <Compile Include="Npc\Combat\CombatExperience.cs" />
     <Compile Include="Npc\Combat\CombatMemory.cs" />
     <Compile Include="Npc\Combat\CombatRoleDirector.cs" />
@@ -550,6 +580,7 @@
     <Compile Include="UI\CfgDiscovery.cs" />
     <Compile Include="UI\ConfigPopup.cs" />
     <Compile Include="UI\ConfigWindowScale.cs" />
+    <Compile Include="UI\ScaledLayout.cs" />
     <Compile Include="UI\ConfigSkin.cs" />
     <Compile Include="UI\ConfigGamePause.cs" />
     <Compile Include="UI\ConfigHiddenSettings.cs" />
@@ -633,6 +664,13 @@
     <Compile Include="Diagnostics\PathfindingStats.cs" />
     <Compile Include="Diagnostics\ClothAuthoringProbe.cs" />
     <Compile Include="Input\KeyBinding.cs" />
+    <Compile Include="Input\KeybindEntry.cs" />
+    <Compile Include="Input\KeybindRegistry.cs" />
+    <Compile Include="Input\KeybindConflictDetector.cs" />
+    <Compile Include="Input\KeybindConflictStore.cs" />
+    <Compile Include="Input\VanillaKeybinds.cs" />
+    <Compile Include="UI\ConfigPanelKeybinds.cs" />
+    <Compile Include="UI\ConfigPanelKeybindPopup.cs" />
     <Compile Include="Input\WheelBinding.cs" />
     <Compile Include="Lifecycle\AdminCheck.cs" />
     <Compile Include="Lifecycle\CollisionCallbackReuse.cs" />
@@ -720,23 +758,6 @@
     <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <!-- Post-build deploy to the active r2modman 'BlueHills' test profile. Gated on
-       Exists so a missing/renamed profile (other machines, CI) just skips and never
-       fails the build. Copies only the built DLL + PDB into the existing r2modman-
-       managed mod folder; other files there (LiteDB, etc.) are left untouched. -->
-  <PropertyGroup>
-    <BlueHillsPluginDir>$(AppData)\r2modmanPlus-local\Valheim\profiles\BlueHills\BepInEx\plugins\FiresUnifiedCore\</BlueHillsPluginDir>
-    <BlueHillsDediDir>C:\Program Files (x86)\Steam\steamapps\common\Valheim dedicated server - BlueHills\BepInEx\plugins\FiresUnifiedCore\</BlueHillsDediDir>
-  </PropertyGroup>
-  <Target Name="DeployToBlueHills" AfterTargets="Build" Condition="Exists('$(BlueHillsPluginDir)')">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BlueHillsPluginDir)" OverwriteReadOnlyFiles="true" />
-    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(BlueHillsPluginDir)" OverwriteReadOnlyFiles="true" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
-    <Message Importance="high" Text="Deployed $(TargetFileName) (+pdb) -> $(BlueHillsPluginDir)" />
-  </Target>
-  <Target Name="DeployToBlueHillsDedi" AfterTargets="Build" Condition="Exists('$(BlueHillsDediDir)')">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BlueHillsDediDir)" OverwriteReadOnlyFiles="true" />
-    <Message Importance="high" Text="Deployed $(TargetFileName) -> $(BlueHillsDediDir)" />
-  </Target>
   <!-- The plain dedi receives FiresRPGmaker on every deploy; without Core alongside it, the pair
        skews and new Core APIs MissingMethod-crash there (parity plan bug B5). -->
   <PropertyGroup>
@@ -747,3 +768,7 @@
     <Message Importance="high" Text="Deployed $(TargetFileName) -> $(PlainDediDir)" />
   </Target>
 </Project>
+
+
+
+

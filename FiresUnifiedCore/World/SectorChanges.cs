@@ -36,6 +36,8 @@ namespace FiresCore.World
         private static double s_nextAudit;
         private static double s_nextReport;
         private static int s_auditCursor;
+        private static ZDO s_lastMarked;
+        private static int s_lastMarkedFrame;
 
         /// <summary>Counts up once per world update, so a caller can remember "as of frame N" and ask again later.</summary>
         public static int Frame { get; private set; } = 1;
@@ -92,6 +94,7 @@ namespace FiresCore.World
         [HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.AddToSector)), HarmonyPostfix]
         static void OnAddToSector(ZDO zdo, ZoneSystem.SectorIndex sectorIndex)
         {
+            if (!Ready) return;
             Mark(sectorIndex.Sector);
             if (zdo != null && zdo.Distant) Add(sectorIndex.Sector, 1);
         }
@@ -99,6 +102,7 @@ namespace FiresCore.World
         [HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.RemoveFromSector)), HarmonyPostfix]
         static void OnRemoveFromSector(ZDO zdo, ZoneSystem.SectorIndex sectorIndex)
         {
+            if (!Ready) return;
             Mark(sectorIndex.Sector);
             if (zdo != null && zdo.Distant) Add(sectorIndex.Sector, -1);
         }
@@ -114,16 +118,30 @@ namespace FiresCore.World
         }
 
         [HarmonyPatch(typeof(ZDO), "IncreaseDataRevision"), HarmonyPostfix]
-        static void OnDataRevision(ZDO __instance) => Mark(SectorOf(__instance));
+        static void OnDataRevision(ZDO __instance) => MarkChanged(__instance);
 
         [HarmonyPatch(typeof(ZDO), "IncreaseOwnerRevision"), HarmonyPostfix]
-        static void OnOwnerRevision(ZDO __instance) => Mark(SectorOf(__instance));
+        static void OnOwnerRevision(ZDO __instance) => MarkChanged(__instance);
 
         [HarmonyPatch(typeof(ZDO), nameof(ZDO.Deserialize)), HarmonyPostfix]
-        static void OnDeserialize(ZDO __instance) => Mark(SectorOf(__instance));
+        static void OnDeserialize(ZDO __instance) => MarkChanged(__instance);
 
         [HarmonyPatch(typeof(ZDO), nameof(ZDO.SetOwnerInternal)), HarmonyPostfix]
-        static void OnSetOwnerInternal(ZDO __instance) => Mark(SectorOf(__instance));
+        static void OnSetOwnerInternal(ZDO __instance) => MarkChanged(__instance);
+
+        // These four run tens of thousands of times a second. Two things keep that affordable, and both have to come
+        // BEFORE the position is read: nothing is recorded at all where no one reads it, and one object writing several
+        // values in the same frame - which is the normal case, and which vanilla's SetOwner does by itself - is counted
+        // once. Without them this asked the world for a sector index on every call, on top of the networking mod doing
+        // the same thing from its own copy of these hooks.
+        private static void MarkChanged(ZDO zdo)
+        {
+            if (!Ready || zdo == null) return;
+            if (ReferenceEquals(zdo, s_lastMarked) && s_lastMarkedFrame == Frame) return;
+            s_lastMarked = zdo;
+            s_lastMarkedFrame = Frame;
+            Mark(SectorOf(zdo));
+        }
 
         // Checks a slice of the world against a real count every few seconds. The counts above are maintained by
         // arithmetic, and arithmetic that drifts one way makes objects disappear without complaining, so this is the
@@ -209,7 +227,13 @@ namespace FiresCore.World
                     s_distant[sector] = count;
                 }
             }
-            Ready = bySector != null;
+            // A dedicated server reads none of this: the networking mod keeps its own copy of the same record and is
+            // deliberately dependency-free, so recording it here as well would be the same work done twice on the
+            // busiest path in the game. Everything that consumes this - the bake's idle skip and the distant-object
+            // search - runs on a client or a listen host.
+            bool wanted = ZNet.instance != null && !ZNet.instance.IsDedicated();
+            Ready = bySector != null && wanted;
+            s_lastMarked = null;
         }
 
         private static void Mark(uint sector)

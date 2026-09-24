@@ -1,5 +1,4 @@
 ﻿using UnityEngine;
-using FiresCore.Npc.AI;
 using FiresCore.Npc.Archetypes;
 
 namespace FiresCore.Npc.Combat
@@ -228,7 +227,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
             // GET CURRENT THREAT
             // ==========================================
             
-            var target = _context.CompanionAI?.GetTargetCreature();
+            var target = _context.Agent?.Target;
         if (target == null || target.IsDead())
             {
                 if (_isBlocking) TryStopBlocking("no target");
@@ -709,7 +708,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
             }
 
             // Check if we have enough stamina to start blocking via CompanionStats (fallback)
-            var stats = _context?.Companion?.GetStats();
+            var stats = _context?.Agent?.Stamina;
             float blockStartCost = 5f; // Base stamina cost to raise block
             if (stats != null) blockStartCost = stats.ModifyBlockStaminaCost(blockStartCost);
             if (stats != null && !stats.HasStamina(blockStartCost))
@@ -934,7 +933,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
 
             // Consume stamina based on blocked damage (like players)
             float staminaCost = blockedDamage * 0.5f; // Half of blocked damage as stamina cost
-            var stats = _context.Companion?.GetStats();
+            var stats = _context.Agent?.Stamina;
             if (stats != null) staminaCost = stats.ModifyBlockStaminaCost(staminaCost);
             if (stats != null)
             {
@@ -1026,16 +1025,12 @@ weaponType == CompanionCombat.WeaponType.Staff)
             ForceStopBlocking("parry counter-attack");
             
             // Get the combat system to execute immediate attack
-            var combat = _owner.GetComponent<CompanionCombat>();
-            if (combat != null)
+            var agent = _context.Agent;
+            if (agent != null)
             {
-                // Force target to the staggered enemy
-                var companionAI = _owner.GetComponent<CompanionAI>();
-                companionAI?.ForceTarget(staggeredEnemy);
-                
-                // Execute immediate counter-attack
-                combat.ForceAttack();
-                
+                agent.TrySetTarget(staggeredEnemy);
+                agent.ForceAttackNow();
+
                 if (CompanionCombat.VerboseLogging)
                     Debug.Log($"[BlockingBehavior] PARRY COUNTER-ATTACK on staggered {staggeredEnemy.m_name}!");
             }
@@ -1078,3 +1073,4 @@ if (commitRemaining > 0)
         }
     }
 }
+

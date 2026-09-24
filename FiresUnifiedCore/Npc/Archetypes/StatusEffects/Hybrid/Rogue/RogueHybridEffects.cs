@@ -140,7 +140,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Rogue
                     float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                     if (dist <= HealRange)
                     {
-                        character.Heal(healAmount, true);
+                        AbilityHeals.Apply(SourceCharacter ?? m_character, character, healAmount, true);
                     }
                 }
             }
@@ -411,7 +411,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Rogue
             float stolenLife = totalDamage * LifestealPercent;
             
             // Self heal
-            m_character?.Heal(stolenLife * (1f - AllyTransferPercent), true);
+            AbilityHeals.Apply(SourceCharacter ?? m_character, m_character, stolenLife * (1f - AllyTransferPercent), true);
             
             // Transfer to lowest health ally
             if (m_character != null)
@@ -436,7 +436,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Rogue
                 
                 if (lowestAlly != null)
                 {
-                    lowestAlly.Heal(stolenLife * AllyTransferPercent, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, lowestAlly, stolenLife * AllyTransferPercent, true);
                 }
             }
         }

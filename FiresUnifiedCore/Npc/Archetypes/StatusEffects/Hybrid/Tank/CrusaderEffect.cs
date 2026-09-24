@@ -60,7 +60,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Tank
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(HealAmount, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealAmount, true);
                     AbilityFXManager.SpawnEffect("fx_creature_tamed", character.transform.position, null, 0.5f);
                 }
             }

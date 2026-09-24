@@ -14,7 +14,7 @@ namespace FiresCore.UI
     /// mod. Gold names mark values that differ from their default.
     /// Data source is CfgDiscovery; write-back is ConfigEntry.BoxedValue.
     /// </summary>
-    public class ConfigPanel : MonoBehaviour
+    public partial class ConfigPanel : MonoBehaviour
     {
         private const int WindowId = 0xF1C0;
         private const float WindowAlpha = 0.92f;
@@ -25,6 +25,7 @@ namespace FiresCore.UI
         private const float AdvancedCheckboxWidthBase = 94f;
         private const float KeybindCheckboxWidthBase = 92f;
         private const float AllModsCheckboxWidthBase = 92f;
+        private const float ConflictsCheckboxWidthBase = 96f;
         private const float WidgetWidthBase = 190f;
         private const float NumberFieldWidthBase = 64f;
         private const float DropdownWidthBase = 190f;
@@ -172,6 +173,8 @@ namespace FiresCore.UI
         private void Update()
         {
             if (!_cmdRegistered) { try { RegisterCommands(); _cmdRegistered = true; } catch { } }
+            WatchVanillaControlsMenu();
+            LogKeybindConflictsOnce();
             if (_capturing) { PollKeyCapture(); return; }
 
             if (HotkeyPressed()) ToggleInternal();
@@ -179,7 +182,8 @@ namespace FiresCore.UI
             if (!_open) return;
             if (UnityEngine.Input.GetKeyDown(KeyCode.Escape))
             {
-                if (ConfigPopup.IsOpen) ConfigPopup.Close();
+                if (KeybindPopupOpen) CloseKeybindPopup();
+                else if (ConfigPopup.IsOpen) ConfigPopup.Close();
                 else if (SettingEditWindow.IsOpen) SettingEditWindow.Close();
                 else { Hide(); return; }
             }
@@ -215,6 +219,7 @@ namespace FiresCore.UI
                 HideGameUi(true);
                 ConfigGamePause.Apply(true);
                 FiresConfigUI.Log.LogInfo($"ConfigPanel opened: {CfgDiscovery.ModNames.Count} mod(s), {CfgDiscovery.Descriptors.Count} entries.");
+                OnWindowOpenedCheckKeybinds();
             }
             catch (Exception ex) { FiresConfigUI.Log.LogError("ConfigPanel.Show failed: " + ex); }
         }
@@ -222,6 +227,7 @@ namespace FiresCore.UI
         public void Hide()
         {
             CancelCapture();
+            CloseKeybindPopup();
             ConfigPopup.Close();
             SettingEditWindow.Close();
             _open = false;
@@ -334,6 +340,7 @@ namespace FiresCore.UI
                 FiresRoundedSkin.DrawPendingTooltip(ConfigSkin.Tip);
                 SettingEditWindow.Draw(_editWindowWidget, _editWindowReset);
                 ConfigPopup.Draw();
+                DrawKeybindPopup();
                 CommitOnFocusChange();
             }
             finally { GUI.matrix = matrix; }
@@ -354,6 +361,7 @@ namespace FiresCore.UI
             // height is an IMGUI layout error rather than a small list.
             float bodyHeight = Mathf.Max(Px(MinBodyHeightBase), _rect.height - BodyChromeHeight);
             if (_filesMode) _filesEditor.Draw(bodyHeight);
+            else if (_conflictsOnly) DrawConflictsBody(bodyHeight);
             else
             {
                 GUILayout.BeginHorizontal();
@@ -366,7 +374,9 @@ namespace FiresCore.UI
             GUILayout.BeginHorizontal();
             GUILayout.Label(_filesMode
                 ? "editing raw files under BepInEx/config — saving reloads the owning mod"
-                : "gold name = changed from default   ·   grey = locked by the server   ·   double-click a name to open it",
+                : _conflictsOnly
+                    ? "one row per binding on a contested key   -   Ignore keeps a conflict and stops warning about it"
+                    : "gold name = changed from default   ·   grey = locked by the server   ·   double-click a name to open it",
                 ConfigSkin.Hint);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
@@ -381,11 +391,11 @@ namespace FiresCore.UI
         private void DrawHeader()
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Fires Configuration", ConfigSkin.Title, GUILayout.Width(Px(170f)));
+            GUILayout.Label("Fires Configuration", ConfigSkin.Title, ScaledLayout.Width(Px(170f)));
             GUILayout.FlexibleSpace();
             DrawZoomControls();
             GUILayout.Space(8f);
-            if (GUILayout.Button("<color=#FFB0B0><b>X</b></color>", ConfigSkin.ButtonSmall, GUILayout.Width(Px(28f))))
+            if (GUILayout.Button("<color=#FFB0B0><b>X</b></color>", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(28f))))
                 Hide();
             GUILayout.EndHorizontal();
 
@@ -395,14 +405,14 @@ namespace FiresCore.UI
         private void DrawZoomControls()
         {
             float scale = FiresConfigUI.WindowScale;
-            if (GUILayout.Button("A-", ConfigSkin.ButtonSmall, GUILayout.Width(Px(28f)))) NudgeWindowScale(-ZoomStep);
+            if (GUILayout.Button("A-", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(28f)))) NudgeWindowScale(-ZoomStep);
             FiresRoundedSkin.MarkHint("Smaller window and smaller text.");
 
-            if (GUILayout.Button(Mathf.RoundToInt(scale * 100f) + "%", ConfigSkin.ButtonSmall, GUILayout.Width(Px(50f))))
+            if (GUILayout.Button(Mathf.RoundToInt(scale * 100f) + "%", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(50f))))
                 SetWindowScale(1f);
             FiresRoundedSkin.MarkHint("Window and text size. Click to reset to 100%.");
 
-            if (GUILayout.Button("A+", ConfigSkin.ButtonSmall, GUILayout.Width(Px(28f)))) NudgeWindowScale(ZoomStep);
+            if (GUILayout.Button("A+", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(28f)))) NudgeWindowScale(ZoomStep);
             FiresRoundedSkin.MarkHint("Bigger window and bigger text.");
         }
 
@@ -417,12 +427,28 @@ namespace FiresCore.UI
         // ConfigurationManager's filter toggles are checkboxes, not buttons whose caption reports the current
         // state — a button reading "Simple" is ambiguous about whether that is the state or the action. The
         // box is ASCII: Unity's game font renders Unicode box glyphs as tofu.
-        private static bool Checkbox(bool value, string label, float widthBase, string hint)
+        // A checkbox label is a literal at every call site and the colour is a const, so each of its two
+        // rendered forms is fixed for the life of the process - they were being rebuilt every IMGUI event.
+        private static readonly Dictionary<string, string> _checkboxTextOn =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, string> _checkboxTextOff =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+
+        private static string CheckboxText(bool value, string label)
         {
-            string text = value
+            var cache = value ? _checkboxTextOn : _checkboxTextOff;
+            if (cache.TryGetValue(label, out var text)) return text;
+            text = value
                 ? $"<b><color={ChangedColor}>[x] {label}</color></b>"
                 : $"[  ] {label}";
-            bool clicked = GUILayout.Button(text, ConfigSkin.NavItem, GUILayout.Width(Px(widthBase)));
+            cache[label] = text;
+            return text;
+        }
+
+        private static bool Checkbox(bool value, string label, float widthBase, string hint)
+        {
+            string text = CheckboxText(value, label);
+            bool clicked = GUILayout.Button(text, ConfigSkin.NavItem, ScaledLayout.Width(Px(widthBase)));
             FiresRoundedSkin.MarkHint(hint);
             return clicked;
         }
@@ -438,8 +464,8 @@ namespace FiresCore.UI
         {
             GUILayout.BeginHorizontal();
             GUI.SetNextControlName("searchBox");
-            _search = GUILayout.TextField(_search ?? "", ConfigSkin.TextInput, GUILayout.ExpandWidth(true));
-            if (GUILayout.Button("Clear", ConfigSkin.ButtonSmall, GUILayout.Width(Px(52f))))
+            _search = GUILayout.TextField(_search ?? "", ConfigSkin.TextInput, ScaledLayout.ExpandedWidth);
+            if (GUILayout.Button("Clear", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(52f))))
             {
                 _search = "";
                 GUIUtility.keyboardControl = 0;
@@ -456,6 +482,10 @@ namespace FiresCore.UI
                 OnKeybindFilterChanged();
             }
 
+            if (Checkbox(_conflictsOnly, "Conflicts", ConflictsCheckboxWidthBase,
+                    "Show only keys more than one mod - or a mod and Valheim - is listening for."))
+                SetConflictsOnly(!_conflictsOnly);
+
             if (Checkbox(!CfgDiscovery.FiresOnly, "All mods", AllModsCheckboxWidthBase,
                     "Unchecked, the list is limited to the Fires family.") && FiresConfigUI.CfgFiresOnly != null)
             {
@@ -463,12 +493,12 @@ namespace FiresCore.UI
                 RebuildDiscovery();
             }
 
-            if (GUILayout.Button(_filesMode ? "<b>Files</b>" : "Files", ConfigSkin.ButtonSmall, GUILayout.Width(Px(48f))))
+            if (GUILayout.Button(_filesMode ? "<b>Files</b>" : "Files", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(48f))))
                 ToggleFilesMode();
             FiresRoundedSkin.MarkHint("Edit the raw .cfg / .yml / .json files under BepInEx/config.");
 
-            if (GUILayout.Button("Collapse", ConfigSkin.ButtonSmall, GUILayout.Width(Px(66f)))) CollapseAll(true);
-            if (GUILayout.Button("Expand", ConfigSkin.ButtonSmall, GUILayout.Width(Px(60f)))) CollapseAll(false);
+            if (GUILayout.Button("Collapse", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(66f)))) CollapseAll(true);
+            if (GUILayout.Button("Expand", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(60f)))) CollapseAll(false);
             GUILayout.EndHorizontal();
         }
 
@@ -496,6 +526,8 @@ namespace FiresCore.UI
         // ---------------------------------------------------------------- left nav (mods -> section index)
         private void DrawNav(float height)
         {
+            // Both options in one call, so neither can come from ScaledLayout's single-option arrays - and the
+            // height is the live window's, which must not be cached anyway.
             _navScroll = GUILayout.BeginScrollView(_navScroll, GUILayout.Width(NavWidth), GUILayout.Height(height));
             foreach (var mod in CfgDiscovery.ModNames)
             {
@@ -647,7 +679,7 @@ namespace FiresCore.UI
 
                 if (!descriptor.Tags.HideSettingName)
                 {
-                    GUILayout.Label(RowName(descriptor, locked), ConfigSkin.Label, GUILayout.Width(NameWidth));
+                    GUILayout.Label(RowName(descriptor, locked), ConfigSkin.Label, ScaledLayout.Width(NameWidth));
                     FiresRoundedSkin.MarkHint(descriptor.Description);
                     if (WasDoubleClicked()) SettingEditWindow.Open(descriptor);
                 }
@@ -655,7 +687,7 @@ namespace FiresCore.UI
                 if (locked) GUI.enabled = false;
                 DrawWidget(descriptor);
                 GUILayout.FlexibleSpace();
-                if (!descriptor.Tags.HideDefaultButton && GUILayout.Button("Reset", ConfigSkin.ButtonSmall, GUILayout.Width(ResetButtonWidth)))
+                if (!descriptor.Tags.HideDefaultButton && GUILayout.Button("Reset", ConfigSkin.ButtonSmall, ScaledLayout.Width(ResetButtonWidth)))
                     ResetToDefault(descriptor);
             }
             catch (Exception ex)
@@ -742,7 +774,7 @@ namespace FiresCore.UI
                 case CtrlKind.Quaternion: DrawVector(descriptor, VectorOf((Quaternion)value), 4); break;
                 case CtrlKind.Serialized: DrawSerializedField(descriptor, value); break;
                 default:
-                    GUILayout.Label($"<color={OffColor}>{value?.ToString() ?? "null"}</color>", ConfigSkin.Label, GUILayout.Width(Px(220f)));
+                    GUILayout.Label($"<color={OffColor}>{value?.ToString() ?? "null"}</color>", ConfigSkin.Label, ScaledLayout.Width(Px(220f)));
                     break;
             }
         }
@@ -772,14 +804,14 @@ namespace FiresCore.UI
         {
             bool isOn = value is bool flag && flag;
             string text = isOn ? $"<b><color={OnColor}>Enabled</color></b>" : $"<color={OffColor}>Disabled</color>";
-            if (GUILayout.Button(text, ConfigSkin.Button, GUILayout.Width(Px(92f)))) Set(descriptor, !isOn);
+            if (GUILayout.Button(text, ConfigSkin.Button, ScaledLayout.Width(Px(92f)))) Set(descriptor, !isOn);
         }
 
         private void DrawRange(CfgDescriptor descriptor, object value)
         {
             float current = Convert.ToSingle(value, CultureInfo.InvariantCulture);
             float updated = GUILayout.HorizontalSlider(current, (float)descriptor.Min, (float)descriptor.Max,
-                ConfigSkin.Slider, ConfigSkin.SliderThumb, GUILayout.Width(WidgetWidth));
+                ConfigSkin.Slider, ConfigSkin.SliderThumb, ScaledLayout.Width(WidgetWidth));
             if (!Mathf.Approximately(updated, current))
             {
                 current = SnapStep(updated, descriptor);
@@ -791,7 +823,7 @@ namespace FiresCore.UI
             {
                 float span = Mathf.Abs((float)(descriptor.Max - descriptor.Min));
                 float fraction = span > 0f ? Mathf.Abs(current - (float)descriptor.Min) / span : 0f;
-                GUILayout.Label(fraction.ToString("P0", CultureInfo.InvariantCulture), ConfigSkin.Field, GUILayout.Width(NumberFieldWidth));
+                GUILayout.Label(fraction.ToString("P0", CultureInfo.InvariantCulture), ConfigSkin.Field, ScaledLayout.Width(NumberFieldWidth));
                 return;
             }
 
@@ -815,7 +847,7 @@ namespace FiresCore.UI
             int selected = IndexOfValue(descriptor, value);
             string label = selected >= 0 && selected < names.Length ? names[selected] : value?.ToString() ?? "";
 
-            if (GUILayout.Button(label + "   v", ConfigSkin.Button, GUILayout.Width(DropdownWidth)) && names.Length > 0)
+            if (GUILayout.Button(label + "   v", ConfigSkin.Button, ScaledLayout.Width(DropdownWidth)) && names.Length > 0)
                 OpenDropdown(id, descriptor, names, selected);
             ConfigPopup.AnchorToLastRect(id);
         }
@@ -852,7 +884,7 @@ namespace FiresCore.UI
             var values = descriptor.OptionValues ?? Array.Empty<object>();
             long current = Convert.ToInt64(value, CultureInfo.InvariantCulture);
 
-            GUILayout.BeginVertical(GUILayout.Width(WidgetWidth * 2f));
+            GUILayout.BeginVertical(ScaledLayout.Width(WidgetWidth * 2f));
             for (int i = 0; i < values.Length; i++)
             {
                 long flag = Convert.ToInt64(values[i], CultureInfo.InvariantCulture);
@@ -904,7 +936,7 @@ namespace FiresCore.UI
             GUILayout.BeginHorizontal();
             for (int i = 0; i < components; i++)
             {
-                GUILayout.Label(VectorComponentLabels[i], ConfigSkin.Label, GUILayout.Width(Px(14f)));
+                GUILayout.Label(VectorComponentLabels[i], ConfigSkin.Label, ScaledLayout.Width(Px(14f)));
                 string typed = BufferedField(descriptor, VectorComponentIds[i], current[i].ToString("0.###", CultureInfo.InvariantCulture), VectorFieldWidth);
                 if (typed == null || !float.TryParse(typed, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsed)) continue;
                 if (Mathf.Approximately(parsed, current[i])) continue;
@@ -930,21 +962,47 @@ namespace FiresCore.UI
             }
         }
 
+        private const float ColorSwatchWidthBase = 20f;
+        private const float ColorSwatchHeightBase = 18f;
+
+        // A call passing TWO options cannot take two of ScaledLayout's single-option arrays, so the swatches
+        // keep their own pairs, rebuilt only when the window scale changes.
+        private static float _swatchOptionsFactor = -1f;
+        private static GUILayoutOption[] _swatchSizeOptions;
+        private static GUILayoutOption[] _swatchRowOptions;
+
+        private static void EnsureSwatchOptions()
+        {
+            if (_swatchOptionsFactor == ConfigWindowScale.Factor) return;
+            _swatchOptionsFactor = ConfigWindowScale.Factor;
+            _swatchSizeOptions = new[]
+            {
+                GUILayout.Width(Px(ColorSwatchWidthBase)),
+                GUILayout.Height(Px(ColorSwatchHeightBase)),
+            };
+            _swatchRowOptions = new[]
+            {
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(Px(ColorSwatchHeightBase)),
+            };
+        }
+
         private void DrawColorField(CfgDescriptor descriptor, object value)
         {
+            EnsureSwatchOptions();
             var color = value is Color colorValue ? colorValue : Color.white;
             string id = ControlId(descriptor, "");
 
             var previousBackground = GUI.backgroundColor;
             GUI.backgroundColor = color;
-            if (GUILayout.Button(ColorToHex(color), ConfigSkin.Button, GUILayout.Width(DropdownWidth)))
+            if (GUILayout.Button(ColorToHex(color), ConfigSkin.Button, ScaledLayout.Width(DropdownWidth)))
                 OpenColorPicker(id, descriptor);
             GUI.backgroundColor = previousBackground;
             ConfigPopup.AnchorToLastRect(id);
 
             var previousTint = GUI.color;
             GUI.color = color;
-            GUILayout.Label(GUIContent.none, ConfigSkin.Swatch, GUILayout.Width(Px(20f)), GUILayout.Height(Px(18f)));
+            GUILayout.Label(GUIContent.none, ConfigSkin.Swatch, _swatchSizeOptions);
             GUI.color = previousTint;
         }
 
@@ -952,6 +1010,7 @@ namespace FiresCore.UI
         {
             ConfigPopup.Toggle(id, new Vector2(ColorPickerWidth, ColorPickerHeight), _ =>
             {
+                EnsureSwatchOptions();
                 var color = descriptor.BoxedValue is Color live ? live : Color.white;
                 var updated = color;
                 updated.r = DrawChannelSlider("R", color.r);
@@ -962,10 +1021,10 @@ namespace FiresCore.UI
 
                 GUILayout.Space(4f);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label(ColorToHex(updated), ConfigSkin.Field, GUILayout.Width(Px(90f)));
+                GUILayout.Label(ColorToHex(updated), ConfigSkin.Field, ScaledLayout.Width(Px(90f)));
                 var previousTint = GUI.color;
                 GUI.color = updated;
-                GUILayout.Label(GUIContent.none, ConfigSkin.Swatch, GUILayout.ExpandWidth(true), GUILayout.Height(Px(18f)));
+                GUILayout.Label(GUIContent.none, ConfigSkin.Swatch, _swatchRowOptions);
                 GUI.color = previousTint;
                 GUILayout.EndHorizontal();
                 if (GUILayout.Button("Done", ConfigSkin.ButtonSmall)) ConfigPopup.Close();
@@ -975,9 +1034,9 @@ namespace FiresCore.UI
         private static float DrawChannelSlider(string label, float value)
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label(label, ConfigSkin.Label, GUILayout.Width(Px(14f)));
-            float updated = GUILayout.HorizontalSlider(value, 0f, 1f, ConfigSkin.Slider, ConfigSkin.SliderThumb, GUILayout.ExpandWidth(true));
-            GUILayout.Label(Mathf.RoundToInt(updated * 255f).ToString(), ConfigSkin.Label, GUILayout.Width(Px(30f)));
+            GUILayout.Label(label, ConfigSkin.Label, ScaledLayout.Width(Px(14f)));
+            float updated = GUILayout.HorizontalSlider(value, 0f, 1f, ConfigSkin.Slider, ConfigSkin.SliderThumb, ScaledLayout.ExpandedWidth);
+            GUILayout.Label(Mathf.RoundToInt(updated * 255f).ToString(), ConfigSkin.Label, ScaledLayout.Width(Px(30f)));
             GUILayout.EndHorizontal();
             return updated;
         }
@@ -987,13 +1046,15 @@ namespace FiresCore.UI
 
         private void DrawKeyBind(CfgDescriptor descriptor, object value)
         {
+            if (DrawCaptureConfirm(descriptor)) return;
+
             // The value box IS the capture control (ConfigurationManager parity): click it to start
             // recording, click it or Apply to commit, Esc or X to cancel. Keys accumulate while recording,
             // so chords like L + LeftAlt are recordable; nothing commits until the second click.
             bool capturingThis = _capturing && _captureTarget == descriptor.Entry;
             string boxLabel = capturingThis ? CaptureLabel() : BindLabel(value);
 
-            if (GUILayout.Button(boxLabel, ConfigSkin.Button, GUILayout.Width(KeyBindWidth)))
+            if (GUILayout.Button(boxLabel, ConfigSkin.Button, ScaledLayout.Width(KeyBindWidth)))
             {
                 if (capturingThis) CommitCapture(descriptor);
                 else BeginCapture(descriptor.Entry);
@@ -1002,14 +1063,14 @@ namespace FiresCore.UI
 
             var previousBackground = GUI.backgroundColor;
             if (capturingThis) GUI.backgroundColor = CaptureButtonGreen;
-            if (GUILayout.Button(capturingThis ? "Apply" : "Set", ConfigSkin.ButtonSmall, GUILayout.Width(ResetButtonWidth)))
+            if (GUILayout.Button(capturingThis ? "Apply" : "Set", ConfigSkin.ButtonSmall, ScaledLayout.Width(ResetButtonWidth)))
             {
                 if (capturingThis) CommitCapture(descriptor);
                 else BeginCapture(descriptor.Entry);
             }
             GUI.backgroundColor = previousBackground;
 
-            if (GUILayout.Button("X", ConfigSkin.ButtonSmall, GUILayout.Width(ClearButtonWidth)))
+            if (GUILayout.Button("X", ConfigSkin.ButtonSmall, ScaledLayout.Width(ClearButtonWidth)))
             {
                 if (capturingThis) CancelCapture();
                 else Set(descriptor, descriptor.Type == typeof(KeyboardShortcut) ? (object)KeyboardShortcut.Empty : (object)KeyCode.None);
@@ -1110,6 +1171,7 @@ namespace FiresCore.UI
             ConfigPopup.Close();
             _capturing = true;
             _captureTarget = entry;
+            _captureEntry = null;
             _capMain = KeyCode.None;
             _capMods.Clear();
             _capButtonsScreenRect = default;
@@ -1120,6 +1182,7 @@ namespace FiresCore.UI
         {
             _capturing = false;
             _captureTarget = null;
+            _captureEntry = null;
             _capMain = KeyCode.None;
             _capMods.Clear();
         }
@@ -1128,6 +1191,7 @@ namespace FiresCore.UI
         {
             if (_captureTarget == null) { _capturing = false; return; }
             if (UnityEngine.Input.GetKeyDown(KeyCode.Escape)) { CancelCapture(); return; }
+            if (UnityEngine.Input.GetKeyDown(KeyCode.Delete)) { UnbindCaptureTarget(); return; }
 
             foreach (KeyCode keyCode in Enum.GetValues(typeof(KeyCode)))
             {
@@ -1150,33 +1214,47 @@ namespace FiresCore.UI
 
         private void CommitCapture(CfgDescriptor descriptor)
         {
-            bool wantsShortcut = _captureTarget != null && _captureTarget.SettingType == typeof(KeyboardShortcut);
+            var target = _captureTarget;
+            bool wantsShortcut = target != null && target.SettingType == typeof(KeyboardShortcut);
             KeyCode main = _capMain;
             var modifiers = new List<KeyCode>(_capMods);
 
             if (main == KeyCode.None && modifiers.Count == 0) { CancelCapture(); return; }
-
-            try
+            if (main == KeyCode.None) { main = modifiers[0]; modifiers.RemoveAt(0); }
+            if (!wantsShortcut && modifiers.Count > 0)
             {
-                if (wantsShortcut)
-                {
-                    if (main == KeyCode.None)
-                    {
-                        main = modifiers[0];
-                        modifiers.RemoveAt(0);
-                    }
-                    _captureTarget.BoxedValue = new KeyboardShortcut(main, modifiers.ToArray());
-                }
-                else
-                {
-                    if (main == KeyCode.None) main = modifiers[0];
-                    else if (modifiers.Count > 0) Notice(descriptor, $"single-key setting — stored {main}, modifiers ignored");
-                    _captureTarget.BoxedValue = main;
-                }
+                Notice(descriptor, $"single-key setting - stored {main}, modifiers ignored");
+                modifiers.Clear();
             }
-            catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind capture failed: " + ex.Message); }
 
             CancelCapture();
+            if (OfferCaptureConfirm(descriptor, target, main, modifiers, wantsShortcut)) return;
+            WriteCapture(target, main, modifiers, wantsShortcut);
+        }
+
+        private void WriteCapture(ConfigEntryBase target, KeyCode main, List<KeyCode> modifiers, bool wantsShortcut)
+        {
+            if (target == null) return;
+            try
+            {
+                if (wantsShortcut) target.BoxedValue = new KeyboardShortcut(main, modifiers.ToArray());
+                else target.BoxedValue = main;
+            }
+            catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind capture failed: " + ex.Message); }
+        }
+
+        private void UnbindCaptureTarget()
+        {
+            var target = _captureTarget;
+            CancelCapture();
+            if (target == null) return;
+            try
+            {
+                target.BoxedValue = target.SettingType == typeof(KeyboardShortcut)
+                    ? (object)KeyboardShortcut.Empty
+                    : (object)KeyCode.None;
+            }
+            catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind unbind failed: " + ex.Message); }
         }
 
         private void Notice(CfgDescriptor descriptor, string text)

@@ -47,7 +47,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Base
             // Every client applies the effect from the routed RPC; only the target's owner heals, or it heals once per client.
             if (InitialHeal > 0f && m_character != null && m_character.IsOwner())
             {
-                m_character.Heal(InitialHeal, ShowHealText);
+                AbilityHeals.Apply(Healer, m_character, InitialHeal, ShowHealText);
                 _totalHealed += InitialHeal;
                 
                 if (VerboseLogging)
@@ -76,6 +76,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Base
             }
         }
         
+        /// <summary>Who this heal is credited to. An unattributed effect heals on its own behalf.</summary>
+        protected Character Healer => SourceCharacter ?? m_character;
+
         /// <summary>
         /// Applies a single tick of healing.
         /// </summary>
@@ -84,7 +87,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Base
             if (m_character == null || m_character.IsDead()) return;
             
             // Heal the primary target
-            m_character.Heal(HealPerTick, ShowHealText);
+            AbilityHeals.Apply(Healer, m_character, HealPerTick, ShowHealText);
             _totalHealed += HealPerTick;
             
             // If area heal, also heal nearby allies
@@ -123,7 +126,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Base
                 float distance = Vector3.Distance(center, character.transform.position);
                 if (distance <= AreaHealRange)
                 {
-                    character.Heal(allyHeal, ShowHealText);
+                    AbilityHeals.Apply(Healer, character, allyHeal, ShowHealText);
                     
                     if (VerboseLogging)
                     {
