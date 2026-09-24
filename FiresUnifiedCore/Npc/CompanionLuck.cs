@@ -1,5 +1,7 @@
 ﻿using UnityEngine;
 using System;
+using System.Globalization;
+using FiresCore.Classes;
 
 namespace FiresCore.Npc
 {
@@ -11,21 +13,29 @@ namespace FiresCore.Npc
     {
         #region Constants
         
-        /// <summary>Minimum luck value</summary>
-        public const int MIN_LUCK = 0;
-        
-        /// <summary>Maximum luck value</summary>
-        public const int MAX_LUCK = 100;
-        
+        /// <summary>Base-luck range. Effective luck is uncapped - see <see cref="LuckModel"/>.</summary>
+        public const int MIN_LUCK = LuckModel.MinBaseLuck;
+        public const int MAX_LUCK = LuckModel.MaxBaseLuck;
+
         /// <summary>Minimum scaling per level (at 0 luck)</summary>
         public const float MIN_SCALING_PER_LEVEL = 0.0025f; // 0.25%
-        
+
         /// <summary>Maximum scaling per level (at 100 luck)</summary>
         public const float MAX_SCALING_PER_LEVEL = 0.005f; // 0.5%
-        
+
+        /// <summary>Above MAX_LUCK the per-level bonus keeps climbing, at half the rate.</summary>
+        private const float ScalingPerLevelPerLuckAboveMax =
+            (MAX_SCALING_PER_LEVEL - MIN_SCALING_PER_LEVEL) / MAX_LUCK / 2f;
+
+        private const int DefaultMaxCompanionLevel = 100;
+        private const int UnsavedLuckSentinel = -1;
+        private const char VaultFieldSeparator = ';';
+        private const string ZdoBaseLuckKey = "companion_luck";
+        private const string ZdoPermanentBonusKey = "companion_luck_bonus";
+
         /// <summary>Threshold for "Lucky" status (shows special indicator)</summary>
         public const int LUCKY_THRESHOLD = 75;
-        
+
         /// <summary>Threshold for "Unlucky" status</summary>
         public const int UNLUCKY_THRESHOLD = 25;
         
@@ -39,10 +49,13 @@ namespace FiresCore.Npc
         
         // Core luck value (0-100)
         private int _baseLuck;
-        
-        // Cached scaling value for this companion
-        private float _scalingPerLevel;
-        
+
+        // Uncapped, saved: achievements, quests and other permanent rewards
+        private float _permanentBonusLuck;
+
+        // Uncapped, not saved: equipment, consumables, curses and other live sources
+        private float _transientBonusLuck;
+
         // Tracking
         private bool _initialized;
         
@@ -55,34 +68,19 @@ namespace FiresCore.Npc
         /// <summary>Base luck value (0-100)</summary>
         public int BaseLuck => _baseLuck;
         
-        /// <summary>Effective luck (base + any bonuses from equipment/buffs)</summary>
-        public int EffectiveLuck => CalculateEffectiveLuck();
-        
+        /// <summary>Effective luck: base plus every bonus, uncapped.</summary>
+        public float EffectiveLuck => _baseLuck + _permanentBonusLuck + _transientBonusLuck;
+
         /// <summary>The scaling per level this companion uses (determined by luck)</summary>
-        public float ScalingPerLevel => _scalingPerLevel;
-        
+        public float ScalingPerLevel => ScalingPerLevelFor(EffectiveLuck);
+
         /// <summary>Whether this companion is considered "Lucky" (luck >= 75)</summary>
-        public bool IsLucky => _baseLuck >= LUCKY_THRESHOLD;
-        
+        public bool IsLucky => EffectiveLuck >= LUCKY_THRESHOLD;
+
         /// <summary>Whether this companion is considered "Unlucky" (luck <= 25)</summary>
-        public bool IsUnlucky => _baseLuck <= UNLUCKY_THRESHOLD;
-        
-        /// <summary>
-        /// Descriptive tier for the luck value.
-        /// </summary>
-        public string LuckTier
-        {
-            get
-            {
-                if (_baseLuck >= 90) return "Blessed";
-                if (_baseLuck >= 75) return "Lucky";
-                if (_baseLuck >= 60) return "Fortunate";
-                if (_baseLuck >= 40) return "Average";
-                if (_baseLuck >= 25) return "Unlucky";
-                if (_baseLuck >= 10) return "Cursed";
-                return "Doomed";
-            }
-        }
+        public bool IsUnlucky => EffectiveLuck <= UNLUCKY_THRESHOLD;
+
+        public string LuckTier => LuckModel.LuckTier(EffectiveLuck);
         
         #endregion
         
@@ -124,55 +122,38 @@ namespace FiresCore.Npc
                 }
             }
             
-            // Calculate the scaling value based on luck
-            CalculateScalingFromLuck();
-            
             _initialized = true;
-            
+
             if (VerboseLogging)
             {
                 Debug.Log($"[CompanionLuck] Initialized {_companion?.companionName}: " +
-                    $"Luck={_baseLuck} ({LuckTier}), Scaling={_scalingPerLevel * 100:F3}%/level, " +
+                    $"Luck={_baseLuck} ({LuckTier}), Scaling={ScalingPerLevel * 100:F3}%/level, " +
                     $"vaultRestored={_vaultDataRestored}");
             }
         }
-        
-        /// <summary>
-        /// Generates a random luck value for a new companion.
-        /// Uses a weighted distribution - extreme luck (very high or low) is rarer.
-        /// </summary>
+
         private void GenerateRandomLuck()
         {
-            // Use a bell-curve-ish distribution centered around 50
-            // This makes average luck common and extreme luck rare
-            float roll1 = UnityEngine.Random.value;
-            float roll2 = UnityEngine.Random.value;
-            float roll3 = UnityEngine.Random.value;
-            
-            // Average of 3 rolls creates a bell curve
-            float averageRoll = (roll1 + roll2 + roll3) / 3f;
-            
-            _baseLuck = Mathf.RoundToInt(averageRoll * MAX_LUCK);
-            _baseLuck = Mathf.Clamp(_baseLuck, MIN_LUCK, MAX_LUCK);
-            
-            // Save to ZDO
+            _baseLuck = LuckModel.RollBaseLuck();
             SaveToZDO();
-            
+
             if (VerboseLogging)
             {
                 Debug.Log($"[CompanionLuck] Generated luck {_baseLuck} for {_companion?.companionName}");
             }
         }
-        
+
         /// <summary>
-        /// Calculates the per-level scaling value based on luck.
-        /// This value is cached and used for all scaling calculations.
+        /// Per-level bonus for a luck value: interpolated across the base range, then continuing above
+        /// it at half the rate so effective luck past 100 still pays.
         /// </summary>
-        private void CalculateScalingFromLuck()
+        private static float ScalingPerLevelFor(float effectiveLuck)
         {
-            // Interpolate between min and max scaling based on luck
-            float luckFactor = (float)_baseLuck / MAX_LUCK;
-            _scalingPerLevel = Mathf.Lerp(MIN_SCALING_PER_LEVEL, MAX_SCALING_PER_LEVEL, luckFactor);
+            if (effectiveLuck <= MAX_LUCK)
+                return Mathf.Lerp(MIN_SCALING_PER_LEVEL, MAX_SCALING_PER_LEVEL,
+                    Mathf.Clamp01(effectiveLuck / MAX_LUCK));
+
+            return MAX_SCALING_PER_LEVEL + (effectiveLuck - MAX_LUCK) * ScalingPerLevelPerLuckAboveMax;
         }
         
         #endregion
@@ -207,7 +188,7 @@ namespace FiresCore.Npc
             if (level <= 1) return 1f;
             
             // Apply scaling: base multiplier + (levels above 1) * scaling per level
-            return 1f + (level - 1) * _scalingPerLevel;
+            return 1f + (level - 1) * ScalingPerLevel;
         }
         
         /// <summary>
@@ -228,8 +209,8 @@ namespace FiresCore.Npc
         /// </summary>
         public float GetMaxBonusPercent()
         {
-            // Bonus at level 100 = 99 levels * scaling per level * 100
-            return 99 * _scalingPerLevel * 100f;
+            int maxLevel = _progression != null ? _progression.maxLevel : DefaultMaxCompanionLevel;
+            return (maxLevel - 1) * ScalingPerLevel * 100f;
         }
         
         /// <summary>
@@ -246,36 +227,26 @@ namespace FiresCore.Npc
         #region Luck Modifiers
         
         /// <summary>
-        /// Calculates effective luck including any bonuses.
-        /// Future: Equipment, buffs, and other modifiers can affect this.
-        /// </summary>
-        private int CalculateEffectiveLuck()
-        {
-            int effective = _baseLuck;
-            
-            // TODO: Add equipment luck bonuses
-            // TODO: Add status effect luck modifiers
-            // TODO: Add territory/biome luck modifiers
-            
-            return Mathf.Clamp(effective, MIN_LUCK, MAX_LUCK);
-        }
-        
-        /// <summary>
-        /// Adds a permanent luck bonus (from special events, achievements, etc.)
+        /// Adds a permanent luck bonus. It raises base luck while there is room, and the remainder
+        /// becomes an uncapped bonus, so a reward is never silently swallowed at base 100.
         /// </summary>
         public void AddPermanentLuckBonus(int amount, string source)
         {
-            int oldLuck = _baseLuck;
-            _baseLuck = Mathf.Clamp(_baseLuck + amount, MIN_LUCK, MAX_LUCK);
-            
-            if (_baseLuck != oldLuck)
-            {
-                CalculateScalingFromLuck();
-                SaveToZDO();
-                
-                Debug.Log($"[CompanionLuck] {_companion?.companionName} gained {amount} luck from {source}. " +
-                    $"New luck: {_baseLuck}");
-            }
+            int previousBase = _baseLuck;
+            int raisedBase = LuckModel.ClampBase(_baseLuck + amount);
+            _baseLuck = raisedBase;
+            _permanentBonusLuck += amount - (raisedBase - previousBase);
+
+            SaveToZDO();
+
+            Debug.Log($"[CompanionLuck] {_companion?.companionName} gained {amount} luck from {source}. " +
+                $"New luck: {EffectiveLuck:F0} (base {_baseLuck}, permanent bonus {_permanentBonusLuck:F0})");
+        }
+
+        /// <summary>Replaces the live bonus from equipment, consumables and curses. Never saved.</summary>
+        public void SetTransientLuckBonus(float bonusLuck)
+        {
+            _transientBonusLuck = bonusLuck;
         }
         
         #endregion
@@ -288,7 +259,8 @@ namespace FiresCore.Npc
             var zdo = _nview?.GetZDO();
             if (zdo == null) return;
 
-            zdo.Set("companion_luck", _baseLuck);
+            zdo.Set(ZdoBaseLuckKey, _baseLuck);
+            zdo.Set(ZdoPermanentBonusKey, _permanentBonusLuck);
         }
         
         public bool LoadFromZDO()
@@ -297,11 +269,12 @@ namespace FiresCore.Npc
             if (zdo == null) return false;
             
             // Check if luck was ever saved (use -1 as sentinel)
-            int savedLuck = zdo.GetInt("companion_luck", -1);
+            int savedLuck = zdo.GetInt(ZdoBaseLuckKey, UnsavedLuckSentinel);
             
-            if (savedLuck >= 0)
+            if (savedLuck > UnsavedLuckSentinel)
             {
-                _baseLuck = Mathf.Clamp(savedLuck, MIN_LUCK, MAX_LUCK);
+                _baseLuck = LuckModel.ClampBase(savedLuck);
+                _permanentBonusLuck = zdo.GetFloat(ZdoPermanentBonusKey, 0f);
                 return true;
             }
             
@@ -313,7 +286,7 @@ namespace FiresCore.Npc
         /// </summary>
         public string GetLuckDataForVault()
         {
-            return $"{_baseLuck}";
+            return FormattableString.Invariant($"{_baseLuck}{VaultFieldSeparator}{_permanentBonusLuck}");
         }
         
         /// <summary>
@@ -329,19 +302,16 @@ namespace FiresCore.Npc
             
             try
             {
-                _baseLuck = int.Parse(data);
-                _baseLuck = Mathf.Clamp(_baseLuck, MIN_LUCK, MAX_LUCK);
-                
-                // Mark vault data as restored
+                string[] fields = data.Split(VaultFieldSeparator);
+                _baseLuck = LuckModel.ClampBase(int.Parse(fields[0], CultureInfo.InvariantCulture));
+                _permanentBonusLuck = fields.Length > 1
+                    ? float.Parse(fields[1], CultureInfo.InvariantCulture)
+                    : 0f;
+
                 _vaultDataRestored = true;
-                
-                // Recalculate scaling
-                CalculateScalingFromLuck();
-                
-                // Save to ZDO
                 SaveToZDO();
-                
-                Debug.Log($"[CompanionLuck] Restored luck {_baseLuck} from vault for {_companion?.companionName}");
+
+                Debug.Log($"[CompanionLuck] Restored luck {EffectiveLuck:F0} from vault for {_companion?.companionName}");
             }
             catch (Exception ex)
             {
@@ -358,8 +328,8 @@ namespace FiresCore.Npc
         /// </summary>
         public void SetLuck(int luck)
         {
-            _baseLuck = Mathf.Clamp(luck, MIN_LUCK, MAX_LUCK);
-            CalculateScalingFromLuck();
+            _baseLuck = LuckModel.ClampBase(luck);
+            
             SaveToZDO();
             
             Debug.Log($"[CompanionLuck] Set luck to {_baseLuck} for {_companion?.companionName}");
@@ -375,7 +345,7 @@ namespace FiresCore.Npc
             float maxMultiplier = GetLevelScalingMultiplier(100);
             
             return $"Luck: {_baseLuck} ({LuckTier})\n" +
-                   $"Scaling: {_scalingPerLevel * 100:F3}%/level\n" +
+                   $"Scaling: {ScalingPerLevel * 100:F3}%/level\n" +
                    $"Current (L{level}): x{currentMultiplier:F3}\n" +
                    $"Max (L100): x{maxMultiplier:F3} (+{GetMaxBonusPercent():F1}%)";
         }

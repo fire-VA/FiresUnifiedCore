@@ -84,7 +84,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(HealAmount, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealAmount, true);
                     
                     // Visual effect
                     AbilityFXManager.SpawnEffect("fx_creature_tamed", character.transform.position, null, 0.5f);
@@ -372,7 +372,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(HealAmount, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealAmount, true);
                     StatusEffectManager.ApplyInvulnerable(character, ImmunityDuration);
                     healed++;
                     
@@ -1105,7 +1105,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(healAmount, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, healAmount, true);
                 }
             }
         }

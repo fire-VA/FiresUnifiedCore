@@ -141,7 +141,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
                 if (distance <= AuraRange)
                 {
                     // Heal ally
-                    character.Heal(AllyHealPerTick, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, AllyHealPerTick, true);
                     
                     if (VerboseLogging)
                     {

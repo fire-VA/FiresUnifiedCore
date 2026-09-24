@@ -34,6 +34,25 @@ namespace FiresCore.Npc.Combat
         
         // Reference to threat analyzer for tactical decisions
         public ThreatAnalyzer ThreatAnalyzer { get; set; }
+
+        private FiresCore.Npc.Combat.Agent.ICombatAgent _agent;
+
+        /// <summary>
+        /// The body behind this context, for behaviours that have to work for monsters too. Resolved on first
+        /// ask so a companion that no agent-aware behaviour drives carries no agent component at all.
+        /// </summary>
+        public FiresCore.Npc.Combat.Agent.ICombatAgent Agent
+        {
+            get
+            {
+                if (_agent == null && Transform != null)
+                {
+                    _agent = FiresCore.Npc.Combat.Agent.CombatAgents.Ensure(Transform.gameObject);
+                }
+                return _agent;
+            }
+            set { _agent = value; }
+        }
         
         // ============================================
  // ANIMATION LOCK SYSTEM

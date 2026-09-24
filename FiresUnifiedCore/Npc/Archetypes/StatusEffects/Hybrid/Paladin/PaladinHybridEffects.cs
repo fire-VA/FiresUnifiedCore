@@ -253,7 +253,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Paladin
                 hitData.m_damage.m_spirit += SpiritDamageBonus;
                 
                 // Self-heal on ranged hit
-                m_character?.Heal(HealOnHit, true);
+                AbilityHeals.Apply(SourceCharacter ?? m_character, m_character, HealOnHit, true);
             }
         }
         
@@ -413,7 +413,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Paladin
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(HealAmount, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealAmount, true);
                     StatusEffectManager.ApplyInvulnerable(character, ImmunityDuration);
                     healed++;
                     

@@ -24,6 +24,14 @@ namespace FiresCore.Npc.Archetypes
         // Fallback cleanup duration if effect doesn't self-destruct
         private const float FallbackCleanupDuration = 10f;
 
+        private const float SweepIntervalSeconds = 5f;
+        private const string TimedDestructionInvokeName = "DestroyNow";
+
+        private static float _lastSweepTime;
+
+        private const float HealTickHeightMeters = 0.5f;
+        private const float HealTickScale = 0.45f;
+
         private static int _localCopyDepth;
 
         /// <summary>
@@ -103,7 +111,21 @@ namespace FiresCore.Npc.Archetypes
         public const string FX_HEAL_SHIELD_PULSE = "fx_shield_start";
         /// <summary>Spawn effect for resurrect/summon [Duration:10.0s]</summary>
         public const string FX_SPAWN_GLOW = "vfx_spawn";
-        
+
+        // Sanctuary water-drop beats (see Docs/PLAN_GroundRings.md)
+        /// <summary>Water surface ripple - opens and closes the Sanctuary sequence</summary>
+        public const string FX_WATER_RIPPLE = "fx_float_hitwater";
+        /// <summary>Terrain-raise puff - "the ground gives" at the Sanctuary target</summary>
+        public const string FX_GROUND_GIVE = "vfx_Place_raise";
+        /// <summary>Mead splash particles, given upward velocity to read as a rising water column</summary>
+        public const string FX_WATER_COLUMN = "vfx_MeadSplash";
+        /// <summary>Heavy water impact for the drop falling back into itself</summary>
+        public const string FX_WATER_IMPACT = "fx_WaterImpact_Big";
+        /// <summary>Dverger nova ring - tinted green and expanded to the heal radius</summary>
+        public const string FX_NOVA_RING = "fx_DvergerMage_Nova_ring";
+        /// <summary>Rising motes inside a heal area while it lasts</summary>
+        public const string FX_HEALING_MOTES = "vfx_HealthUpgrade";
+
         // ========================
         // BERSERKER EFFECTS
         // ========================
@@ -248,6 +270,10 @@ namespace FiresCore.Npc.Archetypes
         public const string SFX_HEAL = "sfx_Potion_health_medium";
         /// <summary>Offering sound for purify</summary>
         public const string SFX_PURIFY = "sfx_offering";
+        /// <summary>Water landing for the Sanctuary drop</summary>
+        public const string SFX_LAND_WATER = "sfx_land_water";
+        /// <summary>Shaman heal layered under the Sanctuary splash</summary>
+        public const string SFX_SHAMAN_HEAL = "sfx_greydwarf_shaman_heal";
         
         // ========================
         // BERSERKER SOUNDS
@@ -360,6 +386,25 @@ namespace FiresCore.Npc.Archetypes
         }
 
         /// <summary>
+        /// Runs CleanupExpiredEffects at most once per SweepIntervalSeconds.
+        /// </summary>
+        private static void SweepIfDue()
+        {
+            if (Time.time - _lastSweepTime < SweepIntervalSeconds) return;
+            _lastSweepTime = Time.time;
+            CleanupExpiredEffects();
+        }
+
+        /// <summary>
+        /// Sweeps the tracking list, then adds one spawned instance to it.
+        /// </summary>
+        private static void Track(GameObject instance, float duration)
+        {
+            SweepIfDue();
+            _activeEffects.Add(new TrackedEffect { Instance = instance, SpawnTime = Time.time, Duration = duration });
+        }
+
+        /// <summary>
         /// Clears the tracking list, routing any still-live instances through
         /// NetworkObjectHelper so ZNetScene.m_instances stays consistent.
         /// </summary>
@@ -399,7 +444,7 @@ namespace FiresCore.Npc.Archetypes
 
             // Track so CleanupExpiredEffects can catch any edge-case continuous SFX.
             float dur = EnsureSelfDestruct(instance, FallbackCleanupDuration);
-            _activeEffects.Add(new TrackedEffect { Instance = instance, SpawnTime = Time.time, Duration = dur });
+            Track(instance, dur);
 
             if (VerboseLogging)
                 Debug.Log($"[AbilityFXManager] Spawned SFX: {sfxName} at {position}");
@@ -423,7 +468,11 @@ namespace FiresCore.Npc.Archetypes
 
             var timedDestruction = instance.GetComponent<TimedDestruction>();
             if (timedDestruction != null && timedDestruction.m_timeout > 0f)
+            {
+                if (!timedDestruction.IsInvoking(TimedDestructionInvokeName))
+                    timedDestruction.Trigger();
                 return timedDestruction.m_timeout;
+            }
 
             if (timedDestruction == null)
                 timedDestruction = instance.AddComponent<TimedDestruction>();
@@ -484,12 +533,24 @@ namespace FiresCore.Npc.Archetypes
                 instance.transform.localScale *= scale;
 
             float dur = EnsureSelfDestruct(instance, FallbackCleanupDuration);
-            _activeEffects.Add(new TrackedEffect { Instance = instance, SpawnTime = Time.time, Duration = dur });
+            Track(instance, dur);
 
             if (VerboseLogging)
                 Debug.Log($"[AbilityFXManager] Spawned effect: {effectName} at {position}");
 
             return instance;
+        }
+
+        /// <summary>Spawns one visual as a client-local copy: no ZNetView, and only when this machine's player is near.</summary>
+        public static GameObject SpawnLocalEffect(string effectName, Vector3 position, Quaternion? rotation = null, float scale = 1f)
+        {
+            using (LocalCopies()) return SpawnEffect(effectName, position, rotation, scale);
+        }
+
+        /// <summary>Spawns one sound as a client-local copy: no ZNetView, and only when this machine's player is near.</summary>
+        public static GameObject SpawnLocalSound(string sfxName, Vector3 position)
+        {
+            using (LocalCopies()) return SpawnSound(sfxName, position);
         }
 
         /// <summary>
@@ -519,7 +580,7 @@ namespace FiresCore.Npc.Archetypes
             // Prefer the prefab's own TimedDestruction duration; fall back to the
             // caller-supplied duration so continuous auras still get cleaned up.
             float dur = EnsureSelfDestruct(instance, duration);
-            _activeEffects.Add(new TrackedEffect { Instance = instance, SpawnTime = Time.time, Duration = dur });
+            Track(instance, dur);
 
             if (VerboseLogging)
                 Debug.Log($"[AbilityFXManager] Spawned effect: {effectName} on {character.m_name}");
@@ -617,6 +678,50 @@ namespace FiresCore.Npc.Archetypes
             SpawnAoEEffect(FX_HEAL_HEARTS, healer.transform.position, range * 0.8f, 4);
         }
         
+        /// <summary>
+        /// Plays the full Sanctuary water-drop sequence and raises the heal ring. Call it on every client that runs
+        /// the cast (the ability's routed-RPC path), not once on the owner - the ring's visibility is per viewer.
+        /// </summary>
+        public static void PlaySanctuaryWaterDrop(Vector3 casterPosition, Vector3 target, float radius,
+            float ringDuration, long casterPlayerId)
+        {
+            Effects.SanctuaryWaterDrop.Play(casterPosition, target, radius, ringDuration, casterPlayerId);
+        }
+
+        public static void PlaySanctuaryWaterDrop(Character healer, Vector3 target, float radius, float ringDuration)
+        {
+            if (healer == null) return;
+            PlaySanctuaryWaterDrop(healer.transform.position, target, radius, ringDuration,
+                ResolveCasterPlayerId(healer));
+        }
+
+        /// <summary>
+        /// The player a cast is attributed to for ring visibility: the player themselves, or a companion's OWNER so
+        /// the ring follows that owner's ally relationships. 0 means no owning player - a wild creature or a monster -
+        /// which the ring visibility table reads as "show to everyone", the telegraph case.
+        /// </summary>
+        public static long ResolveCasterPlayerId(Character caster)
+        {
+            if (caster == null) return 0L;
+
+            var player = caster as Player;
+            if (player != null) return player.GetPlayerID();
+
+            var companion = caster.GetComponent<CompanionController>();
+            return companion != null ? companion.ownerPlayerId : 0L;
+        }
+
+        /// <summary>One heal tick inside a Sanctuary: silent after the first tick, per the effect budget.</summary>
+        public static void PlaySanctuaryHealTick(Character ally, bool playSound)
+        {
+            if (ally == null) return;
+
+            Vector3 position = ally.transform.position;
+            if (playSound) SpawnLocalSound(SFX_HEAL, position);
+            SpawnLocalEffect(FX_HEAL_PULSE, position + Vector3.up * HealTickHeightMeters,
+                Quaternion.identity, HealTickScale);
+        }
+
         /// <summary>
         /// Plays the Purify cleanse effect - offering altar glow with sound.
         /// </summary>

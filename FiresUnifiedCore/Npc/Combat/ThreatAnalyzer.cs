@@ -181,6 +181,9 @@ namespace FiresCore.Npc.Combat
         private EnemyAttackRecognition _attackRecognition;
         private CombatMemory _combatMemory;
 
+        /// <summary>Set on a non-companion body, which has no CompanionController to gate on.</summary>
+        private FiresCore.Npc.Combat.Agent.ICombatAgent _agent;
+
         private CombatSituation _currentSituation;
         private Dictionary<Character, ThreatProfile> _threatProfiles = new Dictionary<Character, ThreatProfile>();
         private List<DamageEvent> _recentDamage = new List<DamageEvent>();
@@ -215,6 +218,7 @@ namespace FiresCore.Npc.Combat
             _character = GetComponent<Character>();
             _attackRecognition = GetComponent<EnemyAttackRecognition>();
             _combatMemory = GetComponent<CombatMemory>();
+            _agent = GetComponent<FiresCore.Npc.Combat.Agent.ICombatAgent>();
             
             // Add CombatMemory if missing
             if (_combatMemory == null)
@@ -226,7 +230,7 @@ namespace FiresCore.Npc.Combat
         private void Update()
         {
             // Allow both tamed AND wild companions to analyze threats
-            if (_companion == null) return;
+            if (_companion == null && _agent == null) return;
 
             // Throttled analysis
             if (Time.time - _lastAnalysisTime >= analysisInterval)

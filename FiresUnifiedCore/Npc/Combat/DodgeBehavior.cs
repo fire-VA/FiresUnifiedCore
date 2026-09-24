@@ -1,6 +1,5 @@
 ﻿using UnityEngine;
 using System.Collections;
-using FiresCore.Npc.AI;
 using FiresCore.Npc.Core;
 
 namespace FiresCore.Npc.Combat
@@ -26,6 +25,7 @@ namespace FiresCore.Npc.Combat
         private UnifiedMovementAuthority _uma;
         private bool _umaResolved;
         private const string DodgeAuthorityOwner = "CompanionDodge";
+        private const float DodgeFacingHoldSeconds = 0.4f;
 
         // Dodge state
   private float _lastDodgeTime;
@@ -161,7 +161,7 @@ private float _strafeTimer;
             }
 
             // Fallback: Check CompanionStats if StaminaManager not available
-            var stats = _context?.Companion?.GetStats();
+            var stats = _context?.Agent?.Stamina;
             if (stats != null && !stats.HasStamina(GetDodgeStaminaCost()))
             {
                 return false;
@@ -179,14 +179,14 @@ private float _strafeTimer;
             float baseCost = 15f;
             
             // Reduce cost based on skill
-            var skills = _context?.Companion?.GetSkills();
+            var skills = _context?.Agent?.Skills;
             if (skills != null)
             {
                 float skillFactor = skills.GetSkillFactor(Skills.SkillType.Jump);
                 baseCost *= (1f - skillFactor * 0.25f); // Up to 25% reduction at max skill
             }
 
-            var stats = _context?.Companion?.GetStats();
+            var stats = _context?.Agent?.Stamina;
             return stats != null ? stats.ModifyDodgeStaminaCost(baseCost) : baseCost;
         }
 
@@ -249,7 +249,7 @@ private float _strafeTimer;
                 }
             }
 
-            var target2 = _context.CompanionAI?.GetTargetCreature();
+            var target2 = _context.Agent?.Target;
             if (target2 == null)
             {
                 EnterState(MovementState.Idle);
@@ -610,11 +610,11 @@ FaceTarget(target);
             // Single facing-writer: face the threat through the FacingAuthority at Animation priority
             // (the band the dodge drives at). Short lease so it hands back to AI enemy-facing fast when
             // the dodge ends. If a same-priority incumbent holds facing, park — never raw-write here.
-            var facing = _context?.Companion != null ? _context.Companion.GetFacingAuthority() : null;
-            if (facing != null)
+            var agent = _context?.Agent;
+            if (agent != null && agent.HasFacingAuthority)
             {
-                if (facing.TryAcquireFacing(UnifiedMovementAuthority.MovementSource.Animation, DodgeAuthorityOwner, 0.4f))
-                    facing.SetLookTarget(DodgeAuthorityOwner, target.transform.position);
+                agent.TryFaceThrough(DodgeAuthorityOwner, target.transform.position,
+                    Agent.CombatFacingPriority.Animation, DodgeFacingHoldSeconds);
                 return;
             }
 
@@ -642,7 +642,7 @@ FaceTarget(target);
             _staminaManager?.OnDodgePerformed();
             
             // Also update CompanionStats for backward compatibility
-            var stats = _context?.Companion?.GetStats();
+            var stats = _context?.Agent?.Stamina;
             if (stats != null)
             {
                 stats.UseStamina(GetDodgeStaminaCost());
@@ -735,7 +735,7 @@ FaceTarget(target);
             _staminaManager?.OnDodgePerformed();
             
             // Also update CompanionStats for backward compatibility
-            var stats = _context?.Companion?.GetStats();
+            var stats = _context?.Agent?.Stamina;
             if (stats != null)
             {
                 stats.UseStamina(GetDodgeStaminaCost());
@@ -921,7 +921,7 @@ FaceTarget(target);
             _staminaManager?.OnDodgePerformed();
             
             // Also update CompanionStats for backward compatibility
-            var stats = _context?.Companion?.GetStats();
+            var stats = _context?.Agent?.Stamina;
             if (stats != null)
             {
                 stats.UseStamina(GetDodgeStaminaCost());
@@ -960,3 +960,4 @@ FaceTarget(target);
         }
   }
 }
+

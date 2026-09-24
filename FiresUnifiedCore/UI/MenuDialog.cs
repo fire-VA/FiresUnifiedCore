@@ -144,6 +144,44 @@ namespace FiresCore.UI
             Engage();
         }
 
+        // ── Hosting the same field rows inside SOMEONE ELSE'S frame ─────────
+        // A caller that already has a panel — one of vanilla's own, cloned — wants these rows and nothing else: no
+        // canvas, no parchment, no buttons, no input capture. It lays the rows into `host` top-down and returns the
+        // height they used, so the caller can size its frame. The caller owns the frame, the buttons, validation and
+        // the lifetime; on cancel it calls RestoreFields to put the values back the way Show does.
+        public static float RowsHeightFor(int fieldCount)
+            => fieldCount <= 0 ? 0f : fieldCount * RowHeight + (fieldCount - 1) * RowGap;
+
+        public static float BuildRowsIn(RectTransform host, IList<Field> fields)
+        {
+            if (host == null || fields == null || fields.Count == 0) return 0f;
+            TMP_InputField firstInput = null;
+            for (int i = 0; i < fields.Count; i++)
+            {
+                var field = fields[i];
+                if (field == null) continue;
+                var row = NewRect($"Row{i}", host);
+                PlaceTop(row, -(i * (RowHeight + RowGap)), RowHeight, 0f);
+                UIBuilderHelper.CreateLabel(row, "Label", field.Label ?? "", LabelFontSize, UIFontConfig.Colors.ParchmentInk,
+                    Vector2.zero, new Vector2(LabelColumnEnd, 1f), TextAlignmentOptions.MidlineLeft);
+                var slot = NewRect("Slot", row);
+                slot.anchorMin = new Vector2(SlotColumnStart, 0f);
+                slot.anchorMax = Vector2.one;
+                slot.offsetMin = Vector2.zero;
+                slot.offsetMax = Vector2.zero;
+                field.Build(slot);
+                if (firstInput == null && field is TextField text) firstInput = text.InputField;
+            }
+            if (firstInput != null) firstInput.ActivateInputField();
+            return RowsHeightFor(fields.Count);
+        }
+
+        public static void RestoreFields(IList<Field> fields)
+        {
+            if (fields == null) return;
+            foreach (var field in fields) field?.Restore();
+        }
+
         private static void Build(string title, string okLabel, string cancelLabel)
         {
             _canvas = new GameObject(CanvasName);

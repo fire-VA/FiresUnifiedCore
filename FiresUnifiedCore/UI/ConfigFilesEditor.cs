@@ -83,11 +83,11 @@ namespace FiresCore.UI
 
         private void DrawFileList(float height)
         {
-            GUILayout.BeginVertical(GUILayout.Width(ListWidth));
+            GUILayout.BeginVertical(ScaledLayout.Width(ListWidth));
             GUILayout.BeginHorizontal();
             GUI.SetNextControlName("fileFilter");
-            _filter = GUILayout.TextField(_filter ?? "", ConfigSkin.TextInput, GUILayout.ExpandWidth(true));
-            if (GUILayout.Button("Rescan", ConfigSkin.ButtonSmall, GUILayout.Width(Px(60f)))) Refresh();
+            _filter = GUILayout.TextField(_filter ?? "", ConfigSkin.TextInput, ScaledLayout.ExpandedWidth);
+            if (GUILayout.Button("Rescan", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(60f)))) Refresh();
             GUILayout.EndHorizontal();
 
             _listScroll = GUILayout.BeginScrollView(_listScroll, GUILayout.Height(height - ToolbarHeight));
@@ -117,13 +117,13 @@ namespace FiresCore.UI
             }
 
             GUILayout.BeginHorizontal();
-            GUILayout.Label("<b>" + _selected + "</b>", ConfigSkin.Title, GUILayout.ExpandWidth(true));
+            GUILayout.Label("<b>" + _selected + "</b>", ConfigSkin.Title, ScaledLayout.ExpandedWidth);
             bool changed = _text != _loadedText;
             GUI.enabled = changed && !_tooLarge;
-            if (GUILayout.Button("Save", ConfigSkin.ButtonSmall, GUILayout.Width(Px(56f)))) Save();
-            if (GUILayout.Button("Revert", ConfigSkin.ButtonSmall, GUILayout.Width(Px(60f)))) _text = _loadedText;
+            if (GUILayout.Button("Save", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(56f)))) Save();
+            if (GUILayout.Button("Revert", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(60f)))) _text = _loadedText;
             GUI.enabled = true;
-            if (GUILayout.Button("Reload", ConfigSkin.ButtonSmall, GUILayout.Width(Px(60f)))) Load(_selected);
+            if (GUILayout.Button("Reload", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(60f)))) Load(_selected);
             GUILayout.EndHorizontal();
 
             if (_tooLarge)
@@ -135,7 +135,7 @@ namespace FiresCore.UI
 
             _textScroll = GUILayout.BeginScrollView(_textScroll, GUILayout.Height(height - ToolbarHeight * 2f));
             GUI.SetNextControlName("fileText");
-            _text = GUILayout.TextArea(_text, ConfigSkin.TextInput, GUILayout.ExpandWidth(true));
+            _text = GUILayout.TextArea(_text, ConfigSkin.TextInput, ScaledLayout.ExpandedWidth);
             GUILayout.EndScrollView();
 
             GUILayout.Label(changed ? "<color=#FFD980>unsaved changes</color>" : _status, ConfigSkin.Desc);

@@ -22,7 +22,7 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.2.81";
+        public const string PluginVersion = "0.2.90";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -168,10 +168,15 @@ namespace FiresCore
             configSync.AddLockingConfigEntry(ConfigManager.Instance.configServerAuthority);
             configSync.AddConfigEntry(ConfigManager.Instance.configVerboseLogging);
 
-            // HeightmapOverride: server-locked terrain height limits. Plan: Tools/HEIGHTMAP_OVERRIDE_PLAN.md
+            // HeightmapOverride: server-locked terrain height limits. Plan: Docs/HEIGHTMAP_OVERRIDE_PLAN.md
             FiresCore.Terrain.HeightmapOverrideConfig.Initialize(Config);
             FiresCore.Terrain.HeightmapOverrideConfig.BindToSync(configSync);
             FiresCore.Terrain.HeightmapOverrideStatus.ReportPatches();
+
+            // Progression: one character level then Valor, shared by FiresRPGClasses and the companion
+            // engine. Every rate is server-locked. Plan: Docs/PLAN_ClassesFoundation.md
+            FiresCore.Classes.ProgressionSettings.Initialize(Config);
+            FiresCore.Classes.ProgressionSettings.BindToSync(configSync);
 
             // BalrondCompat: server-locked toggles for our neutralization patches against specific
             // BalrondAmazingNature behaviors. Patches auto-activate through Harmony.PatchAll and
@@ -200,6 +205,10 @@ namespace FiresCore
             // FiresValcast NaturalWalk; min/max = the companion's own walk/run speed). Default ON.
             FiresCore.Npc.Core.MovementRampConfig.Initialize(Config);
             FiresCore.Npc.Core.MovementRampConfig.BindToSync(configSync);
+
+            // GroundRings: viewer preferences for the shared ability ground rings, deliberately NOT
+            // server-synced. Plan: Docs/PLAN_GroundRings.md
+            FiresCore.Npc.Archetypes.Effects.GroundRingConfig.Initialize(Config);
         }
 
         private void TryDisposeConfigManager()

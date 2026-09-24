@@ -47,6 +47,7 @@ namespace FiresCore.UI
         internal static ConfigEntry<float> CfgWindowScale;
         internal static ConfigEntry<bool> CfgUseGameGuiScale;
         internal static ConfigEntry<bool> CfgPauseGame;
+        internal static ConfigEntry<bool> CfgWarnKeybindConflicts;
 
         /// <summary>True when the window should show settings a mod tagged as advanced.</summary>
         public static bool ShowAdvanced => CfgShowAdvanced != null && CfgShowAdvanced.Value;
@@ -62,6 +63,9 @@ namespace FiresCore.UI
         public static bool UseGameGuiScale => CfgUseGameGuiScale == null || CfgUseGameGuiScale.Value;
 
         public static bool PauseGame => CfgPauseGame != null && CfgPauseGame.Value;
+
+        /// <summary>True when the window should list unresolved keybind conflicts the first time it opens each session.</summary>
+        public static bool WarnKeybindConflicts => CfgWarnKeybindConflicts == null || CfgWarnKeybindConflicts.Value;
 
         /// <summary>Bind the window's own settings and register that config so its section appears in the window.</summary>
         public static void BindAppearance(ConfigFile cfg)
@@ -92,6 +96,10 @@ namespace FiresCore.UI
                 + "matches the rest of the game's UI. Turn this off to size the window purely by WindowScale.");
             CfgPauseGame = cfg.Bind(Section, "10 PauseGame", false,
                 "Pause the game while the config window is open, when the game can be paused (single player).");
+            CfgWarnKeybindConflicts = cfg.Bind(Section, "11 WarnKeybindConflicts", true,
+                "List unresolved keybind conflicts the first time the window opens each session - two mods on "
+                + "the same key, a mod and Valheim, or a modifier that is itself a bound key. Conflicts you "
+                + "choose to keep are remembered and never listed again.");
 
             CfgFiresOnly.SettingChanged += (sender, args) => CfgDiscovery.Rebuild();
             CfgMenuButton.SettingChanged += (sender, args) => ConfigMenuButton.Refresh();

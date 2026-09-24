@@ -371,7 +371,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Ranger
                         float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                         if (dist <= HealRange)
                         {
-                            character.Heal(HealPerHit, true);
+                            AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealPerHit, true);
                         }
                     }
                 }

@@ -7,8 +7,8 @@ namespace FiresCore.Bridge
     /// <summary>
     /// Cross-mod seam for the env-box TERRAIN side. The portable env-box engine
     /// (<see cref="EnvironmentBoxController"/>) lives in Core and drives the env/skybox/enclosure atmosphere
-    /// itself; the terrain/clutter/snow-on-pieces work — which depends on FiresAdminTerrain's heightmap, clutter,
-    /// and snow systems — routes through this provider. FAT registers one provider; while none is registered
+    /// itself; the terrain/clutter work - which depends on FiresAdminTerrain's heightmap and clutter
+    /// systems - routes through this provider. FAT registers one provider; while none is registered
     /// every call is a null-safe no-op, so a Core consumer that only wants the dark-crypt atmosphere (no biome
     /// terrain override) needs no FAT at all. Mirrors <see cref="GuildBridge"/>.
     /// </summary>
@@ -19,8 +19,6 @@ namespace FiresCore.Bridge
         void RefreshTerrainInBounds(Bounds b);
         void RefreshClutterInBounds(Bounds b);
         void RestoreTerrainInBounds(EnvironmentBoxController box);
-        void ApplySnowToPieces(int boxId, Bounds b);
-        void RemoveSnowFromPieces(int boxId);
     }
 
     public static class EnvironmentBoxBridge
@@ -61,16 +59,6 @@ namespace FiresCore.Bridge
         public static void RestoreTerrainInBounds(EnvironmentBoxController box)
         {
             try { _impl?.RestoreTerrainInBounds(box); } catch (Exception ex) { Warn(ex); }
-        }
-
-        public static void ApplySnowToPieces(int boxId, Bounds b)
-        {
-            try { _impl?.ApplySnowToPieces(boxId, b); } catch (Exception ex) { Warn(ex); }
-        }
-
-        public static void RemoveSnowFromPieces(int boxId)
-        {
-            try { _impl?.RemoveSnowFromPieces(boxId); } catch (Exception ex) { Warn(ex); }
         }
 
         // ── spawn helpers (Core-side: build a persistent env box at runtime) ─────

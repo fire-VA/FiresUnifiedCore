@@ -39,6 +39,7 @@ namespace FiresCore.Npc.Archetypes
             TryRegister(() => rpc.Register<ZDOID, string, float, float>(RpcApplyAoeEffect, RPC_HandleAoEEffect), RpcApplyAoeEffect);
             TryRegister(() => rpc.Register<Vector3, string, float>(RpcSpawnFX, RPC_HandleSpawnFX), RpcSpawnFX);
             TryRegister(() => rpc.Register<ZDOID, string>(RpcRemoveSelfBuff, RPC_HandleRemoveSelfBuff), RpcRemoveSelfBuff);
+            TryRegister(() => AbilityHeals.RegisterRpc(rpc), AbilityHeals.RpcApplyHeal);
 
             _registeredOn = rpc;
 
@@ -787,7 +788,7 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>
         /// Finds a character by its ZDOID.
         /// </summary>
-        private static Character FindCharacterByZDOID(ZDOID zdoid)
+        internal static Character FindCharacterByZDOID(ZDOID zdoid)
         {
             if (zdoid == ZDOID.None) return null;
             

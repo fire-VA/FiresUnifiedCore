@@ -24,6 +24,7 @@ namespace FiresCore.Storage
         public static string Buffs       => Ensure(Path.Combine(Root, "Buffs"));
         public static string World       => Ensure(Path.Combine(Root, "World"));
         public static string Ui          => Ensure(Path.Combine(Root, "UI"));
+        public static string Classes     => Ensure(Path.Combine(Root, "Classes"));
         public static string Debug       => Ensure(Path.Combine(Root, "Debug"));
 
         // ── NPCs ──

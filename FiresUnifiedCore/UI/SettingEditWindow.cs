@@ -63,7 +63,7 @@ namespace FiresCore.UI
                 ConfigSkin.Hint);
             GUILayout.Space(4f);
 
-            _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.Height(DescriptionHeight));
+            _scroll = GUILayout.BeginScrollView(_scroll, ScaledLayout.Height(DescriptionHeight));
             GUILayout.Label(string.IsNullOrEmpty(descriptor.Description) ? "No description." : descriptor.Description,
                 ConfigSkin.Desc);
             GUILayout.EndScrollView();

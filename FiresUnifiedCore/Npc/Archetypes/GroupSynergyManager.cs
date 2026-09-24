@@ -419,7 +419,7 @@ namespace FiresCore.Npc.Archetypes
             foreach (var ally in allies)
             {
                 StatusEffectManager.ApplyInvulnerable(ally, HolyBastionInvulnerableSeconds);
-                ally.Heal(HolyBastionHealAmount, true);
+                AbilityHeals.Apply(null, ally, HolyBastionHealAmount, true);
             }
             
             AbilityFXManager.SpawnEffect("fx_shield_start", allies[0].transform.position, null, 2.5f);
@@ -508,7 +508,7 @@ namespace FiresCore.Npc.Archetypes
         {
             foreach (var ally in allies)
             {
-                ally.Heal(DivineHarmonyHealAmount, true);
+                AbilityHeals.Apply(null, ally, DivineHarmonyHealAmount, true);
                 StatusEffectManager.ApplySanctuary(ally, 0f, duration);
                 StatusEffectManager.ApplyDivineProtection(ally, 0f, duration);
             }
@@ -524,7 +524,7 @@ namespace FiresCore.Npc.Archetypes
             foreach (var ally in allies)
             {
                 StatusEffectManager.ApplyInnerPeace(ally, duration);
-                ally.Heal(ChiResonanceHealAmount, true);
+                AbilityHeals.Apply(null, ally, ChiResonanceHealAmount, true);
 
                 if (ally is Player player)
                 {

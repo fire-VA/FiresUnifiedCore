@@ -79,7 +79,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Base
             // Apply health regen if set
             if (HealthRegenBonus > 0f)
             {
-                m_character.Heal(HealthRegenBonus * dt, false);
+                AbilityHeals.Apply(SourceCharacter ?? m_character, m_character, HealthRegenBonus * dt, false);
             }
         }
         

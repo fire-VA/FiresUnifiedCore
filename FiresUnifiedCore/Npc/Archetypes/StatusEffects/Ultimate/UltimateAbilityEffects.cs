@@ -222,7 +222,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
                     // Heal allies
                     if (character.GetHealthPercentage() < 1f)
                     {
-                        character.Heal(AuraHealPerSecond, true);
+                        AbilityHeals.Apply(SourceCharacter ?? m_character, character, AuraHealPerSecond, true);
                     }
                 }
                 else

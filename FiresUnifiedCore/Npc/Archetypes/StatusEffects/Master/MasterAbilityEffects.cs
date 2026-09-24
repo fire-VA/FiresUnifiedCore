@@ -150,7 +150,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             
             if (healAmount > 0)
             {
-                target.Heal(healAmount, true);
+                AbilityHeals.Apply(SourceCharacter ?? m_character, target, healAmount, true);
             }
             
             // Visual feedback
@@ -634,7 +634,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                     float dist = Vector3.Distance(pos, owner.transform.position);
                     if (dist <= Radius && owner.GetHealthPercentage() < 1f)
                     {
-                        owner.Heal(HealPerTick, true);
+                        AbilityHeals.Apply(SourceCharacter ?? m_character, owner, HealPerTick, true);
                         SpawnVFX("fx_creature_tamed", owner.transform.position);
                         
                         // Grant skill XP for healing ally
@@ -654,7 +654,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist <= Radius)
                 {
-                    character.Heal(HealPerTick, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealPerTick, true);
                     SpawnVFX("fx_creature_tamed", character.transform.position);
                     
                     // Grant skill XP for healing ally

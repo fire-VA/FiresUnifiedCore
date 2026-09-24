@@ -101,7 +101,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
                     // Heal allies
                     if (character.GetHealthPercentage() < 1f)
                     {
-                        character.Heal(HealPerTick, true);
+                        AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealPerTick, true);
                     }
                 }
                 else

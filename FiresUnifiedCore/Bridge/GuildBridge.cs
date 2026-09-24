@@ -12,8 +12,9 @@ namespace FiresCore.Bridge
     ///
     /// Membership queries are REMOTE-aware: <see cref="GetGuildMemberIds"/>/<see cref="GetGuildNameForPlayer"/>
     /// resolve for any player id (not just the local player), because territory/PvP checks ask about others.
-    /// The FiresGuilds host wires <see cref="NpcCompanionBridge.OwnersAllied"/> to <see cref="AreGuilded"/>
-    /// (OR'd with <see cref="GroupBridge.AreGrouped"/>). Player ids are <c>Player.GetPlayerID()</c> (long).
+    /// Companion allegiance needs no wiring from a host: <see cref="NpcCompanionBridge.AreOwnersAllied"/>
+    /// consults this bridge OR'd with <see cref="GroupBridge.AreGrouped"/> whenever no host has assigned
+    /// <see cref="NpcCompanionBridge.OwnersAllied"/>. Player ids are <c>Player.GetPlayerID()</c> (long).
     /// </summary>
     public interface IGuildProvider
     {

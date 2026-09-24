@@ -82,7 +82,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Healer
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(HealPerSecond, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealPerSecond, true);
                 }
             }
         }
@@ -147,7 +147,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Healer
                     float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                     if (dist <= GroupRange)
                     {
-                        character.Heal(PreHealAmount, true);
+                        AbilityHeals.Apply(SourceCharacter ?? m_character, character, PreHealAmount, true);
                         AbilityFXManager.SpawnEffect("fx_creature_tamed", character.transform.position, null, 0.4f);
                     }
                 }
@@ -267,7 +267,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Healer
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(healAmount, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, healAmount, true);
                     AbilityFXManager.SpawnEffect("fx_creature_tamed", character.transform.position, null, 0.4f);
                 }
             }
@@ -358,7 +358,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Healer
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(HealPerSecond, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealPerSecond, true);
                 }
             }
         }
@@ -447,7 +447,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Healer
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(currentHeal, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, currentHeal, true);
                 }
             }
         }
@@ -505,7 +505,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Healer
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(HealBurstAmount, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealBurstAmount, true);
                     StatusEffectManager.ApplyArcaneShield(character, 10f, ShieldAmount);
                     AbilityFXManager.SpawnEffect("vfx_Potion_eitr_minor", character.transform.position, null, 0.5f);
                 }
@@ -590,7 +590,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Healer
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
                 {
-                    character.Heal(HealPerSecond, true);
+                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealPerSecond, true);
                     character.AddStamina(StaminaRestorePerSecond);
                     
                     if (character is Player player)

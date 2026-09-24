@@ -54,17 +54,31 @@ namespace FiresCore.Bridge
         }
 
         /// <summary>
-        /// True when two companion owners are on the same side and should be immune to each other's
-        /// companion damage. Same owner is always allied; a party/guild system can assign
-        /// <see cref="OwnersAllied"/> to extend this to teammates. Null/absent ⇒ only same-owner.
+        /// Overrides who counts as allied for companion damage and targeting. A social mod that owns
+        /// both groups and guilds itself (TerresDeViking) assigns this to impose its own answer.
+        /// Leave it null and <see cref="AreOwnersAllied"/> answers from the Core social bridges instead.
         /// </summary>
         public static Func<long, long, bool> OwnersAllied;
 
+        /// <summary>
+        /// True when two companion owners are on the same side and should be immune to each other's
+        /// companion damage. Same owner is always allied. Otherwise a host-assigned
+        /// <see cref="OwnersAllied"/> decides, and with none assigned party membership
+        /// (<see cref="GroupBridge"/>) or guild membership (<see cref="GuildBridge"/>) does - both
+        /// null-safe, so a stack with neither registered falls back to same-owner-only.
+        /// </summary>
         public static bool AreOwnersAllied(long ownerA, long ownerB)
         {
             if (ownerA == 0L || ownerB == 0L) return false;
             if (ownerA == ownerB) return true;
-            try { return OwnersAllied?.Invoke(ownerA, ownerB) ?? false; } catch { return false; }
+
+            var resolver = OwnersAllied;
+            if (resolver != null)
+            {
+                try { return resolver(ownerA, ownerB); } catch { return false; }
+            }
+
+            return GroupBridge.AreGrouped(ownerA, ownerB) || GuildBridge.AreGuilded(ownerA, ownerB);
         }
     }
 }
