@@ -1,3 +1,24 @@
+* v0.2.80 - the Fires config window replaces ConfigurationManager, config file editor, hidden settings, bigger readable text
+  - NOT YET WRITTEN UP: the changes between v0.2.61 and v0.2.79 from the other work streams (performance, banners, companions) still need their entries here; the notes below cover the config window only
+  - the Fires config window now covers EVERY installed mod, not just the Fires family, so shudnal's ConfigurationManager is no longer needed beside it; a "Fires only" tick narrows the list back down
+  - it opens with F1, or with F8 if another configuration manager is installed and would claim F1; the console command va_config still works
+  - Settings in the main menu and in the pause menu both gained a "Mod Settings" entry, so the window is reachable without knowing a hotkey
+  - the window reads the same setting names, ordering, descriptions and advanced or hidden marks that mods already ship for ConfigurationManager, so other people's mods look right in it with nothing to change on their side
+  - settings the server has locked now show greyed out and refuse edits, instead of looking editable and quietly snapping back to the server's value
+  - settings with a list of choices open a proper drop-down instead of cycling one value per click, and a setting that holds several options at once shows one tick box per option
+  - settings with a range show a slider and a number box you can type an exact value into
+  - colour settings open a picker with red, green, blue and transparency sliders; position and rotation settings get one box per number
+  - keybinds: click the value box, press the keys you want including modifiers, then Apply; Esc cancels and X clears the bind
+  - the window's hotkey opens it while you are moving - before, holding a movement key stopped it firing
+  - a Files tab edits the raw .cfg, .yml and .json files under BepInEx/config from in game, and saving one reloads the mod that owns it
+  - double-click a setting's name for a window with its full description, type and default, which is where the long descriptions the list has to cut to one line can be read
+  - server admins can hide settings from ordinary players with BepInEx/config/FiresRPGmaker/UI/hidden_settings.yml, one ModGuid=Section=Key per line and * allowed for any part; admins and the host still see everything, and the server sends the list to every player
+  - A- and A+ in the title bar scale the window and its text together, and the text is redrawn at the larger size rather than stretched, so it stays sharp; clicking the percentage resets it to 100%
+  - the window can pause single player while it is open, if you turn that on
+  - the tick boxes for Advanced, Keybinds and All mods replace the buttons that used to report their own state, and Keybinds narrows the whole window to keybind settings across every mod
+  - moving and resizing the window no longer loses the drag after a frame
+  - setting descriptions no longer run underneath the Reset buttons
+
 * v0.2.60 - safer building wear, faster loading of built-up areas, main-menu tools for mods, lighter file watching, better companions
   - heavily built areas load and unload faster: each building piece no longer copies its whole area's piece list when it appears or goes away (a vanilla cost that grew with the square of the pieces in one area)
   - buildings don't wear or collapse while the ground under them is still loading

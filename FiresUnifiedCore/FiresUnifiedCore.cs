@@ -22,7 +22,7 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.2.80";
+        public const string PluginVersion = "0.2.81";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -79,6 +79,7 @@ namespace FiresCore
             FiresCore.IO.FileWatchHubConfig.Initialize(Harmony, Config);
             FiresCore.Lifecycle.CollisionCallbackReuse.Initialize(Config);
             FiresCore.Lifecycle.GroundDataThrottle.Initialize(Config);
+            FiresCore.World.DistantSectorSkip.Initialize(Config);
             InstallLogFilter();
             InitializeConfigAndSync();
 
@@ -129,6 +130,8 @@ namespace FiresCore
             // Re-enumerate config now that every mod has bound (some bind after Core.Setup). The window also
             // rebuilds on open, but this primes the cache so va_config_dump is accurate before first open.
             FiresCore.UI.CfgDiscovery.Rebuild();
+
+            FiresCore.Terrain.HeightmapOverrideStatus.ReportLimits();
         }
 
         protected override void Shutdown()
@@ -165,12 +168,10 @@ namespace FiresCore
             configSync.AddLockingConfigEntry(ConfigManager.Instance.configServerAuthority);
             configSync.AddConfigEntry(ConfigManager.Instance.configVerboseLogging);
 
-            // HeightmapOverride: built-in terrain height-clamp override (replaces the
-            // Jotunn-dependent HeightmapUnlimited). Server-locked; toggle via the
-            // [HeightmapOverride] Enabled key. The TerrainComp transpilers auto-activate
-            // through Harmony.PatchAll and no-op while Enabled is false.
+            // HeightmapOverride: server-locked terrain height limits. Plan: Tools/HEIGHTMAP_OVERRIDE_PLAN.md
             FiresCore.Terrain.HeightmapOverrideConfig.Initialize(Config);
             FiresCore.Terrain.HeightmapOverrideConfig.BindToSync(configSync);
+            FiresCore.Terrain.HeightmapOverrideStatus.ReportPatches();
 
             // BalrondCompat: server-locked toggles for our neutralization patches against specific
             // BalrondAmazingNature behaviors. Patches auto-activate through Harmony.PatchAll and

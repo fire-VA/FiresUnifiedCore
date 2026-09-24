@@ -169,7 +169,9 @@
     <Compile Include="FiresUnifiedCore.cs" />
     <Compile Include="Debug\SleepDiag.cs" />
     <Compile Include="Terrain\HeightmapOverrideConfig.cs" />
+    <Compile Include="Terrain\HeightmapOverrideLimits.cs" />
     <Compile Include="Terrain\HeightmapOverridePatches.cs" />
+    <Compile Include="Terrain\HeightmapOverrideStatus.cs" />
     <Compile Include="Terrain\VASnapToGroundSpreadPatch.cs" />
     <Compile Include="Bridge\BoneEditingBridge.cs" />
     <Compile Include="Bridge\GroupHudBridge.cs" />
@@ -636,6 +638,7 @@
     <Compile Include="Lifecycle\CollisionCallbackReuse.cs" />
     <Compile Include="Lifecycle\GroundDataThrottle.cs" />
     <Compile Include="World\SectorChanges.cs" />
+    <Compile Include="World\DistantSectorSkip.cs" />
     <Compile Include="Lifecycle\FiresMod.cs" />
     <Compile Include="Lifecycle\PlayerSpawnGate.cs" />
     <Compile Include="Logging\Banner.cs" />
