@@ -182,6 +182,8 @@ namespace FiresCore.World
             if (first) return;
             string line = TakeAuditLine();
             if (line != null) FiresUnifiedCore.Log.LogInfo(line);
+            string skip = DistantSectorSkip.TakeReportLine();
+            if (skip != null) FiresUnifiedCore.Log.LogInfo(skip);
         }
 
         private static void Rebuild()

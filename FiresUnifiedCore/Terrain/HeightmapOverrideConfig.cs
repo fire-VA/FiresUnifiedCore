@@ -1,4 +1,3 @@
-using System;
 using BepInEx.Configuration;
 
 using FiresCore.Sync;
@@ -6,70 +5,50 @@ using FiresCore.Sync;
 namespace FiresCore.Terrain
 {
     /// <summary>
-    /// Config entries for the built-in heightmap override module.
-    ///
-    /// Replaces the external HeightmapUnlimited (Jotunn-dependent) mod.
-    /// Allows server admins to configure how far terrain can be raised or
-    /// lowered beyond Valheim's default ±8 unit clamp.
-    ///
-    /// All entries are server-locked via ConfigSync.
+    /// Config for the built-in heightmap override: how far terrain may be raised or lowered from its generated
+    /// height. All entries are server-locked via ConfigSync. Read at call time by <see cref="HeightmapOverrideLimits"/>.
     /// </summary>
     public static class HeightmapOverrideConfig
     {
-        // Config Entries
+        private const string Section = "HeightmapOverride";
+        private const float HeightLimitRange = 1000f;
+        private const float MinimumLimitMagnitude = 1f;
+
         public static ConfigEntry<bool>  Enabled;
         public static ConfigEntry<float> MaxHeight;
         public static ConfigEntry<float> MinHeight;
 
-        // Accessor Helpers (used directly by transpiler call targets)
-
-        /// <summary>Returns the configured minimum height delta (negative value).</summary>
-        public static float Min() => MinHeight.Value;
-
-        /// <summary>Returns the absolute value of the configured minimum height delta.</summary>
-        public static float MinAbs() => Math.Abs(MinHeight.Value);
-
-        /// <summary>Returns the configured maximum height delta (positive value).</summary>
-        public static float Max() => MaxHeight.Value;
-
-        // Initialization
-
-        /// <summary>
-        /// Bind all heightmap override config entries.
-        /// Called from FiresUnifiedCore config init.
-        /// </summary>
         public static void Initialize(ConfigFile config)
         {
             Enabled = config.Bind(
-                "HeightmapOverride", "Enabled", true,
-                "Enable the built-in heightmap limit override. " +
-                "When true, terrain can be raised/lowered beyond Valheim's default ±8 unit clamp. " +
-                "[Synced with Server]");
+                Section, "Enabled", true,
+                "Lift Valheim's 8 m limit on raising and lowering terrain, to the MaxHeight / MinHeight below. " +
+                "Applies live, no restart. The log reports the limits in force. [Synced with Server]");
 
             MaxHeight = config.Bind(
-                "HeightmapOverride", "MaxHeight", 1000f,
+                Section, "MaxHeight", HeightLimitRange,
                 new ConfigDescription(
-                    "How high terrain can be stacked relative to its original position. " +
-                    "Replaces Valheim's hard-coded +8 limit. [Synced with Server]",
-                    new AcceptableValueRange<float>(1f, 1000f)));
+                    "How far terrain can be raised above its generated height, in metres. Vanilla is 8. [Synced with Server]",
+                    new AcceptableValueRange<float>(MinimumLimitMagnitude, HeightLimitRange)));
 
             MinHeight = config.Bind(
-                "HeightmapOverride", "MinHeight", -1000f,
+                Section, "MinHeight", -HeightLimitRange,
                 new ConfigDescription(
-                    "How far terrain can be dug down relative to its original position. " +
-                    "Replaces Valheim's hard-coded -8 limit. [Synced with Server]",
-                    new AcceptableValueRange<float>(-1000f, -1f)));
+                    "How far terrain can be dug below its generated height, in metres (negative). Vanilla is -8. [Synced with Server]",
+                    new AcceptableValueRange<float>(-HeightLimitRange, -MinimumLimitMagnitude)));
+
+            Enabled.SettingChanged += OnLimitsChanged;
+            MaxHeight.SettingChanged += OnLimitsChanged;
+            MinHeight.SettingChanged += OnLimitsChanged;
         }
 
-        /// <summary>
-        /// Register all entries with the ConfigSync instance so that server values
-        /// override client values. Called from FiresUnifiedCore config sync.
-        /// </summary>
         public static void BindToSync(ConfigSync configSync)
         {
             configSync.AddConfigEntry(Enabled);
             configSync.AddConfigEntry(MaxHeight);
             configSync.AddConfigEntry(MinHeight);
         }
+
+        private static void OnLimitsChanged(object sender, System.EventArgs e) => HeightmapOverrideStatus.ReportLimits();
     }
 }
