@@ -1,8 +1,3 @@
-* v0.2.97 - a creature rule can set health to an exact number
-  - a creature rule can now set health to an exact number instead of only multiplying the prefab's own value; the multiplier is still used when no exact number is given, so rules saved before this keep working unchanged
-  - the number is the health of an unstarred creature, and stars and world level scale up from it as usual
-  - what a star is worth is editable too: health and damage each have a per-star multiplier, set to vanilla's x2 health and x1.5 damage unless you change them
-  - preset creatures are left alone by all of it, as they are by every other per-species rule - a preset is exactly what it was set to
 * v0.2.80 - the Fires config window replaces ConfigurationManager, config file editor, hidden settings, bigger readable text
   - NOT YET WRITTEN UP: the changes between v0.2.61 and v0.2.79 from the other work streams (performance, banners, companions) still need their entries here; the notes below cover the config window only
   - the Fires config window now covers EVERY installed mod, not just the Fires family, so shudnal's ConfigurationManager is no longer needed beside it; a "Fires only" tick narrows the list back down

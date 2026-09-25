@@ -98,12 +98,10 @@ namespace FiresCore.Dungeon
                 };
                 held.Add(data);
 
-                if (roomByHash == null || !roomByHash.ContainsKey(hash))
-                {
-                    rooms.Add(data);
-                    if (roomByHash != null) roomByHash[hash] = data;
+                bool firstTime = roomByHash == null || !roomByHash.ContainsKey(hash);
+                PutRoomInDb(rooms, roomByHash, hash, data);
+                if (firstTime)
                     Debug.Log($"{spec.LogTag} registered room '{prefabName}' (hash {hash}) theme={spec.NamedTheme}.");
-                }
             }
         }
 
@@ -276,7 +274,8 @@ namespace FiresCore.Dungeon
             // already generated? (Save always writes s_roomData). Then leave it alone.
             if (zdo.GetByteArray(ZDOVars.s_roomData, out byte[] data) && data != null && data.Length >= 4) return;
 
-            Debug.Log($"{spec.LogTag} stale dungeon DG at {generator.transform.position} has no saved rooms — scheduling a regenerate.");
+            // No log here: vanilla's own SpawnLocation also runs this Awake postfix BEFORE its Generate, so a dungeon
+            // being born looks "stale" for one frame. The routine logs if it genuinely regenerates.
             FiresDungeonService.RegenerateDungeonSoon(generator, spec);
         }
 
@@ -494,7 +493,9 @@ namespace FiresCore.Dungeon
 
             int dbCount = DungeonDB.GetRooms()?.Count ?? -1;
             int present = CountOursInDb(held);
-            Debug.Log($"{spec.LogTag} SetupAvailableRooms[{generator.gameObject.name}]: DungeonDB rooms={dbCount}, ours-in-DB={present}/{held.Count}, " +
+            int indexed = CountOursInRoomIndex(held);
+            Debug.Log($"{spec.LogTag} SetupAvailableRooms[{generator.gameObject.name}]: DungeonDB rooms={dbCount}, ours-in-DB={present}/{held.Count} " +
+                      $"(byHash {indexed}/{held.Count} — what a saved dungeon reloads through), " +
                       $"availableBefore={hadBefore} -> availableAfter={available.Count} (theme={spec.NamedTheme}).");
         }
 
@@ -525,14 +526,58 @@ namespace FiresCore.Dungeon
             if (rooms == null) return;
             var roomByHash = GetRoomByHash(dungeonDb);
 
+            int healed = 0;
             foreach (var roomData in held)
             {
                 if (roomData == null || !roomData.m_prefab.IsValid) continue;
-                int hash = roomData.m_prefab.Name.GetStableHashCode();
-                if (roomByHash != null && roomByHash.ContainsKey(hash)) continue;
-                rooms.Add(roomData);
-                if (roomByHash != null) roomByHash[hash] = roomData;
+                if (PutRoomInDb(rooms, roomByHash, roomData.m_prefab.Name.GetStableHashCode(), roomData)) healed++;
             }
+            if (healed > 0 && FiresLogger.VerboseEnabled)
+                FiresLogger.LogInfo($"{spec.LogTag} DungeonDB re-pointed {healed} room entr{(healed == 1 ? "y" : "ies")} at the current room data.");
+        }
+
+        /// <summary>
+        /// Make the DungeonDB entry for <paramref name="hash"/> BE <paramref name="data"/>, in both the hash index
+        /// (what a saved dungeon's Load resolves through) and the room list (what the theme filter walks). A second
+        /// DungeonDB.Start builds fresh RoomData while the index still holds the first pass's objects; when that
+        /// first pass ran before the bundle loaded, its entry is a DEAD SoftReference and every saved dungeon loses
+        /// its rooms ("Missing room"). Same-name stragglers are dropped so one name means one entry. Returns true
+        /// when anything changed.
+        /// </summary>
+        private static bool PutRoomInDb(List<DungeonDB.RoomData> rooms, Dictionary<int, DungeonDB.RoomData> roomByHash,
+            int hash, DungeonDB.RoomData data)
+        {
+            bool changed = false;
+            if (roomByHash != null
+                && (!roomByHash.TryGetValue(hash, out var indexed) || !ReferenceEquals(indexed, data)))
+            {
+                roomByHash[hash] = data;
+                changed = true;
+            }
+            if (!rooms.Contains(data))
+            {
+                string name = data.m_prefab.Name;
+                rooms.RemoveAll(r => r != null && r.m_prefab.IsValid && r.m_prefab.Name == name && !ReferenceEquals(r, data));
+                rooms.Add(data);
+                changed = true;
+            }
+            return changed;
+        }
+
+        // How many of our rooms the hash index resolves to the CURRENT data — the lookup DungeonGenerator.Load uses.
+        private static int CountOursInRoomIndex(List<DungeonDB.RoomData> held)
+        {
+            var dungeonDb = DungeonDB.instance;
+            var roomByHash = dungeonDb != null ? GetRoomByHash(dungeonDb) : null;
+            if (roomByHash == null) return -1;
+            int count = 0;
+            foreach (var roomData in held)
+            {
+                if (roomData == null || !roomData.m_prefab.IsValid) continue;
+                if (roomByHash.TryGetValue(roomData.m_prefab.Name.GetStableHashCode(), out var indexed)
+                    && ReferenceEquals(indexed, roomData)) count++;
+            }
+            return count;
         }
 
         private static int CountOursInDb(List<DungeonDB.RoomData> held)

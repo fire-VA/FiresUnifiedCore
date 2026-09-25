@@ -41,9 +41,13 @@ namespace FiresCore.Logging
         // with the body only when the count matches what is drawn, so being wrong by one in either direction shows up
         // as a border that overhangs its corner or falls short of it.
         //
-        // Default 0 = work it out per glyph, which is right on every console tested: a VS16 colour sequence or a BMP
-        // Emoji_Presentation character advances two cells, a bare astral pictograph advances one. 1 or 2 forces every
-        // emoji to that width for a terminal that does something else.
+        // Default 0 = work it out per glyph: every emoji here advances two cells, whether it carries VS16, is a BMP
+        // Emoji_Presentation character, or is a bare astral pictograph. 1 or 2 forces every emoji to that width for a
+        // terminal that does something else.
+        //
+        // Worth knowing if this ever looks wrong again: an old default written into a config file outlives the default
+        // that wrote it. Shipping 1 here once put `BannerEmojiColumns = 1` in every deployed config, and later builds
+        // changing the default could not take it back out - BepInEx does not rewrite a file that already has the key.
         private const int DefaultEmojiColumns = 0;
         private const string EmojiSection = "Logging";
         private const string EmojiColumnsKey = "BannerEmojiColumns";
@@ -82,17 +86,40 @@ namespace FiresCore.Logging
         public static void EmitBox(string title, string[] lines, string tag, int innerWidth)
         {
             string emitTag = string.IsNullOrEmpty(tag) ? LogTag : tag;
-            int width = Math.Max(innerWidth, BoxInnerWidth);
             try
             {
-                EmitTopBorder(title, emitTag, width);
-                EmitBodyLines(lines ?? Array.Empty<string>(), emitTag, width);
-                EmitBottomBorder(emitTag, width);
+                foreach (var line in FormatBox(title, lines, innerWidth))
+                    EmitLine($"{emitTag} {line}");
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"{emitTag} EmitBox failed: {ex.Message}");
             }
+        }
+
+        // The box as lines, built but NOT emitted, and without a tag.
+        //
+        // For a mod that wants this width model while still logging through its OWN BepInEx
+        // source: FiresLogColorPatch colours by source name and the console prefixes by it, so a
+        // mod emitting through Core's source would print as FiresUnifiedCore. Format here, emit
+        // there, and the arithmetic lives in one place without costing attribution.
+        //
+        // That arithmetic is the whole reason to share it: cells are counted per text element
+        // against the emoji model above, including wide BMP pictographs, and it honours
+        // BannerEmojiColumns — none of which a private renderer picks up.
+        public static string[] FormatMiniBox(string title, string[] lines)
+            => FormatBox(title, lines, BoxInnerWidth);
+
+        public static string[] FormatBox(string title, string[] lines, int innerWidth)
+        {
+            int width = Math.Max(innerWidth, BoxInnerWidth);
+            var body = lines ?? Array.Empty<string>();
+            var box = new string[body.Length + 2];
+
+            box[0] = BuildTopBorder(title, width);
+            for (int i = 0; i < body.Length; i++) box[i + 1] = BuildBodyLine(body[i], width);
+            box[box.Length - 1] = BuildBottomBorder(width);
+            return box;
         }
 
         // Per-mod emitter factory. Build once in the consumer's Setup,
@@ -130,13 +157,12 @@ namespace FiresCore.Logging
         {
             char first = element[0];
             if (char.IsControl(first) || CharUnicodeInfo.GetUnicodeCategory(first) == UnicodeCategory.Format) return 0;
-            // Two cells for an emoji the terminal is being asked to draw in colour - a VS16 sequence, or a BMP
-            // character that carries Emoji_Presentation on its own. One for a bare astral pictograph, which advances
-            // a single cell. WithEmojiPresentation puts VS16 on most box titles, so most land on the two-cell path.
-            if (element.IndexOf(EmojiPresentation) >= 0 || IsWideBmpEmoji(first))
+            // Every emoji here is two cells: a VS16 sequence, a BMP character carrying Emoji_Presentation, and a bare
+            // astral pictograph alike. Measured against the emitted bytes of 21 real boxes rather than guessed from a
+            // screenshot - the same emoji appears with and without VS16 across the stack (bare in FAT's 'RPCs', VS16
+            // in Discord's 'DISCORD LINK'), and both have to count the same or the two renderers disagree by one.
+            if (element.IndexOf(EmojiPresentation) >= 0 || IsWideBmpEmoji(first) || char.IsSurrogatePair(element, 0))
                 return EmojiColumns > 0 ? EmojiColumns : 2;
-            if (char.IsSurrogatePair(element, 0))
-                return EmojiColumns > 0 ? EmojiColumns : 1;
             return 1;
         }
 
@@ -176,7 +202,7 @@ namespace FiresCore.Logging
             return text;
         }
 
-        private static void EmitTopBorder(string title, string tag, int innerWidth)
+        private static string BuildTopBorder(string title, int innerWidth)
         {
             string safeTitle = WithEmojiPresentation(title ?? string.Empty);
             int titleSlotWidth = innerWidth - (TitleSidePadding * 2);
@@ -184,35 +210,27 @@ namespace FiresCore.Logging
             int leftDecoration = decorationWidth / 2;
             int rightDecoration = decorationWidth - leftDecoration;
 
-            string top =
-                TopLeftCorner
+            return TopLeftCorner
                 + new string(HorizontalRule, leftDecoration + TitleSidePadding)
                 + SpaceChar + safeTitle + SpaceChar
                 + new string(HorizontalRule, rightDecoration + TitleSidePadding)
                 + TopRightCorner;
-
-            EmitLine($"{tag} {top}");
         }
 
-        private static void EmitBodyLines(string[] lines, string tag, int innerWidth)
+        private static string BuildBodyLine(string raw, int innerWidth)
         {
-            foreach (var raw in lines)
-            {
-                string content = FitWidth(raw ?? string.Empty, innerWidth, out int width);
-                EmitLine($"{tag} {VerticalRule} {content}{new string(SpaceChar, innerWidth - width)} {VerticalRule}");
-            }
+            string content = FitWidth(raw ?? string.Empty, innerWidth, out int width);
+            return $"{VerticalRule} {content}{new string(SpaceChar, innerWidth - width)} {VerticalRule}";
         }
 
         // Body lines span 1 space + the inner width + 1 space between the verticals,
         // so the bottom rule is innerWidth + 2 — not +4, which overshot the
         // frame by two cells.
-        private static void EmitBottomBorder(string tag, int innerWidth)
+        private static string BuildBottomBorder(int innerWidth)
         {
-            string bottom =
-                BottomLeftCorner
+            return BottomLeftCorner
                 + new string(HorizontalRule, innerWidth + TitleSidePadding)
                 + BottomRightCorner;
-            EmitLine($"{tag} {bottom}");
         }
 
         // Routes a summary line through Core's BepInEx log source instead of

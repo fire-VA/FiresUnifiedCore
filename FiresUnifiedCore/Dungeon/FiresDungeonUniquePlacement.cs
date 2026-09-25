@@ -25,6 +25,7 @@ namespace FiresCore.Dungeon
     public static class FiresDungeonUniquePlacement
     {
         private static MethodInfo _registerLocationMethod;
+        private static string _lastMismatchWarning;
 
         private static bool Matches(ZoneSystem.LocationInstance li, DungeonSpec spec)
         {
@@ -204,11 +205,22 @@ namespace FiresCore.Dungeon
             {
                 if (placed > 0)
                 {
+                    // Zone mode PARKS a converted world's explored land: the dungeon's objects are in the park file,
+                    // not the world, and they come back with the zone. That is not a mismatch.
+                    if (Bridge.FiresZoneModeBridge.Active && Bridge.FiresZoneModeBridge.IsZoneParked(instZone))
+                        return $"pending: the dungeon is parked with zone {instZone} (converted world) — it returns when that zone opens.";
+
                     // The record claims placed but the world holds nothing — a rolled-back world or an external wipe.
-                    // Do NOT auto-place over a possibly-wrong scan; surface it and let an admin decide.
-                    Debug.LogWarning($"{spec.LogTag} ONE-PER-WORLD: instance record at {instPos} says PLACED but no live " +
-                                     "structure was found on the map. Not auto-placing (would risk a duplicate if the " +
-                                     "scan missed it). Verify, then use the manual spawn command after removing the record.");
+                    // Do NOT auto-place over a possibly-wrong scan; surface it and let an admin decide. Warned ONCE per
+                    // state: this is re-checked on a timer, and it used to warn on every retry.
+                    string key = spec.DgNamePrefix + "@" + instPos;
+                    if (_lastMismatchWarning != key)
+                    {
+                        _lastMismatchWarning = key;
+                        Debug.LogWarning($"{spec.LogTag} ONE-PER-WORLD: instance record at {instPos} says PLACED but no live " +
+                                         "structure was found on the map. Not auto-placing (would risk a duplicate if the " +
+                                         "scan missed it). Verify, then use the manual spawn command after removing the record.");
+                    }
                     return $"mismatch: placed record at {instPos} but no structure found — manual review.";
                 }
                 // Zone-mode world: the pending zone must be OPEN for vanilla to ever populate it. Opening is idempotent,
