@@ -551,6 +551,7 @@
     <Compile Include="UI\FiresModIcons.cs" />
     <Compile Include="UI\InputBlock.cs" />
     <Compile Include="UI\MenuDialog.cs" />
+    <Compile Include="UI\VanillaClone.cs" />
     <Compile Include="UI\MiniGameCamera.cs" />
     <Compile Include="UI\MiniGameCameraTuner.cs" />
     <Compile Include="UI\ItemIconRenderer.cs" />
@@ -676,6 +677,7 @@
     <Compile Include="Lifecycle\AdminCheck.cs" />
     <Compile Include="Lifecycle\CollisionCallbackReuse.cs" />
     <Compile Include="Lifecycle\GroundDataThrottle.cs" />
+    <Compile Include="Lifecycle\IntroCinematicSkip.cs" />
     <Compile Include="World\SectorChanges.cs" />
     <Compile Include="World\DistantSectorSkip.cs" />
     <Compile Include="Lifecycle\FiresMod.cs" />
