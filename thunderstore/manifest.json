@@ -1,6 +1,6 @@
 {
     "name":  "FiresUnifiedCore",
-    "version_number":  "0.2.96",
+    "version_number":  "0.2.97",
     "website_url":  "https://github.com/fire-VA/FiresUnifiedCore",
     "description":  "Shared core library for the Fires mod family: NPC engine, config sync + admin gating, networking helpers, storage (LiteDB vault), UI framework, input capture. Required by the other Fires mods.",
     "dependencies":  [

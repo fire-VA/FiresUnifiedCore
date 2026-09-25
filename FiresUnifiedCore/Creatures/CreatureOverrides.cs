@@ -28,6 +28,7 @@ namespace FiresCore.Creatures
         private const float MaxMultiplier = 100f;
         private const float VanillaStarChance = 0.1f;
         private const int VanillaMaxStars = 2;
+        private const float VanillaHealthPerStar = 2f;
         private const string PlayerPrefabName = "Player";
 
         private static readonly int RolledLevelKey = "FiresCreatureRolledLevel".GetStableHashCode();
@@ -69,6 +70,7 @@ namespace FiresCore.Creatures
                 MinStars = 0,
                 MaxStars = VanillaMaxStars,
                 StarChance = VanillaStarChance,
+                HealthValue = creaturePrefab.TryGetComponent(out Character character) ? character.m_health : 0f,
             };
             if (creaturePrefab.TryGetComponent(out CharacterDrop characterDrop))
             {
@@ -207,7 +209,13 @@ namespace FiresCore.Creatures
             [HarmonyPostfix]
             private static void Postfix(Character __instance, ref float __result)
             {
-                if (!__instance.IsPlayer() && TryGetActive(__instance.gameObject, out CreatureOverride entry) && entry.OverrideStats)
+                if (__instance.IsPlayer() || !TryGetActive(__instance.gameObject, out CreatureOverride entry) || !entry.OverrideStats)
+                    return;
+                // An absolute value replaces the prefab's m_health. Scaling __result by the ratio rather than
+                // assigning keeps vanilla's world-level multiplier, which is already folded into __result.
+                if (entry.HealthValue > 0f && __instance.m_health > 0f)
+                    __result *= entry.HealthValue / __instance.m_health;
+                else
                     __result *= entry.HealthMultiplier;
             }
         }
@@ -218,11 +226,36 @@ namespace FiresCore.Creatures
             [HarmonyPostfix]
             private static void Postfix(Humanoid ___m_character, ref float __result)
             {
-                if (___m_character != null && !___m_character.IsPlayer()
-                    && TryGetActive(___m_character.gameObject, out CreatureOverride entry) && entry.OverrideStats)
-                    __result *= entry.DamageMultiplier;
+                if (___m_character == null || ___m_character.IsPlayer()
+                    || !TryGetActive(___m_character.gameObject, out CreatureOverride entry) || !entry.OverrideStats)
+                    return;
+                // Vanilla returns 1 + (level - 1) * 0.5. Restate it with the rule's own per-star value so the
+                // editor's number IS what one star does, then keep the flat multiplier for older saved rules.
+                __result = StarFactor(entry.DamagePerStar, ___m_character.GetLevel()) * entry.DamageMultiplier;
             }
         }
+
+        // Health's star scaling lives in Character.SetupMaxHealth (base x level), not in GetMaxHealthBase, so
+        // changing what a star is worth has to happen here. Level 1 is vanilla's own answer, so leave it alone.
+        [HarmonyPatch(typeof(Character), "SetupMaxHealth")]
+        private static class ScaleHealthPerStar
+        {
+            [HarmonyPostfix]
+            private static void Postfix(Character __instance)
+            {
+                if (__instance == null || __instance.IsPlayer()
+                    || !TryGetActive(__instance.gameObject, out CreatureOverride entry) || !entry.OverrideStats)
+                    return;
+                int level = Mathf.Max(1, __instance.GetLevel());
+                if (level == 1 || Mathf.Approximately(entry.HealthPerStar, VanillaHealthPerStar))
+                    return;
+                __instance.SetMaxHealth(__instance.GetMaxHealthBase() * StarFactor(entry.HealthPerStar, level));
+            }
+        }
+
+        /// <summary>One star is worth <paramref name="perStar"/>; each further star adds the same again.</summary>
+        private static float StarFactor(float perStar, int level) =>
+            1f + Mathf.Max(0, level - 1) * (perStar - 1f);
 
         private static void RebuildActiveRules()
         {
