@@ -181,6 +181,7 @@
     <Compile Include="Terrain\HeightmapOverrideStatus.cs" />
     <Compile Include="Terrain\VASnapToGroundSpreadPatch.cs" />
     <Compile Include="Bridge\BoneEditingBridge.cs" />
+    <Compile Include="Bridge\MonsterPresetBridge.cs" />
     <Compile Include="Bridge\GroupHudBridge.cs" />
     <Compile Include="Bridge\ModUiRegistry.cs" />
     <Compile Include="Bridge\BiomeSectorAccess.cs" />

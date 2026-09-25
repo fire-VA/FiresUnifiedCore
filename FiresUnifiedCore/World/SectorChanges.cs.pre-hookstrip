@@ -27,6 +27,7 @@ namespace FiresCore.World
         private const int AuditSectorsPerPass = 64;
         private const double ReportSeconds = 300.0;
 
+        private static readonly int[] s_changedFrame = new int[SectorCount];
         private static readonly int[] s_distant = new int[SectorCount];
 
         private static readonly AccessTools.FieldRef<ZDOMan, List<ZDO>[]> s_objectsBySector
@@ -35,6 +36,11 @@ namespace FiresCore.World
         private static double s_nextAudit;
         private static double s_nextReport;
         private static int s_auditCursor;
+        private static ZDO s_lastMarked;
+        private static int s_lastMarkedFrame;
+
+        /// <summary>Counts up once per world update, so a caller can remember "as of frame N" and ask again later.</summary>
+        public static int Frame { get; private set; } = 1;
 
         /// <summary>True once a world is loaded and the counts have been built.</summary>
         public static bool Ready { get; private set; }
@@ -42,6 +48,19 @@ namespace FiresCore.World
         /// <summary>Sectors audited against a real count, and how many disagreed. A caller trusting this should look.</summary>
         public static long Audited { get; private set; }
         public static long Wrong { get; private set; }
+
+        /// <summary>The frame something in this sector last changed. An unknown sector answers "just now", so a caller
+        /// that compares against its own last-seen frame does the work rather than skipping it.</summary>
+        public static int ChangedFrame(uint sector) => sector < SectorCount ? s_changedFrame[sector] : Frame;
+
+        /// <summary>True when anything in any of these sectors has changed since the given frame.</summary>
+        public static bool AnyChangedSince(IList<uint> sectors, int since)
+        {
+            if (!Ready || sectors == null) return true;
+            for (int i = 0; i < sectors.Count; i++)
+                if (ChangedFrame(sectors[i]) >= since) return true;
+            return false;
+        }
 
         /// <summary>How many objects filed in this sector are flagged distant, or Unknown when it cannot be trusted.
         /// Only a confident zero means a caller may skip the sector.</summary>
@@ -53,6 +72,9 @@ namespace FiresCore.World
 
         public static bool HasNoDistantObjects(uint sector) => DistantCount(sector) == 0;
 
+        [HarmonyPatch(typeof(ZNet), "Update"), HarmonyPrefix, HarmonyPriority(Priority.First)]
+        static void NextFrame() => Frame++;
+
         [HarmonyPatch(typeof(ZNet), "Start"), HarmonyPostfix]
         static void OnStart() => Rebuild();
 
@@ -60,6 +82,7 @@ namespace FiresCore.World
         static void OnShutdown()
         {
             Ready = false;
+            Array.Clear(s_changedFrame, 0, SectorCount);
             Array.Clear(s_distant, 0, SectorCount);
         }
 
@@ -72,6 +95,7 @@ namespace FiresCore.World
         static void OnAddToSector(ZDO zdo, ZoneSystem.SectorIndex sectorIndex)
         {
             if (!Ready) return;
+            Mark(sectorIndex.Sector);
             if (zdo != null && zdo.Distant) Add(sectorIndex.Sector, 1);
         }
 
@@ -79,6 +103,7 @@ namespace FiresCore.World
         static void OnRemoveFromSector(ZDO zdo, ZoneSystem.SectorIndex sectorIndex)
         {
             if (!Ready) return;
+            Mark(sectorIndex.Sector);
             if (zdo != null && zdo.Distant) Add(sectorIndex.Sector, -1);
         }
 
@@ -92,21 +117,31 @@ namespace FiresCore.World
             Add(SectorOf(__instance), value ? 1 : -1);
         }
 
-        // ═══ THE PER-ZDO CHANGE HOOKS ARE GONE, 2026-09-24 ═══════════════════════════════════════════════════════
-        // There were four more postfixes here - IncreaseDataRevision, IncreaseOwnerRevision, Deserialize and
-        // SetOwnerInternal - maintaining a per-sector "last changed" frame. They ran more than 50,000 times a SECOND,
-        // measured: FDT's stall profiler refused to keep timing them because timing them cost more than the call.
-        // VAGhettoNetworking patches the same two hot methods from its own copy, so the game was paying four postfix
-        // dispatches on two of the busiest methods it has.
-        //
-        // THE ONLY THING THAT READ THEM WAS DEAD. ChangedFrame/AnyChangedSince existed for EBM's
-        // CreateDestroySkipScoped, and EBM's ScanGate replaced that: a whole session with the old skip enabled
-        // produced ZERO skipped ticks and not one [CDS] line, while ScanGate reached 95%. So the index was being
-        // maintained at 50,000 writes a second to answer a question nobody asked any more.
-        //
-        // What is left is the DISTANT count, which feeds DistantSectorSkip and is fed by AddToSector,
-        // RemoveFromSector and set_Distant - three hooks that fire when an object enters, leaves or changes its
-        // distant flag, not on every value written to every ZDO.
+        [HarmonyPatch(typeof(ZDO), "IncreaseDataRevision"), HarmonyPostfix]
+        static void OnDataRevision(ZDO __instance) => MarkChanged(__instance);
+
+        [HarmonyPatch(typeof(ZDO), "IncreaseOwnerRevision"), HarmonyPostfix]
+        static void OnOwnerRevision(ZDO __instance) => MarkChanged(__instance);
+
+        [HarmonyPatch(typeof(ZDO), nameof(ZDO.Deserialize)), HarmonyPostfix]
+        static void OnDeserialize(ZDO __instance) => MarkChanged(__instance);
+
+        [HarmonyPatch(typeof(ZDO), nameof(ZDO.SetOwnerInternal)), HarmonyPostfix]
+        static void OnSetOwnerInternal(ZDO __instance) => MarkChanged(__instance);
+
+        // These four run tens of thousands of times a second. Two things keep that affordable, and both have to come
+        // BEFORE the position is read: nothing is recorded at all where no one reads it, and one object writing several
+        // values in the same frame - which is the normal case, and which vanilla's SetOwner does by itself - is counted
+        // once. Without them this asked the world for a sector index on every call, on top of the networking mod doing
+        // the same thing from its own copy of these hooks.
+        private static void MarkChanged(ZDO zdo)
+        {
+            if (!Ready || zdo == null) return;
+            if (ReferenceEquals(zdo, s_lastMarked) && s_lastMarkedFrame == Frame) return;
+            s_lastMarked = zdo;
+            s_lastMarkedFrame = Frame;
+            Mark(SectorOf(zdo));
+        }
 
         // Checks a slice of the world against a real count every few seconds. The counts above are maintained by
         // arithmetic, and arithmetic that drifts one way makes objects disappear without complaining, so this is the
@@ -171,6 +206,7 @@ namespace FiresCore.World
 
         private static void Rebuild()
         {
+            Array.Clear(s_changedFrame, 0, SectorCount);
             Array.Clear(s_distant, 0, SectorCount);
             s_auditCursor = 0;
             s_nextAudit = 0.0;
@@ -197,6 +233,12 @@ namespace FiresCore.World
             // search - runs on a client or a listen host.
             bool wanted = ZNet.instance != null && !ZNet.instance.IsDedicated();
             Ready = bySector != null && wanted;
+            s_lastMarked = null;
+        }
+
+        private static void Mark(uint sector)
+        {
+            if (sector < SectorCount) s_changedFrame[sector] = Frame;
         }
 
         private static void Add(uint sector, int delta)

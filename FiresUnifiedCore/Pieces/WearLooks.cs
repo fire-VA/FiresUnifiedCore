@@ -215,20 +215,14 @@ namespace FiresCore.Pieces
                 _brokenShown = wear.m_broken != null && wear.m_broken.activeSelf,
             };
 
+            // A missing worn or broken model is normal - plenty of pieces ship only one - and it just means there is
+            // nothing to switch off. It used to return here instead, which abandoned the method before the model that
+            // should be ON was switched on, so those pieces resolved to a look with nothing showing at all.
             public void Switch(GameObject shown, GameObject firstHidden, GameObject secondHidden)
             {
-                if (firstHidden != shown)
-                {
-                    if (firstHidden == null) return;
-                    Set(firstHidden, false);
-                }
-                if (secondHidden != shown)
-                {
-                    if (secondHidden == null) return;
-                    Set(secondHidden, false);
-                }
-                if (shown == null) return;
-                Set(shown, true);
+                if (firstHidden != null && firstHidden != shown) Set(firstHidden, false);
+                if (secondHidden != null && secondHidden != shown) Set(secondHidden, false);
+                if (shown != null) Set(shown, true);
             }
 
             private void Set(GameObject model, bool shown)

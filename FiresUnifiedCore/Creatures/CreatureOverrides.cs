@@ -127,9 +127,18 @@ namespace FiresCore.Creatures
         [HarmonyPatch(typeof(CharacterDrop), nameof(CharacterDrop.GenerateDropList))]
         private static class ReplaceLootAtDeath
         {
+            // THE one hook on GenerateDropList, so precedence is decided here rather than by
+            // load order. A per-instance preset is more specific than a per-species override
+            // and wins outright.
+            //
+            // FiresAdminPrefabs 1.1.107-1.1.112 had its own prefix on this method assigning
+            // m_drops too, with neither patch declaring a priority — so for a creature that had
+            // both a preset and an override, which one survived depended on which mod Harmony
+            // happened to run last. It now answers through the bridge instead.
             [HarmonyPrefix]
             private static void Prefix(CharacterDrop __instance)
             {
+                if (FiresCore.Bridge.MonsterPresetBridge.TryApplyInstanceDrops(__instance)) return;
                 if (TryGetActive(__instance.gameObject, out CreatureOverride entry) && entry.OverrideDrops)
                     __instance.m_drops = BuildDrops(entry);
             }
@@ -152,6 +161,12 @@ namespace FiresCore.Creatures
                     return;
                 ZDO zdo = __instance.GetZDO();
                 if (zdo == null || !zdo.IsOwner())
+                    return;
+                // This site looks the entry up directly rather than through TryGetActive, so it
+                // needs the preset exemption spelled out. It matters most on an EWP respawn, where
+                // the preset's data is injected BEFORE Awake — so without this we would roll stars
+                // straight over a level the preset had already set.
+                if (FiresCore.Bridge.MonsterPresetBridge.IsPresetInstance(zdo))
                     return;
                 if (!ActiveByPrefabHash.TryGetValue(zdo.GetPrefab(), out CreatureOverride entry) || !entry.OverrideStars)
                     return;
@@ -217,12 +232,19 @@ namespace FiresCore.Creatures
             _starRuleCount = ActiveByPrefabHash.Values.Count(entry => entry.OverrideStars);
         }
 
+        // A creature spawned from a preset is exempt from every per-species rule here — stars,
+        // stat multipliers and drops alike. A preset is authored for that instance and IS the
+        // whole answer for it: "pre-set" means the admin's numbers, not the admin's numbers plus
+        // a species multiplier. Without this, a species rule for Draugr re-rolled the stars of a
+        // preset Draugr whose preset had set them explicitly.
         private static bool TryGetActive(GameObject creature, out CreatureOverride entry)
         {
             entry = null;
             if (ActiveByPrefabHash.Count == 0 || creature == null)
                 return false;
             ZDO zdo = creature.GetComponent<ZNetView>()?.GetZDO();
+            if (FiresCore.Bridge.MonsterPresetBridge.IsPresetInstance(zdo))
+                return false;
             int prefabHash = zdo != null ? zdo.GetPrefab() : Utils.GetPrefabName(creature).GetStableHashCode();
             return ActiveByPrefabHash.TryGetValue(prefabHash, out entry);
         }
