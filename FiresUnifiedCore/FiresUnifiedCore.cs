@@ -22,7 +22,7 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.2.100";
+        public const string PluginVersion = "0.2.102";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -60,6 +60,9 @@ namespace FiresCore
                 "FiresCore.UI.ConfigMenuButton+FejdStartup_Start_AddEntry",
                 "FiresCore.UI.ConfigMenuButton+Menu_Start_AddEntry",
                 "FiresCore.UI.ConfigMenuButton+Menu_UpdateNavigation_AddEntry",
+                // Intro-cinematic skip: CinematicsManager is a VideoPlayer/Camera host that does not
+                // exist headless, same IL-rewriter crash class as the FejdStartup patches above.
+                "FiresCore.Lifecycle.IntroCinematicSkip",
             };
 
         protected override void Setup()
@@ -79,6 +82,7 @@ namespace FiresCore
             FiresCore.IO.FileWatchHubConfig.Initialize(Harmony, Config);
             FiresCore.Lifecycle.CollisionCallbackReuse.Initialize(Config);
             FiresCore.Lifecycle.GroundDataThrottle.Initialize(Config);
+            FiresCore.Lifecycle.IntroCinematicSkip.Initialize(Config);
             FiresCore.World.DistantSectorSkip.Initialize(Config);
             InstallLogFilter();
             InitializeConfigAndSync();
