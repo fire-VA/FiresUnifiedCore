@@ -39,7 +39,30 @@ namespace FiresCore.Creatures
         public float StarChance = 0.1f;
 
         public bool OverrideStats;
+
+        /// <summary>
+        /// Absolute base health for the UNSTARRED creature, replacing the prefab's own value. 0 means unset, in
+        /// which case <see cref="HealthMultiplier"/> applies instead. World-level scaling still multiplies on
+        /// top, exactly as vanilla does to the prefab value, and stars scale from here as usual.
+        /// </summary>
+        public float HealthValue;
+
+        /// <summary>
+        /// What one star multiplies health by; each further star adds the same again, so 2.0 reproduces
+        /// vanilla (x1 at 0 stars, x2 at one, x3 at two). Formula: 1 + (level - 1) * (value - 1).
+        /// </summary>
+        public float HealthPerStar = 2f;
+
+        /// <summary>
+        /// What one star multiplies damage by, same formula. 1.5 reproduces vanilla's
+        /// <c>Attack.GetLevelDamageFactor</c>: x1, x1.5, x2.
+        /// </summary>
+        public float DamagePerStar = 1.5f;
+
+        /// <summary>Flat multipliers kept so older saved rules still mean what they meant. The editor sets the
+        /// value and per-star fields above instead, and leaves these at 1.</summary>
         public float HealthMultiplier = 1f;
+
         public float DamageMultiplier = 1f;
 
         public CreatureOverride Clone()
