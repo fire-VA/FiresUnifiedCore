@@ -1,19 +1,5 @@
-* v0.2.219 - smarter companions, better pathfinding, remembered worlds, hit locations
-  - companions pick their fights: they leave deer and other neutral creatures alone unless those attack, they help when you or another party member is hit, and they go after what you're fighting
-  - in a fight companions keep their weapon's range, block incoming swings and punish staggers, dodge, spread out round the enemy instead of standing on one spot, and back off when they're hurt or outnumbered (not at full health)
-  - companions use their class skills when they're ready and aim placed skills such as Rain of Arrows and Meteor at the enemy; staff users keep an eitr reserve, drink eitr meads and switch to melee up close
-  - ranged companions check the line of fire, so they don't shoot through terrain or their own buildings
-  - companions pick the weapon the enemy is weakest to, and swap out a broken one
-  - Core's walker (companions, and any mod that uses it) walks round obstacles with room to spare, routes round hills and ridges instead of into them, opens doors, walks through and closes them behind it, jumps steps and small ledges, gets itself out of corners, and plans through crypts room by room
-  - companions gather wood and pickables, put the haul into chests, repair their gear at a workbench, upgrade at stations, and eat when they need to
-  - companions no longer get pulled under the world when a distant player's character falls, and they stay under their owner's control while they follow you
-  - hit locations: head, torso and leg hits apply exactly the listed damage multiplier, the same on every screen, with bullseye effects on head and chest hits
-  - taunts now work on enemies that another player's game controls
-  - Core remembers each world: where resources were found and which enemies were met (BepInEx/config/FiresCore/WorldMemory)
-  - new for other Fires mods: party regroup and leash, a home base with routes home, enemy and danger memory, a spawn-rule lookup, and a Discord bridge
-  - range circles (the workbench-style rings) draw as dashed rings instead of black slabs
-  - fewer errors: no wind-zone error when quitting, and no creature-name error in dedicated server hit logs
-  - the item vault's temporary files now stay inside the game folder
+* v0.2.219 - updates and optimizations for Valheim 1.0
+  - smarter companions and better pathfinding
 
 * v0.2.140 - class evasions, faster joins, smoother HD textures, safer vault, keybind conflicts
   - your class's escape move can replace the dodge roll: it goes where you dodge, costs stamina (eitr for casters) and has a cooldown
