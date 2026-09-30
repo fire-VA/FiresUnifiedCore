@@ -441,7 +441,7 @@ namespace FiresCore.Npc.Core
             if (ZoneSystem.instance != null)
             {
                 float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(position, out groundHeight))
+                if (FiresCore.World.Surface.GroundNear(position, out groundHeight))
                 {
                     return new Vector3(position.x, groundHeight, position.z);
                 }

@@ -72,6 +72,8 @@ namespace FiresCore.Npc.IdleBehaviors
         private CraftingStation _targetStation;
         private PieceDataHelper.PieceData _pieceData;
         private Vector3 _workPosition;
+        // Within this of the station itself the companion works from where it stands.
+        private const float StationUseRange = 3.5f;
         private float _workEndTime;
         private float _lastAnimationTime;
         private bool _isCraftingAnimationActive = false;  // Track if crafting animation is playing
@@ -123,8 +125,23 @@ namespace FiresCore.Npc.IdleBehaviors
         
         protected override WorkPhase OnPhaseTimeout(WorkPhase timedOutPhase)
         {
-            LogWarning($"Phase {timedOutPhase} timed out");
+            LogWarning($"Phase {timedOutPhase} timed out{TimeoutDetail(timedOutPhase)}");
             return WorkPhase.Complete;
+        }
+
+        // Always on: where it was, where it was going and who held its movement (R65: a bare "timed out" beside the bench).
+        private string TimeoutDetail(WorkPhase phase)
+        {
+            if (phase != WorkPhase.MovingToWorkstation || Character == null) return "";
+            Vector3 at = Character.transform.position;
+            string station = _targetStation != null
+                ? $"{_targetStation.name} {Vector3.Distance(at, _targetStation.transform.position):0.0} m away"
+                : "no station";
+            string authority = MovementAuthority != null
+                ? $"{MovementAuthority.CurrentAuthority} ({MovementAuthority.CurrentAuthorityOwner}){(MovementAuthority.IsMovementFrozen ? ", FROZEN" : "")}"
+                : "no UMA";
+            return $": at ({at.x:0.0}, {at.y:0.0}, {at.z:0.0}), work spot ({_workPosition.x:0.0}, {_workPosition.y:0.0}, {_workPosition.z:0.0}) "
+                + $"{Vector3.Distance(at, _workPosition):0.0} m away, {station}; movement {authority}, command {IsCommandInitiated}";
         }
         
         #endregion
@@ -177,6 +194,7 @@ namespace FiresCore.Npc.IdleBehaviors
             string companionId = Companion?.companionId ?? Companion?.GetInstanceID().ToString() ?? "unknown";
             _lastWorkstationTime[companionId] = Time.time;
             
+            _wasCommanded = _commandedStation != null;
             if (_commandedStation != null)
             {
                 _targetStation = _commandedStation;
@@ -188,7 +206,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // EARLY RESERVATION: Claim immediately so concurrent companions don't pile in.
                 if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, Character, MaxWorkDuration + 30f))
                 {
-                    LogVerbose($"Could not reserve {_targetStation.m_name} at Start - already taken");
+                    Debug.Log($"[ChoreBrain] upgrade: {Companion?.companionName} at {_targetStation.m_name}: skip: the station is taken by someone else");
                     _targetStation = null;
                     SetPhase(WorkPhase.Complete);
                     return;
@@ -323,6 +341,15 @@ namespace FiresCore.Npc.IdleBehaviors
                 return true;
             }
             
+            // Close enough to use the station: work from here rather than walk to the exact spot in front of it (R65: timed
+            // out in MovingToWorkstation beside the bench; R63/R64 passed at 1.8 / 3.2 m from it).
+            if (Character != null && Vector3.Distance(Character.transform.position, _targetStation.transform.position) <= StationUseRange)
+            {
+                StopMovement();
+                StartWorking();
+                return false;
+            }
+
             // CRITICAL: Call ContinueMovement() every frame for vanilla pathfinding to work!
             // This keeps calling MoveTo() which follows waypoints around obstacles.
             if (ContinueMovement())
@@ -430,7 +457,11 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Start the crafting animation (continuous work stance)
             StartCraftingAnimation();
-            
+
+            // A commanded visit upgrades by the rules (ChoreBrain): the idle flavour below only upgrades at 2 % per hammer swing
+            // and for free, so "use the workbench" never upgraded anything in companion_test (R61: 150 s, no line at all).
+            if (_wasCommanded) TryCommandedUpgrade();
+
             // Also do an initial hammer swing
             PlayPeriodicWorkAnimation();
             _lastAnimationTime = Time.time;
@@ -499,13 +530,16 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (Inventory == null) return;
             
-            // Check upgrade chance first (upgrade is rarer than repair)
-            if (Random.value <= UpgradeChancePerAnimation)
+            // Check upgrade chance first (upgrade is rarer than repair). An idle upgrade follows the SAME rule as a commanded one
+            // (ChoreBrain: the station's level, the recipe's materials, paid from the bag); it used to be a free quality level on
+            // top of a commanded visit's paid one (R71 workstation: q1 -> q3 with one upgrade's materials, [ghost]). A commanded
+            // visit has already done its upgrade, so it doesn't roll.
+            if (!_wasCommanded && Random.value <= UpgradeChancePerAnimation)
             {
-                // Check if we're allowed to upgrade today
                 if (CanUpgradeToday())
                 {
-                    TryUpgradeItem();
+                    TryCommandedUpgrade();
+                    RecordUpgradeDay();
                 }
                 return;
             }
@@ -598,6 +632,55 @@ namespace FiresCore.Npc.IdleBehaviors
             }
         }
         
+        private bool _wasCommanded;
+
+        private static readonly CompanionInventory.EquipmentSlot[] UpgradePrioritySlots =
+        {
+            CompanionInventory.EquipmentSlot.RightHand, CompanionInventory.EquipmentSlot.LeftHand, CompanionInventory.EquipmentSlot.RightBack,
+            CompanionInventory.EquipmentSlot.Chest, CompanionInventory.EquipmentSlot.Legs, CompanionInventory.EquipmentSlot.Helmet,
+            CompanionInventory.EquipmentSlot.Shoulder,
+        };
+
+        // One upgrade by the rules: the first equipped item (hands, back, armour), then the bag's gear, that this station can take
+        // one quality up with materials from the companion's own bag. Always logs the decision.
+        private void TryCommandedUpgrade()
+        {
+            var storage = Inventory != null ? Inventory.GetStorageInventory() : null;
+            if (Inventory == null || storage == null || _targetStation == null) return;
+
+            var items = new List<ItemDrop.ItemData>();
+            foreach (var slot in UpgradePrioritySlots)
+            {
+                var equipped = Inventory.GetEquippedItem(slot);
+                if (equipped != null && !items.Contains(equipped)) items.Add(equipped);
+            }
+            foreach (var bagged in storage.GetAllItems())
+                if (bagged != null && bagged.IsEquipable() && bagged.m_shared.m_maxQuality > 1 && !items.Contains(bagged)) items.Add(bagged);
+
+            float dist = Vector3.Distance(Transform.position, _targetStation.transform.position);
+            string where = $"at {_targetStation.m_name} {dist:0.0} m";
+            var choice = AI.ChoreBrain.FindBestUpgrade(_targetStation, items, storage);
+            if (choice == null)
+            {
+                Debug.Log($"[ChoreBrain] upgrade: {Companion?.companionName} {where}: skip: {AI.ChoreBrain.ExplainNoUpgrade(_targetStation, items, storage)}");
+                return;
+            }
+            if (!AI.ChoreBrain.ConsumeRequirements(choice.Requirements, storage))
+            {
+                Debug.Log($"[ChoreBrain] upgrade: {Companion?.companionName} {choice.Item.m_shared.m_name} {where}: skip: materials went missing");
+                return;
+            }
+
+            int oldQuality = choice.Item.m_quality;
+            if (!Inventory.UpdateItemQuality(choice.Item, choice.TargetQuality)) choice.Item.m_quality = choice.TargetQuality;
+            choice.Item.m_durability = choice.Item.GetMaxDurability();
+            SaveInventory();
+            Companion?.SaveCompanionToVault();
+            Debug.Log($"[ChoreBrain] upgrade: {Companion?.companionName} {choice.Item.m_shared.m_name} q{oldQuality}->q{choice.TargetQuality} {where}: go");
+            string itemName = Localization.instance?.Localize(choice.Item.m_shared?.m_name) ?? "item";
+            CompanionChatHelper.QuickMessages.ItemUpgraded(Companion, itemName, choice.TargetQuality);
+        }
+
         private void TryUpgradeItem()
         {
             var upgradableItems = GetUpgradableItems();
@@ -811,7 +894,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (ZoneSystem.instance != null)
             {
                 float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(workPos, out groundHeight))
+                if (FiresCore.World.Surface.GroundNear(workPos, out groundHeight))
                 {
                     workPos.y = groundHeight;
                 }

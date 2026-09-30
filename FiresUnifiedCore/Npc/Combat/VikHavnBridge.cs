@@ -222,11 +222,116 @@ namespace FiresCore.Npc.Combat
         #endregion
     }
 
-    /// <summary>Runs on the kicker's machine, before the hit is sent to the target's owner, like VikHavn's own kick patch.</summary>
+    /// <summary>Runs on the attacker's machine, before the hit is sent to the target's owner, like VikHavn's own kick patch. Core's
+    /// one Character.Damage hook: the companion kick, then locational damage (dormant unless a mod enables it).</summary>
     [HarmonyPatch(typeof(Character), nameof(Character.Damage))]
     internal static class CompanionKickHitPatch
     {
         [HarmonyPrefix]
-        private static void AmplifyCompanionKick(Character __instance, HitData hit) => VikHavnBridge.OnDamage(__instance, hit);
+        private static void AmplifyCompanionKick(Character __instance, HitData hit)
+        {
+            VikHavnBridge.OnDamage(__instance, hit);
+            FiresCore.Combat.LocationalDamage.OnAttackerHit(__instance, hit);
+            CompanionPvpDamage.OnDamage(__instance, hit);
+            CompanionStaffShieldCount.OnDamage(__instance, hit);
+            // Last, after every scaling above: the hit as it leaves, for the drills' damage shares.
+            CombatStats.OnHit(__instance, hit);
+            OwnerAssist.OnHit(__instance, hit);
+            ParryTiming.OnAttackerHit(__instance, hit);
+            CombatAdvisor.NoteStaffHit(__instance, hit);
+        }
+    }
+
+    /// <summary>
+    /// Counts a healer companion's vanilla StaffShield bubble as a buff (ArchetypeStatistics.BuffsApplied; [ghost]: companion_test's
+    /// healer carries StaffShield, so the bubble is its main action). Vanilla hands the shield out as an Aoe hit carrying
+    /// Staff_shield with the companion as attacker, on the caster's machine: one count per character it lands on, self included.
+    /// </summary>
+    internal static class CompanionStaffShieldCount
+    {
+        private static readonly int StaffShieldHash = "Staff_shield".GetStableHashCode();
+
+        internal static void OnDamage(Character target, HitData hit)
+        {
+            if (hit == null || target == null || hit.m_statusEffectHash != StaffShieldHash) return;
+            Character caster = hit.GetAttacker();
+            var companion = caster != null && !(caster is Player) ? caster.GetComponent<CompanionController>() : null;
+            var archetype = companion != null ? companion.GetArchetypeController() : null;
+            if (archetype != null && archetype.Statistics != null) archetype.Statistics.RecordBuffApplied();
+        }
+    }
+
+    /// <summary>
+    /// Scales a companion's hits on players, and on companions of other owners (Fire's popup 2026-09-29: "Lower, x0.3"; R54d a companion slash did 351 to a
+    /// 271 HP player). SERVER-synced [Combat] Companion damage vs players. Runs on the attacker's machine before the hit goes
+    /// to the victim's owner, for native attacks, the fallback swing and projectiles alike.
+    /// </summary>
+    internal static class CompanionPvpDamage
+    {
+        private static ConfigEntry<float> s_scale;
+        private static ConfigEntry<float> s_companionScale;
+
+        internal static void Bind(ConfigFile config, FiresCore.Sync.ConfigSync configSync)
+        {
+            s_scale = config.Bind("Combat", "Companion damage vs players", 0.3f,
+                new ConfigDescription("SERVER. Multiplies every hit a companion lands on a player (PvP companion fights). 1 = unscaled.",
+                    new AcceptableValueRange<float>(0f, 2f)));
+            configSync?.AddConfigEntry(s_scale);
+            // Fire's popup 2026-09-29: companion-on-companion hits of different owners at 0.5 (R73 threeway: ~197 per hit on a
+            // ~389 HP companion, two swings to a kill).
+            s_companionScale = config.Bind("Combat", "Companion damage vs companions", 0.5f,
+                new ConfigDescription("SERVER. Multiplies every hit a companion lands on another player's companion (companions of the same owner are never scaled). 1 = unscaled.",
+                    new AcceptableValueRange<float>(0f, 2f)));
+            configSync?.AddConfigEntry(s_companionScale);
+        }
+
+        internal static void OnDamage(Character victim, HitData hit)
+        {
+            if (s_scale == null || hit == null || victim == null) return;
+            Character attacker = hit.GetAttacker();
+            CompanionController companion = attacker != null && !(attacker is Player) ? attacker.GetComponent<CompanionController>() : null;
+            if (companion == null) return;
+            float scale;
+            if (victim is Player) scale = s_scale.Value;
+            else if (s_companionScale != null && victim.GetComponent<CompanionController>() != null)
+            {
+                long mine = Archetypes.ClassTargeting.PartyOwner(attacker), theirs = Archetypes.ClassTargeting.PartyOwner(victim);
+                if (mine == 0L || theirs == 0L || mine == theirs) return;
+                scale = s_companionScale.Value;
+            }
+            else return;
+            float before = hit.GetTotalDamage();
+            if (!Mathf.Approximately(scale, 1f)) hit.m_damage.Modify(scale);
+            LogHit(companion, attacker, victim, hit, before, scale);
+        }
+
+        // One line per companion per second at most (pve fights make lots of hits; this only sees hits on players and on other owners' companions).
+        private const float LogInterval = 1f;
+        private static readonly Dictionary<Character, float> s_nextLog = new Dictionary<Character, float>();
+
+        /// <summary>
+        /// "[CompanionHit] <name> -> <victim>: <skill>, level L (x level factor), archetype xA, crit C% xM, pre-armour B x0.3 = T"
+        /// ([ghost]: companion_test quotes it next to a WOULD-DIE). B already holds weapon x skill x level x archetype x crit x
+        /// status effects; armour and resistances come off afterwards on the victim.
+        /// </summary>
+        private static void LogHit(CompanionController companion, Character attacker, Character victim, HitData hit, float before, float scale)
+        {
+            if (s_nextLog.TryGetValue(attacker, out float next) && Time.time < next) return;
+            if (s_nextLog.Count > 64) s_nextLog.Clear();
+            s_nextLog[attacker] = Time.time + LogInterval;
+
+            int level = companion.GetEffectiveLevel();
+            var gear = companion.EquipmentData;
+            // Did THIS hit crit ([ghost], R73: the line printed the crit stats only)? A melee hit is the same HitData the crit
+            // amplified; a projectile's is a copy made on impact, so it reads "?".
+            string crit = gear == null ? "?" : ReferenceEquals(gear.LastCritHit, hit) ? "yes"
+                : hit.m_skill == Skills.SkillType.Bows || hit.m_skill == Skills.SkillType.Crossbows
+                  || hit.m_skill == Skills.SkillType.ElementalMagic || hit.m_skill == Skills.SkillType.BloodMagic ? "?" : "no";
+            string archetype = gear != null
+                ? $"archetype x{gear.ArchetypeDamageMultiplier:0.00}, crit {gear.ArchetypeCritChance * 100f:0}% x{gear.ArchetypeCritDamageMultiplier:0.00} (this hit: crit {crit})"
+                : "archetype ?";
+            Debug.Log($"[CompanionHit] {companion.companionName} -> {victim.m_name}: {hit.m_skill}, level {level} "
+                      + $"(x{1f + Mathf.Max(0, level - 1) * 0.5f:0.0}), {archetype}, pre-armour {before:0} x{scale:0.00} = {hit.GetTotalDamage():0}");
+        }
     }
 }

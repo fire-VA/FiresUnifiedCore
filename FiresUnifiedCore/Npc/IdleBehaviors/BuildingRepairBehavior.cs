@@ -605,7 +605,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private Vector3 GroundedPosition(Vector3 worldPos)
         {
             if (ZoneSystem.instance != null &&
-                ZoneSystem.instance.GetGroundHeight(worldPos, out float groundY))
+                FiresCore.World.Surface.GroundNear(worldPos, out float groundY))
             {
                 return new Vector3(worldPos.x, groundY, worldPos.z);
             }

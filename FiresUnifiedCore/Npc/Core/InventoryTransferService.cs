@@ -117,7 +117,18 @@ namespace FiresCore.Npc.Core
             Container source,
             Inventory destination,
             string prefabName,
-            int maxAmount)
+            int maxAmount) => PullItem(source, destination, prefabName, maxAmount, 0L);
+
+        /// <summary>
+        /// <see cref="PullItem(Container, Inventory, string, int)"/> with the chest rights of <paramref name="writerId"/> (a player's
+        /// id, e.g. the FDT bot body's own); 0 = the companion that owns <paramref name="destination"/>.
+        /// </summary>
+        public static TransferResult PullItem(
+            Container source,
+            Inventory destination,
+            string prefabName,
+            int maxAmount,
+            long writerId)
         {
             if (source == null)
                 return TransferResult.Failed("Source container is null", maxAmount, prefabName);
@@ -138,7 +149,7 @@ namespace FiresCore.Npc.Core
             if (CountItem(sourceInv, prefabName) == 0)
                 return TransferResult.Failed($"No {prefabName} found", maxAmount, prefabName);
 
-            if (!IdleBehaviors.ChestHelper.TryClaimForWrite(source, destination))
+            if (!Claim(source, destination, writerId))
                 return TransferResult.Failed("Container is open or off-limits", maxAmount, prefabName);
 
             int totalPulled = 0;
@@ -280,7 +291,18 @@ namespace FiresCore.Npc.Core
             Inventory source,
             Container destination,
             string prefabName,
-            int maxAmount = int.MaxValue)
+            int maxAmount = int.MaxValue) => DepositItem(source, destination, prefabName, maxAmount, 0L);
+
+        /// <summary>
+        /// <see cref="DepositItem(Inventory, Container, string, int)"/> with the chest rights of <paramref name="writerId"/>
+        /// (0 = the companion that owns <paramref name="source"/>).
+        /// </summary>
+        public static TransferResult DepositItem(
+            Inventory source,
+            Container destination,
+            string prefabName,
+            int maxAmount,
+            long writerId)
         {
             if (source == null)
                 return TransferResult.Failed("Source inventory is null", maxAmount, prefabName);
@@ -292,7 +314,7 @@ namespace FiresCore.Npc.Core
             if (destInv == null)
                 return TransferResult.Failed("Destination inventory is null", maxAmount, prefabName);
 
-            if (!IdleBehaviors.ChestHelper.TryClaimForWrite(destination, source))
+            if (!Claim(destination, source, writerId))
                 return TransferResult.Failed("Container is open or off-limits", maxAmount, prefabName);
 
             int totalDeposited = 0;
@@ -325,7 +347,15 @@ namespace FiresCore.Npc.Core
             Inventory source,
             IEnumerable<Container> destinations,
             string prefabName,
-            int maxAmount = int.MaxValue)
+            int maxAmount = int.MaxValue) => DepositItemSmart(source, destinations, prefabName, maxAmount, 0L);
+
+        /// <summary><see cref="DepositItemSmart(Inventory, IEnumerable{Container}, string, int)"/> with <paramref name="writerId"/>'s chest rights.</summary>
+        public static TransferResult DepositItemSmart(
+            Inventory source,
+            IEnumerable<Container> destinations,
+            string prefabName,
+            int maxAmount,
+            long writerId)
         {
             if (source == null || destinations == null)
                 return TransferResult.Failed("Invalid parameters", maxAmount, prefabName);
@@ -370,8 +400,14 @@ namespace FiresCore.Npc.Core
             if (bestContainer == null)
                 return TransferResult.Failed("No container with room found", maxAmount, prefabName);
             
-            return DepositItem(source, bestContainer, prefabName, maxAmount);
+            return DepositItem(source, bestContainer, prefabName, maxAmount, writerId);
         }
+
+        // The chest gate: a player body's own rights when given its id, else the companion owning the inventory.
+        private static bool Claim(Container chest, Inventory bodySide, long writerId) =>
+            writerId != 0L
+                ? IdleBehaviors.ChestHelper.TryClaimForWrite(chest, writerId)
+                : IdleBehaviors.ChestHelper.TryClaimForWrite(chest, bodySide);
         
         /// <summary>
         /// Deposits all depositable items from a companion inventory.

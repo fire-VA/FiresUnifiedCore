@@ -460,7 +460,7 @@ enemies.Add(character);
             var enemyAI = enemy.GetComponent<BaseAI>();
             if (enemyAI != null)
             {
-                var target = enemyAI.GetTargetCreature();
+                var target = FiresCore.Npc.Combat.ThreatLevel.TargetOf(enemyAI);
                 if (target == _character)
                 {
                     threat += 0.3f * dangerMultiplier;

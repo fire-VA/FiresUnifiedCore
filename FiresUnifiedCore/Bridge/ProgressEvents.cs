@@ -20,5 +20,19 @@ namespace FiresCore.Bridge
             try { AchievementCompleted?.Invoke(name ?? string.Empty, description ?? string.Empty); }
             catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ProgressEvents] AchievementCompleted subscriber threw: {ex.Message}"); }
         }
+
+        /// <summary>
+        /// A mod asks for a captioned screenshot to be captured and posted: (reason). Same optional-coupling
+        /// model as <see cref="AchievementCompleted"/> — the producer neither knows nor cares whether a
+        /// Discord mod is installed. Raised CLIENT-side; a headless caller has no screen to capture.
+        /// </summary>
+        public static event Action<string> ScreenshotRequested;
+
+        /// <summary>Producer side (any mod): ask for a captioned screenshot post. Subscriber exceptions are swallowed.</summary>
+        public static void RaiseScreenshotRequested(string reason)
+        {
+            try { ScreenshotRequested?.Invoke(reason ?? string.Empty); }
+            catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ProgressEvents] ScreenshotRequested subscriber threw: {ex.Message}"); }
+        }
     }
 }

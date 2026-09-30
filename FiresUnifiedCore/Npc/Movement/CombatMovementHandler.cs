@@ -413,7 +413,7 @@ namespace FiresCore.Npc.Movement
             var enemyAI = enemy.GetComponent<BaseAI>();
             if (enemyAI != null)
             {
-                var enemyTarget = enemyAI.GetTargetCreature();
+                var enemyTarget = FiresCore.Npc.Combat.ThreatLevel.TargetOf(enemyAI);
                 var ownerCharacter = owner.GetComponent<Character>();
                 
                 // If enemy is targeting owner, tanks always intercept
@@ -431,7 +431,7 @@ namespace FiresCore.Npc.Movement
             var standardAI = enemy.GetComponent<BaseAI>();
             if (standardAI == null) return false;
             
-            var target = standardAI.GetTargetCreature();
+            var target = FiresCore.Npc.Combat.ThreatLevel.TargetOf(standardAI);
             if (target == null) return false;
             
             var ownerChar = owner.GetComponent<Character>();
@@ -465,6 +465,12 @@ namespace FiresCore.Npc.Movement
             if (_hasAssignedFlankAngle)
             {
                 float engageDist = CompanionSettings.CombatCoordinationMeleeEngageDistance;
+                // The slot within the weapon's reach of the foe's body (0.2.217, R87 pve: Jorunn held "slot N° on $enemy_greyling …
+                // 3.2 m from it" 17x and landed 0 hits: the 2.5 m ring from the foe's centre was outside a one-hand axe's reach).
+                ItemDrop.ItemData weapon = (_character as Humanoid)?.GetCurrentWeapon();
+                float reach = weapon != null && weapon.m_shared.m_attack != null ? weapon.m_shared.m_attack.m_attackRange : 1.5f;
+                float foeRadius = _committedTarget is Character foe ? foe.GetRadius() : 0.5f;
+                engageDist = Mathf.Min(engageDist, foeRadius + reach * 0.8f);
                 Vector3 flankOffset = Quaternion.Euler(0f, _assignedFlankAngle, 0f) * Vector3.forward * engageDist;
                 Vector3 flankPosition = targetPos + flankOffset;
                 
@@ -1081,6 +1087,19 @@ namespace FiresCore.Npc.Movement
                 }
             }
             
+            // The GroupTactics slot (0.2.210, R81: "STACK Magni the Grey + Jorunn the Brave within 1.0 m on $enemy_greydwarfbrute for
+            // 2.2 s" with both slotted): the flank angle was set on this handler but its approach (CalculateApproachMovement) was
+            // never called, so every melee companion walked straight at the foe.
+            if (_hasAssignedFlankAngle)
+            {
+                Vector3 toSlot = CalculateApproachMovement();
+                if (toSlot.sqrMagnitude > 0.01f)
+                {
+                    result.MoveDirection = toSlot;
+                    return result;
+                }
+            }
+
             if (toTarget.sqrMagnitude > 0.01f)
             {
                 _targetMoveDirection = toTarget;
@@ -1090,10 +1109,10 @@ namespace FiresCore.Npc.Movement
             {
                 result.ShouldStop = true;
             }
-            
+
             return result;
         }
-        
+
         /// <summary>
         /// Executes chase movement for pursuing fleeing targets.
         /// Respects owner distance - won't chase forever.

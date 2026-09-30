@@ -54,7 +54,12 @@ namespace FiresCore.World
         public static bool HasNoDistantObjects(uint sector) => DistantCount(sector) == 0;
 
         [HarmonyPatch(typeof(ZNet), "Start"), HarmonyPostfix]
-        static void OnStart() => Rebuild();
+        static void OnStart()
+        {
+            Rebuild();
+            // Each session's new ZRoutedRpc: locational damage's hit-part RPC must be registered before the first hit arrives.
+            FiresCore.Combat.LocationalDamage.OnSessionStart();
+        }
 
         [HarmonyPatch(typeof(ZNet), "Shutdown"), HarmonyPostfix]
         static void OnShutdown()

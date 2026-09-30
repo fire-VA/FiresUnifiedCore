@@ -38,7 +38,6 @@ namespace FiresCore.Npc.IdleBehaviors
         private const float MaxUpgradeTime = 60f;
         private const float UpgradeAttemptChance = 0.3f;
         private const int MaxUpgradesPerSession = 3;
-        private const float MinStationCover = 0.7f;
         
         #endregion
         
@@ -279,142 +278,44 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Upgrade Logic
         
-        private CraftingStation FindNearbyWorkstation()
-        {
-            CraftingStation best = null;
-            int bestLevel = -1;
-            float bestDist = float.MaxValue;
-            
-            var colliders = Physics.OverlapSphere(Transform.position, WorkstationDetectionRange);
-            
-            foreach (var collider in colliders)
-            {
-                if (collider == null) continue;
-                
-                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
-                if (station == null || station.m_upgrader) continue;
+        // The decisions live in AI.ChoreBrain (one brain, two bodies: the FDT bot's workbench drill asks the same questions).
+        private CraftingStation FindNearbyWorkstation() => AI.ChoreBrain.FindWorkstation(Transform.position, WorkstationDetectionRange);
 
-                int level = station.GetLevel();
-                float dist = DistanceTo(station.transform.position);
-
-                if ((level > bestLevel || (level == bestLevel && dist < bestDist)) && IsStationUsable(station))
-                {
-                    bestLevel = level;
-                    bestDist = dist;
-                    best = station;
-                }
-            }
-            
-            return best;
-        }
-        
         private bool HasUpgradeableEquipment(CraftingStation station)
         {
             return FindBestUpgrade(station) != null;
         }
-        
+
+        private static readonly CompanionInventory.EquipmentSlot[] PrioritySlots =
+        {
+            CompanionInventory.EquipmentSlot.RightHand,
+            CompanionInventory.EquipmentSlot.LeftHand,
+            CompanionInventory.EquipmentSlot.RightBack,
+            CompanionInventory.EquipmentSlot.Chest,
+            CompanionInventory.EquipmentSlot.Legs,
+            CompanionInventory.EquipmentSlot.Helmet,
+            CompanionInventory.EquipmentSlot.Shoulder,
+        };
+
         private (ItemDrop.ItemData item, CompanionInventory.EquipmentSlot slot, int currentQuality, List<Piece.Requirement> requirements)? FindBestUpgrade(CraftingStation station)
         {
             if (Inventory == null || station == null) return null;
-            
             var storageInv = GetStorageInventory();
             if (storageInv == null) return null;
-            
-            CompanionInventory.EquipmentSlot[] prioritySlots = new[]
-            {
-                CompanionInventory.EquipmentSlot.RightHand,
-                CompanionInventory.EquipmentSlot.LeftHand,
-                CompanionInventory.EquipmentSlot.RightBack,
-                CompanionInventory.EquipmentSlot.Chest,
-                CompanionInventory.EquipmentSlot.Legs,
-                CompanionInventory.EquipmentSlot.Helmet,
-                CompanionInventory.EquipmentSlot.Shoulder,
-            };
-            
-            foreach (var slot in prioritySlots)
+
+            var items = new List<ItemDrop.ItemData>();
+            var slots = new List<CompanionInventory.EquipmentSlot>();
+            foreach (var slot in PrioritySlots)
             {
                 var item = Inventory.GetEquippedItem(slot);
                 if (item == null) continue;
-                
-                int currentQuality = item.m_quality;
-                int maxQuality = item.m_shared.m_maxQuality;
-                
-                if (currentQuality >= maxQuality) continue;
-
-                int targetQuality = currentQuality + 1;
-                Recipe recipe = ObjectDB.instance?.GetRecipe(item);
-                if (recipe == null || !CanStationUpgrade(station, recipe, targetQuality)) continue;
-
-                var requirements = GetUpgradeRequirements(recipe, targetQuality);
-                if (requirements.Count == 0) continue;
-
-                if (!HasRequiredMaterials(requirements, storageInv)) continue;
-
-                return (item, slot, currentQuality, requirements);
-            }
-            
-            return null;
-        }
-        
-        /// <summary>What a normal (non-upgrader) station charges: GetAmount(q) of every non-upgrader resource (Player.ConsumeResources:2086-2090).</summary>
-        private List<Piece.Requirement> GetUpgradeRequirements(Recipe recipe, int targetQuality)
-        {
-            var requirements = new List<Piece.Requirement>();
-
-            foreach (var req in recipe.m_resources)
-            {
-                if (req.m_resItem == null || req.m_upgraderResource) continue;
-
-                int amount = req.GetAmount(targetQuality);
-                if (amount > 0)
-                {
-                    requirements.Add(new Piece.Requirement
-                    {
-                        m_resItem = req.m_resItem,
-                        m_amount = amount
-                    });
-                }
+                items.Add(item);
+                slots.Add(slot);
             }
 
-            return requirements;
-        }
-        
-        private bool HasRequiredMaterials(List<Piece.Requirement> requirements, Inventory storage)
-        {
-            if (requirements == null || storage == null) return false;
-            
-            foreach (var req in requirements)
-            {
-                if (req.m_resItem == null) continue;
-                
-                string itemName = req.m_resItem.m_itemData.m_shared.m_name;
-                int needed = req.m_amount;
-                int have = storage.CountItems(itemName);
-                
-                if (have < needed) return false;
-            }
-            
-            return true;
-        }
-        
-        /// <summary>Vanilla Player.RequiredCraftingStation(recipe, quality, checkLevel: true) with this (non-upgrader) station as the current one.</summary>
-        private static bool CanStationUpgrade(CraftingStation station, Recipe recipe, int targetQuality)
-        {
-            CraftingStation requiredStation = recipe.GetRequiredStation(targetQuality);
-            if (requiredStation == null) return station.m_showBasicRecipies;
-            return requiredStation.m_name == station.m_name
-                && station.GetLevel() >= recipe.GetRequiredStationLevel(targetQuality);
-        }
-
-        /// <summary>Vanilla CraftingStation.CheckUsable: roof cover and fire where the station requires them.</summary>
-        private static bool IsStationUsable(CraftingStation station)
-        {
-            if (station.m_craftRequireRoof)
-            {
-                Cover.GetCoverForPoint(station.m_roofCheckPoint.position, out float coverPercentage, out bool underRoof);
-                if (!underRoof || coverPercentage < MinStationCover) return false;
-            }
-            return !station.m_craftRequireFire || EffectArea.IsPointPlus025InsideBurningArea(station.transform.position);
+            var choice = AI.ChoreBrain.FindBestUpgrade(station, items, storageInv);
+            if (choice == null) return null;
+            return (choice.Item, slots[items.IndexOf(choice.Item)], choice.Item.m_quality, choice.Requirements);
         }
         
         private bool PerformUpgrade()

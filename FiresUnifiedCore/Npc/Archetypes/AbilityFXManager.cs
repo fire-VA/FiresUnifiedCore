@@ -50,16 +50,86 @@ namespace FiresCore.Npc.Archetypes
             public void Dispose() => _localCopyDepth--;
         }
 
+        /// <summary>
+        /// Leaves any LocalCopies scope until disposed: the spawns inside are networked again. For work only one peer
+        /// does, such as a status effect's Setup on the target's owner (AbilityRPCManager.ApplyOnOwner): its FX spawn
+        /// once, networked, and every peer sees them.
+        /// </summary>
+        public static NetworkedCopyScope NetworkedCopies()
+        {
+            var scope = new NetworkedCopyScope(_localCopyDepth);
+            _localCopyDepth = 0;
+            return scope;
+        }
+
+        public struct NetworkedCopyScope : System.IDisposable
+        {
+            private readonly int _savedDepth;
+            internal NetworkedCopyScope(int savedDepth) { _savedDepth = savedDepth; }
+            public void Dispose() => _localCopyDepth = _savedDepth;
+        }
+
         private static bool ShouldSpawnAt(Vector3 position) =>
             _localCopyDepth > 0 ? Core.NpcFxRange.NearLocalPlayer(position) : Core.NpcFxRange.NearAnyPlayer(position);
 
+        // Which effect prefabs this peer has already audited (once each).
+        private static readonly HashSet<string> s_audited = new HashSet<string>();
+
+        /// <summary>
+        /// Once per effect prefab, always on (Fire, R75 mage drill: a skill effect drew a hard-edged BLACK square on the ground, an
+        /// opaque or shaderless material where a transparent decal/particle was meant): every renderer's material, its shader,
+        /// whether the shader runs here, and its render queue, with a verdict. "[ClassSkill] fx X: … -> SUSPECT (…)" names the culprit.
+        /// </summary>
+        private static void AuditFx(GameObject prefab)
+        {
+            if (prefab == null || !s_audited.Add(prefab.name)) return;
+            var parts = new System.Text.StringBuilder();
+            string suspect = null;
+            foreach (Renderer renderer in prefab.GetComponentsInChildren<Renderer>(true))
+            {
+                if (renderer == null) continue;
+                foreach (Material material in renderer.sharedMaterials)
+                {
+                    string shader = material != null && material.shader != null ? material.shader.name : "none";
+                    bool supported = material != null && material.shader != null && material.shader.isSupported;
+                    int queue = material != null ? material.renderQueue : -1;
+                    if (parts.Length > 0) parts.Append("; ");
+                    parts.Append($"{renderer.GetType().Name} {renderer.name}: {(material != null ? material.name : "no material")} / {shader} (q {queue}{(supported ? "" : ", NOT SUPPORTED")})");
+                    if (suspect != null) continue;
+                    if (material == null) suspect = $"{renderer.name} has no material";
+                    else if (!supported || shader == "none" || shader.Contains("InternalError")) suspect = $"{renderer.name} shader {shader} doesn't run here";
+                    else if (queue < 2450 && (renderer is ParticleSystemRenderer || renderer is LineRenderer || renderer is TrailRenderer))
+                        suspect = $"{renderer.name} is a {renderer.GetType().Name} drawn opaque (queue {queue})";
+                }
+            }
+            Debug.Log($"[ClassSkill] fx {prefab.name}: {(parts.Length > 0 ? parts.ToString() : "no renderers")}" +
+                      (suspect != null ? $" -> SUSPECT ({suspect})" : " -> ok"));
+        }
+
         private static GameObject CreateInstance(GameObject prefab, Vector3 position, Quaternion rotation)
         {
-            if (_localCopyDepth == 0) return Object.Instantiate(prefab, position, rotation);
-            bool previous = ZNetView.m_forceDisableInit;
-            ZNetView.m_forceDisableInit = true;
-            try { return Object.Instantiate(prefab, position, rotation); }
-            finally { ZNetView.m_forceDisableInit = previous; }
+            AuditFx(prefab);
+            GameObject instance;
+            if (_localCopyDepth == 0) instance = Object.Instantiate(prefab, position, rotation);
+            else
+            {
+                bool previous = ZNetView.m_forceDisableInit;
+                ZNetView.m_forceDisableInit = true;
+                try { instance = Object.Instantiate(prefab, position, rotation); }
+                finally { ZNetView.m_forceDisableInit = previous; }
+            }
+            StripShieldGeneratorColoring(instance);
+            return instance;
+        }
+
+        // Vanilla's shield-dome particles take their colour from the nearest ShieldGenerator in Start and throw when there
+        // is none (class_test R37: NullReferenceException at ShieldDomeParticleColor.Start on every peer for Divine
+        // Protection's dome). A class effect isn't a generator's dome, so the component goes before its Start can run.
+        private static void StripShieldGeneratorColoring(GameObject instance)
+        {
+            if (instance == null) return;
+            foreach (ShieldDomeParticleColor coloring in instance.GetComponentsInChildren<ShieldDomeParticleColor>(true))
+                Object.DestroyImmediate(coloring);
         }
 
         /// <summary>

@@ -7,6 +7,10 @@ namespace FiresCore.Materials
     [HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.CopyOtherDB))]
     internal static class ObjectDB_CopyOtherDB_RebindVanillaShaders
     {
-        private static void Postfix() => VanillaShaderRebind.RebindAllLoadedMaterials(FiresUnifiedCore.PluginName);
+        private static void Postfix()
+        {
+            VanillaShaderRebind.RebindAllLoadedMaterials(FiresUnifiedCore.PluginName);
+            FiresCore.Logging.UnityLogSuppressionPatch.EmitShaderBinaryFailureSummary();
+        }
     }
 }

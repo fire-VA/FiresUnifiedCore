@@ -45,19 +45,74 @@ namespace FiresCore.Npc
 
         #region Emote Playback
 
+        // The companions' defaults (the inspector fields' initial values), for PickIdleEmote callers without a companion.
+        public const float IdleEmoteMinInterval = 45f, IdleEmoteMaxInterval = 120f;
+        private const float DefaultQuickSeconds = 2.5f, DefaultPersistentMin = 8f, DefaultPersistentMax = 25f;
+
+        /// <summary>
+        /// An idle emote the way a companion picks one (one brain: FDT's bot waiting for the player uses it too): mostly quick
+        /// one-shots (always right after a fight), else a loop / hold for 8-25 s; <paramref name="seconds"/> is how long to
+        /// play it. Null when the pool is empty or <paramref name="animator"/> can't play the pick. Play it with
+        /// <see cref="PlayerAnimationCatalog.Play"/> and end a loop / hold with <see cref="PlayerAnimationCatalog.Stop"/>;
+        /// wait <see cref="IdleEmoteMinInterval"/>-<see cref="IdleEmoteMaxInterval"/> s between emotes.
+        /// </summary>
+        public static PlayerAnimation PickIdleEmote(Animator animator, bool recentCombat, out float seconds) =>
+            PickIdleEmote(animator, recentCombat, DefaultQuickSeconds, DefaultPersistentMin, DefaultPersistentMax, out seconds);
+
+        /// <summary>
+        /// A vanilla emote name for Player.StartEmote ("wave", "cheer", "sit" …, the catalog's "emote_" parameter without the
+        /// prefix), picked from the companions' idle pool: quick one-shots only with <paramref name="quickOnly"/>, else the same
+        /// mix as <see cref="PickIdleEmote(Animator, bool, out float)"/>. With <paramref name="animator"/>, only one it can play.
+        /// Null when none fits.
+        /// </summary>
+        public static string PickIdleEmoteName(bool quickOnly = true, Animator animator = null)
+        {
+            var pool = new List<PlayerAnimation>();
+            foreach (var anim in QuickEmotes) if (anim.IsEmote) pool.Add(anim);
+            if (!quickOnly && UnityEngine.Random.value <= 0.3f)
+            {
+                pool.Clear();
+                foreach (var anim in PersistentEmotes) if (anim.IsEmote) pool.Add(anim);
+            }
+            if (animator != null) pool.RemoveAll(anim => !PlayerAnimationCatalog.Has(animator, anim));
+            if (pool.Count == 0) return null;
+            return pool[UnityEngine.Random.Range(0, pool.Count)].Parameter.Substring(PlayerAnimationCatalog.EmotePrefix.Length);
+        }
+
+        /// <summary>Seconds to the next idle emote, the companions' rule (<see cref="IdleEmoteMinInterval"/>-<see cref="IdleEmoteMaxInterval"/>).</summary>
+        public static float NextIdleEmoteDelay() => UnityEngine.Random.Range(IdleEmoteMinInterval, IdleEmoteMaxInterval);
+
+        private static PlayerAnimation PickIdleEmote(Animator animator, bool recentCombat, float quickSeconds, float persistentMin,
+            float persistentMax, out float seconds)
+        {
+            seconds = 0f;
+            // Decide between quick emotes vs persistent emotes
+            bool useQuickEmote = recentCombat || UnityEngine.Random.value > 0.3f;
+            var pool = useQuickEmote ? QuickEmotes : PersistentEmotes;
+            if (pool.Count == 0) return null;
+            var anim = pool[UnityEngine.Random.Range(0, pool.Count)];
+            if (!PlayerAnimationCatalog.Has(animator, anim)) return null;
+            if (anim.Kind != PlayerAnimKind.OneShot)
+            {
+                float minDuration = Mathf.Max(persistentMin, Mathf.Min(anim.Seconds, persistentMax));
+                seconds = UnityEngine.Random.Range(minDuration, persistentMax);
+            }
+            else
+            {
+                seconds = anim.Seconds > 0f ? anim.Seconds : quickSeconds;
+            }
+            return anim;
+        }
+
         private void StartIdleEmote()
         {
-            // Decide between quick emotes vs persistent emotes
-            bool useQuickEmote = Time.time - _lastCombatTime < combatCooldownForIdle * 3f ||
-                UnityEngine.Random.value > 0.3f;
-
-            var pool = useQuickEmote ? QuickEmotes : PersistentEmotes;
-            if (pool.Count == 0) return;
-            var anim = pool[UnityEngine.Random.Range(0, pool.Count)];
-            if (!PlayerAnimationCatalog.Has(_animator, anim))
+            bool recentCombat = Time.time - _lastCombatTime < combatCooldownForIdle * 3f;
+            var anim = PickIdleEmote(_animator, recentCombat, quickEmoteDuration, persistentEmoteDurationMin, persistentEmoteDurationMax,
+                out float duration);
+            if (anim == null)
             {
                 if (VerboseLogging)
-                    Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} model cannot play {anim.Parameter} - skipping emote");
+                    Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} no idle emote this model can play - skipping");
                 _nextEmoteTime = Time.time + UnityEngine.Random.Range(idleEmoteMinInterval, idleEmoteMaxInterval);
                 return;
             }
@@ -65,16 +120,6 @@ namespace FiresCore.Npc
             string emote = anim.Parameter;
             bool isPersistent = anim.Kind != PlayerAnimKind.OneShot;
             string emoteType = isPersistent ? "persistent" : "quick";
-            float duration;
-            if (isPersistent)
-            {
-                float minDuration = Mathf.Max(persistentEmoteDurationMin, Mathf.Min(anim.Seconds, persistentEmoteDurationMax));
-                duration = UnityEngine.Random.Range(minDuration, persistentEmoteDurationMax);
-            }
-            else
-            {
-                duration = anim.Seconds > 0f ? anim.Seconds : quickEmoteDuration;
-            }
 
             // Try to enter emote state in state controller
             if (_stateController != null)

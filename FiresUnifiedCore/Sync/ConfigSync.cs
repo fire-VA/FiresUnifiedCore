@@ -64,6 +64,10 @@ namespace FiresCore.Sync
         private bool initialSyncDone;
         private OwnConfigEntryBase lockedConfig;
         private DateTime lastConfigLogTime = DateTime.MinValue;
+        private int valuesVersion;
+        private int joinPackageVersion = -1;
+        private int joinPackageSynchronized = -1;
+        private ZPackage joinPackage;
 
         private readonly Dictionary<string, SortedDictionary<int, byte[]>> configValueCache =
             new Dictionary<string, SortedDictionary<int, byte[]>>();
@@ -125,11 +129,47 @@ namespace FiresCore.Sync
             ZRoutedRpc.instance.InvokeRoutedRPC(serverPeer.m_uid, Name + ConfigSyncRpcSuffix, new ZPackage());
         }
 
-        internal void SendAllValuesToJoiningPeer(ZNetPeer peer)
+        internal enum JoinPackageSource { Cached, Rebuilt, NotCacheable }
+
+        internal JoinPackageSource SendAllValuesToJoiningPeer(ZNetPeer peer)
         {
             var joiningPeer = new List<ZNetPeer> { peer };
-            ZNet.instance.StartCoroutine(SendZPackage(joiningPeer, BuildAllValuesPackage(), waitForSendQueue: false));
+            ZPackage package = JoinPackage(out JoinPackageSource source);
+            ZNet.instance.StartCoroutine(SendPrepared(joiningPeer, package, waitForSendQueue: false));
+            return source;
         }
+
+        // The server builds it at world load, so the first joiner is served from the cache too (R24: 31.5 ms for 13 syncs).
+        internal JoinPackageSource PrebuildJoinPackage()
+        {
+            JoinPackage(out JoinPackageSource source);
+            return source;
+        }
+
+        // Every joining peer gets the same full package until a synced value changes, so it is built and compressed once
+        // per change instead of at every join (20 ms of R20's join frame across the Fires mods). Only when every synced
+        // value is immutable (a string or a value type): a list or dictionary can change in place without raising
+        // SettingChanged or ValueChanged, so those syncs keep building at each join, exactly as before.
+        private ZPackage JoinPackage(out JoinPackageSource source)
+        {
+            if (!allCustomValues.All(v => IsImmutable(v.Type)) || !allConfigs.All(c => IsImmutable(c.BaseConfig.SettingType)))
+            {
+                source = JoinPackageSource.NotCacheable;
+                return Prepare(BuildAllValuesPackage());
+            }
+            int synchronized = allConfigs.Count(c => c.SynchronizedConfig);
+            source = JoinPackageSource.Cached;
+            if (joinPackage == null || joinPackageVersion != valuesVersion || joinPackageSynchronized != synchronized)
+            {
+                joinPackage = Prepare(BuildAllValuesPackage());
+                joinPackageVersion = valuesVersion;
+                joinPackageSynchronized = synchronized;
+                source = JoinPackageSource.Rebuilt;
+            }
+            return joinPackage;
+        }
+
+        private static bool IsImmutable(Type type) => type == typeof(string) || type.IsValueType;
 
         internal void RestoreLocalConfigs()
         {
@@ -171,11 +211,13 @@ namespace FiresCore.Sync
 
             configEntry.SettingChanged += (sender, args) =>
             {
+                valuesVersion++;
                 if (ProcessingServerUpdate || !syncedEntry.SynchronizedConfig) return;
                 Broadcast(ZRoutedRpc.Everybody, configEntry);
             };
 
             allConfigs.Add(syncedEntry);
+            valuesVersion++;
             return syncedEntry;
         }
 
@@ -199,9 +241,11 @@ namespace FiresCore.Sync
 
             allCustomValues.Add(customValue);
             allCustomValues = new HashSet<CustomSyncedValueBase>(allCustomValues.OrderByDescending(v => v.Priority));
+            valuesVersion++;
 
             customValue.ValueChanged += () =>
             {
+                valuesVersion++;
                 if (ProcessingServerUpdate) return;
                 Broadcast(ZRoutedRpc.Everybody, customValue);
             };
@@ -724,9 +768,20 @@ namespace FiresCore.Sync
         {
             if (!ZNet.instance) yield break;
 
+            var send = SendPrepared(peers, Prepare(package), waitForSendQueue);
+            while (send.MoveNext()) yield return send.Current;
+        }
+
+        private static ZPackage Prepare(ZPackage package)
+        {
             byte[] data = package.GetArray();
-            if (data.Length > CompressionThresholdBytes)
-                package = CompressPackage(data);
+            return data.Length > CompressionThresholdBytes ? CompressPackage(data) : package;
+        }
+
+        // Sends a package already compressed (when it needed to be) by Prepare.
+        private IEnumerator SendPrepared(List<ZNetPeer> peers, ZPackage package, bool waitForSendQueue)
+        {
+            if (!ZNet.instance) yield break;
 
             var writers = peers
                 .Where(p => p.IsReady())
@@ -981,6 +1036,8 @@ namespace FiresCore.Sync
                 if (ConfigSync.isServer)
                     FiresLogger.LogInfo($"Registered '{configSync.Name} ConfigSync' RPC");
             }
+
+            if (ConfigSync.isServer) SendServerConfigsToJoiningPeer.PrebuildAll();
         }
     }
 
@@ -1014,8 +1071,64 @@ namespace FiresCore.Sync
             if (peer == null || !peer.IsReady()) return;
 
             AdminSyncing.PushAdminStatus(new[] { peer });
+            var total = System.Diagnostics.Stopwatch.StartNew();
+            var costs = new List<KeyValuePair<string, double>>();
+            var rebuilt = new List<string>();
+            var perJoin = new List<string>();
             foreach (var configSync in ConfigSync.configSyncs)
-                configSync.SendAllValuesToJoiningPeer(peer);
+            {
+                var one = System.Diagnostics.Stopwatch.StartNew();
+                var source = configSync.SendAllValuesToJoiningPeer(peer);
+                costs.Add(new KeyValuePair<string, double>(configSync.Name, one.Elapsed.TotalMilliseconds));
+                if (source == ConfigSync.JoinPackageSource.Rebuilt) rebuilt.Add(configSync.Name);
+                else if (source == ConfigSync.JoinPackageSource.NotCacheable) perJoin.Add(configSync.Name);
+            }
+            if (s_firstJoinPending)
+            {
+                s_firstJoinPending = false;
+                ReportFirstJoin(costs.Count, rebuilt, perJoin);
+            }
+            if (total.Elapsed.TotalMilliseconds < JoinReportMs) return;
+            string slowest = string.Join(", ", costs.OrderByDescending(c => c.Value).Take(SlowestListed).Select(c => $"{c.Key} {c.Value:0.0} ms"));
+            FiresLogger.LogInfo($"[ConfigSync] join configs to '{peer.m_playerName}': {costs.Count} sync(s) in {total.Elapsed.TotalMilliseconds:0.0} ms; slowest: {slowest}.");
+        }
+
+        private const double JoinReportMs = 5.0;
+        private const int SlowestListed = 3;
+
+        private static bool s_firstJoinPending;
+
+        // World load (the server's ZNet.Awake): every sync builds its join package here, not in the first join's frame.
+        internal static void PrebuildAll()
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            int prebuilt = 0;
+            int perJoin = 0;
+            foreach (var configSync in ConfigSync.configSyncs)
+            {
+                try
+                {
+                    if (configSync.PrebuildJoinPackage() == ConfigSync.JoinPackageSource.NotCacheable) perJoin++;
+                    else prebuilt++;
+                }
+                catch (Exception ex)
+                {
+                    FiresLogger.LogWarning($"[ConfigSync] could not prebuild the '{configSync.Name}' join package: {ex.Message}");
+                }
+            }
+            s_firstJoinPending = true;
+            FiresLogger.LogInfo($"[ConfigSync] prebuilt {prebuilt} join package(s) at world load in {clock.Elapsed.TotalMilliseconds:0.0} ms" +
+                                (perJoin > 0 ? $"; {perJoin} not cacheable (built at each join)." : "."));
+        }
+
+        // Which syncs the first join actually got from the world-load build: a value that changed after load (a mod that
+        // reads its settings later) means a rebuild in that join's frame.
+        private static void ReportFirstJoin(int syncs, List<string> rebuilt, List<string> perJoin)
+        {
+            string line = $"[ConfigSync] first join after world load: {syncs - rebuilt.Count - perJoin.Count} of {syncs} join package(s) served prebuilt";
+            if (rebuilt.Count > 0) line += $"; rebuilt (a value changed after load): {string.Join(", ", rebuilt)}";
+            if (perJoin.Count > 0) line += $"; built at each join (not cacheable): {string.Join(", ", perJoin)}";
+            FiresLogger.LogInfo(line + ".");
         }
     }
 

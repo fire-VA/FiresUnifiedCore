@@ -33,9 +33,13 @@ namespace FiresCore.Storage
 
         public static void Configure(string databasePath)
         {
+            VaultWriter.Drain();
+            VaultWorldSnapshots.BeforeVaultConfigured(databasePath);
             _databasePath = databasePath;
             ConfigureMapperOnce();
             EnsureContainingDirectory(databasePath);
+            LeaderboardRepository.OnVaultConfigured();
+            FiresCore.Identity.PlayerIdentity.OnVaultConfigured();
         }
 
         public static LiteDatabase Open()

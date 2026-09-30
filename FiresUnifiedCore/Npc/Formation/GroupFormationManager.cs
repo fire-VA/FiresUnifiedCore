@@ -475,7 +475,7 @@ namespace FiresCore.Npc.Formation
                 if (ZoneSystem.instance != null)
                 {
                     float groundHeight;
-                    if (ZoneSystem.instance.GetGroundHeight(candidate, out groundHeight))
+                    if (FiresCore.World.Surface.GroundNear(candidate, out groundHeight))
                     {
                         candidate.y = groundHeight;
                     }

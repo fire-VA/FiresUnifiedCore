@@ -904,10 +904,10 @@ namespace FiresCore.Npc.Core
             // SIMPLIFIED: Just apply movement directly without complex state machine
             if (_targetMoveDirection.sqrMagnitude > 0.01f)
             {
-                // Blend toward target direction for smooth movement
+                // Blend toward target direction for smooth movement, bent round what is in the way (Steering, shared with the bot)
                 _appliedMoveDirection = Vector3.Lerp(
-                    _appliedMoveDirection, 
-                    _targetMoveDirection, 
+                    _appliedMoveDirection,
+                    SteerAround(_targetMoveDirection),
                     Time.deltaTime * _movementBlendSpeed);
                 
                 ApplyMoveDirectionInternal(_appliedMoveDirection, _useWalk, _useRun);
@@ -975,6 +975,114 @@ namespace FiresCore.Npc.Core
         /// THE ONLY METHOD THAT SHOULD CALL Character.SetMoveDir()
         /// All other code paths should go through the authority system.
         /// </summary>
+        // Local obstacle steering (Fire, 2026-09-29: "register what is around them for objects in order to properly avoid them").
+        // BaseAI's navmesh path ignores rocks, stumps and pieces it wasn't baked with, so the companion snagged on them the way the
+        // bot did. AI.Steering (the bot's walk uses the same) is sampled every SteerInterval and its turn held in between; it stays
+        // off near the destination, so a companion still walks up to the tree it is about to chop.
+        private const float SteerInterval = 0.2f;
+        private const float SteerOffNearDestination = 3f;
+        private const float SteerLogInterval = 5f;
+        private float _nextSteer;
+        private float _steerTurn;
+        private float _nextSteerLog;
+
+        // Jumping (Fire: "they get stuck in holes and on hills … they need to know to jump when they're going uphill"): the same
+        // AI.Steering.ShouldJump the bot uses, asked with each steering sample. "Stuck" = under StuckProgress metres in StuckWindow
+        // seconds while trying to move.
+        private const float StuckWindow = 1.5f;
+        private const float StuckProgress = 0.3f;
+        private Vector3 _progressFrom;
+        private float _progressSince = -1f;
+        private bool _stuck;
+
+        private void TrackProgress()
+        {
+            if (_progressSince < 0f || Time.time - _progressSince > StuckWindow * 2f)
+            {
+                _progressFrom = transform.position;
+                _progressSince = Time.time;
+                _stuck = false;
+                return;
+            }
+            if (Time.time - _progressSince < StuckWindow) return;
+            _stuck = Vector3.Distance(transform.position, _progressFrom) < StuckProgress;
+            _progressFrom = transform.position;
+            _progressSince = Time.time;
+        }
+
+        private const float JumpCooldown = 1.2f;
+        private float _nextJump;
+
+        // A lip the body can't clear (R68: "jump: stuck uphill (lip 1.5 m …)" every 1.2 s for 40 s, then "couldn't reach the
+        // tree"): JumpBudget jumps within JumpSpotRadius of one spot inside JumpSpotWindow s, still stuck -> stop jumping there
+        // and back out at ±BackOutTurn off the wanted way for BackOutSeconds (sides alternate), so the path finds another line.
+        private const int JumpBudget = 3;
+        private const float JumpSpotRadius = 1.5f, JumpSpotWindow = 15f, BackOutSeconds = 3f, BackOutTurn = 60f;
+        private Vector3 _jumpSpot;
+        private float _jumpSpotSince = -999f;
+        private int _jumpTries;
+        private float _backOutUntil;
+        private float _backOutSide = 1f;
+
+        private void TryJump(Vector3 wanted)
+        {
+            if (Time.time < _nextJump) return;
+            if (_character.IsSwimming() || !_character.IsOnGround() || _character.InAttack() || _character.InDodge()) return;
+            if (_stuck && _jumpTries >= JumpBudget && Vector3.Distance(transform.position, _jumpSpot) < JumpSpotRadius
+                && Time.time - _jumpSpotSince < JumpSpotWindow)
+            {
+                _backOutUntil = Time.time + BackOutSeconds;
+                _backOutSide = -_backOutSide;
+                Debug.Log($"[MovementAuthority] {_companion?.companionName} gave up jumping at ({_jumpSpot.x:0}, {_jumpSpot.z:0}) after "
+                          + $"{_jumpTries} tries: backing out {BackOutSeconds:0} s at {BackOutTurn * _backOutSide:+0;-0} deg");
+                _jumpTries = 0;
+                _stuck = false;
+                return;
+            }
+            var jump = AI.Jumping.Check(_character, wanted, _stuck);
+            if (!jump.Jump) return;
+            _nextJump = Time.time + JumpCooldown;
+            _character.Jump();
+            _stuck = false;
+            if (Vector3.Distance(transform.position, _jumpSpot) < JumpSpotRadius && Time.time - _jumpSpotSince < JumpSpotWindow) _jumpTries++;
+            else
+            {
+                _jumpSpot = transform.position;
+                _jumpSpotSince = Time.time;
+                _jumpTries = 1;
+            }
+            Debug.Log($"[MovementAuthority] {_companion?.companionName} jump: {(jump.ForStuck ? "stuck uphill" : "lip ahead")} "
+                      + $"(lip {jump.LipHeight:0.0} m at {jump.LipDistance:0.0} m, slope {jump.SlopeDegrees:0} deg)");
+        }
+
+        private Vector3 SteerAround(Vector3 wanted)
+        {
+            if (_character == null || wanted.sqrMagnitude < 0.01f) return wanted;
+            if (Time.time < _backOutUntil) return Quaternion.AngleAxis(BackOutTurn * _backOutSide, Vector3.up) * -wanted;
+            TrackProgress();
+            if (Time.time >= _nextSteer) TryJump(wanted);
+            if (HasDestination && Vector3.Distance(transform.position, CurrentDestination) < SteerOffNearDestination)
+            {
+                _steerTurn = 0f;
+                return wanted;
+            }
+            if (Time.time >= _nextSteer)
+            {
+                _nextSteer = Time.time + SteerInterval;
+                var steer = AI.Steering.Steer(_character, wanted);
+                // Boxed in: keep the wanted direction and let the stuck handling repath.
+                _steerTurn = steer.Boxed ? 0f : steer.Turn;
+                if (_steerTurn != 0f && Time.time >= _nextSteerLog)
+                {
+                    _nextSteerLog = Time.time + SteerLogInterval;
+                    Debug.Log($"[MovementAuthority] {_companion?.companionName} steering {_steerTurn:+0;-0} deg round "
+                              + $"{(steer.Blocker != null ? steer.Blocker.name : "?")} at {steer.BlockerDistance:0.0} m");
+                }
+            }
+            if (_steerTurn == 0f) return wanted;
+            return Quaternion.AngleAxis(_steerTurn, Vector3.up) * wanted;
+        }
+
         private void ApplyMoveDirectionInternal(Vector3 direction, bool walk, bool run)
         {
             if (_character == null) return;

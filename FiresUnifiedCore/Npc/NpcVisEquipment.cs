@@ -80,6 +80,7 @@ namespace FiresCore.Npc
         {
             _nview = GetComponent<ZNetView>();
             NpcBodyMeshGuard.EnsureInstalled();
+            _bodyMeshAssignedFrame = Time.frameCount;   // the prefab's own body mesh renders for the first time now
             
             // VisEquipment runs every frame and NREs before the skeleton and model table exist. Until DelayedInitialize
             // it is disabled, given an empty model table, has its equipment hashes cleared and its ZDO override removed,
@@ -1332,6 +1333,87 @@ namespace FiresCore.Npc
                 Debug.Log($"[NpcVisEquipment] Set model index to {modelIndex}");
         }
         
+        // ── The Player's skeleton order ────────────────────────────────────────────────────────────────────────────
+        // Vanilla's AttachItem hands every skinned item (1.0 hair, beards, capes, armour: attach_skin) the body's bone ARRAY
+        // by index (smr.bones = m_bodyModel.bones), and those meshes are skinned against the 1.0 Player's order. Our
+        // companion body is Core's bundle bake from the pre-1.0 rig, so a different order bound hair to the wrong bones: it
+        // floated off the head and ignored the attack animation, and fur/capes smeared into blobs, on every peer (Fire,
+        // 2026-09-29 R77: "these are player models, they have player skeletons, they should use the proper attaches").
+        // So the body's bone array is put in the Player's order, by name, once; everything vanilla attaches after that
+        // binds as it would on a player, and what was attached before is re-attached.
+        private bool _skeletonChecked;
+        private bool _playerOrder;
+        private bool _skeletonReordered;
+        // The frame this body's mesh last changed, and how long after it a skin-time rejection can still be about it.
+        private int _bodyMeshAssignedFrame;
+        private const int RejectionWindowFrames = 10;
+
+        private bool AlignSkeletonToPlayer(SkinnedMeshRenderer body)
+        {
+            if (_skeletonChecked) return _playerOrder;
+            _skeletonChecked = true;
+            string who = GetComponent<CompanionController>()?.companionName ?? name;
+            var playerVis = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab("Player")?.GetComponent<VisEquipment>() : null;
+            var playerBones = playerVis != null && playerVis.m_bodyModel != null ? playerVis.m_bodyModel.bones : null;
+            if (playerBones == null || playerBones.Length == 0 || body.bones == null)
+            {
+                Debug.LogWarning($"[NpcSkeleton] '{who}': no Player skeleton to align to (Player bones {playerBones?.Length ?? 0}, body bones "
+                                 + $"{body.bones?.Length ?? 0}); the body keeps its own order.");
+                return false;
+            }
+
+            var byName = new Dictionary<string, Transform>();
+            foreach (var t in body.bones) if (t != null && !byName.ContainsKey(t.name)) byName[t.name] = t;
+            // A bone the body's array doesn't list may still be in its hierarchy.
+            var root = body.rootBone != null ? body.rootBone.root : transform;
+            foreach (var t in root.GetComponentsInChildren<Transform>(true)) if (!byName.ContainsKey(t.name)) byName[t.name] = t;
+
+            var ordered = new Transform[playerBones.Length];
+            var missing = new List<string>();
+            int sameIndex = 0;
+            for (int i = 0; i < playerBones.Length; i++)
+            {
+                string wanted = playerBones[i] != null ? playerBones[i].name : null;
+                if (wanted == null || !byName.TryGetValue(wanted, out var bone)) { missing.Add(wanted ?? $"#{i}"); continue; }
+                ordered[i] = bone;
+                if (i < body.bones.Length && ReferenceEquals(body.bones[i], bone)) sameIndex++;
+            }
+            if (missing.Count > 0)
+            {
+                Debug.LogWarning($"[NpcSkeleton] '{who}': NOT on the Player's skeleton: {missing.Count} of the Player's {playerBones.Length} bones "
+                                 + $"have no bone of that name here ({string.Join(", ", missing.GetRange(0, Mathf.Min(6, missing.Count)))}); the body keeps "
+                                 + "its own order and skinned attachments may bind wrong. REPORT THIS LINE.");
+                return false;
+            }
+            _playerOrder = true;
+            if (sameIndex == playerBones.Length && body.bones.Length == playerBones.Length)
+            {
+                Debug.Log($"[NpcSkeleton] '{who}': already in the Player's bone order ({sameIndex}/{playerBones.Length}); vanilla attaches as on a player.");
+                return true;
+            }
+            body.bones = ordered;
+            _skeletonReordered = true;
+            var playerRoot = playerVis.m_bodyModel.rootBone;
+            if (playerRoot != null && byName.TryGetValue(playerRoot.name, out var rootBone)) body.rootBone = rootBone;
+            // Anything vanilla attached on the old order is bound wrong: every item is attached again, hair and beard included.
+            ClearVisEquipmentCurrentHashes();
+            ClearHairBeardCurrentHashes();
+            Debug.Log($"[NpcSkeleton] '{who}': put in the Player's bone order ({sameIndex}/{playerBones.Length} were already in place, "
+                      + $"{body.bones.Length} bones, root '{(body.rootBone != null ? body.rootBone.name : "-")}') at frame {Time.frameCount}; every item "
+                      + "re-attaches on the next equipment update (its '[NpcAttach]' lines follow).");
+            return true;
+        }
+
+        private void ClearHairBeardCurrentHashes()
+        {
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            foreach (string field in new[] { "m_currentHairItemHash", "m_currentBeardItemHash" })
+            {
+                var info = typeof(VisEquipment).GetField(field, flags);
+                if (info != null && info.FieldType == typeof(int)) info.SetValue(_visEquipment, -1);
+            }
+        }
+
         private static readonly HashSet<string> _meshAssignLogged = new HashSet<string>();
         private Mesh _nativeBodyMesh;
 
@@ -1344,6 +1426,7 @@ namespace FiresCore.Npc
         {
             var bodyRenderer = _visEquipment != null ? _visEquipment.m_bodyModel : null;
             if (bodyRenderer == null) return false;
+            bool playerOrder = AlignSkeletonToPlayer(bodyRenderer);
 
             Mesh live = null;
             if (modelIndex >= 0)
@@ -1360,7 +1443,11 @@ namespace FiresCore.Npc
 
             Mesh chosen = null;
             string source = "none";
-            if (NpcBodyMeshGuard.IsAssignable(mesh, bodyRenderer)) { chosen = mesh; source = ReferenceEquals(mesh, live) ? "table(live)" : "table"; }
+            // Only a body this code REORDERED needs the Player's own mesh: its table mesh is skinned to the old order. A body already
+            // in the Player's order keeps its table mesh; preferring the live one there made Unity reject it at skin time ("vertex
+            // stride"), and the guard, which matches meshes by name, then swapped female bodies to 'body' (R79 00:42, bot).
+            if (playerOrder && _skeletonReordered && live != null && NpcBodyMeshGuard.IsAssignable(live, bodyRenderer)) { chosen = live; source = "vanilla-player"; }
+            else if (NpcBodyMeshGuard.IsAssignable(mesh, bodyRenderer)) { chosen = mesh; source = ReferenceEquals(mesh, live) ? "table(live)" : "table"; }
             else if (live != null && !ReferenceEquals(live, mesh) && NpcBodyMeshGuard.IsAssignable(live, bodyRenderer)) { chosen = live; source = "vanilla-player"; }
 
             var probe = chosen ?? mesh;
@@ -1373,7 +1460,11 @@ namespace FiresCore.Npc
             }
 
             if (chosen == null) return false;
-            if (!ReferenceEquals(bodyRenderer.sharedMesh, chosen)) bodyRenderer.sharedMesh = chosen;
+            if (!ReferenceEquals(bodyRenderer.sharedMesh, chosen))
+            {
+                bodyRenderer.sharedMesh = chosen;
+                _bodyMeshAssignedFrame = Time.frameCount;
+            }
             return true;
         }
 
@@ -1395,6 +1486,10 @@ namespace FiresCore.Npc
                 if (bodyRenderer == null) bodyRenderer = GetComponentInChildren<SkinnedMeshRenderer>(true);
                 if (bodyRenderer == null || bodyRenderer.sharedMesh == null) return false;
                 if (bodyRenderer.gameObject.name != goName || bodyRenderer.sharedMesh.name != meshName) return false;
+                // Unity's line names only the mesh and the GameObject ('bodyfem' on 'body'), which every female companion shares.
+                // It rejects a pairing on the first frames that mesh renders, so only a body whose mesh was assigned just now is
+                // the one it means; the rest keep a mesh that renders fine (R79: one rejection swapped several women to 'body').
+                if (Time.frameCount - _bodyMeshAssignedFrame > RejectionWindowFrames) return false;
 
                 var bad = bodyRenderer.sharedMesh;
                 NpcBodyMeshGuard.MarkRejected(bad, bodyRenderer);
@@ -1426,6 +1521,7 @@ namespace FiresCore.Npc
                     return true;
                 }
                 bodyRenderer.sharedMesh = replacement;
+                _bodyMeshAssignedFrame = Time.frameCount;
                 NpcBodyMeshGuard.LogOnce($"heal|{GetInstanceID()}|{bad.GetInstanceID()}",
                     $"{rejected}; swapped body to '{replacement.name}' ({source}), pairing blacklisted for this session. Rejected {layout}");
                 return true;

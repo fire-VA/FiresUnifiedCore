@@ -960,7 +960,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (ZoneSystem.instance != null)
             {
                 float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(firingPos, out groundHeight))
+                if (FiresCore.World.Surface.GroundNear(firingPos, out groundHeight))
                 {
                     firingPos.y = groundHeight;
                 }

@@ -19,7 +19,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         public float TauntRadius { get; set; } = 10f;
         
         public override string Description => 
-            $"<color=gold>IMMORTAL STANCE</color>\n" +
+            $"<color=#FFD700>IMMORTAL STANCE</color>\n" +
             $"Immune to all damage\n" +
             $"All enemies taunted";
         
@@ -40,7 +40,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             AbilityFXManager.SpawnEffect("vfx_ghost_hit", m_character.transform.position, null, 1.0f);
             AbilityFXManager.SpawnEffect("fx_shield_start", m_character.transform.position, null, 1.0f);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=gold>IMMORTAL STANCE</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=#FFD700>IMMORTAL STANCE</color>");
             
             // Taunt all enemies in range
             TauntAllEnemies();
@@ -50,14 +50,17 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         
         private void TauntAllEnemies()
         {
+            // Authoritative: this runs when the effect goes on, which used to happen on every peer (one taunt hit each)
+            if (!Authoritative) return;
+
             Vector3 pos = m_character.transform.position;
             int taunted = 0;
-            
+
             foreach (var character in Character.GetAllCharacters())
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (character.IsTamed() || character.IsPlayer()) continue;
+                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
                 
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist <= TauntRadius)
@@ -73,6 +76,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
                     hitData.m_backstabBonus = 1f;
                     
                     character.Damage(hitData);
+                    NoteHit(character, hitData.m_damage.m_blunt, false);
                     taunted++;
                 }
             }
@@ -104,7 +108,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             
             // Continuous aura VFX - use the same scaled shaman protect bubble
             // This prevents the jarring visual switch between big shaman shield and tiny shield_start
-            if (m_character != null && Random.value < 0.15f) // Reduced frequency since effect is larger
+            if (m_character != null && AuraDue(dt, AuraSpawnsPerSecond))
             {
                 // Use AbilityFXManager for consistent scaling with the initial effect
                 AbilityFXManager.SpawnEffect("fx_shaman_protect", m_character.transform.position, null, 1.0f);
@@ -199,7 +203,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             }
             
             // Continuous holy VFX
-            if (Random.value < 0.2f)
+            if (AuraDue(dt, AuraSpawnsPerSecond))
             {
                 SpawnVFX("vfx_ghost_hit", m_character.transform.position + Vector3.up);
             }
@@ -217,15 +221,16 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist > AuraRadius) continue;
                 
-                if (character.IsTamed() || character.IsPlayer())
+                // Fire: heal the caster's party, damage enemies (it used to heal any player or tame and hit anything else)
+                if (IsParty(character))
                 {
-                    // Heal allies
                     if (character.GetHealthPercentage() < 1f)
                     {
-                        AbilityHeals.Apply(SourceCharacter ?? m_character, character, AuraHealPerSecond, true);
+                        AbilityHeals.Apply(Caster, character, AuraHealPerSecond, true);
+                        NoteHit(character, AuraHealPerSecond, true);
                     }
                 }
-                else
+                else if (IsFoe(character))
                 {
                     // Damage enemies (spirit damage)
                     var hitData = new HitData();
@@ -233,8 +238,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
                     hitData.m_dir = (character.transform.position - pos).normalized;
                     hitData.m_attacker = m_character.GetZDOID();
                     hitData.m_damage.m_spirit = AuraDamagePerSecond;
-                    
+
                     character.Damage(hitData);
+                    NoteHit(character, AuraDamagePerSecond, false);
                 }
             }
         }
@@ -312,7 +318,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             m_character.m_staggerWhenBlocked = false;
             
             // War aura VFX
-            if (Random.value < 0.15f)
+            if (AuraDue(dt, AuraSpawnsPerSecond))
             {
                 SpawnVFX("vfx_MeadBzerker", m_character.transform.position);
             }
@@ -448,7 +454,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             }
             
             // Continuous shadow VFX
-            if (Random.value < 0.15f && !_renderersHidden)
+            if (AuraDue(dt, AuraSpawnsPerSecond) && !_renderersHidden)
             {
                 Vector3 offset = Random.insideUnitSphere * 0.5f;
                 offset.y = 0;
@@ -737,7 +743,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             base.UpdateStatusEffect(dt);
             
             // Aiming VFX
-            if (!_hasUsedShot && m_character != null && Random.value < 0.1f)
+            if (!_hasUsedShot && m_character != null && AuraDue(dt, AuraSpawnsPerSecond))
             {
                 SpawnVFX("fx_Lightning", m_character.transform.position + Vector3.up);
             }
@@ -759,7 +765,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         public float DamageBonus { get; set; } = 2.0f; // Double damage
         
         public override string Description => 
-            $"<color=magenta>ARCANE FORM</color>\n" +
+            $"<color=#FF00FF>ARCANE FORM</color>\n" +
             $"Spells cost no Eitr\n" +
             $"+{(DamageBonus - 1f) * 100:F0}% magic damage";
         
@@ -782,7 +788,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             SpawnVFX("vfx_StaffShield", m_character.transform.position);
             SpawnVFX("vfx_ghost_hit", m_character.transform.position);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=magenta>ARCANE FORM</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=#FF00FF>ARCANE FORM</color>");
             
             Debug.Log($"[ArcaneFormEffect] {m_character.m_name} transformed into ARCANE FORM!");
         }
@@ -807,7 +813,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             base.UpdateStatusEffect(dt);
             
             // Arcane aura VFX
-            if (m_character != null && Random.value < 0.2f)
+            if (m_character != null && AuraDue(dt, AuraSpawnsPerSecond))
             {
                 Vector3 offset = Random.insideUnitSphere * 0.5f;
                 SpawnVFX("vfx_StaffShield", m_character.transform.position + offset);
@@ -900,7 +906,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             base.UpdateStatusEffect(dt);
             
             // Life aura VFX
-            if (m_character != null && Random.value < 0.15f)
+            if (m_character != null && AuraDue(dt, AuraSpawnsPerSecond))
             {
                 SpawnVFX("fx_creature_tamed", m_character.transform.position);
             }
@@ -932,7 +938,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         public float CritBonus { get; set; } = 2.0f; // Double crit damage
         
         public override string Description => 
-            $"<color=gold>WAY OF PERFECTION</color>\n" +
+            $"<color=#FFD700>WAY OF PERFECTION</color>\n" +
             $"2x attack speed\n" +
             $"All attacks critical hit";
         
@@ -952,7 +958,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             SpawnVFX("vfx_Cold", m_character.transform.position);
             SpawnVFX("vfx_ghost_hit", m_character.transform.position);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=gold>WAY OF PERFECTION</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=#FFD700>WAY OF PERFECTION</color>");
             
             Debug.Log($"[WayOfPerfectionEffect] {m_character.m_name} achieved WAY OF PERFECTION!");
         }
@@ -972,7 +978,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             base.UpdateStatusEffect(dt);
             
             // Perfection aura
-            if (m_character != null && Random.value < 0.2f)
+            if (m_character != null && AuraDue(dt, AuraSpawnsPerSecond))
             {
                 SpawnVFX("fx_fenring_frost", m_character.transform.position);
             }

@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using FiresCore.Logging;
 using FiresLogAnalysis;
-using UnityEngine;
 
 namespace FiresCore.ClientLogRelay
 {
@@ -42,7 +42,7 @@ namespace FiresCore.ClientLogRelay
                         return false;
                 }
                 _consumers.Add(consumer);
-                Debug.Log($"[ClientLogRelay] Registered consumer: {consumer.ConsumerId} (total: {_consumers.Count})");
+                FiresLogger.LogInfo($"[ClientLogRelay] Registered consumer: {consumer.ConsumerId} (total: {_consumers.Count})");
                 return true;
             }
         }
@@ -60,7 +60,7 @@ namespace FiresCore.ClientLogRelay
                     if (string.Equals(_consumers[i].ConsumerId, consumerId, StringComparison.Ordinal))
                     {
                         _consumers.RemoveAt(i);
-                        Debug.Log($"[ClientLogRelay] Unregistered consumer: {consumerId} (total: {_consumers.Count})");
+                        FiresLogger.LogInfo($"[ClientLogRelay] Unregistered consumer: {consumerId} (total: {_consumers.Count})");
                         return true;
                     }
                 }
@@ -92,7 +92,7 @@ namespace FiresCore.ClientLogRelay
             {
                 if (_consumers.Count == 0)
                 {
-                    Debug.Log($"[ClientLogRelay] No consumers; dropping artifacts for {artifacts.PlatformId}");
+                    FiresLogger.LogInfo($"[ClientLogRelay] No consumers; dropping artifacts for {artifacts.PlatformId}");
                     return;
                 }
                 snapshot = _consumers.ToArray();
@@ -107,7 +107,7 @@ namespace FiresCore.ClientLogRelay
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[ClientLogRelay] Consumer '{consumer.ConsumerId}' threw: {ex.Message}");
+                    FiresLogger.LogWarning($"[ClientLogRelay] Consumer '{consumer.ConsumerId}' threw: {ex.Message}");
                 }
             }
         }
@@ -128,7 +128,7 @@ namespace FiresCore.ClientLogRelay
             catch (Exception ex)
             {
                 string failure = $"Log analysis failed for {artifacts.PlatformId}: {ex.GetType().Name}: {ex.Message}";
-                Debug.LogWarning($"[ClientLogRelay] {failure}");
+                FiresLogger.LogWarning($"[ClientLogRelay] {failure}");
                 artifacts.ErrorsWarningsReport = failure;
             }
         }
@@ -149,7 +149,7 @@ namespace FiresCore.ClientLogRelay
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[ClientLogRelay] ModListDiff failed for {artifacts.PlatformId}: {ex.Message}");
+                FiresLogger.LogWarning($"[ClientLogRelay] ModListDiff failed for {artifacts.PlatformId}: {ex.Message}");
             }
         }
 
@@ -190,7 +190,7 @@ namespace FiresCore.ClientLogRelay
                 {
                     AppDomain.CurrentDomain.SetData(LoginOwnerKey, ownerId);
                     AppDomain.CurrentDomain.SetData(LoginOwnerPriorityKey, priority);
-                    Debug.Log($"[ClientLogRelay] Login snapshot owner: '{ownerId}' (priority {priority})");
+                    FiresLogger.LogInfo($"[ClientLogRelay] Login snapshot owner: '{ownerId}' (priority {priority})");
                     return true;
                 }
 
@@ -204,7 +204,7 @@ namespace FiresCore.ClientLogRelay
 
                 if (priority > currentPriority)
                 {
-                    Debug.Log($"[ClientLogRelay] Login snapshot owner changed: " +
+                    FiresLogger.LogInfo($"[ClientLogRelay] Login snapshot owner changed: " +
                               $"'{currentOwner}' (priority {currentPriority}) -> '{ownerId}' (priority {priority})");
                     AppDomain.CurrentDomain.SetData(LoginOwnerKey, ownerId);
                     AppDomain.CurrentDomain.SetData(LoginOwnerPriorityKey, priority);
@@ -212,7 +212,7 @@ namespace FiresCore.ClientLogRelay
                 }
 
                 // Another claim wins.
-                Debug.Log($"[ClientLogRelay] Login snapshot claim declined for '{ownerId}' " +
+                FiresLogger.LogInfo($"[ClientLogRelay] Login snapshot claim declined for '{ownerId}' " +
                           $"(priority {priority}); current owner '{currentOwner}' (priority {currentPriority})");
                 return false;
             }

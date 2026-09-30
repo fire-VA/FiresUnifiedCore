@@ -25,10 +25,7 @@ namespace FiresCore.Identity
             {
                 using var db = VaultDatabase.Open();
                 var collection = db.GetCollection<PlayerIdentityRecord>(VaultDatabase.PlayerIdentityCollection, BsonAutoId.ObjectId);
-                collection.EnsureIndex(x => x.SteamId);
-                collection.EnsureIndex(x => x.ConnectionUid);
-                collection.EnsureIndex(x => x.PlayerName);
-                collection.EnsureIndex(x => x.LastConnectionUtc);
+                EnsureIndexes(collection);
 
                 PlayerIdentityRecord existing = FindBestMatch(collection, incoming);
                 DateTime now = DateTime.UtcNow;
@@ -177,6 +174,38 @@ namespace FiresCore.Identity
                 FiresLogger.LogWarning($"{LogPrefix} GetStats failed: {ex.Message}");
                 return new PlayerIdentityStatsDto { GeneratedAtUtc = DateTime.UtcNow };
             }
+        }
+
+        // The upsert's one-time costs (the record's mapping, the indexes, each lookup's first run), paid when the server's vault
+        // is configured instead of by the first join. Reads only: the probe matches no row.
+        public static void Warm()
+        {
+            if (!Ready("Warm")) return;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                using (var db = VaultDatabase.Open())
+                {
+                    var collection = db.GetCollection<PlayerIdentityRecord>(VaultDatabase.PlayerIdentityCollection, BsonAutoId.ObjectId);
+                    EnsureIndexes(collection);
+                    FindBestMatch(collection, new PlayerIdentityRecord
+                    {
+                        SteamId = PlayerIdentity.WarmSteamId,
+                        ConnectionUid = PlayerIdentity.WarmUid,
+                        PlayerName = PlayerIdentity.WarmName
+                    });
+                }
+                FiresLogger.LogInfo($"{LogPrefix} identity vault warmed on the background writer in {clock.Elapsed.TotalMilliseconds:0} ms.");
+            }
+            catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} Warm failed: {ex.Message}"); }
+        }
+
+        private static void EnsureIndexes(ILiteCollection<PlayerIdentityRecord> collection)
+        {
+            collection.EnsureIndex(x => x.SteamId);
+            collection.EnsureIndex(x => x.ConnectionUid);
+            collection.EnsureIndex(x => x.PlayerName);
+            collection.EnsureIndex(x => x.LastConnectionUtc);
         }
 
         private static PlayerIdentityRecord FindBestMatch(ILiteCollection<PlayerIdentityRecord> collection, PlayerIdentityRecord incoming)

@@ -159,6 +159,8 @@ namespace FiresCore.Npc.WildSpawn
             if (_idle == null) return;
 
             Vector3 leaderPos = _leaderGo.transform.position;
+            // A follower anchors on its leader, but never on a dungeon doorstep or a test spot (WildNoPark).
+            if (WildNoPark.Adjust(ref leaderPos, out string place, out float moved)) WildNoPark.Log(gameObject.name, place, moved);
             _idle.SetHomePosition(leaderPos);
         }
 

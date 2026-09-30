@@ -116,16 +116,12 @@ namespace FiresCore.Npc.Combat
                 _entries[i].IsValid = false;
             _activeEntryCount = 0;
 
-            // Single physics scan for the whole group
-            int hitCount = Physics.OverlapSphereNonAlloc(groupCenter, scanRadius, _scanBuffer);
-
-            for (int i = 0; i < hitCount; i++)
+            // The loaded characters within the scan radius (0.2.210, R80 group_spacing: "0 threat(s)" every 10 s while a Greydwarf
+            // Elite hit Vafire 3x: an unmasked 64-collider overlap filled up with the base's pieces and terrain before any character).
+            float radiusSq = scanRadius * scanRadius;
+            foreach (Character character in Character.GetAllCharacters())
             {
-                if (_scanBuffer[i] == null) continue;
-
-                var character = _scanBuffer[i].GetComponent<Character>();
-                if (character == null) character = _scanBuffer[i].GetComponentInParent<Character>();
-                if (character == null) continue;
+                if (character == null || (character.transform.position - groupCenter).sqrMagnitude > radiusSq) continue;
 
                 // Filter: only enemies
                 if (!IsValidEnemy(character, player)) continue;
@@ -177,7 +173,7 @@ namespace FiresCore.Npc.Combat
             var enemyAI = enemy.GetComponent<BaseAI>();
             if (enemyAI != null)
             {
-                var aiTarget = enemyAI.GetTargetCreature();
+                var aiTarget = FiresCore.Npc.Combat.ThreatLevel.TargetOf(enemyAI);
                 if (aiTarget != null)
                 {
                     if (aiTarget.IsPlayer())
@@ -363,18 +359,19 @@ namespace FiresCore.Npc.Combat
         private bool IsValidEnemy(Character character, Player player)
         {
             if (character == null || character.IsDead()) return false;
-            if (character.IsPlayer()) return false;
-            if (character.IsTamed()) return false;
-
-            // Must be hostile to player
-            if (player != null)
+            // A creature that hasn't noticed anyone is wildlife, not a threat (0.2.210, R81 companion_test corner: with the 0.2.209
+            // scan seeing every character, a boar nearby pulled FiresBot's companions into "COMBAT ENTRY … Target: $enemy_boar" and
+            // they stalled 9-12 s at the corner, one 65 m behind). The alert flag is synced, so this holds off the owner too.
+            if (!character.IsPlayer() && !character.IsTamed())   // a PvP party's companions are judged by the party rule below
             {
-                var playerChar = player.GetComponent<Character>();
-                if (playerChar != null && !BaseAI.IsEnemy(playerChar, character))
-                    return false;
+                BaseAI ai = character.GetBaseAI();
+                if (ai != null && !ai.IsAlerted()) return false;
             }
-
-            return true;
+            // The owner's enemies by the one party rule (0.2.208): monsters as before, AND in PvP the other party's players and
+            // companions. It skipped every player and tame, so in companion_test's pvp / threeway fights the group had no threats, no
+            // directive targets and no GroupTactics slots (R79: not one "[GroupTactics]" line).
+            if (player == null) return !character.IsPlayer() && !character.IsTamed();
+            return Archetypes.ClassTargeting.IsEnemyTarget(player, character);
         }
 
         private bool HasEntryFor(Character enemy)

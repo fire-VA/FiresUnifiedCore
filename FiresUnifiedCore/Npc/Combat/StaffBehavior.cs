@@ -772,7 +772,10 @@ namespace FiresCore.Npc.Combat
             if (distance < MinRange - RepositionThreshold) return false;
             
             // Check line of sight
-            if (!HasLineOfSight(target)) return false;
+            // An offensive cast needs a clear lane (LineOfFire: never through a friendly piece, a player or a companion).
+            if (Context.Character == null
+                ? !HasLineOfSight(target)
+                : !LineOfFire.Clear(Context.Character, Context.Transform.position + Vector3.up * EyeHeight, target, out _)) return false;
             
             return true;
         }
@@ -1099,7 +1102,11 @@ namespace FiresCore.Npc.Combat
         private bool IsFriendlyTarget(Character character, long ownerId)
         {
             if (character == null) return false;
-            
+
+            // Support casts (heals, shields) reach the caster's PARTY only, PvP on or off (Fire's rule, the same gate as
+            // AbilityHeals.Apply). R69 pve: "Vafire.healer>FiresBot 1" came from here, when every player counted as friendly.
+            if (Context.Character != null) return Archetypes.ClassTargeting.IsPartyMember(Context.Character, character);
+
             // Players are always potential friendly targets
             if (character.IsPlayer())
             {

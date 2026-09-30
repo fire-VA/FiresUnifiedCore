@@ -128,6 +128,34 @@ namespace FiresCore.UI
         {
             if (config == null) return;
             s_nameOverrides[config] = modName;
+            s_nameOverrideVersion++;
+        }
+
+        // The window asks RebuildIfChanged on open rather than Rebuild: an entry's value, lock and tags are read live,
+        // so only a changed set of configs needs the list built again - a plugin or entry bound since the last build, a
+        // renamed mod, or the Fires-only filter ([perf], 2026-09-28: every open spent 145 ms rebuilding 2,476 entries).
+        private const int SignaturePrime = 31;
+        private static bool s_built;
+        private static int s_builtSignature;
+        private static int s_nameOverrideVersion;
+
+        public static bool RebuildIfChanged()
+        {
+            if (s_built && Signature() == s_builtSignature) return false;
+            Rebuild();
+            return true;
+        }
+
+        private static int Signature()
+        {
+            unchecked
+            {
+                int hash = FiresOnly ? 1 : 0;
+                hash = hash * SignaturePrime + s_nameOverrideVersion;
+                foreach (var kvp in FiresMod.Instances) hash = hash * SignaturePrime + (kvp.Value?.Config?.Count ?? -1);
+                foreach (var kvp in Chainloader.PluginInfos) hash = hash * SignaturePrime + (kvp.Value?.Instance?.Config?.Count ?? -1);
+                return hash;
+            }
         }
 
         /// <summary>True when the window is filtered down to the Fires family instead of every loaded plugin.</summary>
@@ -154,6 +182,8 @@ namespace FiresCore.UI
             }
             ModCount = mods;
             BuildNav();
+            s_builtSignature = Signature();
+            s_built = true;
         }
 
         private struct PluginSource

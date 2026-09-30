@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using FiresCore.Logging;
 using HarmonyLib;
@@ -15,6 +16,10 @@ namespace FiresCore.Identity
     public static class PlayerIdentity
     {
         private const int MinSteamIdDigits = 8;
+        private const double CaptureReportMs = 5.0;
+        internal const string WarmSteamId = "Steam_0";
+        internal const long WarmUid = -1L;
+        internal const string WarmName = "\u0001";
 
         private static readonly HashSet<long> CapturedSessions = new HashSet<long>();
         private static readonly object Sync = new object();
@@ -24,13 +29,17 @@ namespace FiresCore.Identity
             return ZNet.instance != null && ZNet.instance.IsServer();
         }
 
-        public static void CapturePeer(ZNetPeer peer)
+        public static void CapturePeer(ZNetPeer peer) => CapturePeer(peer, Stopwatch.StartNew());
+
+        // The clock is started by the caller, so time spent before the first line (first-call loading) is reported too.
+        internal static void CapturePeer(ZNetPeer peer, Stopwatch clock)
         {
             if (peer == null || !IsServerRuntime())
             {
                 return;
             }
 
+            double started = clock.Elapsed.TotalMilliseconds;
             long sessionUid = GetSessionUid(peer);
             if (sessionUid == 0L)
             {
@@ -46,13 +55,26 @@ namespace FiresCore.Identity
                 }
             }
 
-            PlayerIdentityRecord record = BuildRecord(peer, sessionUid);
-            if (record == null)
-            {
-                return;
-            }
+            string steamId = ResolveSteamId(peer);
+            string playerName = GetPlayerName(peer);
+            string lastIp = ResolveLastIp(peer);
+            double identified = clock.Elapsed.TotalMilliseconds;
+            bool isAdmin = ResolveIsAdmin(peer, sessionUid, playerName, steamId);
+            double checkedAdmin = clock.Elapsed.TotalMilliseconds;
 
-            PlayerIdentityRepository.UpsertSession(record);
+            var record = new PlayerIdentityRecord
+            {
+                SteamId = steamId ?? string.Empty,
+                ConnectionUid = sessionUid,
+                PlayerName = playerName ?? string.Empty,
+                LastConnectionUtc = DateTime.UtcNow,
+                LastIp = lastIp ?? string.Empty,
+                IsAdmin = isAdmin
+            };
+
+            // The record is built here from the peer (main-thread state); the vault upsert runs on the background writer.
+            FiresCore.Storage.VaultWriter.Enqueue(() => PlayerIdentityRepository.UpsertSession(record));
+            double queued = clock.Elapsed.TotalMilliseconds;
 
             lock (Sync)
             {
@@ -60,6 +82,32 @@ namespace FiresCore.Identity
             }
 
             FiresLogger.LogInfo("[PlayerIdentity] Session recorded steamId='" + record.SteamId + "' uid=" + record.ConnectionUid + " name='" + record.PlayerName + "' admin=" + record.IsAdmin + ".");
+
+            double total = clock.Elapsed.TotalMilliseconds;
+            if (total < CaptureReportMs)
+            {
+                return;
+            }
+
+            FiresLogger.LogInfo($"[PlayerIdentity] capturing '{record.PlayerName}' took {total:0.0} ms: first call {started:0.0}, identity {identified - started:0.0}, " +
+                                $"admin check {checkedAdmin - identified:0.0}, queue {queued - checkedAdmin:0.0}, log {total - queued:0.0}.");
+        }
+
+        // The server's vault now points at a world: the first capture's one-time costs (the writer thread, the record's mapping
+        // and indexes, the helpers' first run) are paid on the loading screen, not in the first join's frame. R22b: the first
+        // capture after a start held that frame 159 ms, mostly blocked; later joins cost nothing.
+        internal static void OnVaultConfigured()
+        {
+            if (!IsServerRuntime())
+            {
+                return;
+            }
+
+            FiresCore.Storage.VaultWriter.Enqueue(PlayerIdentityRepository.Warm);
+            ResolveSteamId(null);
+            ResolveLastIp(null);
+            GetPlayerName(null);
+            ResolveIsAdmin(null, WarmUid, WarmName, NormalizeSteamId(WarmSteamId));
         }
 
         public static void ForgetSession(long sessionUid)
@@ -89,24 +137,6 @@ namespace FiresCore.Identity
         public static List<PlayerIdentityRecord> GetBySteamId(string steamId) => PlayerIdentityRepository.GetBySteamId(steamId);
         public static List<PlayerIdentityGroupedDto> GetGrouped(int limit) => PlayerIdentityRepository.GetGrouped(limit);
         public static PlayerIdentityStatsDto GetStats() => PlayerIdentityRepository.GetStats();
-
-        private static PlayerIdentityRecord BuildRecord(ZNetPeer peer, long sessionUid)
-        {
-            string steamId = ResolveSteamId(peer);
-            string playerName = GetPlayerName(peer);
-            string lastIp = ResolveLastIp(peer);
-            bool isAdmin = ResolveIsAdmin(peer, sessionUid, playerName, steamId);
-
-            return new PlayerIdentityRecord
-            {
-                SteamId = steamId ?? string.Empty,
-                ConnectionUid = sessionUid,
-                PlayerName = playerName ?? string.Empty,
-                LastConnectionUtc = DateTime.UtcNow,
-                LastIp = lastIp ?? string.Empty,
-                IsAdmin = isAdmin
-            };
-        }
 
         private static string ResolveSteamId(ZNetPeer peer)
         {

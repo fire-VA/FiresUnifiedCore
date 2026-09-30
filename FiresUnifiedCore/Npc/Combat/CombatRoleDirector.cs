@@ -70,7 +70,11 @@ namespace FiresCore.Npc.Combat
                 TargetPosition = Vector3.zero;
                 Priority = 0f;
                 FlankAngle = 0f;
+                HasFlank = false;
             }
+
+            // FlankAngle is a world yaw; 0 (north) is a real angle, so "assigned" is this flag, not FlankAngle != 0.
+            public bool HasFlank;
         }
 
         #endregion
@@ -107,6 +111,7 @@ namespace FiresCore.Npc.Combat
             // Check for emergency regroup conditions
             if (ShouldRegroup(healthMonitor, player))
             {
+                LogSession(companions, player, threatTable, healthMonitor, true);
                 IssueRegroupToAll(companions);
                 return;
             }
@@ -127,7 +132,12 @@ namespace FiresCore.Npc.Combat
                 }
 
                 if (archetype.IsTank)
+                {
                     IssueTankDirective(companion, archetype, player, threatTable, healthMonitor);
+                    // Tanks spread with the melee too (they took the same spot as the first DPS before 0.2.201).
+                    if (archetype.IsMelee)
+                        _meleeCompanions.Add(companion);
+                }
                 else if (archetype.IsSupport)
                     IssueSupportDirective(companion, archetype, player, threatTable, healthMonitor);
                 else if (archetype.IsDPS)
@@ -141,7 +151,8 @@ namespace FiresCore.Npc.Combat
             }
 
             // Assign flanking angles to melee companions attacking the same target
-            AssignFlankingAngles();
+            AssignFlankingAngles(player);
+            LogSession(companions, player, threatTable, healthMonitor, false);
         }
 
         #endregion
@@ -271,6 +282,27 @@ namespace FiresCore.Npc.Combat
             // Check if we have a current target from the threat table
             var assignedTarget = threatTable.GetAssignedTarget(companion.companionId);
 
+            // The foe on the owner first (0.2.204, Fire: "two companions on one weak foe while another hits the owner" is wrong): a threat
+            // attacking the player beats the current pick unless that pick is on the player too.
+            SharedThreatTable.ThreatEntry onOwner = null, assignedEntry = null;
+            foreach (var threat in threatTable.AllThreats)
+            {
+                if (!threat.IsValid) continue;
+                if (threat.Enemy == assignedTarget) assignedEntry = threat;
+                if (threat.IsTargetingPlayer && threat.AssignedCompanionCount < maxPerTarget && (onOwner == null || threat.ThreatScore > onOwner.ThreatScore))
+                    onOwner = threat;
+            }
+            if (onOwner != null && (assignedEntry == null || !assignedEntry.IsTargetingPlayer) && onOwner.Enemy != assignedTarget)
+            {
+                directive.Set(CombatDirective.FocusTarget, _directiveExpiryTime);
+                directive.TargetEnemy = onOwner.Enemy;
+                directive.Priority = 70f;
+                threatTable.AssignCompanionToTarget(companion.companionId, onOwner.Enemy);
+                Debug.Log($"[GroupTactics] {companion.companionName} target {onOwner.Enemy.m_name} because it is on the owner" +
+                          $"{(assignedTarget != null ? $" (was {assignedTarget.m_name})" : "")}");
+                return;
+            }
+
             // If current target is still alive and not almost dead, keep it (target consistency)
             if (assignedTarget != null && !assignedTarget.IsDead())
             {
@@ -337,12 +369,16 @@ namespace FiresCore.Npc.Combat
         #region Flanking
 
         /// <summary>
-        /// Assigns flanking angles to melee companions attacking the same target.
-        /// Ensures they spread around the enemy instead of stacking.
+        /// Assigns flanking angles to melee companions (tanks included) attacking the same target, measured from the foe's side
+        /// that faces the owner: a tank takes that front (between the foe and the owner), the others spread evenly around, so they
+        /// ring the enemy instead of stacking. Without a tank the ring is turned half a step so nobody stands in the owner's line.
         /// </summary>
-        private void AssignFlankingAngles()
+        private void AssignFlankingAngles(Player player)
         {
-            if (_meleeCompanions.Count < 2) return;
+            // The STACK watchdog over every melee companion with a target (0.2.204).
+            GroupTactics.Watch(_meleeCompanions, c => GetDirective(c.companionId)?.TargetEnemy);
+            // One melee companion too (0.2.204): it keeps out of its owner's line of attack.
+            if (_meleeCompanions.Count < 1) return;
 
             // Group melee companions by their target
             var targetGroups = new Dictionary<Character, List<CompanionController>>();
@@ -360,30 +396,57 @@ namespace FiresCore.Npc.Combat
                 group.Add(companion);
             }
 
-            // Assign angle offsets for groups with 2+ melee
+            // Slots round each foe (0.2.204, GroupTactics): from the owner's side, the owner's line kept clear, slots taken by anyone
+            // already standing there left alone, each companion's slot kept while it's free. "[GroupTactics] <name> slot …" per change.
             foreach (var kvp in targetGroups)
             {
                 var group = kvp.Value;
-                if (group.Count < 2) continue;
-
-                float angleStep = 360f / group.Count;
-                for (int i = 0; i < group.Count; i++)
+                _slotYaws.Clear();
+                GroupTactics.AssignSlots(kvp.Key, player, group, IsTank, _slotYaws);
+                foreach (var companion in group)
                 {
-                    var directive = GetDirective(group[i].companionId);
-                    if (directive == null) continue;
-
-                    directive.Directive = CombatDirective.FlankTarget;
-                    directive.FlankAngle = angleStep * i;
+                    var directive = GetDirective(companion.companionId);
+                    if (directive == null || !_slotYaws.TryGetValue(companion, out float yaw)) continue;
+                    // A tank keeps its intercept/taunt directive; only the melee DPS switch to FlankTarget.
+                    if (!IsTank(companion)) directive.Directive = CombatDirective.FlankTarget;
+                    directive.FlankAngle = yaw;
+                    directive.HasFlank = true;
                 }
-
-                if (VerboseLogging)
-                    Debug.Log($"[CombatRoleDirector] Assigned flanking angles to {group.Count} melee companions on {kvp.Key.m_name}: step={angleStep:F0}°");
             }
+        }
+
+        private readonly Dictionary<CompanionController, float> _slotYaws = new Dictionary<CompanionController, float>();
+
+        private readonly Dictionary<int, string> _flankLogged = new Dictionary<int, string>();
+
+        private static bool IsTank(CompanionController companion)
+        {
+            var archetype = companion != null ? companion.GetArchetypeController() : null;
+            return archetype != null && archetype.IsTank;
         }
 
         #endregion
 
         #region Emergency
+
+        // One line per group every SessionLogSeconds while its combat session ticks (0.2.208, R79: companions fought and not one
+        // "[GroupTactics]" line came out; this names the gate that closed: no threats, a forced regroup, no melee with a target).
+        private const float SessionLogSeconds = 10f;
+        private float _sessionLoggedAt = -999f;
+
+        private void LogSession(IReadOnlyList<CompanionController> companions, Player player, SharedThreatTable threats, GroupHealthMonitor health, bool regroup)
+        {
+            if (Time.time - _sessionLoggedAt < SessionLogSeconds) return;
+            _sessionLoggedAt = Time.time;
+            int withTarget = 0;
+            foreach (var c in _meleeCompanions)
+            {
+                var d = c != null ? GetDirective(c.companionId) : null;
+                if (d != null && d.TargetEnemy != null) withTarget++;
+            }
+            Debug.Log($"[GroupTactics] group of {(player != null ? player.GetPlayerName() : "?")}: {companions.Count} companion(s), {threats.ThreatCount} threat(s), " +
+                      $"owner hp {health.PlayerHealthPercent * 100f:0}%, {(regroup ? "REGROUP (no slots this tick)" : $"{_meleeCompanions.Count} melee, {withTarget} with a target")}");
+        }
 
         private bool ShouldRegroup(GroupHealthMonitor healthMonitor, Player player)
         {
@@ -438,6 +501,7 @@ namespace FiresCore.Npc.Combat
         {
             _directives.Clear();
             _meleeCompanions.Clear();
+            _flankLogged.Clear();
         }
 
         #endregion

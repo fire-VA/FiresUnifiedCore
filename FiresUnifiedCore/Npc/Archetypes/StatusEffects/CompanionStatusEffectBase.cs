@@ -23,7 +23,142 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         
         /// <summary>The character who applied this effect (if applicable).</summary>
         public Character SourceCharacter { get; set; }
-        
+
+        /// <summary>Whose ability this is: the one who applied it, else the character wearing it.</summary>
+        protected Character Caster => SourceCharacter ?? m_character;
+
+        /// <summary>
+        /// True on the one peer that owns the character. AbilityRPCManager only adds class effects there, so this is a belt
+        /// for work done when the effect goes on: a heal or hit run on every peer landed once per peer.
+        /// </summary>
+        protected bool Authoritative => m_character != null && m_character.IsOwner();
+
+        /// <summary>How often a running aura re-spawns its FX, per second.</summary>
+        protected const float AuraSpawnsPerSecond = 1f;
+
+        /// <summary>
+        /// Whether a looping aura FX is due this frame, at about <paramref name="spawnsPerSecond"/> regardless of frame rate. The
+        /// auras rolled a fixed chance EVERY frame (Divine Shield 0.3: ~18 spawns a second at 60 fps), and the pile of pooled FX
+        /// washed the screen pink/magenta (Fire's Divine Shield screenshot, 2026-09-29; [wishbone]).
+        /// </summary>
+        protected static bool AuraDue(float dt, float spawnsPerSecond) => UnityEngine.Random.value < spawnsPerSecond * dt;
+
+        /// <summary>Fire: heals and buffs only the caster's party (ClassTargeting).</summary>
+        protected bool IsParty(Character character) => ClassTargeting.IsPartyMember(Caster, character);
+
+        /// <summary>Fire: damage and debuffs only on enemies; a player only when both have PvP on (ClassTargeting).</summary>
+        protected bool IsFoe(Character character) => ClassTargeting.IsEnemyTarget(Caster, character);
+
+        // ---- Placed areas (Rain of Arrows, Meteor): where the caster aimed, handed over by the class mod just before the cast ----
+
+        private static Vector3 s_placement;
+        private static float s_placementAt = -1f;
+        private const float PlacementFresh = 1f, AutoPlaceRange = 30f;
+
+        /// <summary>
+        /// The class mod calls this right before casting a placed area skill as a self effect (e.g. RPGClasses' ranger_rain_arrows,
+        /// aimed up to 40 m): the next placed effect lands there instead of 8 m in front of the caster.
+        /// </summary>
+        public static void SetNextPlacement(Vector3 point)
+        {
+            s_placement = point;
+            s_placementAt = Time.time;
+        }
+
+        /// <summary>
+        /// Where a placed area effect lands: the class mod's aim if it was just handed over, else the nearest foe in front of the
+        /// caster within <see cref="AutoPlaceRange"/> m, else <paramref name="fallbackDistance"/> m ahead (R75: Rain of Arrows always
+        /// fell 8 m ahead, so it hit nothing unless a foe happened to stand there).
+        /// </summary>
+        protected Vector3 PlacedTarget(float fallbackDistance, out string how)
+        {
+            Character caster = m_character;
+            if (s_placementAt >= 0f && Time.time - s_placementAt < PlacementFresh)
+            {
+                s_placementAt = -1f;
+                how = "aimed";
+                return s_placement;
+            }
+            how = "ahead";
+            if (caster == null) return Vector3.zero;
+            Vector3 at = caster.transform.position, forward = caster.transform.forward;
+            Character best = null;
+            float bestDistance = float.MaxValue;
+            foreach (Character other in Character.GetAllCharacters())
+            {
+                if (other == null || other == caster || other.IsDead() || !IsFoe(other)) continue;
+                Vector3 to = other.transform.position - at;
+                float distance = to.magnitude;
+                if (distance > AutoPlaceRange || Vector3.Dot(forward, to / Mathf.Max(0.01f, distance)) < 0.3f) continue;
+                if (distance < bestDistance) { bestDistance = distance; best = other; }
+            }
+            if (best != null)
+            {
+                how = $"on the nearest foe in front, {best.m_name}";
+                return best.transform.position;
+            }
+            return at + forward * fallbackDistance;
+        }
+
+        // Each hit's result, read back a moment later on this peer (the health change comes back from the target's owner).
+        private sealed class PendingHit
+        {
+            public Character Target;
+            public string Effect;
+            public float Sent;
+            public float HpBefore;
+            public float At;
+        }
+
+        private static readonly System.Collections.Generic.List<PendingHit> s_pendingHits = new System.Collections.Generic.List<PendingHit>();
+        private const float HitReadBack = 0.6f;
+
+        /// <summary>Counts a hit or heal this effect landed (ClassEffectLedger, read by class_test) and logs it verbosely.</summary>
+        protected void NoteHit(Character target, float amount, bool heal)
+        {
+            // Always on (Fire, R75: "the skills don't seem to actually do any damage"): what was sent, and a moment later what the
+            // target's health did, "[ClassSkill] <effect> hit <foe>: dealt N (hp a -> b)".
+            if (!heal && target != null && s_pendingHits.Count < 64)
+            {
+                s_pendingHits.Add(new PendingHit { Target = target, Effect = name, Sent = amount, HpBefore = target.GetHealth(), At = Time.time });
+                HitReader.Ensure();
+            }
+            ClassEffectLedger.Record(name, heal);
+            if (VerboseLogging)
+            {
+                Debug.Log($"[{GetType().Name}] {(heal ? "healed" : "hit")} {target?.m_name} for {amount:0.#}");
+            }
+        }
+
+        private sealed class HitReader : MonoBehaviour
+        {
+            private static HitReader s_instance;
+
+            internal static void Ensure()
+            {
+                if (s_instance != null) return;
+                var go = new GameObject("FiresClassSkillHits");
+                DontDestroyOnLoad(go);
+                s_instance = go.AddComponent<HitReader>();
+            }
+
+            private void Update()
+            {
+                float now = Time.time;
+                for (int i = s_pendingHits.Count - 1; i >= 0; i--)
+                {
+                    PendingHit h = s_pendingHits[i];
+                    if (now - h.At < HitReadBack) continue;
+                    s_pendingHits.RemoveAt(i);
+                    if (h.Target == null) continue;
+                    float after = h.Target.GetHealth();
+                    string effect = h.Effect != null && h.Effect.StartsWith("Companion_") ? h.Effect.Substring(10) : h.Effect;
+                    Debug.Log($"[ClassSkill] {effect} hit {h.Target.m_name}: dealt {h.Sent:0.#} (hp {h.HpBefore:0} -> {after:0}" +
+                              $"{(h.Target.IsDead() ? ", dead" : "")}{(Mathf.Approximately(after, h.HpBefore) && !h.Target.IsDead() ? ", NO CHANGE" : "")})");
+                }
+            }
+        }
+
         /// <summary>
         /// Friendly display name for the tooltip. Override in derived classes.
         /// </summary>

@@ -135,13 +135,14 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (BaseAI.IsEnemy(m_character, character)) continue;
-                
+                if (!IsParty(character)) continue; // Fire: heals only the party (it used to heal anything not hostile)
+
                 float distance = Vector3.Distance(center, character.transform.position);
                 if (distance <= AuraRange)
                 {
                     // Heal ally
-                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, AllyHealPerTick, true);
+                    AbilityHeals.Apply(Caster, character, AllyHealPerTick, true);
+                    NoteHit(character, AllyHealPerTick, true);
                     
                     if (VerboseLogging)
                     {

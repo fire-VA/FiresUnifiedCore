@@ -43,6 +43,8 @@ namespace FiresCore.Input
             string description = null)
         {
             string desc = string.IsNullOrEmpty(description) ? name : description;
+            section = KeyBinding.SafeConfigName(section, "section");
+            name = KeyBinding.SafeConfigName(name, "key");
             Enabled     = config.Bind(section, name + EnabledEntrySuffix,     true,                "Enable wheel binding for " + desc + ".");
             Mod         = config.Bind(section, name + ModifierEntrySuffix,    defaultMod,          "Modifier required for " + desc + " wheel action.");
             Sensitivity = config.Bind(section, name + SensitivityEntrySuffix, defaultSensitivity,  "Per-notch delta applied for " + desc + ".");

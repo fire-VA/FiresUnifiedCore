@@ -204,6 +204,8 @@ FoodName = shared.m_name,
         StartTime = Time.time
             };
 
+            float maxBefore = _character != null ? _character.GetMaxHealth() : 0f;
+
             // Vanilla: eating the same food restarts it, and a full belly drops the emptiest food first.
             var existing = _activeFoodEffects.Find(active => active.FoodName == shared.m_name);
             if (existing != null) _activeFoodEffects.Remove(existing);
@@ -254,6 +256,10 @@ FoodName = shared.m_name,
        Debug.Log($"  - Duration: {effect.Duration:F0}s");
          Debug.Log($"  - New Max Health: {GetMaxHealth():F0}");
    }
+
+            // One line per meal, always on (companion_test reads it: R54's max-HP check couldn't tell whether a companion ate).
+            Debug.Log($"[CompanionConsumables] {_companion?.companionName} ate {shared.m_name}: max HP {maxBefore:0} -> "
+                      + $"{(_character != null ? _character.GetMaxHealth() : 0f):0}, {_activeFoodEffects.Count} food(s) active");
 
             // Show feedback
             ShowConsumptionEffect(item);
@@ -603,6 +609,17 @@ FoodName = shared.m_name,
         }
 
         #endregion
+
+        /// <summary>Empties the belly: every active food ends now, and the bonuses and max health follow. Tests call it before
+        /// feeding a known set (the random loadout's foods are eaten at spawn and would keep the test's out).</summary>
+        public void ClearFoods()
+        {
+            if (_activeFoodEffects.Count == 0) return;
+            _activeFoodEffects.Clear();
+            RecalculateFoodBonuses();
+            UpdateMaxHealth();
+            SaveToZDO();
+        }
 
         #region Persistence
 

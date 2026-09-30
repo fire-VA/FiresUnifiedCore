@@ -64,7 +64,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ranger
         /// </summary>
         public static bool ApplyHuntersMark(Character target, Character ranger, float duration)
         {
-            if (target == null || ranger == null) return false;
+            // A null ranger is allowed: the target's owner applies it when the caster isn't loaded on that peer.
+            if (target == null) return false;
             
             var seman = target.GetSEMan();
             if (seman == null) return false;

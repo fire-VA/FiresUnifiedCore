@@ -266,12 +266,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 else
                 {
                     Debug.LogWarning($"[WoodGathering] {Companion?.companionName} - Invalid target resource");
-                    SetPhase(GatherPhase.Complete);
+                    EndWith("the commanded target isn't a gatherable tree or log");
                 }
             }
             else
             {
-                SetPhase(GatherPhase.Complete);
+                EndWith("no target (autonomous start found none)");
             }
 
             _combatMovement?.SetCommandPriorityDuration(MaxDuration);
@@ -293,6 +293,7 @@ namespace FiresCore.Npc.IdleBehaviors
             switch (_currentPhase)
             {
                 case GatherPhase.FindingTree:
+                    if (_endReason == null) _endReason = "no tree found";
                     Complete();
                     return true;
 
@@ -341,9 +342,50 @@ namespace FiresCore.Npc.IdleBehaviors
             base.Cancel();
         }
 
+        // Why the run ended, for the always-on end line (R60 gather FAIL: "started WoodGatheringBehavior", then "CompleteCommand
+        // … Success" with no chop and nothing in between to say why).
+        private string _endReason;
+        private bool _chopLogged;
+
+        // Every EndWith is a failed run: a commanded one reports FailCommand(reason), never "Success" (R67).
+        private void EndWith(string reason)
+        {
+            if (_endReason == null) _endReason = reason;
+            if (FailureReason == null) FailureReason = reason;
+            SetPhase(GatherPhase.Complete);
+        }
+
+        // Where to stand and what to measure reach against for the current target: its hit point (the trunk, a log's nearest
+        // collider point) snapped to the navmesh, not its pivot, which sits inside the navmesh carve-out (R67: "couldn't reach the
+        // tree in 23 s (8.5 m away)"). Cached per target, refreshed every 2 s as the body moves round it.
+        private Vector3 _approach, _hit;
+        private string _approachMethod = "";
+        private GameObject _approachFor;
+        private float _approachAt;
+
+        private void RefreshApproach()
+        {
+            GameObject go = _targetResource?.GameObject;
+            if (go == null)
+            {
+                _approach = _hit = _targetResource != null ? _targetResource.InteractionPosition : Transform.position;
+                return;
+            }
+            if (go == _approachFor && Time.time - _approachAt < 2f) return;
+            _approach = FiresCore.World.PrefabIndex.ApproachPoint(go, Transform.position, AttackRange, out _hit, out _approachMethod);
+            _approachFor = go;
+            _approachAt = Time.time;
+        }
+
         protected override void Complete()
         {
             StopCraftingPose();
+            var axe = GetEquippedAxe();
+            Debug.Log($"[WoodGathering] {Companion?.companionName} ended in {_currentPhase}: {_endReason ?? "done"} "
+                      + $"(gathered {_resourcesGathered}, target {(_targetResource != null ? _targetResource.Name : "none")}, "
+                      + $"axe {(axe != null ? axe.m_shared.m_name : "none")})");
+            _endReason = null;
+            _chopLogged = false;
             base.Complete();
         }
 
@@ -542,8 +584,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            _targetPosition = _targetResource.InteractionPosition;
-            float dist = Vector3.Distance(Transform.position, _targetPosition);
+            RefreshApproach();
+            _targetPosition = _approach;
+            float dist = Vector3.Distance(Transform.position, _hit);
 
             if (dist < AttackRange)
             {
@@ -552,7 +595,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            MoveToPosition(_targetPosition);
+            MoveToPosition(_approach);
 
             float maxMoveTime = 20f + (dist / 3f);
             if (Time.time - _phaseStartTime > maxMoveTime)
@@ -564,7 +607,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 else
                 {
-                    SetPhase(GatherPhase.Complete);
+                    EndWith($"couldn't reach the {_targetResource.Type} in {maxMoveTime:0} s ({dist:0.0} m from its hit point, "
+                        + $"{Vector3.Distance(Transform.position, _approach):0.0} m from where to stand; {_approachMethod})");
                 }
             }
 
@@ -612,9 +656,18 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
+            if (!_chopLogged)
+            {
+                _chopLogged = true;
+                var axe = GetEquippedAxe();
+                Debug.Log($"[WoodGathering] {Companion?.companionName} chopping {_targetResource.Name} with "
+                          + $"{(axe != null ? axe.m_shared.m_name : "no axe in hand")}");
+            }
+
             // Check if destructible gone but GameObject exists
             if (_targetResource.Destructible == null)
             {
+                if (_endReason == null) _endReason = "the target had no destructible part (counted as felled)";
                 if (_wasTargetingStump)
                 {
                     OnStumpDestroyed(_targetStumpPosition, _targetStumpName);
@@ -646,16 +699,17 @@ namespace FiresCore.Npc.IdleBehaviors
             bool isAttacking = _character != null && _character.InAttack();
             if (!isAttacking)
             {
-                float dist = Vector3.Distance(Transform.position, _targetResource.InteractionPosition);
+                RefreshApproach();
+                float dist = Vector3.Distance(Transform.position, _hit);
                 if (dist > AttackRange)
                 {
-                    MoveToPosition(_targetResource.InteractionPosition);
+                    MoveToPosition(_approach);
                 }
                 else
                 {
                     StopMovement();
                 }
-                FaceTarget(_targetResource.InteractionPosition);
+                FaceTarget(_hit);
             }
             else
             {
@@ -931,7 +985,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (ZoneSystem.instance != null)
             {
                 float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(newPosition, out groundHeight))
+                if (FiresCore.World.Surface.GroundNear(newPosition, out groundHeight))
                 {
                     newPosition.y = groundHeight;
                 }
@@ -1493,7 +1547,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (ZoneSystem.instance != null)
             {
                 float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(position, out groundHeight))
+                if (FiresCore.World.Surface.GroundNear(position, out groundHeight))
                 {
                     spawnPos.y = groundHeight;
                 }

@@ -185,6 +185,23 @@ namespace FiresCore.Npc.IdleBehaviors
                 && (!chest.m_checkGuardStone || WardsAllow(chest.transform.position, ownerPlayerId));
         }
 
+        /// <summary>
+        /// Why <see cref="OwnerMayWrite"/> refuses (null when it allows): "not networked", "open (in use)", "private to its maker
+        /// &lt;id&gt;", "ward". For always-on failure lines (R59 deposit: the test chest stayed empty with no line saying why).
+        /// </summary>
+        public static string WhyNotWritable(Container chest, long ownerPlayerId)
+        {
+            ZNetView chestView = chest != null ? chest.m_nview : null;
+            if (chestView == null || !chestView.IsValid()) return "not networked";
+            if (chestView.GetZDO().GetInt(ZDOVars.s_inUse) == 1) return "open (in use)";
+            if (!PrivacyAllows(chest, ownerPlayerId))
+                return chest.m_privacy == Container.PrivacySetting.Private
+                    ? $"private to its maker {(chest.m_piece != null ? chest.m_piece.GetCreator() : 0L)}"
+                    : $"privacy {chest.m_privacy}";
+            if (chest.m_checkGuardStone && !WardsAllow(chest.transform.position, ownerPlayerId)) return "ward";
+            return null;
+        }
+
         private static bool PrivacyAllows(Container chest, long playerId)
         {
             switch (chest.m_privacy)
@@ -201,7 +218,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // PrivateArea.CheckAccess (PrivateArea.cs:325) for the given player instead of Player.m_localPlayer, which is null
         // on a dedicated server and not necessarily the companion's owner: open unless enabled wards cover the point and
         // none of them has the player as creator or permitted.
-        private static bool WardsAllow(Vector3 position, long playerId)
+        public static bool WardsAllow(Vector3 position, long playerId)
         {
             bool covered = false;
             foreach (var area in PrivateArea.m_allAreas)
@@ -577,7 +594,10 @@ namespace FiresCore.Npc.IdleBehaviors
                     itemType == ItemDrop.ItemData.ItemType.Utility ||
                     itemType == ItemDrop.ItemData.ItemType.Shield ||
                     itemType == ItemDrop.ItemData.ItemType.Bow ||
-                    itemType == ItemDrop.ItemData.ItemType.Tool)
+                    itemType == ItemDrop.ItemData.ItemType.Tool ||
+                    // Ammo is kit, not loot (0.2.217, R87 deposit: the fighter put its own ArrowFire x47 in the chest; ChoreBrain
+                    // deposits through this overload, which never saw the companion's bow check).
+                    itemType == ItemDrop.ItemData.ItemType.Ammo)
                 {
                     continue;
                 }
@@ -604,7 +624,10 @@ namespace FiresCore.Npc.IdleBehaviors
             CompanionInventory.EquipmentSlot.LeftBack
         };
 
-        /// <summary>True for ammo that an equipped bow or crossbow of the companion fires (same m_ammoType).</summary>
+        /// <summary>
+        /// True for ammo that a bow or crossbow the companion carries fires (same m_ammoType), equipped or in its bag: the fight
+        /// swaps to the bow at range (CombatAdvisor), so its arrows stay (R64 companion_test: the fighter stashed its 24 arrows).
+        /// </summary>
         public static bool IsAmmoForEquippedWeapon(CompanionInventory companionInventory, ItemDrop.ItemData item)
         {
             if (companionInventory == null || item?.m_shared == null) return false;
@@ -613,13 +636,18 @@ namespace FiresCore.Npc.IdleBehaviors
 
             foreach (var slot in WeaponSlots)
             {
-                var weapon = companionInventory.GetEquippedItem(slot);
-                if (weapon != null && weapon.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow
-                    && !string.IsNullOrEmpty(weapon.m_shared.m_ammoType) && weapon.m_shared.m_ammoType == item.m_shared.m_ammoType)
-                    return true;
+                if (FiresAmmo(companionInventory.GetEquippedItem(slot), item)) return true;
+            }
+            foreach (var carried in companionInventory.GetAllStorageItems())
+            {
+                if (FiresAmmo(carried, item)) return true;
             }
             return false;
         }
+
+        private static bool FiresAmmo(ItemDrop.ItemData weapon, ItemDrop.ItemData ammo) =>
+            weapon?.m_shared != null && weapon.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow
+            && !string.IsNullOrEmpty(weapon.m_shared.m_ammoType) && weapon.m_shared.m_ammoType == ammo.m_shared.m_ammoType;
 
         /// <summary>
         /// Checks if a container has stack space for any of the given items.

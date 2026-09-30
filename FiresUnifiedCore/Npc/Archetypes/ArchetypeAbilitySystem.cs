@@ -152,7 +152,9 @@ namespace FiresCore.Npc.Archetypes
         public static bool VerboseLogging = false;
         
         /// <summary>Gets the companion's current level for ability unlock checks.</summary>
-        private int CompanionLevel => _progression?.Level ?? 1;
+        // Progression starts at level 0, but the Starter abilities unlock at 1: a new companion could use none of its kit until
+        // it levelled once (R59: "Healer … Level:0", 0 casts). Unlocks read level 1 at least.
+        private int CompanionLevel => Mathf.Max(1, _progression != null ? _progression.Level : 1);
         
         private void Awake()
         {
@@ -297,6 +299,75 @@ namespace FiresCore.Npc.Archetypes
             // Taunt is handled by ArchetypeController (unlocks at level 5)
         }
         
+        /// <summary>
+        /// Test hook (0.2.204, [ghost]'s synergy step): casts <paramref name="ability"/> ("Fortify", "BerserkRage", "LayOnHands", …: the
+        /// name after "Use") now, through its real Use method: the effect RPC, the skill XP, the chat line and the synergy report
+        /// (OnAbilityUsed). The AI's own gates (unlock level, the decision cooldowns) are skipped so a test can cast on demand. A
+        /// targeted ability takes the AI's target (an enemy), or for a heal the owner / the most hurt party member. Owner peer only.
+        /// </summary>
+        public bool TryCastForTest(string ability, out string why)
+        {
+            why = null;
+            if (_companion == null || _character == null) { why = "not ready (no companion body)"; return false; }
+            if (_character.m_nview == null || !_character.m_nview.IsValid() || !_character.m_nview.IsOwner())
+            {
+                why = "this peer doesn't own the companion (its AI runs on another peer)";
+                return false;
+            }
+            if (string.IsNullOrEmpty(ability)) { why = "no ability named"; return false; }
+            string name = ability.StartsWith("Use") ? ability : "Use" + ability;
+            var method = typeof(ArchetypeAbilitySystem).GetMethod(name,
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.IgnoreCase);
+            if (method == null) { why = $"no ability '{ability}' (no {name} on this class)"; return false; }
+            var parameters = method.GetParameters();
+            object[] args;
+            if (parameters.Length == 0) args = new object[0];
+            else if (parameters.Length == 1 && typeof(Character).IsAssignableFrom(parameters[0].ParameterType))
+            {
+                bool helpful = method.Name.IndexOf("Heal", System.StringComparison.OrdinalIgnoreCase) >= 0 || method.Name.IndexOf("LayOn", System.StringComparison.OrdinalIgnoreCase) >= 0;
+                Character target = helpful ? TestAlly() : TestFoe();
+                if (target == null) { why = $"{method.Name} needs a{(helpful ? "n ally" : "n enemy")} target and none is near"; return false; }
+                args = new object[] { target };
+            }
+            else { why = $"{method.Name} takes {parameters.Length} argument(s); not castable on demand"; return false; }
+            try { method.Invoke(this, args); }
+            catch (System.Reflection.TargetInvocationException ex) { why = $"{method.Name} threw: {ex.InnerException?.Message ?? ex.Message}"; return false; }
+            why = $"cast {method.Name.Substring(3)}{(args.Length > 0 ? " on " + ((Character)args[0]).m_name : "")}";
+            Debug.Log($"[ArchetypeAbility] {_companion.companionName}: TryCastForTest: {why}");
+            return true;
+        }
+
+        // The AI's target, else the nearest enemy within 30 m.
+        private Character TestFoe()
+        {
+            Character current = _ai != null ? _ai.GetTargetCreature() : null;
+            if (current != null && !current.IsDead()) return current;
+            Character best = null;
+            float bestD = 30f;
+            foreach (var c in Character.GetAllCharacters())
+            {
+                if (c == null || c.IsDead() || !BaseAI.IsEnemy(_character, c)) continue;
+                float d = Vector3.Distance(c.transform.position, _character.transform.position);
+                if (d < bestD) { bestD = d; best = c; }
+            }
+            return best;
+        }
+
+        // The most hurt party member within 30 m (the owner when nobody is hurt).
+        private Character TestAlly()
+        {
+            Character best = null;
+            float lowest = 2f;
+            foreach (var c in Character.GetAllCharacters())
+            {
+                if (c == null || c.IsDead() || !ClassTargeting.IsPartyMember(_character, c)) continue;
+                if (Vector3.Distance(c.transform.position, _character.transform.position) > 30f) continue;
+                float share = c.GetHealthPercentage();
+                if (share < lowest) { lowest = share; best = c; }
+            }
+            return best ?? _companion.GetOwner();
+        }
+
         private void UseFortify()
         {
             _lastSelfBuffTime = Time.time;
@@ -2040,7 +2111,7 @@ namespace FiresCore.Npc.Archetypes
                 if (!BaseAI.IsEnemy(_character, character)) continue;
                 
                 var ai = character.GetComponent<BaseAI>();
-                if (ai != null && ai.GetTargetCreature() == _character)
+                if (ai != null && FiresCore.Npc.Combat.ThreatLevel.TargetOf(ai) == _character)
                 {
                     return true;
                 }
@@ -2059,7 +2130,7 @@ namespace FiresCore.Npc.Archetypes
                 if (!BaseAI.IsEnemy(_character, character)) continue;
                 
                 var ai = character.GetComponent<BaseAI>();
-                if (ai != null && ai.GetTargetCreature() == _character)
+                if (ai != null && FiresCore.Npc.Combat.ThreatLevel.TargetOf(ai) == _character)
                 {
                     targetingCount++;
                 }

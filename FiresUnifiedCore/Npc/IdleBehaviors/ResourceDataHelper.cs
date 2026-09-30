@@ -1002,10 +1002,67 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         public static bool YieldsAnyOf(GameObject obj, ICollection<string> itemPrefabs)
         {
-            if (DropTableContainsAny(GetMinedDropTable(obj), itemPrefabs)) return true;
+            if (obj == null || itemPrefabs == null || itemPrefabs.Count == 0) return false;
+            s_dropScratch.Clear();
+            DropsOf(obj, s_dropScratch);
+            foreach (string item in s_dropScratch)
+                if (itemPrefabs.Contains(item)) return true;
+            return false;
+        }
+
+        private static readonly HashSet<string> s_dropScratch = new HashSet<string>();
+
+        /// <summary>
+        /// Every item prefab <paramref name="obj"/> can give when gathered, added to <paramref name="into"/>: a rock's mined table (and
+        /// the fractured rock a deposit turns into), a tree's own table and the logs it falls into (and their sub-logs), a log's table,
+        /// a pickable's item, a loose item's prefab(s). Trees and pickables used to be missed, so a "Wood" search rejected every tree.
+        /// </summary>
+        public static void DropsOf(GameObject obj, ICollection<string> into)
+        {
+            if (obj == null || into == null) return;
+            AddDrops(GetMinedDropTable(obj), into);
             var destructible = obj.GetComponent<Destructible>();
-            return destructible != null && destructible.m_spawnWhenDestroyed != null
-                && DropTableContainsAny(GetMinedDropTable(destructible.m_spawnWhenDestroyed), itemPrefabs);
+            if (destructible != null && destructible.m_spawnWhenDestroyed != null)
+                AddDrops(GetMinedDropTable(destructible.m_spawnWhenDestroyed), into);
+
+            var tree = obj.GetComponent<TreeBase>();
+            if (tree != null)
+            {
+                AddDrops(tree.m_dropWhenDestroyed, into);
+                AddLogDrops(tree.m_logPrefab, into, 3);
+            }
+            var log = obj.GetComponent<TreeLog>();
+            if (log != null)
+            {
+                AddDrops(log.m_dropWhenDestroyed, into);
+                AddLogDrops(log.m_subLogPrefab, into, 3);
+            }
+
+            var pickable = obj.GetComponent<Pickable>();
+            if (pickable != null && pickable.m_itemPrefab != null) into.Add(pickable.m_itemPrefab.name);
+            var pickableItem = obj.GetComponent<PickableItem>();
+            if (pickableItem != null)
+            {
+                if (pickableItem.m_itemPrefab != null) into.Add(pickableItem.m_itemPrefab.name);
+                foreach (var random in pickableItem.m_randomItemPrefabs)
+                    if (random.m_itemPrefab != null) into.Add(random.m_itemPrefab.name);
+            }
+        }
+
+        private static void AddLogDrops(GameObject logPrefab, ICollection<string> into, int depth)
+        {
+            if (logPrefab == null || depth <= 0) return;
+            var log = logPrefab.GetComponent<TreeLog>();
+            if (log == null) return;
+            AddDrops(log.m_dropWhenDestroyed, into);
+            AddLogDrops(log.m_subLogPrefab, into, depth - 1);
+        }
+
+        private static void AddDrops(DropTable table, ICollection<string> into)
+        {
+            if (table == null || table.m_drops == null) return;
+            foreach (var drop in table.m_drops)
+                if (drop.m_item != null) into.Add(drop.m_item.name);
         }
 
         private static DropTable GetMinedDropTable(GameObject obj)
@@ -1018,13 +1075,6 @@ namespace FiresCore.Npc.IdleBehaviors
             return dropOnDestroyed != null ? dropOnDestroyed.m_dropWhenDestroyed : null;
         }
 
-        private static bool DropTableContainsAny(DropTable table, ICollection<string> itemPrefabs)
-        {
-            if (table == null) return false;
-            foreach (var drop in table.m_drops)
-                if (drop.m_item != null && itemPrefabs.Contains(drop.m_item.name)) return true;
-            return false;
-        }
 
         private static void EnsurePrefabIndex()
         {

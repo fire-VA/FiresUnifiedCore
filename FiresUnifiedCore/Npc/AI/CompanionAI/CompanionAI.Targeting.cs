@@ -84,9 +84,18 @@ namespace FiresCore.Npc.AI
                 }
             }
 
+            // A target that stopped being one (PvP turned off for both owners, it joined the party, it was tamed) is dropped
+            // here: only new candidates were validated, and a live current target only lost to a far better score, so after
+            // companion_test's pvp step Fire's companions kept chasing the bot's healer through the pve fight (R60).
+            if (_targetCreature != null && !_targetCreature.IsDead() && !StillHostile(_targetCreature))
+            {
+                Debug.Log($"[CompanionAI] {m_character?.m_name} dropped target {_targetCreature.m_name}: no longer hostile (PvP off, party or tame)");
+                ClearTarget();
+            }
+
             Character ownerCharacter = null;
             Vector3 ownerPos = transform.position;
-            
+
             if (_followTarget != null)
             {
                 ownerPos = _followTarget.transform.position;
@@ -123,6 +132,22 @@ namespace FiresCore.Npc.AI
 
             _tempCharacterList.Clear();
 
+            // Assist: the foe the owner (a player or the bot) hit in the last AssistSeconds is ours too, unless something is hitting
+            // us right now (R67 pve: the bot fought the pack and its companions engaged nothing).
+            if (!isStaying && ownerCharacter is Player ownerPlayer && OwnerAssist.Recent(ownerPlayer, AssistSeconds, out Character ownerFoe)
+                && ownerFoe != _targetCreature && IsValidTarget(ownerFoe)
+                && Vector3.Distance(transform.position, ownerFoe.transform.position) <= effectiveAggroRange * 2f
+                && (_targetCreature == null || _targetCreature.IsDead() || !wasRecentlyDamaged))
+            {
+                if (_assistLogged != ownerFoe)
+                {
+                    _assistLogged = ownerFoe;
+                    Debug.Log($"[CompanionAI] assist: {m_character?.m_name} engages {ownerFoe.m_name} (owner attacked it)");
+                }
+                SetTarget(ownerFoe);
+                return;
+            }
+
             if (bestTarget != null)
             {
                 if (_targetCreature == null || _targetCreature.IsDead())
@@ -136,107 +161,19 @@ namespace FiresCore.Npc.AI
             }
         }
 
+        // The score lives in CompanionBrain (one brain for companions and the FDT bot); this supplies the companion's own inputs,
+        // including the group's assigned focus-fire target.
         private float CalculateTargetScore(Character target, Character ownerCharacter, Vector3 ownerPos)
         {
-            Vector3 targetPos = target.transform.position;
-            float distToMe = Vector3.Distance(transform.position, targetPos);
-            float distToOwner = Vector3.Distance(ownerPos, targetPos);
-
-            float score = distToOwner;
-
-            // GROUP COMBAT COORDINATION: If the SharedThreatTable has assigned us a specific target,
-            // strongly prefer that target to maintain focus fire / coordinated engagement.
-            // This does NOT override the existing scoring entirely — it just adds a large bonus
-            // so the assigned target is almost always chosen unless something very urgent happens
-            // (e.g., an enemy is attacking the player at point blank range).
+            Character assigned = null;
             if (_companion != null)
             {
                 var coordinator = GroupCombatCoordinator.Instance;
-                if (coordinator != null)
-                {
-                    var threatTable = coordinator.GetThreatTable(_companion.ownerPlayerId);
-                    if (threatTable != null)
-                    {
-                        var assignedTarget = threatTable.GetAssignedTarget(_companion.companionId);
-                        if (assignedTarget != null && assignedTarget == target)
-                        {
-                            // This is our assigned target — strong preference
-                            score -= 200f;
-                        }
-                    }
-                }
+                var threatTable = coordinator != null ? coordinator.GetThreatTable(_companion.ownerPlayerId) : null;
+                if (threatTable != null) assigned = threatTable.GetAssignedTarget(_companion.companionId);
             }
-
-            if (_threatAnalyzer != null)
-            {
-                var profile = _threatAnalyzer.GetThreatProfile(target);
-                
-                switch (profile.Classification)
-                {
-                    case ThreatAnalyzer.EnemyClass.Boss:
-                        score -= 80f;
-                        break;
-                    case ThreatAnalyzer.EnemyClass.Elite:
-                        score -= 50f;
-                        break;
-                    case ThreatAnalyzer.EnemyClass.Dangerous:
-                        score -= 30f;
-                        break;
-                    case ThreatAnalyzer.EnemyClass.Normal:
-                        score -= 10f;
-                        break;
-                }
-                
-                if (profile.IsTargetingOwner)
-                {
-                    score -= 100f * interceptPriority;
-                }
-                else if (profile.IsTargetingCompanion)
-                {
-                    score -= 50f;
-                }
-                
-                if (profile.IsCurrentlyAttacking)
-                {
-                    score -= 25f;
-                }
-                
-                if (profile.HealthPercent < 0.25f)
-                {
-                    score -= 15f;
-                }
-            }
-            else
-            {
-                if (ownerCharacter != null)
-                {
-                    var targetAI = target.GetComponent<BaseAI>();
-                    if (targetAI != null)
-                    {
-                        var aiTarget = targetAI.GetTargetCreature();
-                        if (aiTarget == ownerCharacter)
-                        {
-                            score -= 100f * interceptPriority;
-                        }
-                        else if (aiTarget == m_character)
-                        {
-                            score -= 50f;
-                        }
-                    }
-                }
-
-                if (distToOwner < 10f)
-                {
-                    score -= 30f;
-                }
-            }
-
-            if (distToMe < attackRange * 2f)
-            {
-                score -= 20f;
-            }
-
-            return score;
+            return CompanionBrain.ScoreTarget(m_character, target, ownerCharacter, ownerPos, attackRange, interceptPriority,
+                _threatAnalyzer, assigned);
         }
 
         private void ConsiderTargetSwitch(Character newTarget, bool wasDamagedByTarget)
@@ -293,6 +230,9 @@ namespace FiresCore.Npc.AI
             {
                 if (!IsValidTarget(character))
                     continue;
+                // Only what it sees or hears (Perception: the same senses the FDT bot uses; Fire 2026-09-29 "a proper vision cone").
+                if (!Perceives(character))
+                    continue;
 
                 float dist = Vector3.Distance(transform.position, character.transform.position);
                 if (dist < bestDist)
@@ -311,6 +251,28 @@ namespace FiresCore.Npc.AI
             }
 
             return false;
+        }
+
+        // Seen in the view cone (any direction while in a fight or hit lately, like an alerted monster) with line of sight, heard, or
+        // sensed within the last few seconds.
+        private bool Perceives(Character target)
+        {
+            if (m_character == null) return true;
+            bool alerted = IsAlerted() || _targetCreature != null
+                           || Time.time - _lastDirectlyDamagedTime < DirectDamageAlertDuration;
+            Vector3 eye = m_character.m_eye != null ? m_character.m_eye.position : m_character.GetCenterPoint();
+            return Perception.Knows(m_character, target, eye, transform.forward, Senses.Of(this), alerted);
+        }
+
+        // Only the relationship is re-checked for a CURRENT target (the hunting, proximity and line-of-sight gates of
+        // IsValidTarget are for picking one): a player, tame or companion stays a target while it is a hostile PvP target, or, for
+        // a wild companion, a player it is an enemy of. Monsters always stay.
+        private bool StillHostile(Character target)
+        {
+            bool owned = target.IsPlayer() || target.IsTamed() || target.GetComponent<CompanionController>() != null;
+            if (!owned) return true;
+            if (IsHostilePvpTarget(target)) return true;
+            return target.IsPlayer() && _companion != null && !_companion.isTamed && IsEnemy(target);
         }
 
         private bool IsValidTarget(Character target)
@@ -423,46 +385,50 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
+        /// The owner-AFK stand-down, only when nothing threatens us. R45: an owner standing still (the bot in its duel, both
+        /// owners in the pve step) made every companion pick a target and drop it the same tick ("relaxing - player idle"), so
+        /// an owner who stood and fought fought alone. Not while this companion was hit lately, while the target is a PvP
+        /// enemy, is after this companion or a party member, or is inside the owner's defense bubble.
+        /// </summary>
+        public bool ShouldRelaxForIdleOwner(Character target)
+        {
+            if (!_isOwnerIdle) return false;
+            if (Time.time - _lastDirectlyDamagedTime < DirectDamageAlertDuration) return false;
+
+            var owner = _followTarget;
+            Character ownerCharacter = owner != null ? owner.GetComponent<Character>() : null;
+            Vector3 ownerPos = owner != null ? owner.transform.position : transform.position;
+            if (target != null && !target.IsDead())
+            {
+                if (IsHostilePvpTarget(target)) return false;
+                var aiTarget = target.GetBaseAI()?.GetTargetCreature();
+                if (aiTarget != null && (aiTarget == m_character || FiresCore.Npc.Archetypes.ClassTargeting.IsPartyMember(m_character, aiTarget)))
+                    return false;
+                // R46: the engage decision took a monster after any nearby player as a threat and this didn't, so the companion
+                // engaged and stood down every tick. A target it would engage is one it keeps.
+                if (IsThreatToOwnerOrSelf(target, ownerPos, ownerCharacter)) return false;
+            }
+
+            // The lead / Fire: a guard standing still while monsters fight nearby keeps its companions in the fight.
+            foreach (Character other in Character.GetAllCharacters())
+            {
+                if (other == null || other == m_character || other.IsDead() || IsPassiveCreature(other)) continue;
+                if (!BaseAI.IsEnemy(m_character, other)) continue;
+                if (Vector3.Distance(other.transform.position, transform.position) <= OwnerDefenseRadius) return false;
+                if (Vector3.Distance(other.transform.position, ownerPos) <= OwnerDefenseRadius) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
         /// In Follow mode, engages a hostile only if it is within <see cref="OwnerDefenseRadius"/> of the owner,
         /// is already targeting the owner, a player or this companion, or this companion was hit within
         /// <see cref="DirectDamageAlertDuration"/>. Explicit attack commands use ForceTarget and bypass this.
         /// </summary>
+        // The rule lives in CompanionBrain (one brain for companions and the FDT bot); this supplies the companion's own inputs.
         private bool IsThreatToOwnerOrSelf(Character target, Vector3 ownerPos, Character ownerCharacter)
-        {
-            if (target == null) return false;
-
-            // 1. Threat is inside the owner's defense bubble.
-            float distToOwner = Vector3.Distance(target.transform.position, ownerPos);
-            if (distToOwner <= OwnerDefenseRadius)
-                return true;
-
-            // 2. The threat's AI is locked on to the owner / a player /
-            //    this companion already.
-            var targetAI = target.GetComponent<BaseAI>();
-            if (targetAI != null)
-            {
-                var aiTarget = targetAI.GetTargetCreature();
-                if (aiTarget != null)
-                {
-                    if (aiTarget == m_character) return true;
-                    if (ownerCharacter != null && aiTarget == ownerCharacter) return true;
-                    // A monster locked onto some OTHER player only pulls us in while the fight is near
-                    // OUR owner — unbounded, every skirmish inside aggro range peeled the escort away
-                    // ("run off at anything that noticed a player"). Bound it by the combat leash so
-                    // companions prioritize fighting with and around their owner.
-                    if (aiTarget.IsPlayer() && distToOwner <= combatLeashDistance) return true;
-                }
-            }
-
-            // 3. We were directly attacked recently — retaliate even if the
-            //    attacker has since broken aggro and isn't currently
-            //    targeting us. Mirrors the existing retaliation window
-            //    that's already used for passive creatures.
-            if (Time.time - _lastDirectlyDamagedTime < DirectDamageAlertDuration)
-                return true;
-
-            return false;
-        }
+            => CompanionBrain.IsThreat(m_character, target, ownerPos, ownerCharacter, OwnerDefenseRadius, combatLeashDistance,
+                Time.time - _lastDirectlyDamagedTime < DirectDamageAlertDuration);
 
         // Ranged LOS support
         // Targets that the bow/crossbow behavior has tried to engage but gave
@@ -500,35 +466,37 @@ namespace FiresCore.Npc.AI
         public bool HasClearShotTo(Character target)
         {
             if (target == null) return false;
+            // Adjacent — no realistic obstruction possible.
+            if (Vector3.Distance(transform.position, target.transform.position) < 2f) return true;
 
-            Vector3 eyePos = transform.position + Vector3.up * 1.5f;
-            Vector3 targetPos = target.transform.position + Vector3.up * 1f;
-            Vector3 direction = targetPos - eyePos;
-            float distance = direction.magnitude;
-
-            // Adjacent — no realistic obstruction possible, skip the raycast.
-            if (distance < 2f) return true;
-
-            if (Physics.Raycast(eyePos, direction.normalized, out RaycastHit hit, distance))
+            // One brain with the FDT bot (LineOfFire, Fire: "they need to understand line of sight"): a bow / crossbow traces its
+            // real arrow; anything else the straight line from the eye. Solids and friendly characters block; enemies don't.
+            string blocker;
+            bool clear;
+            var humanoid = m_character as Humanoid;
+            ItemDrop.ItemData weapon = humanoid != null ? humanoid.GetCurrentWeapon() : null;
+            var skill = weapon?.m_shared?.m_skillType;
+            if (humanoid != null && (skill == Skills.SkillType.Bows || skill == Skills.SkillType.Crossbows))
             {
-                // Triggers (volumes, area-effects, etc.) never block sight.
-                if (hit.collider.isTrigger) return true;
-
-                // We hit the target itself or one of its child colliders - clear.
-                var hitChar = hit.collider.GetComponentInParent<Character>();
-                if (hitChar == target) return true;
-
-                // We hit something very close to the target (its collider edge,
-                // a piece of armor, a mount, etc.) - still effectively clear.
-                if (Vector3.Distance(hit.point, targetPos) < 0.75f) return true;
-
-                // Wall, terrain, or piece in the way.
-                return false;
+                LaneBlock lane = LineOfFire.Shot(humanoid, weapon, target);
+                clear = !lane.Blocked;
+                blocker = lane.Blocker;
             }
+            else clear = LineOfFire.Clear(m_character, transform.position + Vector3.up * 1.5f, target, out blocker);
 
-            // Raycast hit nothing within distance — open path.
-            return true;
+            if (!clear && blocker != _laneBlockerLogged)
+            {
+                _laneBlockerLogged = blocker;
+                Debug.Log($"[CompanionAI] {m_character?.m_name}: lane to {target.m_name} blocked by {blocker}; not shooting");
+            }
+            else if (clear) _laneBlockerLogged = null;
+            return clear;
         }
+
+        private string _laneBlockerLogged;
+        private Character _assistLogged;
+        // How long after the owner hits a foe its companions still join in.
+        private const float AssistSeconds = 5f;
 
         /// <summary>
         /// Public probe used by ranged weapon behaviors to abort an in-progress

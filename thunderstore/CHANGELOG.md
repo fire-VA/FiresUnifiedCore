@@ -1,5 +1,53 @@
+* v0.2.219 - smarter companions, better pathfinding, remembered worlds, hit locations
+  - companions pick their fights: they leave deer and other neutral creatures alone unless those attack, they help when you or another party member is hit, and they go after what you're fighting
+  - in a fight companions keep their weapon's range, block incoming swings and punish staggers, dodge, spread out round the enemy instead of standing on one spot, and back off when they're hurt or outnumbered (not at full health)
+  - companions use their class skills when they're ready and aim placed skills such as Rain of Arrows and Meteor at the enemy; staff users keep an eitr reserve, drink eitr meads and switch to melee up close
+  - ranged companions check the line of fire, so they don't shoot through terrain or their own buildings
+  - companions pick the weapon the enemy is weakest to, and swap out a broken one
+  - Core's walker (companions, and any mod that uses it) walks round obstacles with room to spare, routes round hills and ridges instead of into them, opens doors, walks through and closes them behind it, jumps steps and small ledges, gets itself out of corners, and plans through crypts room by room
+  - companions gather wood and pickables, put the haul into chests, repair their gear at a workbench, upgrade at stations, and eat when they need to
+  - companions no longer get pulled under the world when a distant player's character falls, and they stay under their owner's control while they follow you
+  - hit locations: head, torso and leg hits apply exactly the listed damage multiplier, the same on every screen, with bullseye effects on head and chest hits
+  - taunts now work on enemies that another player's game controls
+  - Core remembers each world: where resources were found and which enemies were met (BepInEx/config/FiresCore/WorldMemory)
+  - new for other Fires mods: party regroup and leash, a home base with routes home, enemy and danger memory, a spawn-rule lookup, and a Discord bridge
+  - range circles (the workbench-style rings) draw as dashed rings instead of black slabs
+  - fewer errors: no wind-zone error when quitting, and no creature-name error in dedicated server hit logs
+  - the item vault's temporary files now stay inside the game folder
+
+* v0.2.140 - class evasions, faster joins, smoother HD textures, safer vault, keybind conflicts
+  - your class's escape move can replace the dodge roll: it goes where you dodge, costs stamina (eitr for casters) and has a cooldown
+  - class abilities only hurt enemies and only heal your party; PvP hits land only when both players have PvP on
+  - companion escape moves follow the same rule, so they no longer hit deer and other bystanders
+  - joining a server is faster: fewer stalls on the server when players join, and the first join after a restart no longer waits
+  - players whose join takes a long time (big downloads) are now recorded properly
+  - with HD textures installed, the menu stays responsive while they load, with a loading screen and progress bar
+  - HD textures now load at half size by default (much less memory, faster menu); set [HD Textures] Size = Full to keep full size
+  - no more long freeze when joining a world with HD textures
+  - the server's item vault rolls back with the world after a crash, so items can't be duplicated or lost (Vault: Roll back with the world)
+  - the config window opens faster and without the first-open freeze
+  - the config window finds keybind conflicts: a Conflicts view, a reminder popup, and a warning when you bind a key that's taken
+  - the Chaos Hammer opens as a full build menu with Categories, Biomes, Blueprints and Favorites tabs
+  - the build menu opens faster
+  - terrain height limits apply live without a restart
+  - new option: Skip Empty Distant Sectors, for faster scene building around you
+  - new option: Skip Intro Cinematic
+  - characters gather snow on their gear in the Deep North and shed it indoors
+  - snow no longer gets stuck on blueprinted and baked pieces, and baked pieces that showed nothing are visible again
+  - creature rules can set exact health, with per-star health and damage multipliers; monster presets always keep their own drops
+  - custom dungeons no longer lose their rooms on reload
+  - taunts end properly, and a class effect with no shield generator nearby no longer breaks
+  - companion ability effects no longer pile up over a long session
+  - quieter and tidier server logs: fewer fake errors, readable broken-shader warnings, per-mod log levels, console boxes line up
+
 * v0.2.80 - the Fires config window replaces ConfigurationManager, config file editor, hidden settings, bigger readable text
-  - NOT YET WRITTEN UP: the changes between v0.2.61 and v0.2.79 from the other work streams (performance, banners, companions) still need their entries here; the notes below cover the config window only
+  - following companions actually follow again, and ones left sitting or doing a chore come after you once you walk away
+  - a group of followers spreads out around you instead of clumping
+  - wild companions can fight
+  - helmets hide hair and beards on companions, NPCs and mannequins, like on players
+  - new settings to turn on detailed companion logging
+  - dedicated servers no longer print a batch of fake errors on every start
+  - long console lines wrap neatly, and the status box fits the console
   - the Fires config window now covers EVERY installed mod, not just the Fires family, so shudnal's ConfigurationManager is no longer needed beside it; a "Fires only" tick narrows the list back down
   - it opens with F1, or with F8 if another configuration manager is installed and would claim F1; the console command va_config still works
   - Settings in the main menu and in the pause menu both gained a "Mod Settings" entry, so the window is reachable without knowing a hotkey

@@ -261,7 +261,7 @@ namespace FiresCore.Npc
             _isFemale = wasFemale || modelIndex == 1;
             
             // Restore hair and beard
-            string savedHair = ValidSavedStyle(zdo, "companion_hair", zdo.GetString("companion_hair", ""), GetAvailableHairStyles(), "HairNone");
+            string savedHair = ValidSavedStyle(zdo, "companion_hair", zdo.GetString("companion_hair", ""), GetAvailableHairStyles(), "HairNone", fillEmpty: true);
             string savedBeard = ValidSavedStyle(zdo, "companion_beard", zdo.GetString("companion_beard", ""), GetAvailableBeardStyles(), "BeardNone");
             
             // Restore colors
@@ -1138,14 +1138,20 @@ namespace FiresCore.Npc
         /// A saved style from before the barber filter is swapped for a valid one, picked from the companion's ZDO id so
         /// every client lands on the same style; the owner saves it.
         /// </summary>
-        private string ValidSavedStyle(ZDO zdo, string zdoKey, string saved, List<string> styles, string none)
+        // fillEmpty: on the OWNER, a style that was never saved ('' - not the explicit `none`, which stays) gets the same
+        // deterministic pick, written back so every peer shows it (a non-owner may read the ZDO before the owner's first roll). A
+        // companion whose ZDO never got hair came back bald on every load, and a female one never re-rolled (her saved gender
+        // counts as "appearance already generated"); Fire, 2026-09-29: companions are supposed to have hair.
+        private string ValidSavedStyle(ZDO zdo, string zdoKey, string saved, List<string> styles, string none, bool fillEmpty = false)
         {
-            if (string.IsNullOrEmpty(saved) || IsBarberStyle(saved)) return saved;
+            if (IsBarberStyle(saved) || (string.IsNullOrEmpty(saved) && !(fillEmpty && IsOwner()))) return saved;
             var pool = styles.Where(s => s != none).ToList();
             if (pool.Count == 0) return saved;
             string replacement = pool[(int)((uint)zdo.m_uid.GetHashCode() % (uint)pool.Count)];
             if (IsOwner()) zdo.Set(zdoKey, replacement);
-            Debug.Log($"[CompanionRandomLoadout] {_companion?.companionName}: saved style '{saved}' is not a barber style, using '{replacement}'");
+            Debug.Log(string.IsNullOrEmpty(saved)
+                ? $"[CompanionRandomLoadout] {_companion?.companionName}: no saved {zdoKey}, using '{replacement}'"
+                : $"[CompanionRandomLoadout] {_companion?.companionName}: saved style '{saved}' is not a barber style, using '{replacement}'");
             return replacement;
         }
 
@@ -1275,7 +1281,11 @@ namespace FiresCore.Npc
             {
                 // Scale wander radius based on biome
                 float radius = wildWanderRadius * GetBiomeMultiplier(_currentBiome);
-                _idleBehavior.SetHomePosition(_spawnPosition, radius);
+                // Never a home on a dungeon doorstep or a test spot (WildNoPark).
+                Vector3 home = _spawnPosition;
+                if (FiresCore.Npc.WildSpawn.WildNoPark.Adjust(ref home, out string place, out float moved))
+                    FiresCore.Npc.WildSpawn.WildNoPark.Log(_companion.companionName, place, moved);
+                _idleBehavior.SetHomePosition(home, radius);
                 
                 // Enable wandering by setting high wander chance
                 _idleBehavior.idleWanderChance = 0.5f;

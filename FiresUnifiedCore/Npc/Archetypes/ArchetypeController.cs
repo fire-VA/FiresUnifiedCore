@@ -123,6 +123,33 @@ namespace FiresCore.Npc.Archetypes
         
         /// <summary>Current assigned archetype class (primary).</summary>
         public ArchetypeClass CurrentArchetypeClass => _currentArchetype;
+
+        // A test's archetype (0.2.204, [ghost]'s synergy step): held against the equipment re-evaluation until released with None.
+        private ArchetypeClass _testArchetype = ArchetypeClass.None;
+
+        /// <summary>
+        /// Test hook: gives this companion <paramref name="archetype"/> and holds it (the equipment-based re-evaluation leaves it alone)
+        /// until called with <see cref="ArchetypeClass.None"/>. Only on the peer that owns the companion (its AI runs there).
+        /// </summary>
+        public bool SetArchetypeForTest(ArchetypeClass archetype, out string why)
+        {
+            var view = GetComponent<ZNetView>();
+            if (_companion == null) { why = "not a companion"; return false; }
+            if (view == null || !view.IsValid() || !view.IsOwner()) { why = "this peer doesn't own the companion (its AI runs on another peer)"; return false; }
+            _testArchetype = archetype;
+            if (archetype == ArchetypeClass.None)
+            {
+                why = "test archetype released; the equipment decides again";
+                EvaluateArchetype();
+            }
+            else
+            {
+                SetArchetype(archetype);
+                why = $"archetype {archetype} (held for the test)";
+            }
+            Debug.Log($"[ArchetypeController] {_companion.companionName}: {why}");
+            return true;
+        }
         
         /// <summary>Secondary archetype class based on alternate weapons in inventory.</summary>
         public ArchetypeClass SubArchetypeClass => _subArchetype;
@@ -237,8 +264,30 @@ namespace FiresCore.Npc.Archetypes
             return (ArchetypeClass)_nview.GetZDO().GetInt(zdoKey, (int)ArchetypeClass.None);
         }
         
+        // A copy on another peer read level and archetype choice once, at load: SetLevel / the archetype override made on the owner
+        // stayed invisible there ([wishbone] R60: Fire's copy showed "level 0" and a Rogue). Re-read both from the ZDO now and then.
+        private const float RemoteRefreshInterval = 2f;
+        private float _nextRemoteRefresh;
+        private int _lastSeenOverride = int.MinValue;
+
+        private void RefreshRemoteCopy()
+        {
+            if (Time.time < _nextRemoteRefresh) return;
+            _nextRemoteRefresh = Time.time + RemoteRefreshInterval;
+            var zdo = _nview.GetZDO();
+            if (_progression != null && zdo.GetInt("companion_level", 0) != _progression.Level) _progression.LoadFromZDO();
+            int chosen = zdo.GetInt(ZdoArchetypeOverride, (int)ArchetypeClass.None);
+            if (chosen != _lastSeenOverride)
+            {
+                bool first = _lastSeenOverride == int.MinValue;
+                _lastSeenOverride = chosen;
+                if (!first) ForceReevaluate();
+            }
+        }
+
         private void Update()
         {
+            if (_nview != null && _nview.IsValid() && !_nview.IsOwner()) RefreshRemoteCopy();
             if (_companion == null || !_companion.isTamed) return;
             if (_currentArchetype == ArchetypeClass.None) return;
             
@@ -614,6 +663,8 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         public void SetArchetype(ArchetypeClass newArchetype)
         {
+            // A test's archetype holds (SetArchetypeForTest).
+            if (_testArchetype != ArchetypeClass.None && newArchetype != _testArchetype) return;
             var oldArchetype = _currentArchetype;
             _currentArchetype = newArchetype;
             _currentDefinition = ArchetypeRegistry.GetDefinition(newArchetype);
@@ -1385,7 +1436,7 @@ namespace FiresCore.Npc.Archetypes
                     var ai = character.GetComponent<BaseAI>();
                     if (ai != null)
                     {
-                        var target = ai.GetTargetCreature();
+                        var target = FiresCore.Npc.Combat.ThreatLevel.TargetOf(ai);
                         if (target != null && target != _character)
                         {
                             // Enemy is targeting someone else - we should taunt!

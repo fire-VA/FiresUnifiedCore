@@ -24,16 +24,40 @@ namespace FiresCore.Lifecycle
         public static readonly Dictionary<Assembly, FiresMod> Instances
             = new Dictionary<Assembly, FiresMod>();
 
-        // Headless dedicated build runs Unity with the null graphics device.
-        // Cheap to call; safe before ZNet.instance exists.
+        // No graphics device: true on the dedicated server AND on a client started with -batchmode -nographics
+        // (the headless test bot). Use it to skip GPU / render / audio / UI work; it does NOT mean "I am the
+        // server" (use IsDedicatedServer). Cheap to call; safe before ZNet.instance exists.
         public static bool IsHeadless
             => SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null;
+
+        private const string ServerProcessMarker = "server";
+
+        // The dedicated server executable. Its own assembly_valheim returns true from ZNet.IsDedicated (the client's
+        // returns false, also under -batchmode); before ZNet exists the process name decides (valheim_server.exe or a
+        // renamed server exe). A headless client is never a dedicated server.
+        public static bool IsDedicatedServer
+            => ZNet.instance != null
+                ? ZNet.instance.IsDedicated()
+                : Paths.ProcessName.IndexOf(ServerProcessMarker, StringComparison.OrdinalIgnoreCase) >= 0;
 
         // Default true: most Fires-* plugins do real work on dedi.
         // Client-only mods (HUD-only / overlay-only) override to false to
         // skip WorldStart on a dedicated server while still letting Setup
         // run for Harmony patches that benignly no-op on the server side.
         protected virtual bool RunOnServer => true;
+
+        // [worldgen] R45: on an application quit Unity destroys the plugins BEFORE ZNet, so a mod that unpatched in its own
+        // OnDestroy lost its ZNet.OnDestroy (and every later teardown) hook, and whatever that hook wrote to disk never landed.
+        // Application.quitting fires before that destroy pass; after it the process is ending, so the patches stay.
+        protected static bool ApplicationQuitting { get; private set; }
+        private static bool s_quitHooked;
+
+        protected static void HookApplicationQuitting()
+        {
+            if (s_quitHooked) return;
+            s_quitHooked = true;
+            Application.quitting += () => ApplicationQuitting = true;
+        }
     }
 
     // Generic plugin base. Inherit as `class MyMod : FiresMod<MyMod>` and
@@ -154,6 +178,7 @@ namespace FiresCore.Lifecycle
 
         private void Awake()
         {
+            HookApplicationQuitting();
             Harmony = new Harmony(Info.Metadata.GUID);
 
             try
@@ -232,7 +257,7 @@ namespace FiresCore.Lifecycle
                 Debug.LogWarning($"[{Info.Metadata.Name}] Shutdown() threw: {ex.Message}");
             }
 
-            try { Harmony?.UnpatchSelf(); }
+            try { if (!ApplicationQuitting) Harmony?.UnpatchSelf(); }
             catch (Exception ex)
             {
                 Debug.LogWarning($"[{Info.Metadata.Name}] Harmony.UnpatchSelf threw: {ex.Message}");

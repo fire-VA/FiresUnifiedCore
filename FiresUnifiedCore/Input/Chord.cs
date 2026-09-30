@@ -24,10 +24,10 @@ namespace FiresCore.Input
         {
             var main = shortcut.MainKey;
             if (main == KeyCode.None) return false;
-            if (!UnityEngine.Input.GetKeyDown(main)) return false;
+            if (!FiresKeys.GetKeyDown(main)) return false;
 
             foreach (var mod in shortcut.Modifiers)
-                if (!UnityEngine.Input.GetKey(mod)) return false;
+                if (!FiresKeys.GetKey(mod)) return false;
 
             // Treat L/R variants of a listed modifier as satisfying the "unlisted" test only for
             // exact keys — a bind saved as "L + LeftAlt" should not fire on RightAlt+L, matching
@@ -38,7 +38,7 @@ namespace FiresCore.Input
                 bool listed = false;
                 foreach (var modifier in shortcut.Modifiers)
                     if (modifier == mod) { listed = true; break; }
-                if (!listed && UnityEngine.Input.GetKey(mod)) return false;
+                if (!listed && FiresKeys.GetKey(mod)) return false;
             }
             return true;
         }

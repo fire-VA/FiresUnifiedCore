@@ -26,6 +26,17 @@ namespace FiresCore.IO
         private const string IntervalDescription =
             "After the first change, changes are collected for this many seconds and then delivered to the mods together, so a " +
             "burst of saves reaches each mod once.";
+        private const string FoldKey = "Fold Into Config Root";
+        private const string FoldDescription =
+            "Watches the whole config folder from ONE change-notification handle instead of one per watched subfolder, which is " +
+            "the fewest the game can run on. Each handle costs a thread and a 64 KB buffer, so folding them saves both. While " +
+            "nothing is changing this is free either way - a handle only does work when a file actually changes, so an idle 4 GB " +
+            "config folder costs exactly what an idle small one does. The difference appears while something is WRITING a lot " +
+            "inside config: every write anywhere under it then has to be examined and discarded, and a burst large enough to " +
+            "overflow the one buffer makes every mod on that handle re-check its files rather than only the mods near the churn. " +
+            "On this setup the folders that get written in bulk are asset caches that no mod watches, so the trade is usually " +
+            "worth it - but if config hot reload starts firing for no reason during a bundle sync or a bake, turn this off. " +
+            "Applies live, and the STATUS Files line shows the folder count so you can see what it did. This machine only.";
 
         public static void Initialize(Harmony harmony, ConfigFile config)
         {
@@ -34,10 +45,13 @@ namespace FiresCore.IO
                 ConfigEntry<bool> enabled = config.Bind(Section, EnabledKey, true, EnabledDescription);
                 ConfigEntry<float> interval = config.Bind(Section, IntervalKey, IntervalDefault,
                     new ConfigDescription(IntervalDescription, new AcceptableValueRange<float>(IntervalMin, IntervalMax)));
+                ConfigEntry<bool> fold = config.Bind(Section, FoldKey, true, FoldDescription);
                 FileWatchHub.Enabled = enabled.Value;
                 FileWatchHub.IntervalSeconds = interval.Value;
+                FileWatchHub.FoldIntoConfigRoot = fold.Value;
                 enabled.SettingChanged += (_, __) => FileWatchHub.Enabled = enabled.Value;
                 interval.SettingChanged += (_, __) => FileWatchHub.IntervalSeconds = interval.Value;
+                fold.SettingChanged += (_, __) => FileWatchHub.FoldIntoConfigRoot = fold.Value;
 
                 if (!FileWatchHub.Install(harmony, message => FiresUnifiedCore.Log.LogInfo(LogPrefix + message),
                                           message => FiresUnifiedCore.Log.LogWarning(LogPrefix + message)))

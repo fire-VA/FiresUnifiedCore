@@ -403,7 +403,7 @@ namespace FiresCore.Npc
             Vector3 spawnPos = transform.position;
             if (ZoneSystem.instance != null)
             {
-                if (ZoneSystem.instance.GetGroundHeight(spawnPos, out float groundHeight))
+                if (FiresCore.World.Surface.GroundNear(spawnPos, out float groundHeight))
                 {
                     spawnPos.y = groundHeight + 0.5f;
                 }
@@ -481,7 +481,7 @@ namespace FiresCore.Npc
             if (tombstonePrefab == null) return;
 
             Vector3 spawnPos = transform.position;
-            if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(spawnPos, out float groundHeight))
+            if (ZoneSystem.instance != null && FiresCore.World.Surface.GroundNear(spawnPos, out float groundHeight))
                 spawnPos.y = groundHeight + 0.5f;
 
             var tombstoneObj = CompanionNetworkHelper.Spawn(tombstonePrefab, spawnPos, Quaternion.identity);

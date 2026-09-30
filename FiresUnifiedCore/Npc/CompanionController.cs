@@ -350,6 +350,8 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
             
             // Ensure GroupCombatCoordinator singleton exists for multi-companion coordination
             Combat.GroupCombatCoordinator.EnsureInitialized();
+            // The companions' combos (0.2.204, Fire: wire it in): never initialised before, so every OnAbilityUsed went nowhere.
+            Archetypes.GroupSynergyManager.Initialize();
         }
 
    #endregion
@@ -1806,7 +1808,7 @@ _isRespawning = false;
          if (ZoneSystem.instance != null)
   {
    float groundHeight;
-         if (ZoneSystem.instance.GetGroundHeight(testPos, out groundHeight))
+         if (FiresCore.World.Surface.GroundNear(testPos, out groundHeight))
       {
    testPos.y = groundHeight + 0.5f;
               return testPos;
@@ -1959,7 +1961,7 @@ _isRespawning = false;
                 if (!destinationAtInteriorAltitude && ZoneSystem.instance != null)
                 {
                     float groundHeight;
-                    if (ZoneSystem.instance.GetGroundHeight(testPos, out groundHeight))
+                    if (FiresCore.World.Surface.GroundNear(testPos, out groundHeight))
                         testPos.y = groundHeight + 0.5f;
                     else
                         continue;
@@ -2032,7 +2034,7 @@ _isRespawning = false;
                 if (!ownerAtInteriorAltitude && ZoneSystem.instance != null)
                 {
                     float groundHeight;
-                    if (ZoneSystem.instance.GetGroundHeight(testPos, out groundHeight))
+                    if (FiresCore.World.Surface.GroundNear(testPos, out groundHeight))
                     {
                         testPos.y = groundHeight + 0.5f;
                     }

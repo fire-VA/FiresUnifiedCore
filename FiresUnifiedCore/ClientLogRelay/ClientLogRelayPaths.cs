@@ -1,6 +1,6 @@
 ﻿using System;
 using System.IO;
-using UnityEngine;
+using FiresCore.Logging;
 
 namespace FiresCore.ClientLogRelay
 {
@@ -57,7 +57,7 @@ namespace FiresCore.ClientLogRelay
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[ClientLogRelay] Failed to create directory '{dir}': {ex.Message}");
+                FiresLogger.LogWarning($"[ClientLogRelay] Failed to create directory '{dir}': {ex.Message}");
             }
         }
     }

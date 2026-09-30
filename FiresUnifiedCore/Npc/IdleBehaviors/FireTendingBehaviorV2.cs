@@ -595,7 +595,9 @@ namespace FiresCore.Npc.IdleBehaviors
             var chestInv = chest.GetInventory();
             var storage = GetStorageInventory();
             if (chestInv == null || storage == null) return 0;
-            
+            // A chest this machine doesn't own reverts the edit (ChestHelper.cs:128-130); claim it first like every other chest write.
+            if (!ChestHelper.TryClaimForWrite(chest, Companion)) return 0;
+
             int pulled = 0;
             var items = new List<ItemDrop.ItemData>(chestInv.GetAllItems());
             
@@ -750,7 +752,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private Vector3 GroundedPosition(Vector3 worldPos)
         {
             if (ZoneSystem.instance != null &&
-                ZoneSystem.instance.GetGroundHeight(worldPos, out float groundY))
+                FiresCore.World.Surface.GroundNear(worldPos, out float groundY))
             {
                 return new Vector3(worldPos.x, groundY, worldPos.z);
             }

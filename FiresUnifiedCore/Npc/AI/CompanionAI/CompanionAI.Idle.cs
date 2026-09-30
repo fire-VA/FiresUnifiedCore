@@ -385,9 +385,28 @@ namespace FiresCore.Npc.AI
         /// based on the current follow speed tier. This ensures Valheim's
         /// Character.UpdateWalking() uses the matching speed and animation.
         /// </summary>
+        // True while the follow sprint is held back for stamina (logged when it flips).
+        private bool _sprintPaced;
+
         private void ApplyFollowSpeedToCharacter(FollowSpeed speed)
         {
             if (m_character == null) return;
+
+            // Fire: pace the sprint by stamina so a follower isn't left empty. StaminaManager.ShouldSprint starts a sprint at
+            // 50 % and stops it under 30 %; in between the follower jogs and recovers.
+            // An EMERGENCY catch-up (Sprinting: past catchUpDistance) is not held back by combat recovery, only by a nearly empty
+            // bar: after a fight the recovery flag kept the follower jogging until 85 % stamina, and a jog never closes on a
+            // running owner (R58 follow: gaps of 109-117 m, "follow sprint paused … (stamina=52 %)").
+            bool paced = _staminaManager != null && (speed == FollowSpeed.Sprinting
+                ? _staminaManager.GetStaminaPercent() < _staminaManager.sprintStopThreshold
+                : speed == FollowSpeed.Running && !_staminaManager.ShouldSprint());
+            if (paced != _sprintPaced && (paced || speed == FollowSpeed.Running || speed == FollowSpeed.Sprinting))
+            {
+                _sprintPaced = paced;
+                Debug.Log($"[CompanionAI] {m_character.m_name} follow sprint {(paced ? "paused: jogging to recover" : "resumed")} " +
+                          $"(stamina={_staminaManager.GetStaminaPercent():P0})");
+            }
+            if (paced) speed = FollowSpeed.Jogging;
 
             // Publish the run-tier catch-up boost so CompanionSpeedRamp can push the follower ABOVE its
             // archetype run speed while catching up (a plain run only matches an owner running at the same

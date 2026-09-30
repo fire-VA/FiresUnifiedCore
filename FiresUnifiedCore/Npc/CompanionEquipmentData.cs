@@ -596,6 +596,17 @@ if (ActiveFoods.Count > 0)
      
         // Archetype outgoing-damage multiplier (set by ArchetypeController, applied in CreateWeaponHitData).
         private float _archetypeDamageMultiplier = 1f;
+        /// <summary>The archetype's outgoing-damage multiplier (for the [CompanionHit] line).</summary>
+        public float ArchetypeDamageMultiplier => _archetypeDamageMultiplier;
+        /// <summary>The archetype's crit chance and crit damage multiplier (for the [CompanionHit] line).</summary>
+        public float ArchetypeCritChance => _archetypeCritChance;
+        public float ArchetypeCritDamageMultiplier => _archetypeCritDamageMultiplier;
+
+        /// <summary>
+        /// The last hit the archetype crit amplified (the same HitData the attack goes on to deal, for the [CompanionHit] line's
+        /// "crit yes/no"; a projectile's hit is a copy made on impact, so it can't be matched).
+        /// </summary>
+        public HitData LastCritHit { get; private set; }
         public void SetArchetypeDamageMultiplier(float multiplier) =>
             _archetypeDamageMultiplier = multiplier <= 0f ? 1f : multiplier;
 
@@ -1083,7 +1094,13 @@ ShieldBlockPowerPerLevel = 0f;
 
             // Archetype critical hit: roll once, amplify on success (never reduces).
             if (_archetypeCritChance > 0f && _archetypeCritDamageMultiplier > 1f && UnityEngine.Random.value < _archetypeCritChance)
+            {
                 hit.m_damage.Modify(_archetypeCritDamageMultiplier);
+                LastCritHit = hit;
+                // ArchetypeStatistics.CriticalHits was never fed (R58 skills: crits 0 for every fighter).
+                var archetype = _companion != null ? _companion.GetArchetypeController() : null;
+                if (archetype != null) archetype.OnCriticalHit();
+            }
 
             var progression = _companion?.GetProgression();
             if (progression != null)

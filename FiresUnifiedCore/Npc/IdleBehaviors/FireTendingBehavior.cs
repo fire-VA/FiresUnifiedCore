@@ -1074,7 +1074,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (ZoneSystem.instance != null)
                 {
                     float groundHeight;
-                    if (ZoneSystem.instance.GetGroundHeight(testPos, out groundHeight))
+                    if (FiresCore.World.Surface.GroundNear(testPos, out groundHeight))
                     {
                         testPos.y = groundHeight + 0.1f; // Slightly above ground
                     }
@@ -1099,7 +1099,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     if (ZoneSystem.instance != null)
                     {
                         float groundHeight;
-                        if (ZoneSystem.instance.GetGroundHeight(testPos, out groundHeight))
+                        if (FiresCore.World.Surface.GroundNear(testPos, out groundHeight))
                         {
                             testPos.y = groundHeight + 0.1f;
                         }
@@ -1120,7 +1120,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (ZoneSystem.instance != null)
             {
                 float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(fallbackPos, out groundHeight))
+                if (FiresCore.World.Surface.GroundNear(fallbackPos, out groundHeight))
                 {
                     fallbackPos.y = groundHeight + 0.1f;
                 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
@@ -60,9 +61,13 @@ namespace FiresCore.Logging
 
         private static readonly TimeSpan LimitExceededInterval = TimeSpan.FromSeconds(LimitExceededThrottleSeconds);
 
+        private static RateLimitedLogHandler s_installed;
+
         private readonly ILogHandler _inner;
         private readonly ManualLogSource _ourModLineSource;
         private readonly int _mainThreadId;
+        private readonly ConcurrentQueue<KeyValuePair<LogLevel, string>> _offThreadLines =
+            new ConcurrentQueue<KeyValuePair<LogLevel, string>>();
 
         private DateTime _lastLimitExceeded = DateTime.MinValue;
         private int _suppressedShaderWarnings;
@@ -75,6 +80,7 @@ namespace FiresCore.Logging
             _inner = inner ?? Debug.unityLogger.logHandler;
             _ourModLineSource = BepInEx.Logging.Logger.CreateLogSource(UnityLogSourceName);
             _mainThreadId = Thread.CurrentThread.ManagedThreadId;
+            s_installed = this;
             StatusBanner.Register(StatusSource, DescribeSuppressed);
         }
 
@@ -90,6 +96,7 @@ namespace FiresCore.Logging
             AddCount(counts, UnityLogSuppressionPatch.SuppressedClutterNreWarnings, "ClutterSystem NRE");
             AddCount(counts, UnityLogSuppressionPatch.SuppressedHeadlessRenderErrors, "headless render/video");
             AddCount(counts, BepInExLogSuppressionPatch.QuietedOtherModLines, "other mods quieted");
+            AddCount(counts, BepInExLogSuppressionPatch.PerModDroppedLines, "dropped by PerModLogLevel");
             AddCount(counts, BepInExLogSuppressionPatch.SuppressedHarmonyMissing, "HarmonyX probe misses");
             AddCount(counts, _suppressedValheimNreBugs, "known no-fix NRE");
             return counts.Count == 0 ? null : $"log filter held back {string.Join(", ", counts)} (verbose shows them)";
@@ -127,19 +134,36 @@ namespace FiresCore.Logging
         {
             if (_routeOtherModLines == null || !_routeOtherModLines.Value) return false;
             if (Thread.CurrentThread.ManagedThreadId != _mainThreadId) return false;
+            WriteOffThreadLines();
             _ourModLineSource.Log(ToBepInExLevel(logType), message);
             return true;
         }
 
         // Our tagged lines go straight to BepInEx under the "Unity Log" source, so the console and LogOutput.log get each
         // one once, colored, without Unity's uncolored native echo. BepInEx only hears what the inner handler forwards, so
-        // dropping them lost them everywhere. Off the main thread they keep the native path: BepInEx's console writer is
-        // not thread-safe.
+        // dropping them lost them everywhere. Off the main thread BepInEx's console writer is not thread-safe, and the
+        // native echo never reaches LogOutput.log (BepInEx's Unity Log source hears only main-thread lines), so those
+        // lines wait for the main thread's next frame instead.
         private bool TryWriteOurModLineToBepInEx(LogType logType, string message)
         {
-            if (Thread.CurrentThread.ManagedThreadId != _mainThreadId || !FiresLogColorPatch.IsOurModMessage(message)) return false;
+            if (!FiresLogColorPatch.IsOurModMessage(message)) return false;
+            if (Thread.CurrentThread.ManagedThreadId != _mainThreadId)
+            {
+                _offThreadLines.Enqueue(new KeyValuePair<LogLevel, string>(ToBepInExLevel(logType), message));
+                return true;
+            }
+            WriteOffThreadLines();
             _ourModLineSource.Log(ToBepInExLevel(logType), message);
             return true;
+        }
+
+        // Main thread only (a call from any other thread does nothing): writes the lines other threads queued, in order.
+        internal static void FlushOffThreadLines() => s_installed?.WriteOffThreadLines();
+
+        private void WriteOffThreadLines()
+        {
+            if (_offThreadLines.IsEmpty || Thread.CurrentThread.ManagedThreadId != _mainThreadId) return;
+            while (_offThreadLines.TryDequeue(out var line)) _ourModLineSource.Log(line.Key, line.Value);
         }
 
         private static LogLevel ToBepInExLevel(LogType logType)

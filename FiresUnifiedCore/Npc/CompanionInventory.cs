@@ -1437,6 +1437,11 @@ string inventoryData = zdo.GetString("companion_inventory", "");
            
            // Update the equipment hash for change detection
            _lastEquipmentHash = CalculateEquipmentHash(zdo);
+
+           // A remote copy picked its archetype 0.5 s after Start from an inventory it hadn't loaded yet (MONK, "unarmed"),
+           // and only an equip on this machine re-ran the pick (R44: the bot's Fulla BERSERKER on the bot, MONK on Fire's).
+           if (_nview != null && !_nview.IsOwner())
+               GetComponent<Archetypes.ArchetypeController>()?.ForceReevaluate();
      }
             catch (Exception ex)
           {

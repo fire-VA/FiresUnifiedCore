@@ -34,7 +34,13 @@ namespace FiresCore.Npc.Archetypes
         private BaseAI _targetAI;
         private float _checkInterval = 0.1f; // Check every 100ms for better responsiveness
         private float _lastCheck;
-        
+
+        // Set when the taunt breaks early. Vanilla's IsDone is m_ttl > 0 && m_time > m_ttl, so the old "m_ttl = 0" made a
+        // broken taunt last forever, and Stop never cleared ActiveTaunts (class_test R37: Taunted still on after its 2 s).
+        private bool _broken;
+
+        public override bool IsDone() => _broken || base.IsDone();
+
         // Reflection cache for setting target directly
         private static FieldInfo _monsterAI_targetCreatureField;
         private static bool _reflectionInitialized = false;
@@ -111,7 +117,7 @@ namespace FiresCore.Npc.Archetypes
                 {
                     Debug.Log($"[CompanionTauntEffect] Taunt breaking early on {m_character?.m_name}");
                 }
-                m_ttl = 0; // End the effect
+                _broken = true; // IsDone ends it; SEMan then calls Stop, which clears ActiveTaunts
                 return;
             }
             
@@ -607,19 +613,8 @@ namespace FiresCore.Npc.Archetypes
                 return true;
             }
             
-            // Apply new taunt
-            var tauntEffect = ScriptableObject.CreateInstance<CompanionTauntEffect>();
-            tauntEffect.name = "CompanionTaunted";
-            tauntEffect.Taunter = m_character;
-            tauntEffect.Duration = duration;
-            
-            // Remove any existing taunt (from us or others)
-            if (seman.HaveStatusEffect(existingHash))
-            {
-                seman.RemoveStatusEffect(existingHash, true);
-            }
-            
-            seman.AddStatusEffect(tauntEffect, true);
+            // Apply new taunt, on the enemy's owner (0.2.201: its AI runs there)
+            TauntRouting.Taunt(m_character, enemy, duration);
             Combat.VikHavnBridge.Taunt(m_character, enemy, duration);
             return true;
         }
@@ -786,21 +781,8 @@ namespace FiresCore.Npc.Archetypes
             var seman = enemy.GetSEMan();
             if (seman == null) return false;
             
-            // Create a new taunt effect instance
-            var tauntEffect = ScriptableObject.CreateInstance<CompanionTauntEffect>();
-            tauntEffect.name = "CompanionTaunted";
-            tauntEffect.Taunter = taunter;
-            tauntEffect.Duration = duration;
-            
-            // Remove existing taunt if any (newer taunt replaces)
-            int existingHash = "CompanionTaunted".GetStableHashCode();
-            if (seman.HaveStatusEffect(existingHash))
-            {
-                seman.RemoveStatusEffect(existingHash, true);
-            }
-            
-            // Apply the taunt
-            seman.AddStatusEffect(tauntEffect, true);
+            // Apply the taunt on the enemy's owner (0.2.201: its AI runs there; a newer taunt replaces an older one)
+            TauntRouting.Taunt(taunter, enemy, duration);
             Combat.VikHavnBridge.Taunt(taunter, enemy, duration);
 
             if (VerboseLogging)
@@ -1482,19 +1464,8 @@ namespace FiresCore.Npc.Archetypes
             var seman = enemy.GetSEMan();
             if (seman == null) return false;
             
-            var tauntEffect = ScriptableObject.CreateInstance<CompanionTauntEffect>();
-            tauntEffect.name = "CompanionTaunted";
-            tauntEffect.Taunter = taunter;
-            tauntEffect.Duration = duration;
-            
-            // Remove existing taunt if any (newer taunt replaces)
-            int existingHash = "CompanionTaunted".GetStableHashCode();
-            if (seman.HaveStatusEffect(existingHash))
-            {
-                seman.RemoveStatusEffect(existingHash, true);
-            }
-            
-            seman.AddStatusEffect(tauntEffect, true);
+            // On the enemy's owner (0.2.201: its AI runs there; a newer taunt replaces an older one)
+            TauntRouting.Taunt(taunter, enemy, duration);
             Combat.VikHavnBridge.Taunt(taunter, enemy, duration);
             return true;
         }
@@ -1527,6 +1498,104 @@ namespace FiresCore.Npc.Archetypes
             }
             
             seman.AddStatusEffect(tauntingEffect, true);
+        }
+    }
+
+    /// <summary>
+    /// Puts a taunt on the enemy where its AI runs (0.2.201). The taunt is a status effect plus the ActiveTaunts registry that
+    /// TauntAIPatches reads inside MonsterAI, and MonsterAI only thinks on the enemy's ZDO owner (a dedicated server simulating it,
+    /// or another player's client). Applied here when this peer owns the enemy; otherwise one routed RPC to the owner, which
+    /// applies it there. "[Taunt]" lines on both ends prove the hand-over.
+    /// </summary>
+    [HarmonyPatch]
+    public static class TauntRouting
+    {
+        private const string TauntRpc = "FC_Taunt";
+        private const string EffectName = "CompanionTaunted";
+        private static ZRoutedRpc s_registeredOn;
+        private const float ResendSeconds = 3f;
+        private static readonly Dictionary<(int, int), float> s_lastSent = new Dictionary<(int, int), float>();
+
+        [HarmonyPatch(typeof(ZNet), "Start"), HarmonyPostfix]
+        private static void OnSessionStart() => EnsureRpc();
+
+        private static void EnsureRpc()
+        {
+            ZRoutedRpc rpc = ZRoutedRpc.instance;
+            if (rpc == null || ReferenceEquals(rpc, s_registeredOn)) return;
+            rpc.Register<ZDOID, ZDOID, float>(TauntRpc, RPC_Taunt);
+            s_registeredOn = rpc;
+        }
+
+        /// <summary>Taunts <paramref name="enemy"/> onto <paramref name="taunter"/> for <paramref name="duration"/> s, on the enemy's owner.</summary>
+        public static void Taunt(Character taunter, Character enemy, float duration)
+        {
+            if (taunter == null || enemy == null || enemy.IsDead()) return;
+            ZNetView view = enemy.m_nview;
+            if (view == null || !view.IsValid() || view.IsOwner())
+            {
+                ApplyHere(taunter, enemy, duration);
+                Debug.Log($"[Taunt] {taunter.m_name} taunted {enemy.m_name} for {duration:0.#} s (applied here, this peer owns it)");
+                return;
+            }
+            // The Taunting aura re-applies every TauntReapplyInterval, and this peer can't see the effect on a remote enemy: one
+            // send per enemy and taunter every ResendSeconds (the effect on the owner holds between them).
+            var key = (enemy.GetInstanceID(), taunter.GetInstanceID());
+            if (s_lastSent.TryGetValue(key, out float sentAt) && Time.time - sentAt < Mathf.Min(ResendSeconds, duration * 0.5f)) return;
+            if (s_lastSent.Count > 256) s_lastSent.Clear();
+            s_lastSent[key] = Time.time;
+            EnsureRpc();
+            long owner = view.GetZDO().GetOwner();
+            if (ZRoutedRpc.instance == null || owner == 0L)
+            {
+                ApplyHere(taunter, enemy, duration);
+                Debug.Log($"[Taunt] {taunter.m_name} taunted {enemy.m_name} for {duration:0.#} s (no owner to send it to; applied here)");
+                return;
+            }
+            ZRoutedRpc.instance.InvokeRoutedRPC(owner, TauntRpc, enemy.GetZDOID(), taunter.GetZDOID(), duration);
+            Debug.Log($"[Taunt] {taunter.m_name} taunted {enemy.m_name} for {duration:0.#} s (sent to its owner {owner})");
+        }
+
+        private static void RPC_Taunt(long sender, ZDOID enemyId, ZDOID taunterId, float duration)
+        {
+            if (ZNetScene.instance == null) return;
+            GameObject enemyObject = ZNetScene.instance.FindInstance(enemyId);
+            GameObject taunterObject = ZNetScene.instance.FindInstance(taunterId);
+            Character enemy = enemyObject != null ? enemyObject.GetComponent<Character>() : null;
+            Character taunter = taunterObject != null ? taunterObject.GetComponent<Character>() : null;
+            if (enemy == null || taunter == null || enemy.IsDead())
+            {
+                Debug.Log($"[Taunt] taunt from peer {sender} dropped: {(enemy == null ? "enemy not loaded here" : taunter == null ? "taunter not loaded here" : "enemy dead")}");
+                return;
+            }
+            if (enemy.m_nview == null || !enemy.m_nview.IsOwner())
+            {
+                // Ownership moved on the way: pass it on to the new owner.
+                Taunt(taunter, enemy, duration);
+                return;
+            }
+            ApplyHere(taunter, enemy, duration);
+            Debug.Log($"[Taunt] {enemy.m_name} taunted onto {taunter.m_name} for {duration:0.#} s (from peer {sender}; this peer owns it)");
+        }
+
+        // The status effect on the enemy (its Setup registers ActiveTaunts; a newer taunt replaces an older one).
+        private static void ApplyHere(Character taunter, Character enemy, float duration)
+        {
+            SEMan seman = enemy.GetSEMan();
+            if (seman == null) return;
+            int hash = EffectName.GetStableHashCode();
+            // Already held by this taunter: its effect keeps the AI on it (a refresh, as before 0.2.201).
+            if (seman.GetStatusEffect(hash) is CompanionTauntEffect held && held.Taunter == taunter)
+            {
+                held.m_ttl = Mathf.Max(held.m_ttl, held.m_time + duration);
+                return;
+            }
+            if (seman.HaveStatusEffect(hash)) seman.RemoveStatusEffect(hash, true);
+            var effect = ScriptableObject.CreateInstance<CompanionTauntEffect>();
+            effect.name = EffectName;
+            effect.Taunter = taunter;
+            effect.Duration = duration;
+            seman.AddStatusEffect(effect, true);
         }
     }
 }

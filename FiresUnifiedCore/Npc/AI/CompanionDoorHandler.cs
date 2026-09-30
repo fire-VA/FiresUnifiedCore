@@ -67,12 +67,6 @@ namespace FiresCore.Npc.AI
         private float _closeTimer;     // counts down in WaitingToClose
         private float _cooldownTimer;  // post-close cooldown
 
-        // door cache (shared across all instances)
-
-        private static Door[] _doorCache;
-        private static float _doorCacheExpiry;
-        private const float DoorCacheLifetime = 5f;
-
         // Unity lifecycle
 
         private void Awake()
@@ -151,8 +145,13 @@ namespace FiresCore.Npc.AI
                 return;
             }
 
-            // Close enough - interact (opens the door).
-            _targetDoor.Interact(_humanoid, false, false);
+            // Close enough - open it through the door rule (it remembers the open, so the door isn't toggled back before the ZDO says
+            // open). Not passable any more (opened by someone else, locked): nothing to do.
+            if (!DoorRule.OpenFor(_humanoid, _targetDoor))
+            {
+                ResetToIdle();
+                return;
+            }
 
             _phase      = Phase.WaitingToClose;
             _closeTimer = AutoCloseDelay;
@@ -180,7 +179,7 @@ namespace FiresCore.Npc.AI
                 return;
 
             // Timer elapsed - close the door if no one is blocking it.
-            if (!IsAnyoneNearDoor())
+            if (!DoorRule.AnyoneNear(_doorPos, gameObject))
                 TryCloseDoor();
 
             ResetToIdle(withCooldown: true);
@@ -188,19 +187,8 @@ namespace FiresCore.Npc.AI
 
         // helpers
 
-        private void TryCloseDoor()
-        {
-            if (_targetDoor == null)
-                return;
-
-            var nview = _targetDoor.GetComponent<ZNetView>();
-            if (nview == null || nview.GetZDO() == null)
-                return;
-
-            // Only close if still open (state != 0).
-            if (nview.GetZDO().GetInt(ZDOVars.s_state) != 0)
-                _targetDoor.Interact(_humanoid, false, false);
-        }
+        // The door rules live in DoorRule (one rule for companions and the FDT bot's PathWalker).
+        private void TryCloseDoor() => DoorRule.Close(_humanoid, _targetDoor);
 
         /// <summary>Returns the nearest closed, unlocked, accessible door within <see cref="ScanRadius"/>.</summary>
         private Door FindNearestClosedDoor()
@@ -208,10 +196,10 @@ namespace FiresCore.Npc.AI
             Door best     = null;
             float bestDist = float.MaxValue;
 
-            foreach (Door door in GetDoorCache())
+            foreach (Door door in DoorRule.Doors())
             {
                 if (door == null) continue;
-                if (!IsValidClosedDoor(door)) continue;
+                if (!DoorRule.IsPassable(door, _humanoid)) continue;
 
                 float doorDistance = Vector3.Distance(transform.position, door.transform.position);
                 if (doorDistance < ScanRadius && doorDistance < bestDist)
@@ -224,58 +212,6 @@ namespace FiresCore.Npc.AI
             return best;
         }
 
-        private static bool IsValidClosedDoor(Door door)
-        {
-            if (door == null) return false;
-            // Skip locked doors.
-            if (door.m_keyItem != null) return false;
-
-            // Vanilla PrivateArea.CheckAccess dereferences the ward's m_piece and Player.m_localPlayer unguarded, and
-            // either can be null (a ward mid-Awake, a player mid-teleport). Skip the check without a local player and
-            // treat a throw as no access, so the companion walks past as it would a real ward block.
-            if (door.m_checkGuardStone)
-            {
-                if (Player.m_localPlayer == null) return false;
-                bool hasAccess;
-                try
-                {
-                    hasAccess = PrivateArea.CheckAccess(door.transform.position, flash: false);
-                }
-                catch
-                {
-                    // Stale PrivateArea in vanilla's static m_allAreas list
-                    // (m_piece null on a half-initialized or half-destroyed
-                    // ward). Conservative: treat as blocked.
-                    return false;
-                }
-                if (!hasAccess) return false;
-            }
-
-            var nview = door.GetComponent<ZNetView>();
-            if (nview == null || nview.GetZDO() == null) return false;
-
-            // state == 0 means closed.
-            return nview.GetZDO().GetInt(ZDOVars.s_state) == 0;
-        }
-
-        private bool IsAnyoneNearDoor()
-        {
-            // Check local player.
-            if (Player.m_localPlayer != null &&
-                Vector3.Distance(Player.m_localPlayer.transform.position, _doorPos) < ProximityBlock)
-                return true;
-
-            // Check other characters (companions, enemies) nearby.
-            var hits = Physics.OverlapSphere(_doorPos, ProximityBlock);
-            foreach (var collider in hits)
-            {
-                if (collider == null || collider.gameObject == gameObject) continue;
-                if (collider.GetComponent<Character>() != null)
-                    return true;
-            }
-
-            return false;
-        }
 
         private bool ValidateDoor()
         {
@@ -298,27 +234,10 @@ namespace FiresCore.Npc.AI
                 _cooldownTimer = PostCloseCooldown;
         }
 
-        // door cache
-
-        private static Door[] GetDoorCache()
-        {
-            if (_doorCache == null || Time.time >= _doorCacheExpiry)
-            {
-                _doorCache       = Object.FindObjectsByType<Door>(FindObjectsSortMode.None);
-                _doorCacheExpiry = Time.time + DoorCacheLifetime;
-            }
-            return _doorCache;
-        }
-
         /// <summary>
-        /// Invalidates the shared door cache. Call this after a door is placed
-        /// or destroyed (e.g. from a ZNetScene event) so the next scan picks
-        /// up the change.
+        /// Invalidates the shared door cache (now DoorRule's). Call this after a door is placed
+        /// or destroyed (e.g. from a ZNetScene event) so the next scan picks up the change.
         /// </summary>
-        public static void InvalidateDoorCache()
-        {
-            _doorCache       = null;
-            _doorCacheExpiry = 0f;
-        }
+        public static void InvalidateDoorCache() => DoorRule.InvalidateCache();
     }
 }

@@ -20,7 +20,10 @@ namespace FiresCore.Npc.Archetypes.Effects
         private const int RippleSegmentCount = 16;
         private const float RippleOpacityScale = 0.7f;
         private const int CrossTickSegmentsPerTick = 2;
-        private const float CrossTickScale = 0.55f;
+        // Dash sizes (m), 0.2.203: thin dashes with gaps, not the workbench's 1 m segments end to end (R77: solid black slabs).
+        private const float DashWidth = 0.12f, MaxDashLength = 0.9f, MinDashLength = 0.15f, DashShare = 0.55f;
+        private const float RippleDashWidth = 0.08f, RippleDashLength = 0.35f, CrossTickLength = 0.6f;
+        private static readonly HashSet<GroundRingKind> s_reported = new HashSet<GroundRingKind>(), s_rippleReported = new HashSet<GroundRingKind>();
         private const int GroundSamplesPerFrame = 2;
         private const float MinimumDuration = 0.1f;
 
@@ -71,8 +74,23 @@ namespace FiresCore.Npc.Archetypes.Effects
             }
 
             ApplyPaletteColor();
+            // Each dash is DashShare of its slice of the circumference (a gap between every two), whatever the radius.
+            float dash = Mathf.Clamp(2f * Mathf.PI * _radius / Mathf.Max(1, _pattern.SegmentCount) * DashShare, MinDashLength, MaxDashLength);
+            for (int i = 0; i < _mainSegments.Count; i++)
+                if (_mainSegments[i] != null) _mainSegments[i].localScale = new Vector3(DashWidth, 1f, dash);
             SampleWholeGroundProfile();
             PlaceSegments(0f, 1f);
+            ReportOnce(dash);
+        }
+
+        // Evidence, once per kind a session (fx_ground judges it): shader, the colour read back from the material, dash sizes.
+        private void ReportOnce(float dash)
+        {
+            if (!s_reported.Add(_kind) || _mainMaterial == null) return;
+            Color set = _mainMaterial.HasProperty("_Color") ? _mainMaterial.GetColor("_Color") : Color.clear;
+            Debug.Log($"[GroundRing] {_kind} ring r={_radius:0.0} m: {_mainSegments.Count} dash(es) {dash:0.00} x {DashWidth:0.00} m (gaps between), " +
+                      $"material {_mainMaterial.name} / {GroundRingSegmentSource.ShaderName}, colour {set.r:0.00},{set.g:0.00},{set.b:0.00} alpha {set.a:0.00} " +
+                      $"(palette {(GroundRingConfig.UseColorBlindPalette ? "colour-blind" : "standard")}, ring opacity {GroundRingConfig.Opacity:0.00})");
         }
 
         private void BuildSegments()
@@ -86,7 +104,7 @@ namespace FiresCore.Npc.Archetypes.Effects
             for (int i = 0; i < _pattern.SegmentCount; i++)
             {
                 bool visible = _pattern.DashStride <= 1 || (i % _pattern.DashStride) != 0;
-                var segment = CreateSegment(_mainMaterial, Vector3.one);
+                var segment = CreateSegment(_mainMaterial, new Vector3(DashWidth, 1f, MaxDashLength));
                 if (segment == null) return;
                 segment.gameObject.SetActive(visible);
                 _mainSegments.Add(segment);
@@ -96,7 +114,7 @@ namespace FiresCore.Npc.Archetypes.Effects
             {
                 for (int i = 0; i < RippleSegmentCount; i++)
                 {
-                    var segment = CreateSegment(_rippleMaterial, Vector3.one);
+                    var segment = CreateSegment(_rippleMaterial, new Vector3(RippleDashWidth, 1f, RippleDashLength));
                     if (segment == null) return;
                     _rippleSegments.Add(segment);
                 }
@@ -105,7 +123,7 @@ namespace FiresCore.Npc.Archetypes.Effects
             int tickSegments = _pattern.CrossTickCount * CrossTickSegmentsPerTick;
             for (int i = 0; i < tickSegments; i++)
             {
-                var segment = CreateSegment(_mainMaterial, Vector3.one * CrossTickScale);
+                var segment = CreateSegment(_mainMaterial, new Vector3(DashWidth, 1f, CrossTickLength));
                 if (segment == null) return;
                 _tickSegments.Add(segment);
             }
@@ -259,6 +277,14 @@ namespace FiresCore.Npc.Archetypes.Effects
 
             Color color = GroundRingPalette.ColorFor(_kind, GroundRingConfig.UseColorBlindPalette);
             FxTint.ApplyToMaterial(_rippleMaterial, ScaleColor(color, opacity * rippleFade), BaseEmissionIntensity);
+            // Evidence, once per kind a session, mid-expansion (R77 Fire: "a black one that starts in the center and expands out").
+            if (phase >= 0.5f && s_rippleReported.Add(_kind) && _rippleMaterial != null)
+            {
+                Color set = _rippleMaterial.HasProperty("_Color") ? _rippleMaterial.GetColor("_Color") : Color.clear;
+                Debug.Log($"[GroundRing] {_kind} ripple ({_pattern.Ripple}) at r={rippleRadius:0.0} of {_radius:0.0} m: {_rippleSegments.Count} dash(es) " +
+                          $"{RippleDashLength:0.00} x {RippleDashWidth:0.00} m, material {_rippleMaterial.name} / {GroundRingSegmentSource.ShaderName}, " +
+                          $"colour {set.r:0.00},{set.g:0.00},{set.b:0.00} alpha {set.a:0.00} (fades by alpha only)");
+            }
         }
 
         private void PlaceCrossTicks(float spin)
@@ -291,9 +317,10 @@ namespace FiresCore.Npc.Archetypes.Effects
             segment.rotation = Quaternion.LookRotation(radialFacing ? radial : tangent, Vector3.up);
         }
 
+        // Fades through alpha only (0.2.203): multiplying the colour darkened the dashes toward black instead of letting the ground through.
         private static Color ScaleColor(Color color, float factor)
         {
-            return new Color(color.r * factor, color.g * factor, color.b * factor, color.a * factor);
+            return new Color(color.r, color.g, color.b, color.a * factor);
         }
 
         private void OnDestroy()

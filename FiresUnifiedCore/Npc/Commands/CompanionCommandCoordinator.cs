@@ -267,7 +267,7 @@ namespace FiresCore.Npc.Commands
             if (ZoneSystem.instance != null)
             {
                 float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(targetPos, out groundHeight))
+                if (FiresCore.World.Surface.GroundNear(targetPos, out groundHeight))
                 {
                     targetPos.y = groundHeight + 0.1f;
                 }

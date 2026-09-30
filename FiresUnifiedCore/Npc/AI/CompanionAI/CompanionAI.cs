@@ -298,6 +298,11 @@ namespace FiresCore.Npc.AI
             // destroyed Component throws a native NullReferenceException, so bail out first.
             if (this == null || !gameObject) return false;
 
+            // CompanionCombatMovement adds the StaminaManager after this Awake cached null, so every stamina check here was
+            // skipped (R46-R49: "no stamina mgr" on every state line; Fire: companions drain themselves, then can't follow or
+            // attack). Picked up once it exists.
+            if (_staminaManager == null) _staminaManager = GetComponent<StaminaManager>();
+
             // CRITICAL: Check stationed state BEFORE base.UpdateAI runs.
             // BaseAI.UpdateAI resets m_lookDir every tick via UpdateTarget/UpdateRotation,
             // which overrides any look direction we set (e.g., face-nearest-player).
@@ -1023,16 +1028,41 @@ namespace FiresCore.Npc.AI
             // BaseAI.MoveTo() uses FindPath() and m_path waypoints for obstacle avoidance.
             // Escape hatch (see MoveToThroughAuthority): open the single-writer gate around the vanilla
             // MoveTo so its direct SetMoveDir is allowed through; try/finally always re-closes it.
+            bool done;
             try
             {
                 authority?.DisableExternalBlocking();
-                return MoveTo(Time.deltaTime, destination, reachDistance, run);
+                done = MoveTo(Time.deltaTime, destination, reachDistance, run);
             }
             finally
             {
                 authority?.EnableExternalBlocking();
             }
+            // Vanilla MoveTo also says "done" at the end of a PARTIAL path or when it finds none. Short of the destination by more
+            // than PartialSlack that is not an arrival: report false (the behaviour's own timeout ends it honestly) and say so once
+            // (R70, [visual]: the bot "arrived" 4.7 m short at a lip; BaseAI's path can end short the same way).
+            PathShortBy = 0f;
+            if (done)
+            {
+                float left = Utils.DistanceXZ(transform.position, destination);
+                if (left > reachDistance + PartialSlack)
+                {
+                    PathShortBy = left;
+                    if (Vector3.Distance(destination, _shortLoggedFor) > 1f)
+                    {
+                        _shortLoggedFor = destination;
+                        Debug.Log($"[CompanionAI] {m_character?.m_name}: path ends {left:0.0} m short of {destination} ({authorityOwner}); not arrived");
+                    }
+                    return false;
+                }
+            }
+            return done;
         }
+
+        /// <summary>How far short of its destination the last pathfinding move stopped (0 = reached or still walking).</summary>
+        public float PathShortBy { get; private set; }
+        private const float PartialSlack = 1.5f;
+        private Vector3 _shortLoggedFor = new Vector3(float.NaN, 0f, 0f);
 
         /// <summary>
         /// Grounded DIRECT move toward <paramref name="destination"/> — vanilla BaseAI.MoveTowards (SetLookDir +

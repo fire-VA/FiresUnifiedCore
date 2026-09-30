@@ -991,7 +991,7 @@ namespace FiresCore.Npc
                 if (ZoneSystem.instance != null)
                 {
                     float groundHeight;
-                    if (ZoneSystem.instance.GetGroundHeight(testPos, out groundHeight))
+                    if (FiresCore.World.Surface.GroundNear(testPos, out groundHeight))
                     {
                         testPos.y = groundHeight + 0.5f;
                         return testPos;
@@ -1904,6 +1904,10 @@ namespace FiresCore.Npc
         [HarmonyPrefix]
         public static bool Character_RPC_Damage_Prefix(Character __instance, long sender, HitData hit)
         {
+            // Core's one RPC_Damage hook also carries locational damage's victim step (every character, before the companion checks).
+            FiresCore.Combat.LocationalDamage.OnVictimHit(__instance, hit);
+            FiresCore.Npc.Combat.ParryTiming.OnVictimHit(__instance, hit);
+            FiresCore.Npc.Combat.ThreatLevel.NoteHitTaken(__instance, hit);
             try
             {
                 var companion = __instance.GetComponent<CompanionController>();
@@ -2386,6 +2390,9 @@ namespace FiresCore.Npc
             {
                 try
                 {
+                    // A stealthed character shows no bar or name except to its own party (Fire, 2026-09-28).
+                    if (Archetypes.StatusEffects.Rogue.StealthSync.HidesHudFor(c)) return false;
+
                     // PERF: Use cached lookup
                     var companion = c != null ? GetCachedCompanion(c) : null;
                     if (companion == null) return true; // Not a companion, show normal hud
@@ -2419,6 +2426,13 @@ namespace FiresCore.Npc
             {
                 try
                 {
+                    // A bar already up for a character that goes into stealth is taken down (non-party viewers only).
+                    if (Archetypes.StatusEffects.Rogue.StealthSync.HidesHudFor(c))
+                    {
+                        __result = false;
+                        return;
+                    }
+
                     // PERF: Use cached lookup
                     var companion = c != null ? GetCachedCompanion(c) : null;
                     if (companion == null) return;

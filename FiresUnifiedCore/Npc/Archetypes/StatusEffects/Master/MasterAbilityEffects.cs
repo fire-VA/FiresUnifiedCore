@@ -148,9 +148,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             float currentHealth = target.GetHealth();
             float healAmount = maxHealth - currentHealth;
             
-            if (healAmount > 0)
+            // Authoritative: this runs when the effect goes on, which used to happen on every peer (one full heal each)
+            if (healAmount > 0 && Authoritative && IsParty(target))
             {
-                AbilityHeals.Apply(SourceCharacter ?? m_character, target, healAmount, true);
+                AbilityHeals.Apply(Caster, target, healAmount, true);
+                NoteHit(target, healAmount, true);
             }
             
             // Visual feedback
@@ -239,18 +241,30 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             }
         }
         
-        /// <summary>
-        /// Blocks healing when Death Wish is active.
-        /// Note: This requires a patch to Character.Heal() to check for this effect.
-        /// For now, we'll track it and log it.
-        /// </summary>
+        /// <summary>Blocks healing while Death Wish is active (<see cref="DeathWishBlocksHealing"/>).</summary>
         public bool BlocksHealing => _isActive;
         
         private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
     }
-    
+
+    /// <summary>
+    /// Death Wish's "cannot be healed" (Fire, popup 2026-09-28 20:4x): while it is active no heal lands on its carrier, player
+    /// or companion. Every Character.Heal ends in RPC_Heal on the character's owner, the peer where the effect runs.
+    /// </summary>
+    [HarmonyLib.HarmonyPatch(typeof(Character), "RPC_Heal")]
+    internal static class DeathWishBlocksHealing
+    {
+        private static readonly int s_deathWish = StatusEffectManager.EFFECT_DEATH_WISH.GetStableHashCode();
+
+        private static bool Prefix(Character __instance)
+        {
+            var effect = __instance != null ? __instance.GetSEMan()?.GetStatusEffect(s_deathWish) as DeathWishEffect : null;
+            return effect == null || !effect.BlocksHealing;
+        }
+    }
+
     #endregion
-    
+
     #region Rogue - Death Mark
     
     /// <summary>
@@ -347,10 +361,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
         {
             _lastTickTime = Time.time;
             
-            // Use caster position if no target specified
+            // No target given: where the caster aimed (the class mod's hand-over), else on the nearest foe in front, else ahead.
             if (TargetPosition == Vector3.zero && m_character != null)
             {
-                TargetPosition = m_character.transform.position + m_character.transform.forward * DefaultTargetDistance;
+                TargetPosition = PlacedTarget(DefaultTargetDistance, out string how);
+                Debug.Log($"[ClassSkill] rain of arrows placed at ({TargetPosition.x:0}, {TargetPosition.z:0}) ({how})");
             }
             
             // Initial VFX
@@ -386,8 +401,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (character.IsTamed() || character.IsPlayer()) continue;
-                
+                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
+
                 float dist = Vector3.Distance(TargetPosition, character.transform.position);
                 if (dist <= Radius)
                 {
@@ -402,7 +417,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                     bool willKill = character.GetHealth() <= hitData.GetTotalDamage();
                     
                     character.Damage(hitData);
-                    
+                    NoteHit(character, DamagePerTick, false);
+
                     // Grant skill XP for hitting
                     skillSystem?.OnAbilityHitEnemy("rainofarrows", character, willKill || character.IsDead());
                     
@@ -482,10 +498,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             _startTime = Time.time;
             _hasImpacted = false;
             
-            // Use forward position if no target
+            // No target given: where the caster aimed (the class mod's hand-over), else on the nearest foe in front, else ahead.
             if (TargetPosition == Vector3.zero && m_character != null)
             {
-                TargetPosition = m_character.transform.position + m_character.transform.forward * DefaultTargetDistance;
+                TargetPosition = PlacedTarget(DefaultTargetDistance, out string how);
+                Debug.Log($"[ClassSkill] meteor placed at ({TargetPosition.x:0}, {TargetPosition.z:0}) ({how})");
             }
             
             // Warning VFX at target location
@@ -525,7 +542,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             {
                 if (character == null || character.IsDead()) continue;
                 if (m_character != null && character == m_character) continue;
-                if (character.IsTamed() || character.IsPlayer()) continue;
+                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
                 
                 float dist = Vector3.Distance(TargetPosition, character.transform.position);
                 if (dist <= Radius)
@@ -545,10 +562,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                     bool willKill = character.GetHealth() <= hitData.GetTotalDamage();
                     
                     character.Damage(hitData);
-                    
+                    NoteHit(character, actualDamage, false);
+
                     // Stagger enemies
                     character.Stagger(hitData.m_dir);
-                    
+
                     // Grant skill XP for hitting (and possibly killing)
                     skillSystem?.OnAbilityHitEnemy("meteor", character, willKill || character.IsDead());
                     
@@ -597,7 +615,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             
             if (m_character != null)
             {
-                m_character.Message(MessageHud.MessageType.Center, "<color=cyan>Divine Hymn</color>");
+                m_character.Message(MessageHud.MessageType.Center, "<color=#00FFFF>Divine Hymn</color>");
                 SpawnVFX("fx_DvergerMage_Support_start", m_character.transform.position);
             }
             
@@ -625,36 +643,19 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             // Get skill system for XP tracking
             var skillSystem = m_character.GetComponent<ArchetypeSkillSystem>();
             
-            // Heal owner
-            if (_companionController != null)
-            {
-                var owner = _companionController.GetOwner();
-                if (owner != null && !owner.IsDead())
-                {
-                    float dist = Vector3.Distance(pos, owner.transform.position);
-                    if (dist <= Radius && owner.GetHealthPercentage() < 1f)
-                    {
-                        AbilityHeals.Apply(SourceCharacter ?? m_character, owner, HealPerTick, true);
-                        SpawnVFX("fx_creature_tamed", owner.transform.position);
-                        
-                        // Grant skill XP for healing ally
-                        skillSystem?.OnAbilityBuffedAlly("divinehymn", owner);
-                        healed++;
-                    }
-                }
-            }
-            
-            // Heal all allies in range
+            // Heal the caster's party in range (Fire: heals only the party). The owner used to be healed twice per tick:
+            // once in its own block and again here as a non-enemy.
             foreach (var character in Character.GetAllCharacters())
             {
                 if (character == null || character.IsDead()) continue;
                 if (character.GetHealthPercentage() >= 1f) continue; // Already full
-                if (BaseAI.IsEnemy(m_character, character)) continue;
-                
+                if (!IsParty(character)) continue;
+
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist <= Radius)
                 {
-                    AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealPerTick, true);
+                    AbilityHeals.Apply(Caster, character, HealPerTick, true);
+                    NoteHit(character, HealPerTick, true);
                     SpawnVFX("fx_creature_tamed", character.transform.position);
                     
                     // Grant skill XP for healing ally
@@ -720,18 +721,20 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             SpawnVFX("vfx_Cold", pos);
             SpawnVFX("vfx_sledge_hit", pos);
             
-            m_character.Message(MessageHud.MessageType.Center, "<color=cyan>CHI EXPLOSION!</color>");
+            m_character.Message(MessageHud.MessageType.Center, "<color=#00FFFF>CHI EXPLOSION!</color>");
             
             // Get skill system for XP tracking
             var skillSystem = m_character.GetComponent<ArchetypeSkillSystem>();
             
-            // Deal damage to all enemies in radius
+            // Deal damage to all enemies in radius. Authoritative: this runs when the effect goes on, which used to happen
+            // on every peer (one explosion's damage each).
             int hitCount = 0;
             foreach (var character in Character.GetAllCharacters())
             {
+                if (!Authoritative) break;
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (character.IsTamed() || character.IsPlayer()) continue;
+                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
                 
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist <= Radius)
@@ -751,8 +754,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                     bool willKill = character.GetHealth() <= hitData.GetTotalDamage();
                     
                     character.Damage(hitData);
+                    NoteHit(character, actualDamage, false);
                     character.Stagger(hitData.m_dir);
-                    
+
                     // Grant skill XP for hitting
                     skillSystem?.OnAbilityHitEnemy("chiexplosion", character, willKill || character.IsDead());
                     

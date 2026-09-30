@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using BepInEx;
 using UnityEngine;
 using FiresCore.Config;
@@ -18,11 +18,12 @@ namespace FiresCore
     [BepInDependency("org.bepinex.plugins.serversync", BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency("org.bepinex.plugins.worldeditcommands", BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency("org.bepinex.plugins.serverdevcommands", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("Norger.Vedr", BepInDependency.DependencyFlags.SoftDependency)]
     public class FiresUnifiedCore : FiresMod<FiresUnifiedCore>
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.2.102";
+        public const string PluginVersion = "0.2.219";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -79,11 +80,14 @@ namespace FiresCore
             FiresCore.Logging.BepInExLogSuppressionPatch.BindConfig(Config);
             FiresCore.Logging.LoadSummary.BindConfig(Config);
             FiresCore.Logging.RateLimitedLogHandler.BindConfig(Config);
+            FiresCore.Materials.VanillaShaderRebind.BindConfig(Config);
+            FiresCore.Materials.VanillaShaderSources.Install();
             FiresCore.IO.FileWatchHubConfig.Initialize(Harmony, Config);
             FiresCore.Lifecycle.CollisionCallbackReuse.Initialize(Config);
             FiresCore.Lifecycle.GroundDataThrottle.Initialize(Config);
             FiresCore.Lifecycle.IntroCinematicSkip.Initialize(Config);
             FiresCore.World.DistantSectorSkip.Initialize(Config);
+            FiresCore.Bridge.SeasonBridge.Bind();
             InstallLogFilter();
             InitializeConfigAndSync();
 
@@ -97,6 +101,14 @@ namespace FiresCore
             FiresCore.Diagnostics.CharacterListLeakGuard.Register(Harmony, guardsClientSide);
             FiresCore.Diagnostics.VisEquipmentDropPrefabHeal.Register(Harmony);
             FiresCore.Diagnostics.PathfindingStats.Register(Harmony);
+            FiresCore.Compat.HdTexturesLoadSpread.Register(Harmony, Config);
+            FiresCore.Compat.HdAdditionsShaderScan.Register(Harmony);
+            // Locational damage: dormant until a mod (FiresRPGClasses, the tests) enables it. Plan: Tools\LOCATIONAL_HITS.md
+            FiresCore.Combat.LocationalDamage.Register(Harmony, Config);
+            // Scroll speed in Fires windows (roots mods register with FiresUi.Register); the hook is client-only.
+            FiresCore.UI.FiresUi.Install(Harmony, Config);
+            // The vault rolls back with the world after a crash (Fire: "save with the world"; Tools\SAVE_SAFETY_AUDIT.md fix 3).
+            FiresCore.Storage.VaultWorldSnapshots.Register(Harmony, Config);
 
             // Bind the Fires config window's own appearance (font/opacity/accent) into Core's config and
             // register it, so an "Appearance" section shows right in the window and restyles live.
@@ -181,6 +193,15 @@ namespace FiresCore
             // engine. Every rate is server-locked. Plan: Docs/PLAN_ClassesFoundation.md
             FiresCore.Classes.ProgressionSettings.Initialize(Config);
             FiresCore.Classes.ProgressionSettings.BindToSync(configSync);
+
+            // Locational damage: the server's on/off state and table, so every peer agrees.
+            FiresCore.Combat.LocationalDamage.BindToSync(configSync);
+            // Companion hits on players, server-set (Fire: x0.3).
+            FiresCore.Npc.Combat.CompanionPvpDamage.Bind(Config, configSync);
+            // Wild companions' no-park places (dungeon doors, test spots), server-set.
+            FiresCore.Npc.WildSpawn.WildNoPark.Bind(Config, configSync);
+            // Companion attachments: the skinned-rescale switch (server-set) for the R78 A/B.
+            FiresCore.Npc.NpcAttachmentScaleFix.Bind(Config, configSync);
 
             // BalrondCompat: server-locked toggles for our neutralization patches against specific
             // BalrondAmazingNature behaviors. Patches auto-activate through Harmony.PatchAll and

@@ -566,7 +566,7 @@ namespace FiresCore.Npc.Archetypes
                 if (!BaseAI.IsEnemy(_character, character)) continue;
                 
                 var ai = character.GetComponent<BaseAI>();
-                if (ai != null && ai.GetTargetCreature() == _character)
+                if (ai != null && FiresCore.Npc.Combat.ThreatLevel.TargetOf(ai) == _character)
                 {
                     return true;
                 }

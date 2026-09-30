@@ -95,16 +95,17 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
                 
                 float dist = Vector3.Distance(GroundPosition, character.transform.position);
                 if (dist > Radius) continue;
-                
-                if (character.IsTamed() || character.IsPlayer())
+
+                // Fire: heal the caster's party, damage enemies (it used to heal any player or tame and hit anything else)
+                if (IsParty(character))
                 {
-                    // Heal allies
                     if (character.GetHealthPercentage() < 1f)
                     {
-                        AbilityHeals.Apply(SourceCharacter ?? m_character, character, HealPerTick, true);
+                        AbilityHeals.Apply(Caster, character, HealPerTick, true);
+                        NoteHit(character, HealPerTick, true);
                     }
                 }
-                else
+                else if (IsFoe(character))
                 {
                     // Damage enemies (especially undead)
                     var hitData = new HitData();
@@ -112,8 +113,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
                     hitData.m_dir = Vector3.up;
                     hitData.m_attacker = m_character?.GetZDOID() ?? ZDOID.None;
                     hitData.m_damage.m_spirit = DamagePerTick;
-                    
+
                     character.Damage(hitData);
+                    NoteHit(character, DamagePerTick, false);
                 }
             }
             
@@ -134,11 +136,10 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
     /// </summary>
     public class DivineShieldEffect : CompanionStatusEffectBase
     {
-        private const float AuraVfxChance = 0.3f;
         private const float DurationSeconds = 3f;
 
         public override string Description =>
-            $"<color=gold>Divine Shield</color>\n" +
+            $"<color=#FFD700>Divine Shield</color>\n" +
             $"Immune to all damage\n" +
             $"Cannot attack";
         
@@ -158,7 +159,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             {
                 SpawnVFX("fx_shield_start", m_character.transform.position);
                 SpawnVFX("vfx_ghost_hit", m_character.transform.position);
-                m_character.Message(MessageHud.MessageType.Center, "<color=gold>Divine Shield!</color>");
+                m_character.Message(MessageHud.MessageType.Center, "<color=#FFD700>Divine Shield!</color>");
             }
         }
         
@@ -182,7 +183,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             base.UpdateStatusEffect(dt);
             
             // Shield aura
-            if (m_character != null && Random.value < AuraVfxChance)
+            if (m_character != null && AuraDue(dt, AuraSpawnsPerSecond))
             {
                 SpawnVFX("fx_shield_start", m_character.transform.position);
             }
@@ -683,7 +684,6 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
     /// </summary>
     public class IronBodyEffect : CompanionStatusEffectBase
     {
-        private const float AuraVfxChance = 0.1f;
         private const float DurationSeconds = 10f;
 
         public float DamageReduction { get; set; } = 0.7f; // Take 70% damage (30% reduction)
@@ -718,7 +718,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
             base.UpdateStatusEffect(dt);
             
             // Iron aura
-            if (m_character != null && Random.value < AuraVfxChance)
+            if (m_character != null && AuraDue(dt, AuraSpawnsPerSecond))
             {
                 SpawnVFX("fx_shaman_protect", m_character.transform.position);
             }

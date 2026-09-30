@@ -17,47 +17,12 @@ namespace FiresCore.Npc.Combat
         private const float DefaultStaffRange = 18f;
         private const float DefaultRangedWeaponRange = 25f;
 
-        private const float PointBlankDistance = 3f;
-        private const float VeryCloseEnemyRadius = 4f;
         private const float OpeningMeleeDistance = 4f;
         private const float PreferenceDistanceMargin = 1.5f;
-        private const int SurroundedEnemyCount = 3;
-        private const float LowTargetHealthFraction = 0.3f;
-        private const float LowStaminaFraction = 0.3f;
-        private const float LowHealthFraction = 0.3f;
-        private const float MinScoreDifferenceToSwap = 0.15f;
 
         // StaffShield's buff (staff_shield_aoe m_statusEffect; status_effects.tsv: Staff_shield, SE_Shield).
         private static readonly int StaffShieldEffectHash = "Staff_shield".GetStableHashCode();
 
-        private const float PointBlankMeleeBonus = 0.6f;
-        private const float CloseRangeMeleeBonus = 0.4f;
-        private const float CloseRangeRangedBonus = 0.1f;
-        private const float MediumRangeBlendWeight = 0.3f;
-        private const float LongRangeRangedBonus = 0.5f;
-        private const float VeryLongRangeRangedBonus = 0.2f;
-        private const float CrowdedMeleeBonus = 0.4f;
-        private const float GroupedMeleeBonus = 0.25f;
-        private const float SpreadOutRangedBonus = 0.3f;
-        private const float SurroundedMeleeBonus = 0.3f;
-        private const float ToughTargetRangedBonus = 0.3f;
-        private const float DangerousApproachRangedBonus = 0.25f;
-        private const float TrivialTargetMeleeBonus = 0.2f;
-        private const float WeakTargetRangedBonus = 0.2f;
-        private const float ElevationRangedBonus = 0.5f;
-        private const float ElevationMeleePenalty = 0.3f;
-        private const float UnreachableRangedBonus = 0.6f;
-        private const float UnreachableMeleePenalty = 0.4f;
-        private const float SwimmingRangedBonus = 0.3f;
-        private const float FleeingTargetRangedBonus = 0.4f;
-        private const float ApproachingFarRangedBonus = 0.3f;
-        private const float ApproachingCloseMeleeBonus = 0.2f;
-        private const float LowStaminaRangedBonus = 0.2f;
-        private const float StaminaRecoveryRangedBonus = 0.5f;
-        private const float StaminaRecoveryMeleePenalty = 0.3f;
-        private const float LowHealthRangedBonus = 0.3f;
-        private const float CombatEntryRangedBonus = 0.3f;
-        private const float CurrentWeaponHysteresisBonus = 0.15f;
         private const float OpeningLongRangeRangedBonus = 0.3f;
         private const float OpeningApproachRangedBonus = 0.2f;
         private const float OpeningCloseMeleeBonus = 0.3f;
@@ -618,18 +583,7 @@ public bool IsRanged;
         /// <summary>
         /// Checks if an item is a staff (elemental or blood magic).
         /// </summary>
-        private bool IsStaff(ItemDrop.ItemData item)
-        {
-            if (item?.m_shared == null) return false;
-            
-            var skill = item.m_shared.m_skillType;
-            if (skill == Skills.SkillType.ElementalMagic || skill == Skills.SkillType.BloodMagic)
-                return true;
-            
-            // Also check prefab name
-            string prefabName = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-            return prefabName.Contains("staff");
-        }
+        private bool IsStaff(ItemDrop.ItemData item) => CompanionBrain.IsStaff(item);
         
         /// <summary>
         /// Creates a CachedWeaponInfo from an item.
@@ -730,78 +684,13 @@ public bool IsRanged;
             }
         }
 
-        private bool IsRangedItem(ItemDrop.ItemData item)
-    {
-     if (item?.m_shared == null) return false;
-    
-       // Bows and crossbows are ranged
-       if (item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow)
-           return true;
-       if (item.m_shared.m_skillType == Skills.SkillType.Bows ||
-           item.m_shared.m_skillType == Skills.SkillType.Crossbows)
-           return true;
-       if (item.m_shared.m_attack?.m_bowDraw == true ||
-           item.m_shared.m_attack?.m_requiresReload == true)
-           return true;
-       
-       // Staves are ranged (magic weapons with projectiles)
-       if (item.m_shared.m_skillType == Skills.SkillType.ElementalMagic ||
-           item.m_shared.m_skillType == Skills.SkillType.BloodMagic)
-           return true;
-       
-       // Only the attack type counts: AtgeirBronze/AtgeirGold keep a leftover m_attackProjectile on a melee swing.
-       if (item.m_shared.m_attack?.m_attackType == Attack.AttackType.Projectile)
-           return true;
-       
-       // Check name for staff indicators
-       string itemName = item.m_shared.m_name?.ToLowerInvariant() ?? "";
-       if (itemName.Contains("staff") || itemName.Contains("wand"))
-           return true;
-       
-       return false;
-  }
+        private bool IsRangedItem(ItemDrop.ItemData item) => CompanionBrain.IsRangedWeapon(item);
   
         /// <summary>
         /// Checks if an item is a gathering tool (pickaxe, axe, etc.) that should NOT be used for combat.
         /// These items are intended for resource gathering, not fighting enemies.
         /// </summary>
-        private bool IsGatheringTool(ItemDrop.ItemData item)
-        {
-            if (item?.m_shared == null) return false;
-            
-            // Check if it's a Tool type item (pickaxes are Tools in Valheim)
-            if (item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Tool)
-                return true;
-            
-            // Check skill type - Pickaxes and WoodCutting are gathering skills
-            if (item.m_shared.m_skillType == Skills.SkillType.Pickaxes ||
-                item.m_shared.m_skillType == Skills.SkillType.WoodCutting)
-                return true;
-            
-            // Check name for common gathering tool names
-            // Note: We want to EXCLUDE these from combat, but they're valid for gathering
-            string itemName = item.m_shared.m_name?.ToLowerInvariant() ?? "";
-            string prefabName = item.m_dropPrefab?.name?.ToLowerInvariant() ?? "";
-            
-            // Pickaxes are always gathering tools
-            if (itemName.Contains("pickaxe") || prefabName.Contains("pickaxe"))
-                return true;
-            
-            // Standalone "axe" items for chopping (not battleaxes which are combat weapons)
-            // Check if it's a pure axe by looking at the name pattern
-            // "axe_" prefix or "_axe" suffix without "battle" or "greataxe" indicates gathering axe
-            if ((prefabName.StartsWith("axe") || prefabName.Contains("_axe")) && 
-                !prefabName.Contains("battle") && !prefabName.Contains("greataxe") &&
-                !prefabName.Contains("dualaxe") && !prefabName.Contains("jotunbane"))
-            {
-                // Further check: gathering axes have WoodCutting skill or are Tool type
-                if (item.m_shared.m_skillType == Skills.SkillType.WoodCutting ||
-                    item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Tool)
-                    return true;
-            }
-            
-            return false;
-        }
+        private bool IsGatheringTool(ItemDrop.ItemData item) => CompanionBrain.IsGatheringTool(item);
 
         private string GetItemPrefabName(ItemDrop.ItemData item)
    {
@@ -840,21 +729,66 @@ public bool IsRanged;
                     $"Currently: {(currentlyRanged ? "Ranged" : "Melee")}, Recommendation: {assessment.recommendation}");
             }
 
-            // Execute swap based on recommendation
-            if (assessment.recommendation == WeaponRecommendation.Ranged && !currentlyRanged)
+            // The one gate (class bar, too close for the bow), same as the bot's CombatAdvisor; it decides without the confidence bar.
+            var pick = GatePick(target, assessment.recommendation, distToTarget, out string why);
+            bool gated = why != "weighed";
+
+            // The target's resistances (one rule with the bot's CombatAdvisor.Effectiveness; R74 Crypt4: a Club on a blunt-immune
+            // Ghost): the other weapon gets more than twice as much through -> that one, whatever the weighing says.
+            float meleeEff = Effectiveness(_meleeWeapon, target, out string meleeNote);
+            float rangedEff = Effectiveness(_rangedWeapon, target, out string rangedNote);
+            if (currentlyRanged && meleeEff > rangedEff * 2f && CompanionBrain.CanFight(_character, target, 2f, false))
             {
-                if (assessment.rangedScore >= swapConfidenceThreshold)
+                pick = WeaponRecommendation.Melee;
+                gated = true;
+                why = $"{target.m_name} resists the ranged weapon ({rangedNote}; {rangedEff:0} vs {meleeEff:0} through)";
+            }
+            else if (!currentlyRanged && rangedEff > meleeEff * 2f)
+            {
+                pick = WeaponRecommendation.Ranged;
+                gated = true;
+                why = $"{target.m_name} resists the melee weapon ({meleeNote}; {meleeEff:0} vs {rangedEff:0} through)";
+            }
+
+            // Execute swap based on recommendation
+            if (pick == WeaponRecommendation.Ranged && !currentlyRanged)
+            {
+                if (gated || assessment.rangedScore >= swapConfidenceThreshold)
                 {
+                    Debug.Log($"[WeaponSwapManager] {name}: wield ranged: ranged {assessment.rangedScore:0.00} / melee {assessment.meleeScore:0.00}, {distToTarget:0.0} m, because {why}");
                     ExecuteSwapToRanged();
                 }
             }
-            else if (assessment.recommendation == WeaponRecommendation.Melee && currentlyRanged)
+            else if (pick == WeaponRecommendation.Melee && currentlyRanged)
             {
-                if (assessment.meleeScore >= swapConfidenceThreshold)
+                if (gated || assessment.meleeScore >= swapConfidenceThreshold)
                 {
+                    Debug.Log($"[WeaponSwapManager] {name}: wield melee: ranged {assessment.rangedScore:0.00} / melee {assessment.meleeScore:0.00}, {distToTarget:0.0} m, because {why}");
                     ExecuteSwapToMelee();
                 }
             }
+        }
+
+        // A cached weapon's damage through the target's resistances (its prefab's item data; quality ignored).
+        private static float Effectiveness(CachedWeaponInfo weapon, Character target, out string note)
+        {
+            note = "";
+            if (weapon == null || target == null) return 0f;
+            ItemDrop.ItemData item = weapon.StorageItem;
+            if (item == null && ObjectDB.instance != null && !string.IsNullOrEmpty(weapon.PrefabName))
+            {
+                GameObject prefab = ObjectDB.instance.GetItemPrefab(weapon.PrefabName);
+                item = prefab != null ? prefab.GetComponent<ItemDrop>()?.m_itemData : null;
+            }
+            return item != null ? CombatAdvisor.Effectiveness(item, target, out note) : 0f;
+        }
+
+        // CompanionBrain.GateWeapons for this companion. Melee can't reach a target in water or more than MeleeHeightReach above
+        // or below once close (a fixed 2 m melee reach: the held weapon may be the bow).
+        private WeaponRecommendation GatePick(Character target, WeaponRecommendation weighed, float distToTarget, out string why)
+        {
+            bool meleeReaches = CompanionBrain.CanFight(_character, target, 2f, false);
+            return CompanionBrain.GateWeapons(_character as Humanoid, weighed, distToTarget, meleeReaches, out why);
         }
         
         public enum WeaponRecommendation
@@ -871,258 +805,54 @@ public bool IsRanged;
         public (float rangedScore, float meleeScore, WeaponRecommendation recommendation) EvaluateTacticalSituation(
             Character target, float distToTarget, bool currentlyRanged)
         {
-            float rangedScore = 0f;
-            float meleeScore = 0f;
-            
-            // ==========================================
-            // FACTOR 1: DISTANCE TO TARGET
-            // The most important factor - further = ranged, closer = melee
-            // ==========================================
-            
-            // Very close (0-3m) - heavily favor melee
-            if (distToTarget <= PointBlankDistance)
+            // The rules live in CompanionBrain.WeighWeapons (one brain, two bodies); this gathers the companion's side of it.
+            var situation = new CompanionBrain.WeaponSituation
             {
-                meleeScore += PointBlankMeleeBonus;
-            }
-            // Close range (3-6m) - favor melee but ranged still viable
-            else if (distToTarget <= meleePreferenceDistance)
-            {
-                meleeScore += CloseRangeMeleeBonus;
-                rangedScore += CloseRangeRangedBonus;
-            }
-            // Medium range (6-12m) - slight ranged preference
-            else if (distToTarget <= rangedPreferenceDistance)
-            {
-                float rangedBlend = Mathf.InverseLerp(meleePreferenceDistance, rangedPreferenceDistance, distToTarget);
-                meleeScore += MediumRangeBlendWeight * (1f - rangedBlend);
-                rangedScore += MediumRangeBlendWeight * rangedBlend;
-            }
-            // Long range (12m+) - heavily favor ranged
-            else
-            {
-                rangedScore += LongRangeRangedBonus;
-                // Even more if very far
-                if (distToTarget > rangedPreferenceDistance * PreferenceDistanceMargin)
-                {
-                    rangedScore += VeryLongRangeRangedBonus;
-                }
-            }
-            
-            // ==========================================
-            // FACTOR 2: ENEMY COUNT AND POSITIONING
-            // Multiple close enemies = melee (can hit many), spread out = ranged
-            // ==========================================
-            
-            int veryCloseEnemies = CountEnemiesInRange(0f, VeryCloseEnemyRadius);
-            int closeEnemies = CountEnemiesInRange(0f, meleePreferenceDistance);
-            int mediumRangeEnemies = CountEnemiesInRange(meleePreferenceDistance, rangedPreferenceDistance);
-            int farEnemies = CountEnemiesInRange(rangedPreferenceDistance, rangedPreferenceDistance * 2f);
-            
-            // Multiple enemies in melee range - melee is efficient (cleave/AOE)
-            if (veryCloseEnemies >= 2)
-            {
-                meleeScore += CrowdedMeleeBonus;
-            }
-            else if (closeEnemies >= 2)
-            {
-                meleeScore += GroupedMeleeBonus;
-            }
-            
-            // Enemies spread out at range - ranged can pick them off
-            if (farEnemies >= 2 && closeEnemies <= 1)
-            {
-                rangedScore += SpreadOutRangedBonus;
-            }
-            
-            // Surrounded by many enemies - melee to fight through
-            if (closeEnemies >= SurroundedEnemyCount)
-            {
-                meleeScore += SurroundedMeleeBonus;
-            }
-            
-            // ==========================================
-            // FACTOR 3: ENEMY STRENGTH/TYPE
-            // Tough enemies at range = soften with ranged first
-            // Weak enemies = melee cleave is efficient
-            // ==========================================
-            
+                DistToTarget = distToTarget,
+                CurrentlyRanged = currentlyRanged,
+                VeryCloseEnemies = CountEnemiesInRange(0f, 4f),
+                CloseEnemies = CountEnemiesInRange(0f, meleePreferenceDistance),
+                FarEnemies = CountEnemiesInRange(rangedPreferenceDistance, rangedPreferenceDistance * 2f),
+                TargetApproaching = IsTargetApproaching(target),
+                TargetFleeing = IsTargetFleeing(target),
+                HeightDiff = Mathf.Abs(target.transform.position.y - transform.position.y),
+                Unreachable = IsTargetUnreachable(target),
+                Swimming = _character != null && _character.IsSwimming(),
+                MeleePreferenceDistance = meleePreferenceDistance,
+                RangedPreferenceDistance = rangedPreferenceDistance,
+                ElevationThreshold = elevationSwapThreshold,
+            };
+
             var threatAnalyzer = GetComponent<ThreatAnalyzer>();
             if (threatAnalyzer != null)
             {
                 var profile = threatAnalyzer.GetThreatProfile(target);
-                
-                // Boss or elite at distance - use ranged to chip away
-                if ((profile.Classification == ThreatAnalyzer.EnemyClass.Boss || 
-                     profile.Classification == ThreatAnalyzer.EnemyClass.Elite) &&
-                    distToTarget > meleePreferenceDistance)
-                {
-                    rangedScore += ToughTargetRangedBonus;
-                }
-                
-                // Dangerous enemy approaching - get shots off before they arrive
-                if (profile.Classification >= ThreatAnalyzer.EnemyClass.Dangerous &&
-                    IsTargetApproaching(target) && distToTarget > meleePreferenceDistance)
-                {
-                    rangedScore += DangerousApproachRangedBonus;
-                }
-                
-                // Trivial enemies close by - melee is faster
-                if (profile.Classification == ThreatAnalyzer.EnemyClass.Trivial && closeEnemies >= 1)
-                {
-                    meleeScore += TrivialTargetMeleeBonus;
-                }
-                
-                // Low health enemy far away - finish with ranged
-                if (profile.HealthPercent < LowTargetHealthFraction && distToTarget > meleePreferenceDistance)
-                {
-                    rangedScore += WeakTargetRangedBonus;
-                }
+                situation.HasThreatProfile = true;
+                situation.TargetClass = profile.Classification;
+                situation.TargetHealth = profile.HealthPercent;
             }
-            
-            // ==========================================
-            // FACTOR 4: TERRAIN AND REACHABILITY
-            // Can't reach = ranged, clear path = can use either
-            // ==========================================
-            
-            // Elevation difference
-            float heightDiff = Mathf.Abs(target.transform.position.y - transform.position.y);
-            if (heightDiff > elevationSwapThreshold)
-            {
-                rangedScore += ElevationRangedBonus;
-                meleeScore -= ElevationMeleePenalty; // Penalize melee when we can't reach
-            }
-            
-            // Target unreachable (tried to path but failed)
-            if (IsTargetUnreachable(target))
-            {
-                rangedScore += UnreachableRangedBonus;
-                meleeScore -= UnreachableMeleePenalty;
-            }
-            
-            // Water between us (swimming enemies or we're in water)
-            if (_character != null && _character.IsSwimming() && distToTarget > PointBlankDistance)
-            {
-                rangedScore += SwimmingRangedBonus; // Hard to melee while swimming
-            }
-            
-            // ==========================================
-            // FACTOR 5: ENEMY BEHAVIOR
-            // Fleeing = ranged, approaching = prepare for melee
-            // ==========================================
-            
-            if (IsTargetFleeing(target))
-            {
-                if (distToTarget > meleePreferenceDistance)
-                {
-                    rangedScore += FleeingTargetRangedBonus; // Can't catch them, shoot them
-                }
-            }
-            
-            if (IsTargetApproaching(target))
-            {
-                if (distToTarget > rangedPreferenceDistance)
-                {
-                    // Still far - get shots off while they approach
-                    rangedScore += ApproachingFarRangedBonus;
-                }
-                else if (distToTarget <= meleePreferenceDistance * PreferenceDistanceMargin)
-                {
-                    // Close enough - prepare for melee
-                    meleeScore += ApproachingCloseMeleeBonus;
-                }
-            }
-            
-            // ==========================================
-            // FACTOR 6: COMPANION STATE (Health/Stamina)
-            // Low resources = prefer ranged (safer distance)
-            // ==========================================
-            
+
             var staminaManager = GetComponent<StaminaManager>();
             if (staminaManager != null)
             {
-                float staminaPercent = staminaManager.GetStaminaPercent();
-                
-                // Low stamina - ranged uses less stamina per attack
-                if (staminaPercent < LowStaminaFraction)
-                {
-                    rangedScore += LowStaminaRangedBonus;
-                }
-                
-                // In recovery - definitely prefer ranged (kiting)
-                if (staminaManager.IsInCriticalRecovery())
-                {
-                    rangedScore += StaminaRecoveryRangedBonus;
-                    meleeScore -= StaminaRecoveryMeleePenalty;
-                }
+                situation.HasStamina = true;
+                situation.StaminaShare = staminaManager.GetStaminaPercent();
+                situation.CriticalRecovery = staminaManager.IsInCriticalRecovery();
             }
-            
+
             if (_character != null)
             {
-                float healthPercent = _character.GetHealthPercentage();
-                
-                // Low health - prefer ranged for safety
-                if (healthPercent < LowHealthFraction)
-                {
-                    rangedScore += LowHealthRangedBonus;
-                }
+                situation.HasHealth = true;
+                situation.HealthShare = _character.GetHealthPercentage();
             }
-            
-            // ==========================================
-            // FACTOR 7: COMBAT ENTRY (Opening shots)
-            // Just entered combat at range = get shots off first
-            // ==========================================
-            
-            // If we're far and combat just started, ranged opening is smart
+
             if (distToTarget > rangedPreferenceDistance && !currentlyRanged)
             {
-                // Haven't been attacking much - this is probably combat entry
                 var combatMovement = GetComponent<CompanionCombatMovement>();
-                if (combatMovement != null && !combatMovement.IsInCombat)
-                {
-                    rangedScore += CombatEntryRangedBonus;
-                }
+                situation.CombatEntry = combatMovement != null && !combatMovement.IsInCombat;
             }
-            
-            // ==========================================
-            // FACTOR 8: WEAPON SWAP HYSTERESIS
-            // Add slight bonus to current weapon to prevent constant swapping
-            // ==========================================
-            
-            if (currentlyRanged)
-            {
-                rangedScore += CurrentWeaponHysteresisBonus;
-            }
-            else
-            {
-                meleeScore += CurrentWeaponHysteresisBonus;
-            }
-            
-            // ==========================================
-            // DETERMINE RECOMMENDATION
-            // ==========================================
-            
-            rangedScore = Mathf.Clamp01(rangedScore);
-            meleeScore = Mathf.Clamp01(meleeScore);
-            
-            WeaponRecommendation recommendation;
-            
-            // Need clear advantage to recommend swap
-            float scoreDiff = Mathf.Abs(rangedScore - meleeScore);
-            
-            if (scoreDiff < MinScoreDifferenceToSwap)
-            {
-                // Scores are close - keep current weapon
-                recommendation = WeaponRecommendation.KeepCurrent;
-            }
-            else if (rangedScore > meleeScore)
-            {
-                recommendation = WeaponRecommendation.Ranged;
-            }
-            else
-            {
-                recommendation = WeaponRecommendation.Melee;
-            }
-            
+
+            var recommendation = CompanionBrain.WeighWeapons(situation, out float rangedScore, out float meleeScore);
             return (rangedScore, meleeScore, recommendation);
         }
         
@@ -1142,8 +872,8 @@ public bool IsRanged;
             
             // For opening, we don't add hysteresis - pure tactical choice
             // Remove the hysteresis bonus we added
-            if (currentlyRanged) rangedScore -= CurrentWeaponHysteresisBonus;
-            else meleeScore -= CurrentWeaponHysteresisBonus;
+            if (currentlyRanged) rangedScore -= CompanionBrain.CurrentWeaponHysteresisBonus;
+            else meleeScore -= CompanionBrain.CurrentWeaponHysteresisBonus;
             
             // Additional opening-specific logic:
             
@@ -1171,7 +901,11 @@ public bool IsRanged;
                     $"Ranged: {rangedScore:F2}, Melee: {meleeScore:F2}");
             }
             
-            return rangedScore > meleeScore ? WeaponRecommendation.Ranged : WeaponRecommendation.Melee;
+            var opening = rangedScore > meleeScore ? WeaponRecommendation.Ranged : WeaponRecommendation.Melee;
+            var gatedOpening = GatePick(target, opening, distToTarget, out string why);
+            if (gatedOpening != opening)
+                Debug.Log($"[WeaponSwapManager] {name}: open with {gatedOpening} (weighed {opening}), {distToTarget:0.0} m, because {why}");
+            return gatedOpening;
         }
 
     private bool IsTargetUnreachable(Character target)
@@ -1207,50 +941,12 @@ if (Time.time - _targetUnreachableStartTime > unreachableCheckTime)
           return false;
         }
 
-        private bool IsTargetFleeing(Character target)
-        {
-     if (target == null) return false;
-        
-       Vector3 velocity = target.GetVelocity();
-            if (velocity.magnitude < 1f) return false;
+        private bool IsTargetFleeing(Character target) => CompanionBrain.IsFleeing(target, transform.position);
 
-            Vector3 toUs = (transform.position - target.transform.position).normalized;
-         float dot = Vector3.Dot(velocity.normalized, toUs);
-            
-   return dot < -0.5f; // Moving away from us
-        }
+        private bool IsTargetApproaching(Character target) => CompanionBrain.IsApproaching(target, transform.position);
 
-        private bool IsTargetApproaching(Character target)
-        {
-        if (target == null) return false;
-    
-  Vector3 velocity = target.GetVelocity();
-            if (velocity.magnitude < 0.5f) return false;
-
-       Vector3 toUs = (transform.position - target.transform.position).normalized;
-          float dot = Vector3.Dot(velocity.normalized, toUs);
-      
-          return dot > 0.5f; // Moving toward us
-        }
-
- private int CountEnemiesInRange(float minRange, float maxRange)
-      {
-         int count = 0;
-            foreach (var character in Character.GetAllCharacters())
-          {
-      if (character == null || character.IsDead()) continue;
-    if (character == _character) continue;
-        if (character.IsTamed() || character.IsPlayer()) continue;
-     if (!BaseAI.IsEnemy(_character, character)) continue;
-
-         float dist = Vector3.Distance(transform.position, character.transform.position);
-    if (dist >= minRange && dist <= maxRange)
- {
-       count++;
-     }
-            }
-            return count;
-        }
+        private int CountEnemiesInRange(float minRange, float maxRange) =>
+            CompanionBrain.CountHostiles(_character, transform.position, minRange, maxRange);
 
         #endregion
 

@@ -94,12 +94,18 @@ namespace FiresCore.Input
             }
         }
 
+        // A button vanilla defines with no bindable path (1.0's HotbarUse) throws here on every read, and the window reads
+        // them each time it opens; it is said once, then skipped.
+        private static readonly HashSet<string> s_pathless = new HashSet<string>(StringComparer.Ordinal);
+
         private static string ActionPathOf(ZInput.ButtonDef definition)
         {
+            if (s_pathless.Contains(definition.Name)) return null;
             try { return definition.GetActionPath(); }
             catch (Exception ex)
             {
-                UI.FiresConfigUI.Log.LogWarning($"keybinds: ZInput button '{definition.Name}' has no readable path: {ex.Message}");
+                s_pathless.Add(definition.Name);
+                UI.FiresConfigUI.Log.LogInfo($"keybinds: ZInput button '{definition.Name}' has no readable path ({ex.Message}), so it has no key to list.");
                 return null;
             }
         }

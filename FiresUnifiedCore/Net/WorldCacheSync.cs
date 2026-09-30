@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using FiresCore.Logging;
 using FiresCore.Sync;
 using HarmonyLib;
@@ -42,6 +43,7 @@ namespace FiresCore.Net
         private const string RpcChunk = "FiresCore_WorldCacheChunk";
         private const string LogPrefix = "[WorldCacheSync]";
         private const string TempSuffix = ".partial";
+        private const string VerifySuffix = ".verify";
 
         // Well under the 512 KB routed-RPC ceiling, matching ConfigPushService.
         private const int ChunkBytes = 350 * 1024;
@@ -70,6 +72,18 @@ namespace FiresCore.Net
             new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, Incoming> _incoming =
             new Dictionary<string, Incoming>(StringComparer.OrdinalIgnoreCase);
+
+        private sealed class KnownHash
+        {
+            public long Length;
+            public DateTime WrittenUtc;
+            public string Hash;
+        }
+
+        // Each file's SHA-256 by full path, valid while its length and write time are unchanged.
+        private static readonly Dictionary<string, KnownHash> _hashes =
+            new Dictionary<string, KnownHash>(StringComparer.OrdinalIgnoreCase);
+        private static readonly object _hashLock = new object();
 
         private static ZRoutedRpc _registeredOn;
 
@@ -197,10 +211,8 @@ namespace FiresCore.Net
                     size, new KeyValuePair<CacheEntry, string>(entry, path)));
             }
 
-            // Smallest first. Each offer hashes its file synchronously on its first
-            // resume, and coroutines resume in start order — so a small file queued
-            // behind a hundreds-of-MB one waits out that whole hash in the same frame.
-            // A small file is often the one a client is blocked on.
+            // Smallest first: a small file is often the one a client is blocked on,
+            // and its worker hash is queued ahead of the hundreds-of-MB ones.
             offers.Sort((a, b) => a.Key.CompareTo(b.Key));
             foreach (var offer in offers)
                 host.StartCoroutine(OfferOne(peerUid, offer.Value.Key, offer.Value.Value));
@@ -239,24 +251,26 @@ namespace FiresCore.Net
 
         private static IEnumerator OfferOne(long peerUid, CacheEntry entry, string path)
         {
-            string hash = null;
-            var info = new FileInfo(path);
-            // Hashing hundreds of MB blocks; do it off the critical join path by
-            // yielding first so the peer finishes connecting before we chew on it.
+            // Yield first so the peer finishes connecting; the hash itself never runs on the main thread.
             yield return null;
-            try { hash = HashFileStreaming(path); }
-            catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} could not hash '{path}': {ex.Message}"); }
+            string hash = null;
+            yield return HashAsync(path, result => hash = result);
             if (string.IsNullOrEmpty(hash)) yield break;
+
+            long length;
+            try { length = new FileInfo(path).Length; }
+            catch { yield break; }
 
             var pkg = new ZPackage();
             pkg.Write(entry.Key);
             pkg.Write(hash);
-            pkg.Write(info.Length);
+            pkg.Write(length);
             pkg.Write(entry.DisplayName);
             SafeRoutedRpc.InvokeSafe(peerUid, RpcOffer, pkg);
         }
 
-        // Client side: the server says what it has; reply only if we lack it.
+        // Client side: the server says what it has; reply only if we lack it. The local copy is hashed off the main thread
+        // (a 377 MB bake held each client's RPC handler for about 3 s at every join, R22), so the answer comes a moment later.
         private static void RPC_Offer(long sender, ZPackage pkg)
         {
             if (ZNet.instance != null && ZNet.instance.IsServer()) return;
@@ -272,16 +286,23 @@ namespace FiresCore.Net
             try { target = entry.ClientPath(); } catch { return; }
             if (string.IsNullOrEmpty(target)) return;
 
+            var host = FiresUnifiedCore.Instance;
+            if (host != null) host.StartCoroutine(AnswerOffer(entry, key, serverHash, size, displayName, target));
+            else RunNow(AnswerOffer(entry, key, serverHash, size, displayName, target));
+        }
+
+        private static IEnumerator AnswerOffer(CacheEntry entry, string key, string serverHash, long size, string displayName, string target)
+        {
             if (File.Exists(target))
             {
                 string local = null;
-                try { local = HashFileStreaming(target); } catch { }
+                yield return HashAsync(target, result => local = result);
                 if (string.Equals(local, serverHash, StringComparison.OrdinalIgnoreCase))
                 {
                     ManifestDiffSync.RememberBlobHash(NamespaceFor(key), serverHash);
                     FiresLogger.LogInfo($"{LogPrefix} {displayName}: already current, nothing to transfer.");
                     NotifyClientCurrent(entry, target);
-                    return;
+                    yield break;
                 }
             }
 
@@ -393,38 +414,65 @@ namespace FiresCore.Net
                 state.Stream.Flush();
                 state.Stream.Dispose();
                 state.Stream = null;
-
-                string actual = HashFileStreaming(state.TempPath);
-                if (!string.Equals(actual, hash, StringComparison.OrdinalIgnoreCase))
-                {
-                    FiresLogger.LogWarning($"{LogPrefix} {entry.DisplayName}: transfer finished but the hash does not match " +
-                                           "(expected the server's copy). Discarding rather than installing a corrupt cache.");
-                    TryDelete(state.TempPath);
-                    _incoming.Remove(key);
-                    return;
-                }
-
-                TryDelete(state.TargetPath);
-                File.Move(state.TempPath, state.TargetPath);
+                string verifyPath = state.TargetPath + VerifySuffix;
+                TryDelete(verifyPath);
+                File.Move(state.TempPath, verifyPath);
+                state.TempPath = verifyPath;
                 _incoming.Remove(key);
-                ManifestDiffSync.RememberBlobHash(NamespaceFor(key), hash);
-                if (entry.OnClientCurrent != null)
-                {
-                    FiresLogger.LogInfo($"{LogPrefix} {entry.DisplayName}: received and verified " +
-                                        $"({state.Bytes / 1024} KB) — handing it to its owner now.");
-                    NotifyClientCurrent(entry, state.TargetPath);
-                }
-                else
-                {
-                    FiresLogger.LogWarning($"{LogPrefix} {entry.DisplayName}: received and verified " +
-                                           $"({state.Bytes / (1024 * 1024)} MB). Restart the world to generate on it; " +
-                                           "later joins will not transfer anything.");
-                }
+
+                var host = FiresUnifiedCore.Instance;
+                if (host != null) host.StartCoroutine(Install(entry, state, hash));
+                else RunNow(Install(entry, state, hash));
             }
             catch (Exception ex)
             {
                 FiresLogger.LogWarning($"{LogPrefix} {entry.DisplayName}: chunk {index + 1}/{total} failed: {ex.Message}");
                 CloseIncoming(key);
+            }
+        }
+
+        // Verify the finished transfer off the main thread, then swap it into place; the installed file's hash is then
+        // remembered, so the next offer answers at once.
+        private static IEnumerator Install(CacheEntry entry, Incoming state, string hash)
+        {
+            string actual = null;
+            yield return HashAsync(state.TempPath, result => actual = result);
+            if (!string.Equals(actual, hash, StringComparison.OrdinalIgnoreCase))
+            {
+                FiresLogger.LogWarning($"{LogPrefix} {entry.DisplayName}: transfer finished but the hash does not match " +
+                                       "(expected the server's copy). Discarding rather than installing a corrupt cache.");
+                TryDelete(state.TempPath);
+                yield break;
+            }
+
+            try
+            {
+                var verified = new FileInfo(state.TempPath);
+                long length = verified.Length;
+                DateTime writtenUtc = verified.LastWriteTimeUtc;
+                TryDelete(state.TargetPath);
+                File.Move(state.TempPath, state.TargetPath);
+                RememberHash(Path.GetFullPath(state.TargetPath), length, writtenUtc, hash);
+            }
+            catch (Exception ex)
+            {
+                FiresLogger.LogWarning($"{LogPrefix} {entry.DisplayName}: could not install the verified copy: {ex.Message}");
+                TryDelete(state.TempPath);
+                yield break;
+            }
+
+            ManifestDiffSync.RememberBlobHash(NamespaceFor(entry.Key), hash);
+            if (entry.OnClientCurrent != null)
+            {
+                FiresLogger.LogInfo($"{LogPrefix} {entry.DisplayName}: received and verified " +
+                                    $"({state.Bytes / 1024} KB) — handing it to its owner now.");
+                NotifyClientCurrent(entry, state.TargetPath);
+            }
+            else
+            {
+                FiresLogger.LogWarning($"{LogPrefix} {entry.DisplayName}: received and verified " +
+                                       $"({state.Bytes / (1024 * 1024)} MB). Restart the world to generate on it; " +
+                                       "later joins will not transfer anything.");
             }
         }
 
@@ -439,6 +487,74 @@ namespace FiresCore.Net
         private static void TryDelete(string path)
         {
             try { if (File.Exists(path)) File.Delete(path); } catch { }
+        }
+
+        // The file's SHA-256 without holding the main thread: remembered by full path, length and write time, so a re-offer,
+        // a rejoin or a later join costs nothing; the first hash of each file's content runs on a worker while the caller
+        // yields. A 377 MB bake hashed inline at every join stalled the server and each client about 3 s (R22).
+        private static IEnumerator HashAsync(string path, Action<string> done)
+        {
+            string full;
+            FileInfo before;
+            try
+            {
+                full = Path.GetFullPath(path);
+                before = new FileInfo(full);
+                if (!before.Exists) { done(null); yield break; }
+            }
+            catch (Exception ex)
+            {
+                FiresLogger.LogWarning($"{LogPrefix} could not hash '{path}': {ex.Message}");
+                done(null);
+                yield break;
+            }
+
+            lock (_hashLock)
+            {
+                if (_hashes.TryGetValue(full, out var known) && known.Length == before.Length && known.WrittenUtc == before.LastWriteTimeUtc)
+                {
+                    done(known.Hash);
+                    yield break;
+                }
+            }
+
+            var task = Task.Run(() => HashFileStreaming(full));
+            while (!task.IsCompleted) yield return null;
+            if (task.IsFaulted || task.IsCanceled)
+            {
+                FiresLogger.LogWarning($"{LogPrefix} could not hash '{path}': {task.Exception?.GetBaseException().Message}");
+                done(null);
+                yield break;
+            }
+
+            RememberHash(full, before.Length, before.LastWriteTimeUtc, task.Result);
+            done(task.Result);
+        }
+
+        // Only a file that did not change while it was being hashed is remembered.
+        private static void RememberHash(string full, long length, DateTime writtenUtc, string hash)
+        {
+            try
+            {
+                var after = new FileInfo(full);
+                if (!after.Exists || after.Length != length || after.LastWriteTimeUtc != writtenUtc) return;
+                lock (_hashLock) _hashes[full] = new KnownHash { Length = after.Length, WrittenUtc = after.LastWriteTimeUtc, Hash = hash };
+            }
+            catch { }
+        }
+
+        // Runs a routine to its end right here, nested routines included: only the no-host fallback, which then holds the
+        // caller exactly as the old synchronous hash did.
+        private static void RunNow(IEnumerator routine)
+        {
+            var stack = new Stack<IEnumerator>();
+            stack.Push(routine);
+            while (stack.Count > 0)
+            {
+                var top = stack.Peek();
+                if (!top.MoveNext()) { stack.Pop(); continue; }
+                if (top.Current is IEnumerator nested) stack.Push(nested);
+            }
         }
 
         // Hashes without reading the file into memory — the whole point.

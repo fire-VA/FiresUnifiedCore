@@ -537,6 +537,21 @@ namespace FiresCore.Npc
                 "What do we have nearby?",
                 "Scanning for resources."
             };
+
+            /// <summary>Idle chatter between tasks (companions and the FDT bot: Speech.IdleLine).</summary>
+            public static readonly string[] Idle = new[]
+            {
+                "Quiet day.",
+                "Smells like rain.",
+                "Anyone else hungry?",
+                "Could use a good mead about now.",
+                "Nice view from here.",
+                "I wonder what's over that hill.",
+                "Odin's watching, I bet.",
+                "My boots need mending.",
+                "Hear that? Just the wind.",
+                "Ready when you are."
+            };
             
             #endregion
             

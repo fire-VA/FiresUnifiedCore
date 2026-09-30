@@ -206,7 +206,7 @@ namespace FiresCore.Npc.Core
         private static Vector3 LandingSpot(Vector3 ownerPos)
         {
             if (ZoneSystem.instance == null) return ownerPos;
-            if (!ZoneSystem.instance.GetSolidHeight(ownerPos, out float ground, 1)) return ownerPos;
+            if (!FiresCore.World.Surface.GroundNear(ownerPos, out float ground)) return ownerPos;
             if (ownerPos.y - ground <= AirborneOwnerHeight) return ownerPos;
             return new Vector3(ownerPos.x, Mathf.Max(ground, ZoneSystem.instance.m_waterLevel), ownerPos.z);
         }
@@ -246,7 +246,23 @@ namespace FiresCore.Npc.Core
                 // loading screen or a corpse (the "guard against player teleport/death" rule, server-side).
                 if (!CompanionLeash.IsOwnerReelTarget(player)) continue;
                 long id = player.GetPlayerID();
-                if (id != 0L) ownerPositions[id] = player.transform.position;
+                if (id == 0L) continue;
+                // A remote player's position is what their own client wrote to the ZDO, not the server's copy of the body
+                // (0.2.216, R86 dedi: "Asked peer … to bring 'Eira' 2273 m to its owner at (-759.05, -2195.23, -8.39)", then y
+                // -3973: the server's body of Fire was falling through ground it had no colliders for, and the companions were
+                // reeled under the world).
+                ZDO playerZdo = player.m_nview != null && player.m_nview.IsValid() ? player.m_nview.GetZDO() : null;
+                Vector3 at = playerZdo != null && !playerZdo.IsOwner() ? playerZdo.GetPosition() : player.transform.position;
+                if (UnderTheWorld(at))
+                {
+                    if (Time.unscaledTime - _lastUnderLog > 10f)
+                    {
+                        _lastUnderLog = Time.unscaledTime;
+                        Debug.LogWarning($"{LogPrefix} leash heartbeat: skipping {player.GetPlayerName()}: its position ({at.x:0.0}, {at.y:0.0}, {at.z:0.0}) is under the world");
+                    }
+                    continue;
+                }
+                ownerPositions[id] = at;
             }
             if (ownerPositions.Count == 0) return;
 
@@ -265,6 +281,16 @@ namespace FiresCore.Npc.Core
                 Debug.Log($"{LogPrefix} leash heartbeat reeled in {reeled} stranded follower(s)");
 
             ReportHeartbeat(ownerPositions, reeled);
+        }
+
+        private static float _lastUnderLog = -999f;
+
+        // Well below the generated ground outdoors (dungeons sit at y 5000, far above it): no place to reel anyone to.
+        private static bool UnderTheWorld(Vector3 p)
+        {
+            if (p.y > 1000f) return false;
+            float ground = WorldGenerator.instance != null ? WorldGenerator.instance.GetHeight(p.x, p.z) : 0f;
+            return p.y < Mathf.Min(ground, 0f) - 50f || p.y < ground - 50f;
         }
 
         private const float HeartbeatReportSeconds = 10f;

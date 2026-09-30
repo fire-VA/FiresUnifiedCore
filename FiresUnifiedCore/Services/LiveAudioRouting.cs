@@ -35,9 +35,11 @@ namespace FiresCore.Services
             _pBypassReverb = _tAudioSource.GetProperty("bypassReverbZones");
         }
 
+        // A dedicated server plays nothing, and the first harvest walks every ZNetScene prefab's AudioSources ([worldgen], R51:
+        // 34 ms inside a join frame). Every entry point returns at once there.
         private static void HarvestSfxGroup()
         {
-            if (_liveSfxGroup != null) return;
+            if (_liveSfxGroup != null || FiresCore.Lifecycle.FiresMod.IsDedicatedServer) return;
             var scene = ZNetScene.instance;
             if (scene == null || scene.m_prefabs == null || scene.m_prefabs.Count == 0) return;
             if (_tAudioSource == null || _pOutputGroup == null) return;
@@ -77,7 +79,7 @@ namespace FiresCore.Services
         /// </summary>
         public static int RouteWorldSfx(GameObject root)
         {
-            if (root == null) return 0;
+            if (root == null || FiresCore.Lifecycle.FiresMod.IsDedicatedServer) return 0;
             EnsureReflection();
             if (_tAudioSource == null || _pOutputGroup == null) return 0;
             HarvestSfxGroup();
@@ -103,7 +105,7 @@ namespace FiresCore.Services
         /// </summary>
         public static int RouteUiSfx(GameObject root)
         {
-            if (root == null) return 0;
+            if (root == null || FiresCore.Lifecycle.FiresMod.IsDedicatedServer) return 0;
             EnsureReflection();
             if (_tAudioSource == null || _pBypassReverb == null) return 0;
 

@@ -740,7 +740,7 @@ namespace FiresCore.Npc.Archetypes
             if (_companion != null && Player.m_localPlayer != null)
             {
                 string skillName = GetSkillDisplayName(skill);
-                string message = $"<color=cyan>{_companion.companionName}</color>'s <color=yellow>{skillName}</color> increased to level {newLevel}!";
+                string message = $"<color=#00FFFF>{_companion.companionName}</color>'s <color=yellow>{skillName}</color> increased to level {newLevel}!";
                 Player.m_localPlayer.Message(MessageHud.MessageType.TopLeft, message);
                 
                 // Special messages for milestones

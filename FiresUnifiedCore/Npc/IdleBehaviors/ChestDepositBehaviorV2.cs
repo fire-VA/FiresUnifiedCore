@@ -93,6 +93,17 @@ namespace FiresCore.Npc.IdleBehaviors
         #region State
         
         private Container _targetChest;
+
+        // The walk to a chest is at walk speed (~1.6 m/s): a flat 15 s timed out on a 25 m walk (R76 companion_test 10/12, "Phase
+        // MovingToChest timed out"). The budget is set from the distance when the walk starts: 10 s plus 1 s per metre, 15 s minimum.
+        private float _moveBudget = 15f;
+
+        private void SetMoveBudget(Vector3 to)
+        {
+            float distance = Vector3.Distance(Transform.position, to);
+            _moveBudget = Mathf.Max(15f, 10f + distance);
+            Debug.Log($"[{BehaviorName}] {Companion?.companionName} walk to chest {distance:0.0} m: allowing {_moveBudget:0} s");
+        }
         private int _totalItemsDeposited;
         private int _chestsVisited;
         private int _itemsOrganized;
@@ -112,7 +123,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return phase switch
             {
                 DepositPhase.Scanning => 5f,
-                DepositPhase.MovingToChest => 15f,
+                DepositPhase.MovingToChest => _moveBudget,
                 DepositPhase.Depositing => 20f,
                 DepositPhase.Organizing => 15f,
                 DepositPhase.FindingNextChest => 5f,
@@ -309,7 +320,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     _targetChest = targetContainer;
                     _commandedTarget = null;
-                    
+
+                    SetMoveBudget(_targetChest.transform.position);
                     SetPhase(DepositPhase.MovingToChest);
                     MoveToPosition(_targetChest.transform.position);
                     CompanionChatHelper.QuickMessages.DepositingItems(Companion);
@@ -373,6 +385,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
+            SetMoveBudget(_targetChest.transform.position);
             SetPhase(DepositPhase.MovingToChest);
             
             // Use InteractionPointHelper to get proper standing position in front of chest
@@ -432,7 +445,12 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (!ChestHelper.TryClaimForWrite(_targetChest, Companion))
             {
-                LogVerbose("Target chest is open or off-limits");
+                // Always on (R59 deposit FAIL: the chest stayed empty and nothing said why).
+                var companionView = Companion.GetComponent<ZNetView>();
+                string why = companionView == null || !companionView.IsOwner()
+                    ? "this peer doesn't own the companion"
+                    : ChestHelper.WhyNotWritable(_targetChest, ChestHelper.ChestOwnerIdFor(Companion)) ?? "refused";
+                Debug.Log($"[ChestDeposit] {Companion.companionName} can't use {_targetChest.m_name} at {_targetChest.transform.position}: {why}");
                 _visitedChests.Add(_targetChest);
                 SetPhase(DepositPhase.FindingNextChest);
                 return false;
@@ -459,7 +477,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 CompanionEvents.FireItemDeposited(Companion, "mixed", deposited);
             }
 
-            LogVerbose($"Deposited {deposited} items across {_clusterChests.Count} chests");
+            Debug.Log($"[ChestDeposit] {Companion.companionName} deposited {deposited} item(s) across {_clusterChests.Count} chest(s)");
 
             // Always run the organize pass - even a single chest benefits from stack consolidation.
             SetPhase(DepositPhase.Organizing);
@@ -501,6 +519,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
+            SetMoveBudget(_targetChest.transform.position);
             SetPhase(DepositPhase.MovingToChest);
             
             // Use InteractionPointHelper to get proper standing position in front of chest
@@ -809,9 +828,20 @@ namespace FiresCore.Npc.IdleBehaviors
         private List<Container> ClaimClusterChests()
         {
             var claimed = new List<Container>();
+            // The chest this run is FOR is always in the cluster (already claimed in UpdateDepositing). The nearby search only
+            // returns player-built storage (a creator on the chest's ZDO), so a chest without one - spawned by a test, or by
+            // another mod - was never deposited into: R60 "deposited 0 item(s) across 0 chest(s)" 5 m from a writable chest.
+            if (_targetChest != null) claimed.Add(_targetChest);
+            int found = 0, refused = 0;
             foreach (var chest in ChestHelper.FindNearbyChests(_targetChest.transform.position, ChestClusterRange))
-                if (ChestHelper.TryClaimForWrite(chest, Companion))
-                    claimed.Add(chest);
+            {
+                found++;
+                if (chest == _targetChest) continue;
+                if (ChestHelper.TryClaimForWrite(chest, Companion)) claimed.Add(chest);
+                else refused++;
+            }
+            Debug.Log($"[ChestDeposit] {Companion.companionName} cluster round {_targetChest.m_name} ({ChestClusterRange:0} m): "
+                      + $"{found} nearby player-built, {refused} refused, {claimed.Count} to fill");
             return claimed;
         }
 

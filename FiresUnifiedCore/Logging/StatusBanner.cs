@@ -145,6 +145,10 @@ namespace FiresCore.Logging
             _instance = host.AddComponent<StatusBannerDriver>();
         }
 
-        private void Update() => StatusBanner.Tick();
+        private void Update()
+        {
+            RateLimitedLogHandler.FlushOffThreadLines();
+            StatusBanner.Tick();
+        }
     }
 }

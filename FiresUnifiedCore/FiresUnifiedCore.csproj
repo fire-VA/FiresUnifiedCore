@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -181,6 +181,12 @@
     <Compile Include="Terrain\HeightmapOverrideStatus.cs" />
     <Compile Include="Terrain\VASnapToGroundSpreadPatch.cs" />
     <Compile Include="Bridge\BoneEditingBridge.cs" />
+    <Compile Include="Bridge\DiscordBridge.cs" />
+    <Compile Include="Bridge\WorldGenStudioBridge.cs" />
+    <Compile Include="World\SpawnKnowledge.cs" />
+    <Compile Include="World\ResourceMemory.cs" />
+    <Compile Include="World\EnemyMemory.cs" />
+    <Compile Include="Npc\Combat\GroupTactics.cs" />
     <Compile Include="Bridge\MonsterPresetBridge.cs" />
     <Compile Include="Bridge\GroupHudBridge.cs" />
     <Compile Include="Bridge\ModUiRegistry.cs" />
@@ -201,6 +207,7 @@
     <Compile Include="Bridge\GroupBridge.cs" />
     <Compile Include="Bridge\LeaderboardBridge.cs" />
     <Compile Include="Bridge\ServerPushBridge.cs" />
+    <Compile Include="Bridge\SeasonBridge.cs" />
     <Compile Include="Bridge\PlayerAppearanceBridge.cs" />
     <Compile Include="Appearance\CharacterSnowCover.cs" />
     <Compile Include="Appearance\PlayerAppearanceCapture.cs" />
@@ -252,6 +259,8 @@
     <Compile Include="Npc\HelmetHairRules.cs" />
     <Compile Include="Npc\FiresMannequinBuilder.cs" />
     <Compile Include="Storage\VaultDatabase.cs" />
+    <Compile Include="Storage\VaultWriter.cs" />
+    <Compile Include="Storage\VaultWorldSnapshots.cs" />
     <Compile Include="Storage\KgVaultImport.cs" />
     <Compile Include="Storage\FiresConfigPaths.cs" />
     <Compile Include="Storage\BankSlot.cs" />
@@ -282,6 +291,14 @@
     <Compile Include="Compat\Balrond\BalrondVegetationPatch.cs" />
     <Compile Include="Compat\Cfg\CfgParser.cs" />
     <Compile Include="Compat\MarketplacePaths.cs" />
+    <Compile Include="Compat\HdTexturesLoadSpread.cs" />
+    <Compile Include="Combat\HitLocator.cs" />
+    <Compile Include="Combat\LocationalDamage.cs" />
+    <Compile Include="Compat\HdTexturesLoadScreen.cs" />
+    <Compile Include="Compat\HdTexturesWorldSpread.cs" />
+    <Compile Include="Compat\HdTexturesSize.cs" />
+    <Compile Include="Compat\MagicaWindZoneQuitGuard.cs" />
+    <Compile Include="Compat\HdAdditionsShaderScan.cs" />
     <Compile Include="Events\GameEventArgs.cs" />
     <Compile Include="Events\LifecycleEvents.cs" />
     <Compile Include="Events\GameEvents.cs" />
@@ -292,6 +309,13 @@
     <Compile Include="Npc\AI\CompanionAI\CompanionAI.Idle.cs" />
     <Compile Include="Npc\AI\CompanionAI\CompanionAI.Pathfinding.cs" />
     <Compile Include="Npc\AI\CompanionAI\CompanionAI.Targeting.cs" />
+    <Compile Include="Npc\AI\ChoreBrain.cs" />
+    <Compile Include="Npc\AI\CompanionBrain.cs" />
+    <Compile Include="Npc\AI\ITaskBody.cs" />
+    <Compile Include="Npc\AI\Perception.cs" />
+    <Compile Include="Npc\AI\Steering.cs" />
+    <Compile Include="Npc\AI\Jumping.cs" />
+    <Compile Include="UI\FiresUi.cs" />
     <Compile Include="Npc\AI\CompanionDoorHandler.cs" />
     <Compile Include="Npc\Animation\CompanionAnimationController.cs" />
     <Compile Include="Npc\Animation\PlayerAnimationCatalog.cs" />
@@ -307,6 +331,10 @@
     <Compile Include="Npc\Archetypes\Effects\SanctuaryWaterDrop.cs" />
     <Compile Include="Npc\Archetypes\AbilityHeals.cs" />
     <Compile Include="Npc\Archetypes\AbilityRPCManager.cs" />
+    <Compile Include="Npc\Archetypes\ClassEffectLedger.cs" />
+    <Compile Include="Npc\Archetypes\ClassCrowdControl.cs" />
+    <Compile Include="Npc\Archetypes\ClassTargeting.cs" />
+    <Compile Include="Npc\Archetypes\ClassZones.cs" />
     <Compile Include="Npc\Archetypes\AbilityUnlockSystem.cs" />
     <Compile Include="Npc\Archetypes\ArchetypeAbilitySystem.cs" />
     <Compile Include="Npc\Archetypes\ArchetypeChatManager.cs" />
@@ -327,6 +355,8 @@
     <Compile Include="Npc\Archetypes\StatusEffects\Berserker\BerserkRageEffect.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Berserker\WarcryEffect.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Common\InvulnerableEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Common\CrowdControlEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Common\ClassPresetEffects.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Common\RootedEffect.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Common\SlowdownEffect.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\CompanionStatusEffectBase.cs" />
@@ -358,6 +388,7 @@
     <Compile Include="Npc\Archetypes\StatusEffects\Rogue\CaltropsEffect.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Rogue\PoisonEffect.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Rogue\StealthEffect.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Rogue\StealthSync.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\StatusEffectManager.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Tank\FortifyEffect.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Ultimate\UltimateAbilityEffects.cs" />
@@ -392,6 +423,8 @@
     <Compile Include="Npc\Combat\ShieldBearerBehavior.cs" />
     <Compile Include="Npc\Combat\StaffBehavior.cs" />
     <Compile Include="Npc\Combat\StaminaManager.cs" />
+    <Compile Include="Npc\Combat\ArcCheck.cs" />
+    <Compile Include="Npc\Combat\CombatAdvisor.cs" />
     <Compile Include="Npc\Combat\TerrainAwareness.cs" />
     <Compile Include="Npc\Combat\ThreatAnalyzer.cs" />
     <Compile Include="Npc\Combat\UnarmedBehavior.cs" />
@@ -565,6 +598,7 @@
     <Compile Include="Tables\FiresTableNet.cs" />
     <Compile Include="UI\Chat\FiresChatSkin.cs" />
     <EmbeddedResource Include="UI\Chat\Art\*.png" />
+    <EmbeddedResource Include="firescoreshaders" />
     <Compile Include="UI\ContextMenu\ContextTarget.cs" />
     <Compile Include="UI\ContextMenu\ContextMenuItem.cs" />
     <Compile Include="UI\ContextMenu\IContextMenuProvider.cs" />
@@ -657,6 +691,7 @@
     <Compile Include="Config\FiresConfigChoices.cs" />
     <Compile Include="Config\FiresConfigVisibility.cs" />
     <Compile Include="Config\FiresAdminConfigGate.cs" />
+    <Compile Include="IO\AtomicFile.cs" />
     <Compile Include="IO\DirectoryChangeWatch.cs" />
     <Compile Include="IO\FileWatchHub.cs" />
     <Compile Include="IO\FileWatchHubConfig.cs" />
@@ -666,6 +701,7 @@
     <Compile Include="Diagnostics\PathfindingStats.cs" />
     <Compile Include="Diagnostics\ClothAuthoringProbe.cs" />
     <Compile Include="Input\KeyBinding.cs" />
+    <Compile Include="Input\FiresKeys.cs" />
     <Compile Include="Input\KeybindEntry.cs" />
     <Compile Include="Input\KeybindRegistry.cs" />
     <Compile Include="Input\KeybindConflictDetector.cs" />
@@ -673,12 +709,36 @@
     <Compile Include="Input\VanillaKeybinds.cs" />
     <Compile Include="UI\ConfigPanelKeybinds.cs" />
     <Compile Include="UI\ConfigPanelKeybindPopup.cs" />
+    <Compile Include="UI\ConfigPanelRowCulling.cs" />
+    <Compile Include="UI\ConfigPanelPrewarm.cs" />
+    <Compile Include="UI\BuildUiSpeedups.cs" />
     <Compile Include="Input\WheelBinding.cs" />
     <Compile Include="Lifecycle\AdminCheck.cs" />
     <Compile Include="Lifecycle\CollisionCallbackReuse.cs" />
     <Compile Include="Lifecycle\GroundDataThrottle.cs" />
     <Compile Include="Lifecycle\IntroCinematicSkip.cs" />
     <Compile Include="World\SectorChanges.cs" />
+    <Compile Include="World\Surface.cs" />
+    <Compile Include="IO\BundleCache.cs" />
+    <Compile Include="Npc\AI\PathWalker.cs" />
+    <Compile Include="World\PrefabIndex.cs" />
+    <Compile Include="Npc\Speech.cs" />
+    <Compile Include="Npc\Combat\LineOfFire.cs" />
+    <Compile Include="Npc\Combat\CombatStats.cs" />
+    <Compile Include="Npc\Combat\BossTactics.cs" />
+    <Compile Include="Npc\Combat\OwnerAssist.cs" />
+    <Compile Include="Npc\CompanionOwnershipKeeper.cs" />
+    <Compile Include="Npc\AI\DoorRule.cs" />
+    <Compile Include="Npc\AI\SlopeGuide.cs" />
+    <Compile Include="Npc\AI\CarryRules.cs" />
+    <Compile Include="Npc\AI\CompanionPathRules.cs" />
+    <Compile Include="Npc\Combat\ThreatLevel.cs" />
+    <Compile Include="Npc\Combat\ParryTiming.cs" />
+    <Compile Include="Npc\WildSpawn\WildNoPark.cs" />
+    <Compile Include="Npc\Combat\EscapeRules.cs" />
+    <Compile Include="Npc\AI\TerrainPlanner.cs" />
+    <Compile Include="Npc\AI\RoomGraph.cs" />
+    <Compile Include="Npc\AI\Party.cs" />
     <Compile Include="World\DistantSectorSkip.cs" />
     <Compile Include="Lifecycle\FiresMod.cs" />
     <Compile Include="Lifecycle\PlayerSpawnGate.cs" />
@@ -697,6 +757,8 @@
     <Compile Include="Materials\TerrainMaterialCache.cs" />
     <Compile Include="Materials\VanillaShaderRebind.cs" />
     <Compile Include="Materials\VanillaShaderRebindMenuHook.cs" />
+    <Compile Include="Materials\VanillaShaderSources.cs" />
+    <Compile Include="Materials\FiresShaderBroker.cs" />
     <Compile Include="Net\NetworkObjectHelper.cs" />
     <Compile Include="Net\SafeRoutedRpc.cs" />
     <Compile Include="Net\WorldCacheSync.cs" />
@@ -725,6 +787,9 @@
     <Compile Include="Pieces\WearGate.cs" />
     <Compile Include="Pieces\ConnectedPieces.cs" />
     <Compile Include="Pieces\HammerPieces.cs" />
+    <Compile Include="Pieces\BuildMenuTabs.cs" />
+    <Compile Include="Pieces\BuildMenuPages.cs" />
+    <Compile Include="Pieces\SharedPieceGroups.cs" />
     <Compile Include="Sync\ConfigPushService.cs" />
     <Compile Include="Sync\ConfigPullService.cs" />
     <Compile Include="Sync\ConfigDeleteService.cs" />
@@ -761,15 +826,6 @@
     <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <!-- The plain dedi receives FiresRPGmaker on every deploy; without Core alongside it, the pair
-       skews and new Core APIs MissingMethod-crash there (parity plan bug B5). -->
-  <PropertyGroup>
-    <PlainDediDir>C:\Program Files (x86)\Steam\steamapps\common\Valheim dedicated server\BepInEx\plugins\</PlainDediDir>
-  </PropertyGroup>
-  <Target Name="DeployToPlainDedi" AfterTargets="Build" Condition="Exists('$(PlainDediDir)')">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PlainDediDir)" OverwriteReadOnlyFiles="true" />
-    <Message Importance="high" Text="Deployed $(TargetFileName) -> $(PlainDediDir)" />
-  </Target>
 </Project>
 
 

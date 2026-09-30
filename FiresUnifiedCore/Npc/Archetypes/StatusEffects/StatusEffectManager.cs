@@ -43,6 +43,34 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         public const string EFFECT_INVULNERABLE = "CompanionInvulnerable";
         public const string EFFECT_ROOTED = "CompanionRooted";
         public const string EFFECT_SLOWDOWN = "CompanionSlowed";
+
+        // Class crowd control (ClassCrowdControl; Common\CrowdControlEffects.cs).
+        public const string EFFECT_CLASS_STUN = "ClassStun";
+        public const string EFFECT_CLASS_KNOCKDOWN = "ClassKnockdown";
+        public const string EFFECT_CLASS_FLEE = "ClassFlee";
+        public const string EFFECT_CLASS_LOSE_TARGET = "ClassLoseTarget";
+        public const string EFFECT_CLASS_STAGGER_IMMUNE = "ClassStaggerImmune";
+
+        // Class skill presets (Common\ClassPresetEffects.cs): a Core effect carries no numbers over the wire.
+        public const string EFFECT_CLASS_SLOW30 = "ClassSlow30";
+        public const string EFFECT_CLASS_HASTE15 = "ClassHaste15";
+        public const string EFFECT_CLASS_HASTE20 = "ClassHaste20";
+        public const string EFFECT_CLASS_HASTE25 = "ClassHaste25";
+        public const string EFFECT_CLASS_AEGIS = "ClassAegis";
+        // The lingering zones' presets (rank 1/2/3 where the tree text gives three numbers).
+        public const string EFFECT_CLASS_SLOW20 = "ClassSlow20";
+        public const string EFFECT_CLASS_WARD10 = "ClassWard10";
+        public const string EFFECT_CLASS_WARD15 = "ClassWard15";
+        public const string EFFECT_CLASS_WARD20 = "ClassWard20";
+        public const string EFFECT_CLASS_BANNER10 = "ClassBanner10";
+        public const string EFFECT_CLASS_BANNER15 = "ClassBanner15";
+        public const string EFFECT_CLASS_BANNER20 = "ClassBanner20";
+        public const string EFFECT_CLASS_EITR_WELL100 = "ClassEitrWell100";
+        public const string EFFECT_CLASS_EITR_WELL150 = "ClassEitrWell150";
+        public const string EFFECT_CLASS_EITR_WELL200 = "ClassEitrWell200";
+        public const string EFFECT_CLASS_WARD25 = "ClassWard25";
+        public const string EFFECT_CLASS_DAMAGE25 = "ClassDamage25";
+        public const string EFFECT_CLASS_SLOW60 = "ClassSlow60";
         
         // Tank
         public const string EFFECT_FORTIFY = "CompanionFortify";
@@ -129,6 +157,29 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
                 RegisterEffect<InvulnerableEffect>(EFFECT_INVULNERABLE, _iconColors[EFFECT_INVULNERABLE]);
                 RegisterEffect<RootedEffect>(EFFECT_ROOTED, _iconColors[EFFECT_ROOTED]);
                 RegisterEffect<SlowdownEffect>(EFFECT_SLOWDOWN, _iconColors[EFFECT_SLOWDOWN]);
+                RegisterEffect<StunEffect>(EFFECT_CLASS_STUN, _iconColors[EFFECT_CLASS_STUN]);
+                RegisterEffect<KnockdownEffect>(EFFECT_CLASS_KNOCKDOWN, _iconColors[EFFECT_CLASS_KNOCKDOWN]);
+                RegisterEffect<FleeEffect>(EFFECT_CLASS_FLEE, _iconColors[EFFECT_CLASS_FLEE]);
+                RegisterEffect<LoseTargetEffect>(EFFECT_CLASS_LOSE_TARGET, _iconColors[EFFECT_CLASS_LOSE_TARGET]);
+                RegisterEffect<StaggerImmuneEffect>(EFFECT_CLASS_STAGGER_IMMUNE, _iconColors[EFFECT_CLASS_STAGGER_IMMUNE]);
+                RegisterEffect<ClassSlow30Effect>(EFFECT_CLASS_SLOW30, _iconColors[EFFECT_CLASS_SLOW30]);
+                RegisterEffect<ClassHaste15Effect>(EFFECT_CLASS_HASTE15, _iconColors[EFFECT_CLASS_HASTE15]);
+                RegisterEffect<ClassHaste20Effect>(EFFECT_CLASS_HASTE20, _iconColors[EFFECT_CLASS_HASTE20]);
+                RegisterEffect<ClassHaste25Effect>(EFFECT_CLASS_HASTE25, _iconColors[EFFECT_CLASS_HASTE25]);
+                RegisterEffect<ClassAegisEffect>(EFFECT_CLASS_AEGIS, _iconColors[EFFECT_CLASS_AEGIS]);
+                RegisterEffect<ClassSlow20Effect>(EFFECT_CLASS_SLOW20, _iconColors[EFFECT_CLASS_SLOW20]);
+                RegisterEffect<ClassWardEffect>(EFFECT_CLASS_WARD10, _iconColors[EFFECT_CLASS_WARD10]);
+                RegisterEffect<ClassWard15Effect>(EFFECT_CLASS_WARD15, _iconColors[EFFECT_CLASS_WARD15]);
+                RegisterEffect<ClassWard20Effect>(EFFECT_CLASS_WARD20, _iconColors[EFFECT_CLASS_WARD20]);
+                RegisterEffect<ClassBannerEffect>(EFFECT_CLASS_BANNER10, _iconColors[EFFECT_CLASS_BANNER10]);
+                RegisterEffect<ClassBanner15Effect>(EFFECT_CLASS_BANNER15, _iconColors[EFFECT_CLASS_BANNER15]);
+                RegisterEffect<ClassBanner20Effect>(EFFECT_CLASS_BANNER20, _iconColors[EFFECT_CLASS_BANNER20]);
+                RegisterEffect<ClassEitrWellEffect>(EFFECT_CLASS_EITR_WELL100, _iconColors[EFFECT_CLASS_EITR_WELL100]);
+                RegisterEffect<ClassEitrWell150Effect>(EFFECT_CLASS_EITR_WELL150, _iconColors[EFFECT_CLASS_EITR_WELL150]);
+                RegisterEffect<ClassEitrWell200Effect>(EFFECT_CLASS_EITR_WELL200, _iconColors[EFFECT_CLASS_EITR_WELL200]);
+                RegisterEffect<ClassWard25Effect>(EFFECT_CLASS_WARD25, _iconColors[EFFECT_CLASS_WARD25]);
+                RegisterEffect<ClassDamage25Effect>(EFFECT_CLASS_DAMAGE25, _iconColors[EFFECT_CLASS_DAMAGE25]);
+                RegisterEffect<ClassSlow60Effect>(EFFECT_CLASS_SLOW60, _iconColors[EFFECT_CLASS_SLOW60]);
                 
                 // Register Tank effects
                 RegisterEffect<FortifyEffect>(EFFECT_FORTIFY, _iconColors[EFFECT_FORTIFY]);
@@ -198,6 +249,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
                 RegisterEffect<Ultimate.WayOfPerfectionEffect>(EFFECT_WAY_OF_PERFECTION, _iconColors[EFFECT_WAY_OF_PERFECTION]);
                 
                 _effectsRegistered = true;
+
+                // Every peer ghosts / hides the stealthed characters it does not own (Rogue\StealthSync.cs).
+                Rogue.StealthSync.Ensure();
                 
                 Debug.Log($"[StatusEffectManager] All companion status effects registered ({_iconCache.Count} icons cached)");
             }
@@ -216,6 +270,29 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
             _iconColors[EFFECT_INVULNERABLE] = Color.yellow;
             _iconColors[EFFECT_ROOTED] = new Color(0.5f, 0.3f, 0.1f); // Brown
             _iconColors[EFFECT_SLOWDOWN] = new Color(0.4f, 0.6f, 0.8f); // Light blue
+            _iconColors[EFFECT_CLASS_STUN] = new Color(1f, 0.9f, 0.2f); // Yellow
+            _iconColors[EFFECT_CLASS_KNOCKDOWN] = new Color(0.7f, 0.5f, 0.2f); // Ochre
+            _iconColors[EFFECT_CLASS_FLEE] = new Color(0.6f, 0.2f, 0.7f); // Violet
+            _iconColors[EFFECT_CLASS_LOSE_TARGET] = new Color(0.6f, 0.6f, 0.6f); // Grey
+            _iconColors[EFFECT_CLASS_STAGGER_IMMUNE] = new Color(0.5f, 0.7f, 0.5f); // Sage
+            _iconColors[EFFECT_CLASS_SLOW30] = new Color(0.5f, 0.7f, 0.9f); // Pale blue
+            _iconColors[EFFECT_CLASS_HASTE15] = new Color(0.7f, 0.95f, 0.8f); // Mint
+            _iconColors[EFFECT_CLASS_HASTE20] = new Color(0.6f, 0.95f, 0.75f); // Mint
+            _iconColors[EFFECT_CLASS_HASTE25] = new Color(0.5f, 0.95f, 0.7f); // Mint
+            _iconColors[EFFECT_CLASS_AEGIS] = new Color(0.95f, 0.85f, 0.4f); // Gold
+            _iconColors[EFFECT_CLASS_SLOW20] = new Color(0.55f, 0.75f, 0.9f); // Pale blue
+            _iconColors[EFFECT_CLASS_WARD10] = new Color(0.6f, 0.85f, 0.95f); // Sky
+            _iconColors[EFFECT_CLASS_WARD15] = new Color(0.55f, 0.8f, 0.95f); // Sky
+            _iconColors[EFFECT_CLASS_WARD20] = new Color(0.5f, 0.75f, 0.95f); // Sky
+            _iconColors[EFFECT_CLASS_BANNER10] = new Color(0.9f, 0.45f, 0.3f); // Banner red
+            _iconColors[EFFECT_CLASS_BANNER15] = new Color(0.9f, 0.4f, 0.25f); // Banner red
+            _iconColors[EFFECT_CLASS_BANNER20] = new Color(0.9f, 0.35f, 0.2f); // Banner red
+            _iconColors[EFFECT_CLASS_EITR_WELL100] = new Color(0.55f, 0.5f, 0.95f); // Eitr violet
+            _iconColors[EFFECT_CLASS_EITR_WELL150] = new Color(0.5f, 0.45f, 0.95f); // Eitr violet
+            _iconColors[EFFECT_CLASS_EITR_WELL200] = new Color(0.45f, 0.4f, 0.95f); // Eitr violet
+            _iconColors[EFFECT_CLASS_WARD25] = new Color(0.45f, 0.7f, 1f); // Deep sky
+            _iconColors[EFFECT_CLASS_DAMAGE25] = new Color(0.9f, 0.35f, 0.2f); // Horn red
+            _iconColors[EFFECT_CLASS_SLOW60] = new Color(0.35f, 0.55f, 0.85f); // Frost blue
             
             // Tank
             _iconColors[EFFECT_FORTIFY] = new Color(0.3f, 0.3f, 0.8f); // Blue

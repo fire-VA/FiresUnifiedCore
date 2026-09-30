@@ -144,6 +144,8 @@ namespace FiresCore.Npc.Combat
             public float RecentDamageReceived;
             public bool IsOwnerInDanger;
             public bool IsCompanionInDanger;
+            /// <summary>Living party members (the owner, its companions, allied players) within the scan range, self excluded.</summary>
+            public int AlliesNearby;
             public bool ShouldUseShield;
             public bool ShouldDodgeMore;
             public float AggressionModifier;        // 0.0 (defensive) to 2.0 (aggressive)
@@ -480,7 +482,11 @@ namespace FiresCore.Npc.Combat
                 OwnerHealthPercent = ownerHealthPercent,
                 RecentDamageReceived = recentDamage,
                 IsOwnerInDanger = targetingOwner > 0 || ownerHealthPercent < 0.5f,
-                IsCompanionInDanger = companionHealthPercent < survivalHealthThreshold || dangerousEnemies > 1
+                // Several dangerous enemies only put a companion in danger once it is hurt (R59: Fire's companions fled a pack of
+                // level-3 Greylings at 100 % health, next to their owner and a healer, and never hit a monster).
+                IsCompanionInDanger = companionHealthPercent < survivalHealthThreshold
+                                      || (dangerousEnemies > 1 && companionHealthPercent < cautiousHealthThreshold),
+                AlliesNearby = CountAlliesNearby(myPos)
             };
 
             // Calculate overall threat level (0-100)
@@ -498,6 +504,20 @@ namespace FiresCore.Npc.Combat
                     $"Health: {companionHealthPercent:P0}, " +
                     $"Action: {_currentSituation.PrimaryAction}");
             }
+        }
+
+        private int CountAlliesNearby(Vector3 myPos)
+        {
+            if (_character == null) return 0;
+            int allies = 0;
+            float rangeSq = threatScanRange * threatScanRange;
+            foreach (var other in Character.GetAllCharacters())
+            {
+                if (other == null || other == _character || other.IsDead()) continue;
+                if ((other.transform.position - myPos).sqrMagnitude > rangeSq) continue;
+                if (Archetypes.ClassTargeting.IsPartyMember(_character, other)) allies++;
+            }
+            return allies;
         }
 
         private ThreatProfile BuildThreatProfile(Character enemy, Character ownerCharacter, Vector3 myPos, Vector3 ownerPos)
@@ -525,7 +545,7 @@ namespace FiresCore.Npc.Combat
             var enemyAI = enemy.GetComponent<BaseAI>();
             if (enemyAI != null)
             {
-                var target = enemyAI.GetTargetCreature();
+                var target = FiresCore.Npc.Combat.ThreatLevel.TargetOf(enemyAI);
                 profile.IsTargetingCompanion = target == _character;
                 profile.IsTargetingOwner = target == ownerCharacter;
             }
@@ -645,7 +665,9 @@ namespace FiresCore.Npc.Combat
                 situation.PrimaryAction = TacticalAction.Kite;
                 situation.SecondaryAction = TacticalAction.HitAndRun;
             }
-            else if (situation.TotalEnemies >= overwhelmedThreshold || 
+            // Outnumbered only means retreat when hurt or alone: a healthy companion with its party around fights the pack.
+            else if ((situation.TotalEnemies >= overwhelmedThreshold
+                      && (situation.CompanionHealthPercent < cautiousHealthThreshold || situation.AlliesNearby == 0)) ||
                      (situation.DangerousEnemies >= 2 && situation.CompanionHealthPercent < cautiousHealthThreshold))
             {
                 situation.RecommendedStance = CombatStance.Retreat;

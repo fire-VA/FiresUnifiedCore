@@ -22,6 +22,7 @@ namespace FiresCore.UI
         {
             if (layout == null || layout.RootElement == null || parent == null) return null;
             var root = InstantiateNode(layout.RootElement, parent, layout, null);
+            FiresUi.Register(root);
             return root;
         }
 
@@ -34,6 +35,7 @@ namespace FiresCore.UI
         {
             if (layout == null || layout.RootElement == null || parent == null) return null;
             var root = InstantiateNode(layout.RootElement, parent, layout, onNodeCreated);
+            FiresUi.Register(root);
             return root;
         }
 
@@ -58,6 +60,8 @@ namespace FiresCore.UI
 
                 var go = InstantiateNode(node, nodeParent, layout, onNodeCreated, skipChildren: true);
                 if (go == null) continue;
+                // The first node is the layout's root: register it so its scroll lists get the Fires scroll speed as they appear.
+                if (node == layout.RootElement) FiresUi.Register(go);
 
                 // Queue children in reverse order so they get processed in forward order
                 Transform childParent = go.transform;

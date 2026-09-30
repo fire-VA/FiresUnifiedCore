@@ -285,19 +285,31 @@ private float _strafeTimer;
      return true;
         }
 
-        private void CommitMovement(Vector3 moveDir, float duration)
+        // Positioning (strafe, step in, step back) used to take Animation priority every 0.2 s, above the companion's own combat
+        // moves, so a kiting healer or a strafing fighter never got back to attacking (R61: the bot's companions "CompanionAI
+        // (Combat) DENIED - CompanionDodge (Animation)" through a whole pack fight, 0 hits). Only an URGENT step away (the target
+        // swinging within DangerRange) keeps Animation priority, at most once per UrgentMoveCooldown; everything else competes at
+        // Combat priority, so combat decides.
+        private const float UrgentMoveCooldown = 2f;
+        private float _nextUrgentMove;
+
+        private void CommitMovement(Vector3 moveDir, float duration, bool urgent = false)
         {
             _committedMoveDir = moveDir;
             _isMovementCommitted = true;
             _movementCommitEndTime = Time.time + duration;
             _lastMovementChange = Time.time;
 
-            // Single-writer: drive the committed dodge/strafe through UMA at Animation priority so it
-            // preempts CompanionCombatMovement for the window, instead of a raw SetMoveDir that races it.
             var authority = GetAuthority();
             if (authority != null)
             {
-                if (authority.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.Animation, DodgeAuthorityOwner, Mathf.Max(duration, 0.5f)))
+                var source = UnifiedMovementAuthority.MovementSource.Combat;
+                if (urgent && Time.time >= _nextUrgentMove)
+                {
+                    source = UnifiedMovementAuthority.MovementSource.Animation;
+                    _nextUrgentMove = Time.time + UrgentMoveCooldown;
+                }
+                if (authority.TryAcquireAuthority(source, DodgeAuthorityOwner, Mathf.Max(duration, 0.5f)))
                     authority.SetMoveDirection(DodgeAuthorityOwner, moveDir, walk: false, run: true);
                 return;
             }
@@ -412,7 +424,9 @@ private float _strafeTimer;
             FaceTarget(target);
 
             Vector3 moveDir = dirFromTarget * 0.7f;
- CommitMovement(moveDir, 0.5f);
+            bool urgent = target.InAttack()
+                          && Vector3.Distance(_context.Transform.position, target.transform.position) < DangerRange;
+            CommitMovement(moveDir, 0.5f, urgent);
         }
 
     private void RepositionTowardTarget(Character target, float desiredDistance)
@@ -628,8 +642,20 @@ FaceTarget(target);
         /// Execute a melee dodge - always to the SIDE.
         /// Uses CombatExperience for optimal direction at higher levels.
         /// </summary>
+        // The archetype's dodge count (ArchetypeStatistics.SuccessfulDodges): never fed before, so companion_test's skills step
+        // read 0 dodges for every fighter (R58).
+        // Who the next dodge is from, for its log line (set by the dodge entry points).
+        private string _dodgeFrom = "a threat";
+
+        private void NoteDodgeForArchetype()
+        {
+            Debug.Log($"[CompanionDodge] {_context?.Character?.m_name} dodged {_dodgeFrom} (cooldown {DodgeCooldown:0} s)");
+            _context?.Character?.GetComponent<CompanionController>()?.GetArchetypeController()?.OnDodgePerformed(true);
+        }
+
         public void ExecuteDodge(Character threat)
         {
+            _dodgeFrom = threat != null ? threat.m_name : "a threat";
             if (_isDodging) return;
             if (!CanDodge(false)) return;
 
@@ -640,6 +666,7 @@ FaceTarget(target);
 
             // Consume stamina for dodge - notify StaminaManager
             _staminaManager?.OnDodgePerformed();
+            NoteDodgeForArchetype();
             
             // Also update CompanionStats for backward compatibility
             var stats = _context?.Agent?.Stamina;
@@ -717,6 +744,7 @@ FaceTarget(target);
         /// </summary>
    public void ExecuteRetreatDodge(Character threat, bool isEmergency = false)
 {
+            _dodgeFrom = (threat != null ? threat.m_name : "a threat") + (isEmergency ? " (emergency retreat)" : " (retreat)");
             if (_isDodging) return;
         if (!CanDodge(true) && !isEmergency) return;
 
@@ -733,6 +761,7 @@ FaceTarget(target);
 
             // Consume stamina for dodge - notify StaminaManager
             _staminaManager?.OnDodgePerformed();
+            NoteDodgeForArchetype();
             
             // Also update CompanionStats for backward compatibility
             var stats = _context?.Agent?.Stamina;
@@ -909,6 +938,7 @@ FaceTarget(target);
         /// </summary>
         private void ExecuteProjectileDodge()
         {
+            _dodgeFrom = "a projectile";
             if (_isDodging) return;
             if (_incomingProjectile == null) return;
             
@@ -919,6 +949,7 @@ FaceTarget(target);
             
             // Consume stamina for dodge - notify StaminaManager
             _staminaManager?.OnDodgePerformed();
+            NoteDodgeForArchetype();
             
             // Also update CompanionStats for backward compatibility
             var stats = _context?.Agent?.Stamina;

@@ -10,7 +10,9 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
     /// <summary>
     /// Each archetype's emergency escape (Arcane Blink, Sanctuary Fade, Savage Leap, Shadow Escape, Disengage,
     /// Shield Charge, Divine Retreat, Wind Step, and the Pyromancer's Infernal Blink), triggered when swarmed, at
-    /// low health, or through the API.
+    /// low health, or through the API. A player's class evasion (FiresRPGClasses, in place of the dodge roll) runs
+    /// through <see cref="TryPlayerEvasion"/>. Who it hurts or heals follows ClassTargeting (Fire: damage only enemies,
+    /// heals only the party).
     /// </summary>
     public class EmergencyEvasionManager : MonoBehaviour
     {
@@ -56,6 +58,9 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private EvasionType _evasionType = EvasionType.None;
         private float _resourceCost;
         private bool _usesEitr;
+
+        // A player's evasion goes where they pressed dodge (Fire, popup 2026-09-28 19:09); a companion's picks its own way.
+        private Vector3? _playerDirection;
         
         public static bool VerboseLogging = false;
         
@@ -102,6 +107,9 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         
         private void Start()
         {
+            // A player's manager (TryPlayerEvasion) gets its type per evasion, not from a companion archetype.
+            if (_companion == null) return;
+
             // Determine evasion type from archetype
             StartCoroutine(DetermineEvasionTypeDelayed());
         }
@@ -154,94 +162,61 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 return;
             }
             
-            var mainArchetype = _archetypeController.CurrentArchetypeClass;
-            var subArchetype = _archetypeController.SubArchetypeClass;
-            
-            // Check for Pyromancer hybrid (Mage + Berserker) - gets special Infernal Blink
-            if ((mainArchetype == ArchetypeClass.Mage && 
-                 subArchetype == ArchetypeClass.Berserker) ||
-                (mainArchetype == ArchetypeClass.Berserker && 
-                 subArchetype == ArchetypeClass.Mage))
-            {
-                _evasionType = EvasionType.InfernalBlink;
-                _resourceCost = 35f;
-                _usesEitr = true;
-                _cooldown = 50f;
-                
-                if (VerboseLogging)
-                    Debug.Log($"[EmergencyEvasion] {_companion?.companionName} assigned INFERNAL BLINK (Pyromancer hybrid)");
-                return;
-            }
-            
-            // Standard archetype evasions
-            switch (mainArchetype)
-            {
-                case ArchetypeClass.Mage:
-                    _evasionType = EvasionType.ArcaneBlink;
-                    _resourceCost = 30f;
-                    _usesEitr = true;
-                    _cooldown = 40f;
-                    break;
-                    
-                case ArchetypeClass.Healer:
-                    _evasionType = EvasionType.SanctuaryFade;
-                    _resourceCost = 25f;
-                    _usesEitr = true;
-                    _cooldown = 45f;
-                    break;
-                    
-                case ArchetypeClass.Berserker:
-                    _evasionType = EvasionType.SavageLeap;
-                    _resourceCost = 40f;
-                    _usesEitr = false;
-                    _cooldown = 35f;
-                    break;
-                    
-                case ArchetypeClass.Rogue:
-                    _evasionType = EvasionType.ShadowEscape;
-                    _resourceCost = 25f;
-                    _usesEitr = false;
-                    _cooldown = 30f;
-                    break;
-                    
-                case ArchetypeClass.Ranger:
-                    _evasionType = EvasionType.Disengage;
-                    _resourceCost = 30f;
-                    _usesEitr = false;
-                    _cooldown = 35f;
-                    break;
-                    
-                case ArchetypeClass.Tank:
-                    _evasionType = EvasionType.ShieldCharge;
-                    _resourceCost = 35f;
-                    _usesEitr = false;
-                    _cooldown = 40f;
-                    break;
-                    
-                case ArchetypeClass.Paladin:
-                    _evasionType = EvasionType.DivineRetreat;
-                    _resourceCost = 30f;
-                    _usesEitr = false;
-                    _cooldown = 40f;
-                    break;
-                    
-                case ArchetypeClass.Monk:
-                    _evasionType = EvasionType.WindStep;
-                    _resourceCost = 20f;
-                    _usesEitr = false;
-                    _cooldown = 25f;
-                    break;
-                    
-                default:
-                    _evasionType = EvasionType.None;
-                    break;
-            }
-            
+            UseType(TypeFor(_archetypeController.CurrentArchetypeClass, _archetypeController.SubArchetypeClass));
+
             if (VerboseLogging && _evasionType != EvasionType.None)
             {
                 Debug.Log($"[EmergencyEvasion] {_companion?.companionName} assigned {_evasionType} " +
                     $"(cost: {_resourceCost} {(_usesEitr ? "Eitr" : "Stamina")}, cd: {_cooldown}s)");
             }
+        }
+
+        /// <summary>
+        /// The evasion an archetype gets: its own, or Infernal Blink for the Pyromancer hybrid (Mage + Berserker, either
+        /// way round). Companions and players share this.
+        /// </summary>
+        public static EvasionType TypeFor(ArchetypeClass main, ArchetypeClass sub)
+        {
+            if ((main == ArchetypeClass.Mage && sub == ArchetypeClass.Berserker) ||
+                (main == ArchetypeClass.Berserker && sub == ArchetypeClass.Mage))
+                return EvasionType.InfernalBlink;
+
+            switch (main)
+            {
+                case ArchetypeClass.Mage: return EvasionType.ArcaneBlink;
+                case ArchetypeClass.Healer: return EvasionType.SanctuaryFade;
+                case ArchetypeClass.Berserker: return EvasionType.SavageLeap;
+                case ArchetypeClass.Rogue: return EvasionType.ShadowEscape;
+                case ArchetypeClass.Ranger: return EvasionType.Disengage;
+                case ArchetypeClass.Tank: return EvasionType.ShieldCharge;
+                case ArchetypeClass.Paladin: return EvasionType.DivineRetreat;
+                case ArchetypeClass.Monk: return EvasionType.WindStep;
+                default: return EvasionType.None;
+            }
+        }
+
+        /// <summary>What an evasion costs (stamina, or eitr for the casters) and its cooldown in seconds.</summary>
+        public static void CostOf(EvasionType type, out float cost, out bool usesEitr, out float cooldown)
+        {
+            switch (type)
+            {
+                case EvasionType.InfernalBlink: cost = 35f; usesEitr = true; cooldown = 50f; return;
+                case EvasionType.ArcaneBlink: cost = 30f; usesEitr = true; cooldown = 40f; return;
+                case EvasionType.SanctuaryFade: cost = 25f; usesEitr = true; cooldown = 45f; return;
+                case EvasionType.SavageLeap: cost = 40f; usesEitr = false; cooldown = 35f; return;
+                case EvasionType.ShadowEscape: cost = 25f; usesEitr = false; cooldown = 30f; return;
+                case EvasionType.Disengage: cost = 30f; usesEitr = false; cooldown = 35f; return;
+                case EvasionType.ShieldCharge: cost = 35f; usesEitr = false; cooldown = 40f; return;
+                case EvasionType.DivineRetreat: cost = 30f; usesEitr = false; cooldown = 40f; return;
+                case EvasionType.WindStep: cost = 20f; usesEitr = false; cooldown = 25f; return;
+                default: cost = 0f; usesEitr = false; cooldown = BaseCooldown; return;
+            }
+        }
+
+        private void UseType(EvasionType type)
+        {
+            _evasionType = type;
+            CostOf(type, out _resourceCost, out _usesEitr, out _cooldown);
         }
         
         #endregion
@@ -421,8 +396,46 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                     yield return ExecuteWindStep(originPos);
                     break;
             }
-            
+
             _isEvading = false;
+            _playerDirection = null;
+        }
+
+        /// <summary>
+        /// A player's class evasion in place of the dodge roll (FiresRPGClasses). It is the archetype's evasion, in the
+        /// dodge direction, for Core's cost (stamina, or eitr for the casters) and cooldown (Fire, popup 2026-09-28
+        /// 19:09). Returns false when it isn't ready or the player can't pay, and the vanilla roll runs instead.
+        /// </summary>
+        public static bool TryPlayerEvasion(Player player, EvasionType type, Vector3 direction)
+        {
+            if (player == null || type == EvasionType.None) return false;
+            var manager = player.GetComponent<EmergencyEvasionManager>();
+            if (manager == null) manager = player.gameObject.AddComponent<EmergencyEvasionManager>();
+            return manager.RunForPlayer(player, type, direction);
+        }
+
+        /// <summary>Seconds until this player's evasion is ready again: 0 when it is, or when they have used none yet.</summary>
+        public static float PlayerCooldownRemaining(Player player)
+        {
+            var manager = player != null ? player.GetComponent<EmergencyEvasionManager>() : null;
+            return manager != null ? manager.CooldownRemaining : 0f;
+        }
+
+        private bool RunForPlayer(Player player, EvasionType type, Vector3 direction)
+        {
+            if (_isEvading) return false;
+            UseType(type);
+            if (!IsReady) return false;
+            if (_usesEitr ? !player.HaveEitr(_resourceCost) : !player.HaveStamina(_resourceCost)) return false;
+            if (_usesEitr) player.UseEitr(_resourceCost);
+            else player.UseStamina(_resourceCost);
+
+            direction.y = 0f;
+            _playerDirection = direction.sqrMagnitude > 0.01f ? direction.normalized : player.transform.forward;
+            _lastEvasionTime = Time.time;
+            _isEvading = true;
+            StartCoroutine(ExecuteEvasion());
+            return true;
         }
         
         #endregion
@@ -670,9 +683,9 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         {
             // Find position directly away from nearest enemy
             Character nearestEnemy = FindNearestEnemy();
-            Vector3 awayDir = nearestEnemy != null 
-                ? (origin - nearestEnemy.transform.position).normalized 
-                : -transform.forward;
+            Vector3 awayDir = _playerDirection ?? (nearestEnemy != null
+                ? (origin - nearestEnemy.transform.position).normalized
+                : -transform.forward);
             
             awayDir.y = 0;
             awayDir.Normalize();
@@ -842,6 +855,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// </summary>
         private Vector3 FindSafePosition(Vector3 origin, float distance)
         {
+            if (_playerDirection.HasValue) return FindValidPosition(origin + _playerDirection.Value * distance);
+
             // Calculate direction away from enemy centroid
             Vector3 enemyCentroid = Vector3.zero;
             int enemyCount = 0;
@@ -883,7 +898,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// </summary>
         private Vector3 FindPositionTowardAllies(Vector3 origin, float distance)
         {
-            if (_companion == null) return FindSafePosition(origin, distance);
+            if (_companion == null || _playerDirection.HasValue) return FindSafePosition(origin, distance);
             
             // Find owner or other companions
             var owner = _companion.GetOwner();
@@ -903,6 +918,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// </summary>
         private Vector3 FindPositionWithMostEnemies(Vector3 origin, float distance)
         {
+            if (_playerDirection.HasValue) return FindSafePosition(origin, distance);
+
             Character bestTarget = null;
             int bestNearbyCount = 0;
             
@@ -939,7 +956,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private Vector3 FindFlankingPosition(Vector3 origin, float distance)
         {
             Character nearestEnemy = FindNearestEnemy();
-            if (nearestEnemy == null) return FindSafePosition(origin, distance);
+            if (nearestEnemy == null || _playerDirection.HasValue) return FindSafePosition(origin, distance);
             
             // Get perpendicular direction for flank
             Vector3 toEnemy = (nearestEnemy.transform.position - origin).normalized;
@@ -957,6 +974,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// </summary>
         private Vector3 FindChargeDirection(Vector3 origin)
         {
+            if (_playerDirection.HasValue) return _playerDirection.Value;
+
             // Charge through enemies toward allies
             var owner = _companion?.GetOwner();
             if (owner != null)
@@ -974,6 +993,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// </summary>
         private Vector3 FindSafeDirection(Vector3 origin)
         {
+            if (_playerDirection.HasValue) return _playerDirection.Value;
+
             Vector3 enemyCentroid = Vector3.zero;
             int count = 0;
             
@@ -1014,7 +1035,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == _character) continue;
-                if (character.IsTamed() || character.IsPlayer()) continue;
+                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // Fire: enemies only
                 
                 float dist = Vector3.Distance(transform.position, character.transform.position);
                 if (dist < nearestDist)
@@ -1136,17 +1157,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 if (character == null || character.IsDead()) continue;
                 if (character == _character) continue;
                 
-                // Skip friendlies unless specified
-                if (!hitFriendlies)
-                {
-                    if (character.IsTamed() || character.IsPlayer()) continue;
-                    
-                    // Check if same owner
-                    var otherCompanion = character.GetComponent<CompanionController>();
-                    if (otherCompanion != null && _companion != null && 
-                        otherCompanion.ownerPlayerId == _companion.ownerPlayerId)
-                        continue;
-                }
+                // Fire: damage only enemies (never the party, a player only when both have PvP on)
+                if (!hitFriendlies && !ClassTargeting.IsEnemyTarget(_character, character)) continue;
                 
                 float dist = Vector3.Distance(position, character.transform.position);
                 if (dist > radius) continue;
@@ -1183,42 +1195,16 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// </summary>
         private void HealAlliesInRange(Vector3 position, float radius, float healing)
         {
-            // Heal owner
-            var owner = _companion?.GetOwner();
-            if (owner != null && !owner.IsDead())
-            {
-                float dist = Vector3.Distance(position, owner.transform.position);
-                if (dist <= radius)
-                {
-                    owner.Heal(healing, true);
-                    SpawnVFX("fx_creature_tamed", owner.transform.position);
-                }
-            }
-            
-            // Heal self
-            if (_character != null && !_character.IsDead())
-            {
-                _character.Heal(healing, true);
-            }
-            
-            // Heal other companions
+            // Fire: heals only the party (the evader, its owner or companions, and group/guild allies with theirs).
+            // Character.Heal goes to each target's owner.
             foreach (var character in Character.GetAllCharacters())
             {
                 if (character == null || character.IsDead()) continue;
-                if (character == _character) continue;
-                if (character.IsPlayer()) continue;
-                
-                var otherCompanion = character.GetComponent<CompanionController>();
-                if (otherCompanion != null && _companion != null && 
-                    otherCompanion.ownerPlayerId == _companion.ownerPlayerId)
-                {
-                    float dist = Vector3.Distance(position, character.transform.position);
-                    if (dist <= radius)
-                    {
-                        character.Heal(healing, true);
-                        SpawnVFX("fx_creature_tamed", character.transform.position);
-                    }
-                }
+                if (!ClassTargeting.IsPartyMember(_character, character)) continue;
+                if (character != _character && Vector3.Distance(position, character.transform.position) > radius) continue;
+
+                character.Heal(healing, true);
+                if (character != _character) SpawnVFX("fx_creature_tamed", character.transform.position);
             }
         }
         
@@ -1258,7 +1244,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             foreach (var character in Character.GetAllCharacters())
             {
                 if (character == null || character.IsDead()) continue;
-                if (character.IsTamed() || character.IsPlayer()) continue;
+                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // Fire: enemies only
                 
                 float dist = Vector3.Distance(position, character.transform.position);
                 if (dist <= radius)
@@ -1299,7 +1285,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == _character) continue;
-                if (character.IsTamed() || character.IsPlayer()) continue;
+                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // Fire: enemies only
                 
                 float dist = Vector3.Distance(position, character.transform.position);
                 if (dist <= radius)
@@ -1328,7 +1314,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == _character) continue;
-                if (character.IsTamed() || character.IsPlayer()) continue;
+                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // Fire: enemies only
                 
                 float dist = Vector3.Distance(position, character.transform.position);
                 if (dist <= radius)

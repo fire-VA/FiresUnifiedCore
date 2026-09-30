@@ -77,6 +77,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
                 _isStealthActive = true;
                 FirstAttackUsed = false;
                 
+                // Every other peer reads this from the ZDO (StealthSync): the party sees a ghost, everyone else nothing.
+                StealthSync.Publish(m_character, StealthAlpha);
+
                 // Create visibility controller for ghost material swap
                 _visibilityController = new CharacterVisibilityController(m_character);
                 
@@ -293,6 +296,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
         
         protected override void OnEffectRemoved()
         {
+            StealthSync.Publish(m_character, 0f);
+
             // Restore normal visuals
             _visibilityController?.Restore();
             _visibilityController = null;

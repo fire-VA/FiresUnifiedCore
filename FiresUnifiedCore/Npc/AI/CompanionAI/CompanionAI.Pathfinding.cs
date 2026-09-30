@@ -382,7 +382,7 @@ namespace FiresCore.Npc.AI
                 if (ZoneSystem.instance != null)
                 {
                     float groundHeight;
-                    if (ZoneSystem.instance.GetGroundHeight(waypoint, out groundHeight))
+                    if (FiresCore.World.Surface.GroundNear(waypoint, out groundHeight))
                     {
                         waypoint.y = groundHeight + 0.5f;
                     }
@@ -442,7 +442,7 @@ namespace FiresCore.Npc.AI
                 if (ZoneSystem.instance != null)
                 {
                     float groundHeight;
-                    if (ZoneSystem.instance.GetGroundHeight(testPos, out groundHeight))
+                    if (FiresCore.World.Surface.GroundNear(testPos, out groundHeight))
                     {
                         testPos.y = groundHeight + 0.5f;
                     }

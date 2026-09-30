@@ -100,8 +100,9 @@ namespace FiresCore.Npc
         }
 
         /// <summary>The owner has stood still long enough that the companion may stand down — CompanionAI's
-        /// owner-AFK answer, which also drives its own Following → Idle drop, so combat and the FSM agree.</summary>
-        public bool ShouldRelaxDueToPlayerIdle() => _companionAI?.IsOwnerIdle ?? false;
+        /// owner-AFK answer, which also drives its own Following → Idle drop, so combat and the FSM agree — and nothing
+        /// is threatening the owner, the party or this companion (CompanionAI.ShouldRelaxForIdleOwner).</summary>
+        public bool ShouldRelaxDueToPlayerIdle() => _companionAI?.ShouldRelaxForIdleOwner(_currentTarget) ?? false;
 
         private void SetFollowIntent(MovementIntent intent)
         {

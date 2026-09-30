@@ -102,7 +102,7 @@ namespace FiresCore.Npc
                     if (ZoneSystem.instance != null)
                     {
                         float groundHeight;
-                        if (ZoneSystem.instance.GetGroundHeight(candidate, out groundHeight))
+                        if (FiresCore.World.Surface.GroundNear(candidate, out groundHeight))
                             candidate.y = groundHeight;
                     }
                 }
@@ -330,7 +330,7 @@ namespace FiresCore.Npc
                 if (ZoneSystem.instance != null)
                 {
                     float groundHeight;
-                    if (ZoneSystem.instance.GetGroundHeight(targetPos, out groundHeight))
+                    if (FiresCore.World.Surface.GroundNear(targetPos, out groundHeight))
                         targetPos.y = groundHeight;
                 }
                 
@@ -389,7 +389,7 @@ namespace FiresCore.Npc
             if (ZoneSystem.instance != null)
             {
                 float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(targetPos, out groundHeight))
+                if (FiresCore.World.Surface.GroundNear(targetPos, out groundHeight))
                     targetPos.y = groundHeight;
             }
 
@@ -410,7 +410,7 @@ namespace FiresCore.Npc
                     if (ZoneSystem.instance != null)
                     {
                         float groundHeight;
-                        if (ZoneSystem.instance.GetGroundHeight(checkPos, out groundHeight))
+                        if (FiresCore.World.Surface.GroundNear(checkPos, out groundHeight))
                             checkPos.y = groundHeight;
                     }
 

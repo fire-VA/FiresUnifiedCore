@@ -11,9 +11,31 @@ namespace FiresCore.Classes
     /// </summary>
     public class ClassProgressState
     {
-        public const int CurrentSchema = 3;
+        // 4: talent ranks cost 1/2/3 points (RankCosts), no longer 1 each.
+        public const int CurrentSchema = 4;
 
         public int Schema = CurrentSchema;
+
+        /// <summary>
+        /// What each rank of a talent costs, rank 1 first (Fire, 2026-09-29: the Talents board's 1/2/3). Ranks past the table cost its
+        /// last entry. Core owns the table; FiresRPGClasses' board reads it.
+        /// </summary>
+        public static readonly int[] RankCosts = { 1, 2, 3 };
+
+        /// <summary>The points buying <paramref name="rank"/> (1-based) costs.</summary>
+        public static int RankCost(int rank)
+        {
+            if (rank < 1) return 0;
+            return RankCosts[Mathf.Min(rank, RankCosts.Length) - 1];
+        }
+
+        /// <summary>The points ranks 1..<paramref name="rank"/> cost together.</summary>
+        public static int CumulativeRankCost(int rank)
+        {
+            int total = 0;
+            for (int r = 1; r <= rank; r++) total += RankCost(r);
+            return total;
+        }
 
         public int Level = ProgressionEngine.FirstLevel;
         public long Xp;
@@ -37,7 +59,7 @@ namespace FiresCore.Classes
                 int spent = 0;
                 foreach (var tree in Talents.Values)
                     foreach (int rank in tree.Values)
-                        spent += rank;
+                        spent += CumulativeRankCost(rank);
                 return spent;
             }
         }
@@ -89,7 +111,7 @@ namespace FiresCore.Classes
             if (!Talents.TryGetValue(archetype, out var tree)) return 0;
 
             int refunded = 0;
-            foreach (int rank in tree.Values) refunded += rank;
+            foreach (int rank in tree.Values) refunded += CumulativeRankCost(rank);
             Talents.Remove(archetype);
 
             foreach (string nodeId in passiveNodeIdsInTree)
@@ -102,14 +124,15 @@ namespace FiresCore.Classes
             Talents.TryGetValue(archetype, out var tree) && tree.TryGetValue(nodeId, out int rank) ? rank : 0;
 
         /// <summary>
-        /// Buys one rank of a node. Returns false, changing nothing, when there are no points left or
-        /// the node is already at its maximum rank.
+        /// Buys one rank of a node for <see cref="RankCost"/> of that rank. Returns false, changing nothing, when there are not
+        /// enough points left or the node is already at its maximum rank.
         /// </summary>
         public bool TryBuyTalentRank(ArchetypeClass archetype, string nodeId, int maxRank, ProgressionRates rates)
         {
             if (maxRank < 1) return false;
-            if (TalentRank(archetype, nodeId) >= maxRank) return false;
-            if (UnspentSkillPoints(rates) < 1) return false;
+            int current = TalentRank(archetype, nodeId);
+            if (current >= maxRank) return false;
+            if (UnspentSkillPoints(rates) < RankCost(current + 1)) return false;
 
             if (!Talents.TryGetValue(archetype, out var tree))
             {
@@ -159,6 +182,26 @@ namespace FiresCore.Classes
             Attributes.TryGetValue(kind, out int points);
             Attributes[kind] = points + 1;
             return true;
+        }
+
+        /// <summary>
+        /// Brings a loaded record to <see cref="CurrentSchema"/>; call it at load, before any reconcile. A schema 3 record bought
+        /// every rank for 1 point: if its ranks no longer fit the points it has earned at 1/2/3 pricing, every talent and passive is
+        /// refunded once to re-spend (as the schema 2 migration did), instead of a Refund policy wiping the trees at every load.
+        /// Returns the points refunded (0 when the record still fits).
+        /// </summary>
+        public int UpgradeSchema(ProgressionRates rates)
+        {
+            if (Schema >= CurrentSchema) return 0;
+            int refunded = 0;
+            if (Schema == 3 && ProgressionEngine.IsOverspent(Level, ValorLevel, SpentSkillPoints, rates))
+            {
+                refunded = SpentSkillPoints;
+                Talents.Clear();
+                PassiveLoadout.Clear();
+            }
+            Schema = CurrentSchema;
+            return refunded;
         }
 
         /// <summary>

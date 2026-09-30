@@ -287,7 +287,7 @@ namespace FiresCore.Npc.Combat
                 var ai = character.GetComponent<BaseAI>();
                 if (ai == null) continue;
                 
-                var aiTarget = ai.GetTargetCreature();
+                var aiTarget = FiresCore.Npc.Combat.ThreatLevel.TargetOf(ai);
                 if (aiTarget == null) continue;
                 
                 // Calculate threat level based on who's being targeted

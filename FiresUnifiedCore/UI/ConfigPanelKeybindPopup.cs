@@ -65,6 +65,7 @@ namespace FiresCore.UI
 
         private void DrawKeybindPopupBody(int id)
         {
+            ApplyHiddenTint();
             int count = _keybindPopupConflicts.Count;
             GUILayout.Label(count == 1 ? "1 keybind conflict" : count + " keybind conflicts", ConfigSkin.Title);
             GUILayout.Label("More than one thing is listening for the same key. Fix one now, or keep it and never be asked again.",

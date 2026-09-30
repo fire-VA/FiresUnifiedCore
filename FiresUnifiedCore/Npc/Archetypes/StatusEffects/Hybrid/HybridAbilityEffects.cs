@@ -79,7 +79,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (BaseAI.IsEnemy(m_character, character)) continue;
+                if (!IsParty(character)) continue; // Fire: heals and buffs only the caster's party
                 
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
@@ -367,7 +367,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
             foreach (var character in characters)
             {
                 if (character == null || character.IsDead()) continue;
-                if (BaseAI.IsEnemy(m_character, character)) continue;
+                if (!IsParty(character)) continue; // Fire: heals and buffs only the caster's party
                 
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
@@ -1100,7 +1100,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid
             foreach (var character in characters)
             {
                 if (character == null || character.IsDead()) continue;
-                if (BaseAI.IsEnemy(m_character, character)) continue;
+                if (!IsParty(character)) continue; // Fire: heals and buffs only the caster's party
                 
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)

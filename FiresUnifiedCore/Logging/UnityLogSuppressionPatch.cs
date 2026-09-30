@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
@@ -39,6 +40,7 @@ namespace FiresCore.Logging
         private const string AsyncUploadFragment         = "AsyncResourceUpload failed";
         private const string RenderPathPassesFragment    = "custom render path shader needs to have at least 1 passes";
         private const string VideoMaterialFragment       = "Could not find material Hidden/Video";
+        private const string IntroCinematicFragment      = "Failed to play intro cinematic";
         private const string VideoPassFragment           = "Could not find video decode shader pass";
 
         private const double LimitExceededThrottleSeconds = 30.0;
@@ -47,6 +49,9 @@ namespace FiresCore.Logging
 
         private static readonly TimeSpan LimitExceededInterval =
             TimeSpan.FromSeconds(LimitExceededThrottleSeconds);
+
+        private static readonly Dictionary<string, int> _shaderBinaryFailures = new Dictionary<string, int>();
+        private static readonly HashSet<string> _reportedShaderBinaryNames = new HashSet<string>();
 
         private static int _suppressedShaderWarnings;
         private static int _suppressedMissingScriptWarnings;
@@ -139,12 +144,51 @@ namespace FiresCore.Logging
             }
         }
 
+        // Thousands of these are held back per session, and the count alone never said WHICH vanilla shaders the rip
+        // stripped. Tallying by the shader name inside the quotes turns the flood into one line per distinct shader,
+        // which is the list that identifies them. Names already reported are not repeated.
+        private static void TallyShaderBinaryFailure(string message)
+        {
+            string shaderName = ReadQuotedName(message);
+            if (shaderName == null) return;
+            _shaderBinaryFailures.TryGetValue(shaderName, out int count);
+            _shaderBinaryFailures[shaderName] = count + 1;
+        }
+
+        private static string ReadQuotedName(string message)
+        {
+            int open = message.IndexOf('\'');
+            if (open < 0) return null;
+            int close = message.IndexOf('\'', open + 1);
+            if (close <= open + 1) return null;
+            return message.Substring(open + 1, close - open - 1);
+        }
+
+        // Called from the material sweeps, which run after the bundles have loaded. Emits only names not printed yet,
+        // so a later bundle's failures still get reported without repeating the earlier ones.
+        internal static void EmitShaderBinaryFailureSummary()
+        {
+            if (_shaderBinaryFailures.Count == 0) return;
+
+            var fresh = new List<string>();
+            foreach (var failure in _shaderBinaryFailures)
+            {
+                if (!_reportedShaderBinaryNames.Add(failure.Key)) continue;
+                fresh.Add($"'{failure.Key}' x{failure.Value}");
+            }
+            if (fresh.Count == 0) return;
+
+            fresh.Sort(StringComparer.Ordinal);
+            Debug.Log($"{SummaryPrefix} shader binary-data missing for {fresh.Count} shader(s), held back from the log: {string.Join(", ", fresh)}");
+        }
+
         private static bool ShouldSuppress(string message, LogType type)
         {
             if (type == LogType.Warning && Contains(message, ShaderBinaryWarningFragment))
             {
                 if (++_suppressedShaderWarnings == 1)
                     Announce("shader binary-data warnings");
+                TallyShaderBinaryFailure(message);
                 return true;
             }
             if (type == LogType.Warning && Contains(message, MissingScriptFragment))
@@ -178,7 +222,8 @@ namespace FiresCore.Logging
                 && (Contains(message, AsyncUploadFragment)
                     || Contains(message, RenderPathPassesFragment)
                     || Contains(message, VideoMaterialFragment)
-                    || Contains(message, VideoPassFragment)))
+                    || Contains(message, VideoPassFragment)
+                    || Contains(message, IntroCinematicFragment)))
             {
                 if (++_suppressedHeadlessRenderErrors == 1)
                     Announce("vanilla render/video errors a headless server cannot avoid (no GPU)");

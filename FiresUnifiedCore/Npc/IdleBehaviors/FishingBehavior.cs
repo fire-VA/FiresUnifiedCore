@@ -328,7 +328,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     Vector3 shoreCandidate = waterCandidate + toOrigin * ShoreBackDist;
 
                     if (ZoneSystem.instance != null &&
-                        ZoneSystem.instance.GetGroundHeight(shoreCandidate, out float groundY))
+                        FiresCore.World.Surface.GroundNear(shoreCandidate, out float groundY))
                     {
                         shoreCandidate.y = groundY;
                     }
@@ -374,7 +374,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         Mathf.Cos(rad) * radius, 0f, Mathf.Sin(rad) * radius);
 
                     if (ZoneSystem.instance != null &&
-                        ZoneSystem.instance.GetGroundHeight(shoreCandidate, out float groundY))
+                        FiresCore.World.Surface.GroundNear(shoreCandidate, out float groundY))
                     {
                         shoreCandidate.y = groundY;
                     }

@@ -46,6 +46,12 @@ namespace FiresCore.Npc
         // Cadence of the offline-companion refresh from the census.
         private const float AllKnownScanInterval = 5f;
 
+        // Vanilla loads zones every 0.1 s, at most one new zone per reference point per pass; the companions' keep-alive ran every
+        // frame instead (R39 dedi: 44 ms in one frame at a join). Every position is still visited each pass: CreateLocalZones also
+        // pokes the existing zones, which is what keeps them from expiring.
+        private const float KeepAliveInterval = 0.1f;
+        private static float _keepAliveTimer;
+
         // Reusable lists to avoid GC churn — gathered fresh every tick.
         private static readonly List<Vector3> _localCompanionPositions = new List<Vector3>();
         private static readonly List<Vector3> _tempPositions = new List<Vector3>();
@@ -164,11 +170,15 @@ namespace FiresCore.Npc
             // servers, so they still get coverage.
             if (ZNet.instance != null && ZNet.instance.IsServer())
             {
+                _keepAliveTimer += Time.deltaTime;
+                bool keepAliveDue = _keepAliveTimer >= KeepAliveInterval;
+                if (keepAliveDue) _keepAliveTimer = 0f;
+
                 // Per-online-peer positions (always-on; offline players drop
                 // out via ZNet.Disconnect cleanup).
                 foreach (var kvp in _peerCompanionPositions)
                 {
-                    if (kvp.Value.Count > 0)
+                    if (keepAliveDue && kvp.Value.Count > 0)
                         LoadZonesForPositions(kvp.Value);
                 }
 
@@ -187,7 +197,7 @@ namespace FiresCore.Npc
                         RefreshAllKnownCompanionPositions();
                     }
 
-                    if (_allKnownCompanionPositions.Count > 0)
+                    if (keepAliveDue && _allKnownCompanionPositions.Count > 0)
                         LoadZonesForPositions(_allKnownCompanionPositions);
                 }
                 else if (_allKnownCompanionPositions.Count > 0)

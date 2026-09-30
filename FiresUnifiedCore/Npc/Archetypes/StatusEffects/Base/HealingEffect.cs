@@ -119,9 +119,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Base
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                
-                // Only heal allies (same faction or tamed by same owner)
-                if (BaseAI.IsEnemy(m_character, character)) continue;
+
+                // Fire: heals only the caster's party (it used to heal anything not hostile, deer and strangers too)
+                if (!IsParty(character)) continue;
                 
                 float distance = Vector3.Distance(center, character.transform.position);
                 if (distance <= AreaHealRange)

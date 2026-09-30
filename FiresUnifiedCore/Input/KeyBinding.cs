@@ -48,6 +48,8 @@ namespace FiresCore.Input
             string description = null)
         {
             string desc = string.IsNullOrEmpty(description) ? name : description;
+            section = SafeConfigName(section, "section");
+            name = SafeConfigName(name, "key");
             Config = config;
             Section = section;
             Name = name;
@@ -56,6 +58,26 @@ namespace FiresCore.Input
             Shift = config.Bind(section, name + ShiftEntrySuffix, defaultShift, "Require Shift held with " + name + ".");
             Alt   = config.Bind(section, name + AltEntrySuffix,   defaultAlt,   "Require Alt held with " + name + ".");
             KeybindRegistry.Register(this);
+        }
+
+        // BepInEx refuses these in a section or key name and throws from Bind (R77: a VikHavn key with an apostrophe aborted that mod's
+        // setup on all three peers). A binding name comes from the calling mod, so Core cleans it instead of throwing (0.2.204).
+        private static readonly char[] RefusedConfigChars = { '=', '\n', '\t', '\\', '"', '\'', '[', ']' };
+
+        /// <summary>
+        /// <paramref name="raw"/> with every character BepInEx refuses in a config section or key replaced by '_' (warned once per
+        /// name); unchanged when clean.
+        /// </summary>
+        public static string SafeConfigName(string raw, string what)
+        {
+            if (string.IsNullOrEmpty(raw) || raw.IndexOfAny(RefusedConfigChars) < 0) return raw;
+            var chars = raw.ToCharArray();
+            for (int i = 0; i < chars.Length; i++)
+                if (System.Array.IndexOf(RefusedConfigChars, chars[i]) >= 0) chars[i] = '_';
+            string safe = new string(chars);
+            UnityEngine.Debug.LogWarning($"[KeyBinding] config {what} name '{raw.Replace("\n", "\\n").Replace("\t", "\\t")}' has a character BepInEx refuses " +
+                                         $"(= \\n \\t \\ \" ' [ ]); bound as '{safe}' instead");
+            return safe;
         }
 
         // Overload, never an extra optional parameter: other Fires mods ship compiled against the 8-argument
@@ -96,16 +118,16 @@ namespace FiresCore.Input
         // Gated centrally: while a Fires text field is focused, no KeyBinding hotkey fires (the keys are being
         // typed). Raw UnityEngine.Input can't be Harmony-patched, so every KeyBinding-based hotkey checks here.
         public bool IsPressed()
-            => !FiresInputBlock.IsCapturing && UnityEngine.Input.GetKeyDown(Key.Value) && ModifiersMatch();
+            => !FiresInputBlock.IsCapturing && FiresKeys.GetKeyDown(Key.Value) && ModifiersMatch();
 
         public bool IsHeld()
-            => !FiresInputBlock.IsCapturing && UnityEngine.Input.GetKey(Key.Value) && ModifiersMatch();
+            => !FiresInputBlock.IsCapturing && FiresKeys.GetKey(Key.Value) && ModifiersMatch();
 
         private bool ModifiersMatch()
         {
-            bool ctrlHeld  = UnityEngine.Input.GetKey(KeyCode.LeftControl) || UnityEngine.Input.GetKey(KeyCode.RightControl);
-            bool shiftHeld = UnityEngine.Input.GetKey(KeyCode.LeftShift)   || UnityEngine.Input.GetKey(KeyCode.RightShift);
-            bool altHeld   = UnityEngine.Input.GetKey(KeyCode.LeftAlt)     || UnityEngine.Input.GetKey(KeyCode.RightAlt);
+            bool ctrlHeld  = FiresKeys.GetKey(KeyCode.LeftControl) || FiresKeys.GetKey(KeyCode.RightControl);
+            bool shiftHeld = FiresKeys.GetKey(KeyCode.LeftShift)   || FiresKeys.GetKey(KeyCode.RightShift);
+            bool altHeld   = FiresKeys.GetKey(KeyCode.LeftAlt)     || FiresKeys.GetKey(KeyCode.RightAlt);
             return ctrlHeld == Ctrl.Value && shiftHeld == Shift.Value && altHeld == Alt.Value;
         }
 

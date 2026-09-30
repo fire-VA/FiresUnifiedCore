@@ -635,6 +635,9 @@ namespace FiresCore.Npc.IdleBehaviors
         /// Called when the behavior completes normally.
         /// Clears command priority and allows normal AI to resume.
         /// </summary>
+        /// <summary>Set before <see cref="Complete"/> when the run failed: a commanded run then reports FailCommand(reason).</summary>
+        protected string FailureReason { get; set; }
+
         protected virtual void Complete()
         {
             bool wasCommand = IsCommandInitiated;
@@ -654,10 +657,13 @@ namespace FiresCore.Npc.IdleBehaviors
                 var combatMovement = Companion?.GetComponent<CompanionCombatMovement>();
                 combatMovement?.ClearCommandPriority();
                 
-                // Also notify state controller
+                // Also notify state controller: a run that ended with a FailureReason is a failed command, never "Success"
+                // (R67 gather: "couldn't reach the tree in 23 s", then "CompleteCommand … Success" with the bag unchanged).
                 var stateController = Companion?.GetComponent<Movement.CompanionStateController>();
-                stateController?.CompleteCommand();
+                if (FailureReason != null) stateController?.FailCommand(FailureReason);
+                else stateController?.CompleteCommand();
             }
+            FailureReason = null;
    
             if (CompanionIdleBehavior.VerboseLogging)
                 Debug.Log($"[{BehaviorName}] Completed for {Companion?.companionName}");

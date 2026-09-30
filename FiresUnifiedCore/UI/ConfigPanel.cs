@@ -116,6 +116,27 @@ namespace FiresCore.UI
 
         public static bool IsOpen => _instance != null && _instance._open;
 
+        /// <summary>
+        /// True once the window has been shown this session. The host object exists from the first config
+        /// registration at load, so it cannot tell a first (cold) open from a later (warm) one; ui_test reads this.
+        /// </summary>
+        public static bool EverOpened { get; private set; }
+
+        // Open timing ([ghost] for [perf], 2026-09-28: ui_test measured a 740 ms open): each open logs its Show phases,
+        // then the IMGUI time until the first Repaint that drew the window.
+        private readonly System.Diagnostics.Stopwatch _openClock = new System.Diagnostics.Stopwatch();
+        private string _openPhases;
+        private double _openGuiMs;
+        private bool _openDrawPending;
+        private int _openCount;
+        // R5 ([perf]): the cold open's first frame took 491 ms of which Show was 6 and IMGUI 20, so the rest of that frame
+        // is split too: when this LateUpdate, the canvases, the first camera and the first OnGUI pass came, garbage
+        // collections, and how many frames went by.
+        private double _openLateMs, _openCanvasMs, _openCameraMs, _openFirstGuiMs;
+        private int _openFrame, _openGcCount;
+        private Canvas.WillRenderCanvases _openCanvasHook;
+        private Camera.CameraCallback _openCameraHook;
+
         private bool _open;
         private Rect _rect = new Rect(-1f, -1f, 0f, 0f);
         private Vector2 _size = DefaultSizeBase;
@@ -175,6 +196,7 @@ namespace FiresCore.UI
             if (!_cmdRegistered) { try { RegisterCommands(); _cmdRegistered = true; } catch { } }
             WatchVanillaControlsMenu();
             LogKeybindConflictsOnce();
+            ArmPrewarm();
             if (_capturing) { PollKeyCapture(); return; }
 
             if (HotkeyPressed()) ToggleInternal();
@@ -213,15 +235,71 @@ namespace FiresCore.UI
         {
             try
             {
-                RebuildDiscovery();
+                bool cold = !EverOpened;
+                EverOpened = true;
+                _openCount++;
+                _openClock.Restart();
+                RefreshDiscovery();
+                double discovery = _openClock.Elapsed.TotalMilliseconds;
                 _open = true;
                 InputBlock.Block(true);
                 HideGameUi(true);
+                double hud = _openClock.Elapsed.TotalMilliseconds;
                 ConfigGamePause.Apply(true);
-                FiresConfigUI.Log.LogInfo($"ConfigPanel opened: {CfgDiscovery.ModNames.Count} mod(s), {CfgDiscovery.Descriptors.Count} entries.");
+                double pause = _openClock.Elapsed.TotalMilliseconds;
                 OnWindowOpenedCheckKeybinds();
+                double keybinds = _openClock.Elapsed.TotalMilliseconds;
+                _openPhases = string.Format(CultureInfo.InvariantCulture,
+                    "open #{0} ({1}): {2} mod(s), {3} entries; Show {4:0} ms (discovery {5:0}, input+HUD {6:0}, pause {7:0}, keybind check {8:0}{9})",
+                    _openCount, cold ? "cold" : "warm", CfgDiscovery.ModNames.Count, CfgDiscovery.Descriptors.Count, keybinds,
+                    discovery, hud - discovery, pause - hud, keybinds - pause, _keybindPopupOpen ? ", conflicts popup up" : "");
+                _openGuiMs = 0;
+                _openLateMs = _openCanvasMs = _openCameraMs = _openFirstGuiMs = -1;
+                _openFrame = Time.frameCount;
+                _openGcCount = GC.CollectionCount(0);
+                HookFontRebuilds();
+                _openFontRebuilds = s_fontRebuilds;
+                HookOpenFrame(true);
+                _openDrawPending = true;
             }
             catch (Exception ex) { FiresConfigUI.Log.LogError("ConfigPanel.Show failed: " + ex); }
+        }
+
+        private void LateUpdate()
+        {
+            if (_openDrawPending && _openLateMs < 0) _openLateMs = _openClock.Elapsed.TotalMilliseconds;
+        }
+
+        // The canvas build and the first camera of the timed frame, each noted once.
+        private void HookOpenFrame(bool on)
+        {
+            if (_openCanvasHook == null) _openCanvasHook = () => { if (_openCanvasMs < 0) _openCanvasMs = _openClock.Elapsed.TotalMilliseconds; };
+            if (_openCameraHook == null) _openCameraHook = _ => { if (_openCameraMs < 0) _openCameraMs = _openClock.Elapsed.TotalMilliseconds; };
+            Canvas.willRenderCanvases -= _openCanvasHook;
+            Camera.onPreCull -= _openCameraHook;
+            if (!on) return;
+            Canvas.willRenderCanvases += _openCanvasHook;
+            Camera.onPreCull += _openCameraHook;
+        }
+
+        private static string At(double ms) => ms < 0 ? "-" : ms.ToString("0", CultureInfo.InvariantCulture);
+
+        // Called at the end of every OnGUI pass while an open is being timed: sums the IMGUI passes (layout, input,
+        // repaint) until the first Repaint that drew the window, then writes the open's one line.
+        private void TimeFirstDraw(double passMs)
+        {
+            if (!_openDrawPending) return;
+            _openGuiMs += passMs;
+            if (Event.current == null || Event.current.type != EventType.Repaint) return;
+            _openDrawPending = false;
+            HookOpenFrame(false);
+            FiresConfigUI.Log.LogInfo(string.Format(CultureInfo.InvariantCulture,
+                "ConfigPanel {0}; first frame drawn {1:0} ms after Show began, of which IMGUI {2:0} ms "
+                + "(after Show: LateUpdate at {3}, canvases at {4}, first camera at {5}, first OnGUI at {6} ms; "
+                + "{7} frame(s) later, {8} GC collection(s), {9} font atlas rebuild(s)).",
+                _openPhases, _openClock.Elapsed.TotalMilliseconds, _openGuiMs, At(_openLateMs), At(_openCanvasMs),
+                At(_openCameraMs), At(_openFirstGuiMs), Time.frameCount - _openFrame, GC.CollectionCount(0) - _openGcCount,
+                s_fontRebuilds - _openFontRebuilds));
         }
 
         public void Hide()
@@ -232,6 +310,7 @@ namespace FiresCore.UI
             SettingEditWindow.Close();
             _open = false;
             _editBuf.Clear();
+            if (_openDrawPending) { _openDrawPending = false; HookOpenFrame(false); }
 
             InputBlock.Block(false);
             HideGameUi(false);
@@ -239,11 +318,25 @@ namespace FiresCore.UI
             Input.FiresInputBlock.Release(_textToken);
         }
 
+        // On open only a changed set of configs is discovered again (CfgDiscovery.RebuildIfChanged).
+        private void RefreshDiscovery()
+        {
+            if (CfgDiscovery.RebuildIfChanged()) IndexDiscovery();
+            else if (string.IsNullOrEmpty(_mod) || CfgDiscovery.SectionsOf(_mod).Count == 0) SelectFirstMod();
+        }
+
         private void RebuildDiscovery()
         {
             CfgDiscovery.Rebuild();
+            IndexDiscovery();
+        }
+
+        // New descriptors: their id map, keybind index and row sizes start afresh.
+        private void IndexDiscovery()
+        {
             BuildIdMap();
             BuildKeybindIndex();
+            ForgetRowSizes();
             if (string.IsNullOrEmpty(_mod) || CfgDiscovery.SectionsOf(_mod).Count == 0) SelectFirstMod();
         }
 
@@ -304,9 +397,12 @@ namespace FiresCore.UI
         // ---------------------------------------------------------------- draw
         private void OnGUI()
         {
-            if (!_open) { ReleaseResizeCapture(); return; }
+            _hiddenPass = false;
+            if (!_open) { ReleaseResizeCapture(); PrewarmFonts(); HiddenDraw(); return; }
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
+            double passStart = _openDrawPending ? _openClock.Elapsed.TotalMilliseconds : 0;
+            if (_openDrawPending && _openFirstGuiMs < 0) _openFirstGuiMs = passStart;
 
             // Valheim's own OnGUI can leave GUI.matrix scaled; inheriting it draws the window off-screen
             // (the documented "renders but invisible" trap). Draw in identity space, restore after.
@@ -315,35 +411,45 @@ namespace FiresCore.UI
             GUI.matrix = Matrix4x4.identity;
             try
             {
-                ConfigSkin.Refresh(WindowAlpha, ConfigWindowScale.Factor);
-                FiresRoundedSkin.ResetTooltip();
-
-                if (_rect.x < 0f)
-                {
-                    _size = StartingSize(DesignWidth, DesignHeight);
-                    var startPixels = ConfigWindowScale.Px(_size);
-                    _rect = new Rect((Screen.width - startPixels.x) / 2f,
-                        Mathf.Max(ScreenPadding, (Screen.height - startPixels.y) / 2f - ScreenPadding),
-                        startPixels.x, startPixels.y);
-                }
-
-                // _size is the size the user dragged to, held in DESIGN units so raising the zoom grows the
-                // window with its contents. It is never written back from this clamp, or every A+/A- round
-                // trip would eat a little more of it.
-                _rect.width = Mathf.Clamp(Px(_size.x), MinSize.x, Screen.width - ScreenPadding);
-                _rect.height = Mathf.Clamp(Px(_size.y), MinSize.y, Screen.height - ScreenPadding);
-
-                _rect = GUILayout.Window(WindowId, _rect, DrawWindow, "", ConfigSkin.Window);
-                _rect.x = Mathf.Clamp(_rect.x, 0f, Screen.width - Px(OnScreenMarginBase));
-                _rect.y = Mathf.Clamp(_rect.y, 0f, Screen.height - Px(OnScreenMarginBase));
-
+                DrawMainWindow();
                 FiresRoundedSkin.DrawPendingTooltip(ConfigSkin.Tip);
                 SettingEditWindow.Draw(_editWindowWidget, _editWindowReset);
                 ConfigPopup.Draw();
                 DrawKeybindPopup();
                 CommitOnFocusChange();
             }
-            finally { GUI.matrix = matrix; }
+            finally
+            {
+                GUI.matrix = matrix;
+                if (_openDrawPending) TimeFirstDraw(_openClock.Elapsed.TotalMilliseconds - passStart);
+            }
+        }
+
+        // The skin at the current scale and the main window at its size and place; shared by OnGUI and the hidden
+        // prewarm draw (ConfigPanelPrewarm.HiddenDraw).
+        private void DrawMainWindow()
+        {
+            ConfigSkin.Refresh(WindowAlpha, ConfigWindowScale.Factor);
+            FiresRoundedSkin.ResetTooltip();
+
+            if (_rect.x < 0f)
+            {
+                _size = StartingSize(DesignWidth, DesignHeight);
+                var startPixels = ConfigWindowScale.Px(_size);
+                _rect = new Rect((Screen.width - startPixels.x) / 2f,
+                    Mathf.Max(ScreenPadding, (Screen.height - startPixels.y) / 2f - ScreenPadding),
+                    startPixels.x, startPixels.y);
+            }
+
+            // _size is the size the user dragged to, held in DESIGN units so raising the zoom grows the
+            // window with its contents. It is never written back from this clamp, or every A+/A- round
+            // trip would eat a little more of it.
+            _rect.width = Mathf.Clamp(Px(_size.x), MinSize.x, Screen.width - ScreenPadding);
+            _rect.height = Mathf.Clamp(Px(_size.y), MinSize.y, Screen.height - ScreenPadding);
+
+            _rect = GUILayout.Window(WindowId, _rect, DrawWindow, "", ConfigSkin.Window);
+            _rect.x = Mathf.Clamp(_rect.x, 0f, Screen.width - Px(OnScreenMarginBase));
+            _rect.y = Mathf.Clamp(_rect.y, 0f, Screen.height - Px(OnScreenMarginBase));
         }
 
         // Scaling shrinks the space the window has to live in, so the first-open size is capped as a share of
@@ -354,6 +460,7 @@ namespace FiresCore.UI
 
         private void DrawWindow(int id)
         {
+            ApplyHiddenTint();
             DrawHeader();
             GUILayout.Space(4f);
 
@@ -509,7 +616,7 @@ namespace FiresCore.UI
             SettingEditWindow.Close();
             GUIUtility.keyboardControl = 0;
             if (_filesMode) _filesEditor.Refresh();
-            else CfgDiscovery.Rebuild();
+            else RebuildDiscovery();
         }
 
         private void CollapseAll(bool collapsed)
@@ -521,6 +628,7 @@ namespace FiresCore.UI
                 if (collapsed) _collapsed.Add(key);
                 else _collapsed.Remove(key);
             }
+            InvalidateRowPositions();
         }
 
         // ---------------------------------------------------------------- left nav (mods -> section index)
@@ -557,6 +665,7 @@ namespace FiresCore.UI
                         string key = CollapseKey(mod, section);
                         _collapsed.Remove(key);
                         _pendingJump = key;
+                        InvalidateRowPositions();
                     }
                 }
             }
@@ -567,6 +676,7 @@ namespace FiresCore.UI
         private void DrawBody(float height)
         {
             _bodyScroll = GUILayout.BeginScrollView(_bodyScroll, GUILayout.Height(height));
+            BeginRowCulling(height);
             if (IsSearching) DrawSearchResults();
             else if (_mod != null) DrawModSections();
             GUILayout.EndScrollView();
@@ -597,7 +707,7 @@ namespace FiresCore.UI
                     GUILayout.Space(3f);
                     GUILayout.Label("<b>" + group + "</b>", ConfigSkin.SectionBar);
                 }
-                DrawRow(descriptor);
+                DrawRowCulled(descriptor);
             }
             if (_searchResults.Count == 0) GUILayout.Label("No matches.", ConfigSkin.Label);
         }
@@ -622,6 +732,7 @@ namespace FiresCore.UI
                 if (GUILayout.Button(barText, ConfigSkin.SectionBar))
                 {
                     if (!_collapsed.Remove(key)) _collapsed.Add(key);
+                    InvalidateRowPositions();
                 }
                 if (Event.current.type == EventType.Repaint && _pendingJump == key)
                 {
@@ -633,7 +744,7 @@ namespace FiresCore.UI
                 foreach (var descriptor in rows)
                 {
                     if (IsRowHidden(descriptor)) continue;
-                    DrawRow(descriptor);
+                    DrawRowCulled(descriptor);
                 }
             }
             if (sections.Count == 0) GUILayout.Label("No settings.", ConfigSkin.Label);
@@ -1001,7 +1112,7 @@ namespace FiresCore.UI
             ConfigPopup.AnchorToLastRect(id);
 
             var previousTint = GUI.color;
-            GUI.color = color;
+            GUI.color = previousTint * color;
             GUILayout.Label(GUIContent.none, ConfigSkin.Swatch, _swatchSizeOptions);
             GUI.color = previousTint;
         }
@@ -1023,7 +1134,7 @@ namespace FiresCore.UI
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(ColorToHex(updated), ConfigSkin.Field, ScaledLayout.Width(Px(90f)));
                 var previousTint = GUI.color;
-                GUI.color = updated;
+                GUI.color = previousTint * updated;
                 GUILayout.Label(GUIContent.none, ConfigSkin.Swatch, _swatchRowOptions);
                 GUI.color = previousTint;
                 GUILayout.EndHorizontal();

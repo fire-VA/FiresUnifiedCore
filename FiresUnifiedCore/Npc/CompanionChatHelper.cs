@@ -83,36 +83,26 @@ namespace FiresCore.Npc
         public static void SaySpeechBubble(CompanionController companion, string message, float duration = 5f, bool large = false)
         {
             if (companion == null || string.IsNullOrEmpty(message)) return;
-            // Skip during local player respawn / loading screen — Chat.SetNpcText
-            // broadcasts via ZRoutedRpc to nearby clients, and RPCs during
-            // IsTeleporting=true deadlock the zone stream. Drop the bubble; the
-            // companion will say something else next time.
+            // Skip during local player respawn / loading screen: the bubble goes out as a routed RPC (Speech.Send), and RPCs
+            // during IsTeleporting=true deadlock the zone stream. Drop the bubble; the companion will say something else next time.
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
             if (!ShouldSendMessage(companion, message)) return;
 
-            // Only show to owner
+            // The owner's peer speaks for the companion; everyone within range sees it (0.2.184: before, only the owner did).
             var owner = companion.GetOwner();
             if (owner == null || owner != Player.m_localPlayer) return;
 
-            if (Chat.instance == null) return;
-            
             try
             {
                 // Wrap message with TMP size tag to reduce font size
                 // large=false uses smaller size, large=true uses slightly larger
                 int fontSize = large ? CHAT_BUBBLE_FONT_SIZE + 4 : CHAT_BUBBLE_FONT_SIZE;
                 string formattedMessage = $"<size={fontSize}>{message}</size>";
-                
-                Chat.instance.SetNpcText(
-                    companion.gameObject,
-                    Vector3.up * 2f,    // Offset above head
-                    20f,                // Cull distance
-                    duration,           // TTL
-                    "",                 // No topic
-                    formattedMessage,
-                    false               // Don't use built-in large style, we control size via TMP tags
-                );
-                
+
+                // Offset 2 m above the head, cull 20 m, TTL = duration.
+                if (!Speech.Send(companion.gameObject, formattedMessage, duration, 20f, 2f)) return;
+                Debug.Log($"[CompanionChatHelper] {companion.companionName} says \"{message}\" (to everyone within 20 m)");
+
                 RecordMessageSent(companion, message);
             }
             catch (System.Exception ex)
@@ -285,8 +275,6 @@ namespace FiresCore.Npc
             _activeStatusBubbles[companionId] = bubbleExpiry;
             _activeBubblePositions[companionId] = companionPos;
             
-            if (Chat.instance == null) return;
-            
             try
             {
                 // Get station context for this companion (if set)
@@ -306,15 +294,9 @@ namespace FiresCore.Npc
                 // Wrap with TMP size tag for smaller font
                 string formattedText = $"<size={CHAT_BUBBLE_FONT_SIZE}>{displayText}</size>";
                 
-                Chat.instance.SetNpcText(
-                    companion.gameObject,
-                    Vector3.up * 2.2f,    // Slightly higher offset
-                    25f,                  // Slightly larger cull distance
-                    StatusUpdateInterval - 0.5f,  // Display until next update
-                    "",                   // No topic
-                    formattedText,
-                    false                 // Not large text
-                );
+                // 2.2 m up (slightly higher), cull 25 m, shown until the next update; routed to everyone within range.
+                if (Speech.Send(companion.gameObject, formattedText, StatusUpdateInterval - 0.5f, 25f, 2.2f))
+                    Debug.Log($"[CompanionChatHelper] {companion.companionName} status \"{displayText}\" (to everyone within 25 m)");
             }
             catch (System.Exception ex)
             {
@@ -334,6 +316,19 @@ namespace FiresCore.Npc
         /// - Uses kiln-specific messages (wood/charcoal) instead of smelter messages (ore/metal)
         /// - Cleans up internal Switch names like "m_addWoodSwitch"
         /// </summary>
+        /// <summary>
+        /// The companions' chatter for a status ("Walking to Beech", "Adding ore to smelter" …): the line a companion's bubble would
+        /// show, context-aware and cycled. For any body (the FDT bot's intent bubbles: Speech.Bubble).
+        /// </summary>
+        public static string ChatterFor(string status, StationContext context = StationContext.None) =>
+            ConvertStatusToIdleChatter(status, context);
+
+        /// <summary>One line of <paramref name="lines"/> (e.g. a <see cref="Phrases"/> pool), without repeating the last few of <paramref name="category"/>.</summary>
+        public static string PickLine(string category, string[] lines) => GetCycledMessage(category ?? "", lines);
+
+        /// <summary>One idle-chatter line (<see cref="Phrases.Idle"/>, cycled).</summary>
+        public static string IdleLine() => GetCycledMessage("Idle", Phrases.Idle);
+
         private static string ConvertStatusToIdleChatter(string technicalStatus, StationContext context = StationContext.None)
         {
             if (string.IsNullOrEmpty(technicalStatus)) return technicalStatus;
@@ -918,21 +913,12 @@ namespace FiresCore.Npc
             _activeStatusBubbles.Remove(companionId);
             _activeBubblePositions.Remove(companionId);
             
-            // Clear the NPC text by setting empty text with very short duration
-            if (Chat.instance != null)
+            // Clear the NPC text by setting empty text with very short duration, on every client that shows it. Only the owner's
+            // peer sent it, so only the owner's peer clears it.
+            var owner = companion.GetOwner();
+            if (owner != null && owner == Player.m_localPlayer)
             {
-                try
-                {
-                    Chat.instance.SetNpcText(
-                        companion.gameObject,
-                        Vector3.up * 2.2f,
-                        1f,
-                        0.01f,  // Very short TTL to clear immediately
-                        "",
-                        "",
-                        false
-                    );
-                }
+                try { Speech.Send(companion.gameObject, "", 0.01f, 1f, 2.2f); }
                 catch { }
             }
         }

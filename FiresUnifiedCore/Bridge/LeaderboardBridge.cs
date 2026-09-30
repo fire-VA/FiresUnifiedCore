@@ -40,6 +40,10 @@ namespace FiresCore.Bridge
         public static void SetSkillLevel(string ownerKey, string playerName, string skill, int level)
             => LeaderboardRepository.SetSkillLevel(ownerKey, playerName, skill, level);
 
+        /// <summary>Latest-wins levels for a batch of skills, written in one vault round trip.</summary>
+        public static void SetSkillLevels(string ownerKey, string playerName, IList<KeyValuePair<string, int>> levels)
+            => LeaderboardRepository.SetSkillLevels(ownerKey, playerName, levels);
+
         public static void RecordDeath(string ownerKey, string playerName)
             => LeaderboardRepository.RecordDeath(ownerKey, playerName);
 

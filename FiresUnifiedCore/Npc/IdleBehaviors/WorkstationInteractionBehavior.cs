@@ -360,7 +360,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (ZoneSystem.instance != null)
                 {
                     float groundHeight;
-                    if (ZoneSystem.instance.GetGroundHeight(_workPosition, out groundHeight))
+                    if (FiresCore.World.Surface.GroundNear(_workPosition, out groundHeight))
                     {
                         teleportPos.y = groundHeight + 0.1f;
                     }
@@ -904,7 +904,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (ZoneSystem.instance != null)
             {
                 float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(workPos, out groundHeight))
+                if (FiresCore.World.Surface.GroundNear(workPos, out groundHeight))
                 {
                     workPos.y = groundHeight;
                 }

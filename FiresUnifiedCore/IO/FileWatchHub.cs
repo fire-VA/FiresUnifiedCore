@@ -80,6 +80,12 @@ namespace FiresCore.IO
         private static readonly Dictionary<FileSystemWatcher, Registration> Registrations = new Dictionary<FileSystemWatcher, Registration>();
         private static readonly Dictionary<string, List<Registration>> ByDirectory = new Dictionary<string, List<Registration>>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, DirectoryChangeWatch> Watches = new Dictionary<string, DirectoryChangeWatch>(StringComparer.OrdinalIgnoreCase);
+
+        // A folder inside a recursively watched folder needs no handle of its own: the ancestor's notification already
+        // carries its events. This maps each folder that DOES hold a handle to the watched folders underneath it that
+        // ride on it, so OnChange can re-base a path and hand it to those registrations as if their own watch saw it.
+        // Without this the stack opened one handle - and one thread - per folder even when one already covered twenty.
+        private static readonly Dictionary<string, List<string>> CoveredByRoot = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         private static readonly HashSet<string> Warned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static readonly AutoResetEvent ChangeSignal = new AutoResetEvent(false);
         private static readonly byte[] FingerprintBuffer = new byte[FingerprintBufferBytes];
@@ -96,6 +102,7 @@ namespace FiresCore.IO
         private static Action<string> _warn = _ => { };
         private static bool _installed;
         private static bool _enabled = true;
+        private static bool _foldIntoConfigRoot;
         private static float _intervalSeconds = 2f;
         private static long _delivered;
         private static long _unchangedRewrites;
@@ -121,6 +128,26 @@ namespace FiresCore.IO
         {
             get => _intervalSeconds;
             set => _intervalSeconds = Math.Max(MinimumIntervalSeconds, value);
+        }
+
+        // Watches the whole config folder from one recursive handle instead of one per watched subfolder.
+        // At rest this is free either way - a notification handle is event-driven, so an idle 4 GB tree costs
+        // exactly what an idle 12 MB one does. It only differs while something is WRITING a lot inside the
+        // tree: every write anywhere under config then has to be decoded and matched, and a burst big enough
+        // to fill the 64 KB notification buffer overflows it, which forces a refresh on every watcher riding
+        // that handle rather than only the ones near the churn.
+        public static bool FoldIntoConfigRoot
+        {
+            get => _foldIntoConfigRoot;
+            set
+            {
+                lock (Gate)
+                {
+                    if (_foldIntoConfigRoot == value) return;
+                    _foldIntoConfigRoot = value;
+                    RebuildWatches();
+                }
+            }
         }
 
         public static bool Install(Harmony harmony, Action<string> log, Action<string> warn)
@@ -177,8 +204,10 @@ namespace FiresCore.IO
                 if (!_installed) return null;
                 if (!_enabled) return $"off: {Registrations.Count} watchers get no changes";
                 int recursive = Watches.Values.Count(watch => watch.Recursive);
+                int covered = CoveredByRoot.Values.Sum(list => list.Count);
                 long unchanged = Interlocked.Read(ref _unchangedRewrites);
-                return $"{Registrations.Count} watchers on {Watches.Count} folders ({recursive} with subfolders), " +
+                return $"{Registrations.Count} watchers on {Watches.Count} folders ({recursive} with subfolders" +
+                       (covered > 0 ? $", {covered} folded into a parent" : string.Empty) + "), " +
                        $"{Interlocked.Read(ref _delivered)} changes delivered" +
                        (unchanged > 0 ? $", {unchanged} unchanged {(unchanged == 1 ? "rewrite" : "rewrites")} held back" : string.Empty) +
                        $", every {_intervalSeconds:0.##} s";
@@ -305,13 +334,26 @@ namespace FiresCore.IO
                 foreach (KeyValuePair<string, List<Registration>> folder in ByDirectory)
                     wanted[folder.Key] = folder.Value.Any(registration => registration.Recursive);
 
+            if (_enabled) AddConfigRootFold(wanted);
+
+            // Anything inside a recursively watched folder rides on that folder's handle instead of opening one.
+            var roots = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            CoveredByRoot.Clear();
+            foreach (KeyValuePair<string, bool> folder in wanted)
+            {
+                string root = RecursiveAncestorOf(folder.Key, wanted);
+                if (root == null) { roots[folder.Key] = folder.Value; continue; }
+                if (!CoveredByRoot.TryGetValue(root, out List<string> covered)) CoveredByRoot[root] = covered = new List<string>();
+                covered.Add(folder.Key);
+            }
+
             foreach (string directory in Watches.Keys.ToList())
             {
-                if (wanted.TryGetValue(directory, out bool recursive) && recursive == Watches[directory].Recursive) continue;
+                if (roots.TryGetValue(directory, out bool recursive) && recursive == Watches[directory].Recursive) continue;
                 Watches[directory].Stop();
                 Watches.Remove(directory);
             }
-            foreach (KeyValuePair<string, bool> folder in wanted)
+            foreach (KeyValuePair<string, bool> folder in roots)
             {
                 if (Watches.ContainsKey(folder.Key)) continue;
                 DirectoryChangeWatch watch = DirectoryChangeWatch.Start(folder.Key, folder.Value, OnChange, OnOverflow,
@@ -320,31 +362,118 @@ namespace FiresCore.IO
             }
         }
 
+        // Marks the config folder itself as a recursive watch so the subsumption below folds every watched
+        // folder underneath it into that one handle. Only does anything when something under config is already
+        // watched - it never opens a handle nobody wanted. The root is usually in `wanted` already, because
+        // most mods watch it with an exact filename filter for their own .cfg; those registrations are
+        // unaffected, since Matches() rejects a subfolder path for a non-recursive registration.
+        private static void AddConfigRootFold(Dictionary<string, bool> wanted)
+        {
+            if (!_foldIntoConfigRoot) return;
+
+            string root;
+            try { root = Normalize(BepInEx.Paths.ConfigPath); }
+            catch { return; }
+            if (string.IsNullOrEmpty(root)) return;
+
+            if (!wanted.ContainsKey(root))
+            {
+                bool anythingUnder = false;
+                foreach (string directory in wanted.Keys)
+                    if (IsUnder(directory, root)) { anythingUnder = true; break; }
+                if (!anythingUnder) return;
+            }
+
+            wanted[root] = true;
+        }
+
+        // The nearest watched ancestor that is recursive, or null when nothing above this folder covers it. Walking up
+        // rather than comparing every pair keeps this linear in path depth, and taking the NEAREST one means a covered
+        // folder is always re-based against a handle that really exists.
+        private static string RecursiveAncestorOf(string directory, Dictionary<string, bool> wanted)
+        {
+            for (string parent = ParentOf(directory); parent != null; parent = ParentOf(parent))
+                if (wanted.TryGetValue(parent, out bool recursive) && recursive)
+                    return parent;
+            return null;
+        }
+
+        private static string ParentOf(string directory)
+        {
+            try
+            {
+                string parent = Path.GetDirectoryName(directory);
+                return string.IsNullOrEmpty(parent) || parent.Length >= directory.Length ? null : Normalize(parent);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsUnder(string child, string parent)
+        {
+            if (child.Length <= parent.Length || !child.StartsWith(parent, StringComparison.OrdinalIgnoreCase)) return false;
+            return parent[parent.Length - 1] == Path.DirectorySeparatorChar || child[parent.Length] == Path.DirectorySeparatorChar;
+        }
+
+        // The part of an absolute child path that follows its parent, with no leading separator.
+        private static string RelativeSegment(string child, string parent) =>
+            child.Substring(parent[parent.Length - 1] == Path.DirectorySeparatorChar ? parent.Length : parent.Length + 1);
+
         private static void OnChange(DirectoryChangeWatch watch, int action, string relativePath)
         {
             lock (Gate)
             {
-                if (!IsCurrent(watch) || !ByDirectory.TryGetValue(watch.Directory, out List<Registration> list)) return;
-                bool noted = false;
-                foreach (Registration registration in list)
+                if (!IsCurrent(watch)) return;
+                bool noted = DispatchTo(watch.Directory, relativePath, action);
+
+                // The same notification also belongs to any watched folder underneath this one, re-based so each of
+                // those registrations sees the path relative to its OWN folder - which is what everything downstream,
+                // from Matches to the Pending keys to the fingerprint's Path.Combine, already assumes.
+                if (CoveredByRoot.TryGetValue(watch.Directory, out List<string> covered))
                 {
-                    if (!Matches(registration, relativePath)) continue;
-                    Note(registration, relativePath, action);
-                    noted = true;
+                    string absolute = Path.Combine(watch.Directory, relativePath);
+                    foreach (string directory in covered)
+                        if (IsUnder(absolute, directory))
+                            noted |= DispatchTo(directory, RelativeSegment(absolute, directory), action);
                 }
                 if (noted) ChangeSignal.Set();
             }
+        }
+
+        private static bool DispatchTo(string directory, string relativePath, int action)
+        {
+            if (!ByDirectory.TryGetValue(directory, out List<Registration> list)) return false;
+            bool noted = false;
+            foreach (Registration registration in list)
+            {
+                if (!Matches(registration, relativePath)) continue;
+                Note(registration, relativePath, action);
+                noted = true;
+            }
+            return noted;
         }
 
         private static void OnOverflow(DirectoryChangeWatch watch)
         {
             lock (Gate)
             {
-                if (!IsCurrent(watch) || !ByDirectory.TryGetValue(watch.Directory, out List<Registration> list)) return;
-                foreach (Registration registration in list) registration.Overflowed = true;
-                ChangeSignal.Set();
+                if (!IsCurrent(watch)) return;
+                // A lost batch on this handle is lost for everything riding on it, so every covered folder refreshes too.
+                bool any = MarkOverflowed(watch.Directory);
+                if (CoveredByRoot.TryGetValue(watch.Directory, out List<string> covered))
+                    foreach (string directory in covered) any |= MarkOverflowed(directory);
+                if (any) ChangeSignal.Set();
             }
             WarnOnce("overflow " + watch.Directory, $"more changes in {watch.Directory} at once than one notification holds; its watchers get a refresh");
+        }
+
+        private static bool MarkOverflowed(string directory)
+        {
+            if (!ByDirectory.TryGetValue(directory, out List<Registration> list) || list.Count == 0) return false;
+            foreach (Registration registration in list) registration.Overflowed = true;
+            return true;
         }
 
         private static bool IsCurrent(DirectoryChangeWatch watch) =>

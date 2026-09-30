@@ -313,6 +313,7 @@ namespace FiresCore.Materials
             private static void Postfix()
             {
                 VanillaShaderRebind.RebindAllLoadedMaterials(FiresUnifiedCore.PluginName);
+                FiresCore.Logging.UnityLogSuppressionPatch.EmitShaderBinaryFailureSummary();
                 if (s_cachedMaterial != null) return;
                 ForceCaptureFromScene();
             }

@@ -1,6 +1,5 @@
 using System.Collections;
 using HarmonyLib;
-using UnityEngine;
 
 namespace FiresCore.Identity
 {
@@ -44,6 +43,7 @@ namespace FiresCore.Identity
         [HarmonyPrefix]
         private static void ShutdownPrefix()
         {
+            FiresCore.Storage.VaultWriter.Drain();
             PlayerIdentity.ClearRuntimeState();
         }
 
@@ -54,33 +54,20 @@ namespace FiresCore.Identity
             PlayerIdentity.ClearRuntimeState();
         }
 
+        // The uid and name arrive with the peer's RPC_PeerInfo, which a join gate can hold back for as long as it sends the
+        // world's caches (R25: 26 s for a 359 MB terrain cache). A fixed 10 s wait gave up first and recorded nothing
+        // ("Peer skipped: session uid not found"), so it waits as long as the connection lasts.
         private static IEnumerator CaptureWhenReady(ZNetPeer peer)
         {
-            float elapsed = 0f;
-            const float timeout = 10f;
-
-            while (elapsed < timeout)
+            while (peer != null && PlayerIdentity.IsServerRuntime() && peer.m_socket != null && peer.m_socket.IsConnected())
             {
-                if (peer == null || !PlayerIdentity.IsServerRuntime())
+                if (peer.m_uid != 0L && !string.IsNullOrWhiteSpace(peer.m_playerName))
                 {
+                    PlayerIdentity.CapturePeer(peer, System.Diagnostics.Stopwatch.StartNew());
                     yield break;
                 }
 
-                string playerName = Traverse.Create(peer).Field("m_playerName").GetValue<string>();
-                long uid = Traverse.Create(peer).Field("m_uid").GetValue<long>();
-                if (uid != 0L && !string.IsNullOrWhiteSpace(playerName))
-                {
-                    PlayerIdentity.CapturePeer(peer);
-                    yield break;
-                }
-
-                elapsed += Time.unscaledDeltaTime;
                 yield return null;
-            }
-
-            if (peer != null && PlayerIdentity.IsServerRuntime())
-            {
-                PlayerIdentity.CapturePeer(peer);
             }
         }
     }

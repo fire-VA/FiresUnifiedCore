@@ -329,9 +329,9 @@ namespace FiresCore.Npc
                 if (coordinator != null)
                 {
                     var directive = coordinator.GetDirective(_companion);
-                    if (directive != null && directive.IsValid && 
-                        directive.Directive == CombatRoleDirector.CombatDirective.FlankTarget &&
-                        directive.FlankAngle != 0f)
+                    // HasFlank, not FlankAngle != 0: 0° is a real angle (the first companion used to charge straight in), and a
+                    // tank keeps its intercept/taunt directive while holding the front flank spot (0.2.201).
+                    if (directive != null && directive.IsValid && directive.HasFlank)
                     {
                         _combatHandler.SetFlankAngle(directive.FlankAngle);
                     }

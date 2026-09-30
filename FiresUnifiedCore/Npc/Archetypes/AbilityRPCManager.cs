@@ -54,7 +54,21 @@ namespace FiresCore.Npc.Archetypes
             try { register(); }
             catch (System.Exception ex) { Debug.LogWarning($"[AbilityRPCManager] Could not register {rpcName}: {ex.Message}"); }
         }
-        
+
+        /// <summary>
+        /// When a class cast must not go out: only while the local player is being rebuilt (respawn, loading: the respawn
+        /// freeze CompanionPatches guards) or teleporting. Not while merely staggered: AreCompanionTeleportsSuppressed's
+        /// !CanMove branch (and the timer it re-arms) made a staggered player's skills fail silently (R49: ChiStrike right
+        /// after a stagger). The companion paths keep that gate.
+        /// </summary>
+        public static bool CastBlocked()
+        {
+            if (ZNet.instance != null && ZNet.instance.IsDedicated()) return false;
+            if (Game.instance == null) return false;
+            Player local = Player.m_localPlayer;
+            return local == null || local.IsTeleporting();
+        }
+
         #region Public API - Send RPCs
         
         /// <summary>
@@ -72,7 +86,7 @@ namespace FiresCore.Npc.Archetypes
             // window — RPCs broadcast while IsTeleporting=true deadlock the zone stream
             // (documented in CompanionPatches.cs). Suppressed buffs simply re-trigger
             // from the next Update tick once the player can move again.
-            if (CompanionPatches.AreCompanionTeleportsSuppressed()) return 0;
+            if (CastBlocked()) return 0;
 
             var nview = source.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return 0;
@@ -88,8 +102,18 @@ namespace FiresCore.Npc.Archetypes
                 Debug.Log($"[AbilityRPCManager] Sent group buff RPC: {effectName} from {source.m_name}, range={range}m, duration={duration}s");
             }
             
+            NoteBuffCast(source);
             // Apply locally and return count
             using (AbilityFXManager.LocalCopies()) return ApplyGroupBuffLocal(source, effectName, range, duration);
+        }
+
+        // ArchetypeStatistics.BuffsApplied (read by companion_test's skills step on the caster's owner) was never fed: one per buff a
+        // companion casts, on the peer that owns it (the one that casts).
+        private static void NoteBuffCast(Character caster)
+        {
+            var companion = caster != null ? caster.GetComponent<CompanionController>() : null;
+            var archetype = companion != null ? companion.GetArchetypeController() : null;
+            if (archetype != null && archetype.Statistics != null) archetype.Statistics.RecordBuffApplied();
         }
         
         /// <summary>
@@ -103,7 +127,7 @@ namespace FiresCore.Npc.Archetypes
         public static bool ApplySingleEffect(Character source, Character target, string effectName, float duration)
         {
             if (source == null || target == null) return false;
-            if (CompanionPatches.AreCompanionTeleportsSuppressed()) return false;
+            if (CastBlocked()) return false;
 
             var sourceNview = source.GetComponent<ZNetView>();
             var targetNview = target.GetComponent<ZNetView>();
@@ -122,6 +146,7 @@ namespace FiresCore.Npc.Archetypes
                 Debug.Log($"[AbilityRPCManager] Sent single effect RPC: {effectName} from {source.m_name} to {target.m_name}");
             }
             
+            if (IsBuffEffect(effectName)) NoteBuffCast(source);
             // Apply locally
             using (AbilityFXManager.LocalCopies()) return ApplySingleEffectLocal(source, target, effectName, duration);
         }
@@ -136,7 +161,7 @@ namespace FiresCore.Npc.Archetypes
         public static bool ApplySelfBuff(Character target, string effectName, float duration)
         {
             if (target == null) return false;
-            if (CompanionPatches.AreCompanionTeleportsSuppressed()) return false;
+            if (CastBlocked()) return false;
 
             var nview = target.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return false;
@@ -152,6 +177,7 @@ namespace FiresCore.Npc.Archetypes
                 Debug.Log($"[AbilityRPCManager] Sent self buff RPC: {effectName} on {target.m_name}");
             }
             
+            NoteBuffCast(target);
             // Apply locally
             using (AbilityFXManager.LocalCopies()) return ApplySelfBuffLocal(target, effectName, duration);
         }
@@ -178,7 +204,7 @@ namespace FiresCore.Npc.Archetypes
         public static int ApplyAoEEffect(Character source, string effectName, float range, float duration)
         {
             if (source == null) return 0;
-            if (CompanionPatches.AreCompanionTeleportsSuppressed()) return 0;
+            if (CastBlocked()) return 0;
 
             var nview = source.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return 0;
@@ -206,7 +232,7 @@ namespace FiresCore.Npc.Archetypes
         /// <param name="scale">Scale multiplier.</param>
         public static void SpawnFX(Vector3 position, string effectName, float scale = 1f)
         {
-            if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
+            if (CastBlocked()) return;
             // Send RPC to all clients
             ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, RpcSpawnFX,
                 position, effectName, scale);
@@ -239,11 +265,24 @@ namespace FiresCore.Npc.Archetypes
         {
             var source = FindCharacterByZDOID(sourceId);
             var target = FindCharacterByZDOID(targetId);
-            if (source == null || target == null) return;
-            
+            if (target == null) return;
+
             // Check if we're the sender
             if (ZNet.instance != null && ZNet.GetUID() == sender) return;
-            
+
+            if (source == null)
+            {
+                // The caster isn't loaded here (out of this peer's zones), but the target is and may be ours: the owner must still
+                // apply it or nobody does (class_test R54 se_sync: Caltrops / Death Mark / Hunter's Mark never reached the owner).
+                // The sender already checked who it may hit before sending.
+                if (IsOwnedHere(target))
+                {
+                    Debug.Log($"[AbilityRPCManager] {effectName} on {target.m_name}: caster not loaded here, applying as the target's owner");
+                    using (AbilityFXManager.LocalCopies()) ApplyOnOwner(target, effectName, duration, null);
+                }
+                return;
+            }
+
             using (AbilityFXManager.LocalCopies()) ApplySingleEffectLocal(source, target, effectName, duration);
             
             if (VerboseLogging)
@@ -303,99 +342,45 @@ namespace FiresCore.Npc.Archetypes
         #endregion
         
         #region Local Application
-        
+
+        // Vanilla keeps a status effect only where its character is owned: SEMan.Update (ticks, expiry, Stop) runs only on
+        // the owner. The routed RPC still reaches every peer so every peer draws the FX, but only the target's owner adds the
+        // effect. A copy on any other peer never ticked, never expired, and ran OnEffectApplied once per peer (Lay on Hands
+        // healed and Chi Explosion hit once per peer). The caster's own local call covers the targets it owns and each RPC
+        // receiver covers its own, so every target gets the effect exactly once. An ownership handover mid-effect drops it,
+        // as in vanilla. Returns "applied here, or the target isn't ours", so group counts see every valid target once.
+        // Setup runs on this peer only, so the FX it spawns are networked copies (every peer sees them once), not the
+        // local copies the surrounding RPC scope makes.
+        private static bool ApplyOnOwner(Character target, string effectName, float duration, Character source)
+        {
+            if (!IsOwnedHere(target)) return true;
+            using (AbilityFXManager.NetworkedCopies()) return ApplyEffectByName(target, effectName, duration, source);
+        }
+
+        private static bool IsOwnedHere(Character character)
+        {
+            var nview = character != null ? character.GetComponent<ZNetView>() : null;
+            return nview != null && nview.IsValid() && nview.IsOwner();
+        }
+
         /// <summary>
-        /// Applies a group buff locally to all allies in range.
-        /// TARGETING: Only allies - same-owner companions and their owner player.
+        /// Applies a group buff to every party member of the caster in range (Fire: heals and buffs only the party:
+        /// see <see cref="ClassTargeting"/>).
         /// </summary>
         private static int ApplyGroupBuffLocal(Character source, string effectName, float range, float duration)
         {
             int count = 0;
             Vector3 sourcePos = source.transform.position;
-            long ownerPlayerId = 0;
-            
-            // Get owner player ID for companion owner matching
-            var companionController = source.GetComponent<CompanionController>();
-            if (companionController != null)
-            {
-                ownerPlayerId = companionController.ownerPlayerId;
-            }
-            
-            // Always log group buff applications for debugging
-            Debug.Log($"[AbilityRPCManager] ApplyGroupBuffLocal: {effectName} from {source.m_name}, range={range}m, ownerPlayerId={ownerPlayerId}");
-            
-            // Find all allies in range
-            var characters = Character.GetAllCharacters();
-            int checkedCount = 0;
-            foreach (var character in characters)
+
+            foreach (var character in Character.GetAllCharacters())
             {
                 if (character == null || character.IsDead()) continue;
-                checkedCount++;
-                
-                // VALIDATION: Must be an ally (not an enemy)
-                if (BaseAI.IsEnemy(source, character)) 
-                {
-                    if (VerboseLogging)
-                        Debug.Log($"[AbilityRPCManager] Skipping {character.m_name} - is enemy");
-                    continue;
-                }
-                
-                float distance = Vector3.Distance(sourcePos, character.transform.position);
-                if (distance > range) 
-                {
-                    if (VerboseLogging)
-                        Debug.Log($"[AbilityRPCManager] Skipping {character.m_name} - too far ({distance:F1}m > {range}m)");
-                    continue;
-                }
-                
-                // VALIDATION: For companions, only buff same-owner companions and their owner
-                if (companionController != null)
-                {
-                    if (character.IsPlayer())
-                    {
-                        var player = character as Player;
-                        if (player == null)
-                        {
-                            Debug.Log($"[AbilityRPCManager] Skipping player - cast to Player failed");
-                            continue;
-                        }
-                        
-                        long playerId = player.GetPlayerID();
-                        if (playerId != ownerPlayerId) 
-                        {
-                            Debug.Log($"[AbilityRPCManager] Skipping player {player.GetPlayerName()} - different owner ({playerId} != {ownerPlayerId})");
-                            continue;
-                        }
-                        
-                        Debug.Log($"[AbilityRPCManager] FOUND OWNER PLAYER: {player.GetPlayerName()} (ID: {playerId}) - applying {effectName}!");
-                    }
-                    else
-                    {
-                        // Skip monsters - they're not allies even if not "enemy" to source
-                        var targetCompanion = character.GetComponent<CompanionController>();
-                        if (targetCompanion == null) 
-                        {
-                            if (VerboseLogging)
-                                Debug.Log($"[AbilityRPCManager] Skipping {character.m_name} - not a companion");
-                            continue;
-                        }
-                        if (targetCompanion.ownerPlayerId != ownerPlayerId) 
-                        {
-                            if (VerboseLogging)
-                                Debug.Log($"[AbilityRPCManager] Skipping companion {character.m_name} - different owner");
-                            continue;
-                        }
-                    }
-                }
-                
-                // Apply the effect
-                if (ApplyEffectByName(character, effectName, duration, source))
+                if (Vector3.Distance(sourcePos, character.transform.position) > range) continue;
+                if (!ClassTargeting.IsPartyMember(source, character)) continue;
+
+                if (ApplyOnOwner(character, effectName, duration, source))
                 {
                     count++;
-                    bool isPlayer = character.IsPlayer();
-                    Debug.Log($"[AbilityRPCManager] APPLIED {effectName} to {character.m_name} (isPlayer={isPlayer})");
-                    
-                    // Notify player if they received a buff
                     NotifyPlayerOfBuff(character, effectName, duration, source);
                 }
                 else
@@ -403,148 +388,103 @@ namespace FiresCore.Npc.Archetypes
                     Debug.LogWarning($"[AbilityRPCManager] FAILED to apply {effectName} to {character.m_name}");
                 }
             }
-            
-            Debug.Log($"[AbilityRPCManager] ApplyGroupBuffLocal complete: checked {checkedCount} characters, applied to {count}");
-            
+
+            if (VerboseLogging)
+            {
+                Debug.Log($"[AbilityRPCManager] Group {effectName} from {source.m_name}: {count} party member(s) within {range}m");
+            }
+
             // Play FX based on effect type
             PlayEffectFX(source, effectName, range, duration, true);
-            
+
             return count;
         }
-        
+
         /// <summary>
-        /// Applies a single-target effect locally.
+        /// Applies a single-target effect: a buff only on the caster's party, a debuff only on an enemy (a player only
+        /// when both have PvP on).
         /// </summary>
         private static bool ApplySingleEffectLocal(Character source, Character target, string effectName, float duration)
         {
-            // VALIDATION: Determine if this is a buff or debuff and validate target accordingly
             bool isBuff = IsBuffEffect(effectName);
-            
-            if (isBuff)
+            bool allowed = isBuff ? ClassTargeting.IsPartyMember(source, target) : ClassTargeting.IsEnemyTarget(source, target);
+            if (!allowed)
             {
-                // Buffs should only go on allies
-                if (BaseAI.IsEnemy(source, target))
+                if (VerboseLogging)
                 {
-                    if (VerboseLogging)
-                    {
-                        Debug.LogWarning($"[AbilityRPCManager] Blocked buff {effectName} on enemy {target.m_name}");
-                    }
-                    return false;
+                    Debug.LogWarning($"[AbilityRPCManager] Blocked {(isBuff ? "buff" : "debuff")} {effectName} on {target.m_name}");
                 }
+                return false;
             }
-            else
-            {
-                // Debuffs should only go on enemies (or explicitly self for some effects)
-                if (!BaseAI.IsEnemy(source, target) && target != source)
-                {
-                    // Allow debuffs on self (some mechanics might need this)
-                    // But block debuffs on other allies
-                    if (VerboseLogging)
-                    {
-                        Debug.LogWarning($"[AbilityRPCManager] Blocked debuff {effectName} on ally {target.m_name}");
-                    }
-                    return false;
-                }
-                
-                // Never apply debuffs to players
-                if (target.IsPlayer() && target != source)
-                {
-                    if (VerboseLogging)
-                    {
-                        Debug.LogWarning($"[AbilityRPCManager] Blocked debuff {effectName} on player");
-                    }
-                    return false;
-                }
-            }
-            
-            bool success = ApplyEffectByName(target, effectName, duration, source);
-            
+
+            bool success = ApplyOnOwner(target, effectName, duration, source);
+
             if (success)
             {
                 // Play FX on target
                 PlayEffectFX(target, effectName, 0, duration, false);
-                
+
                 // Notify player if they received a buff
                 if (isBuff)
                 {
                     NotifyPlayerOfBuff(target, effectName, duration, source);
                 }
             }
-            
+
             return success;
         }
-        
+
         /// <summary>
-        /// Applies a self-buff locally.
+        /// Applies a self-buff.
         /// </summary>
         private static bool ApplySelfBuffLocal(Character target, string effectName, float duration)
         {
-            bool success = ApplyEffectByName(target, effectName, duration, target);
-            
+            bool success = ApplyOnOwner(target, effectName, duration, target);
+
             if (success)
             {
                 // Play FX on self
                 PlayEffectFX(target, effectName, 0, duration, false);
-                
+
                 // Notify player if they received a buff
                 NotifyPlayerOfBuff(target, effectName, duration, target);
             }
-            
+
             return success;
         }
-        
+
         /// <summary>
-        /// Applies an AoE effect locally to enemies in range.
-        /// TARGETING: Only enemies - monsters and hostile characters (not players unless PvP).
+        /// Applies an AoE effect to every enemy in range: hostile creatures, and players only when both have PvP on.
         /// </summary>
         private static int ApplyAoEEffectLocal(Character source, string effectName, float range, float duration)
         {
             int count = 0;
             Vector3 sourcePos = source.transform.position;
-            
-            var characters = Character.GetAllCharacters();
-            foreach (var character in characters)
+
+            foreach (var character in Character.GetAllCharacters())
             {
-                if (character == null || character.IsDead()) continue;
-                if (character == source) continue;
-                
-                // VALIDATION: Must be an enemy
-                if (!BaseAI.IsEnemy(source, character)) continue;
-                
-                // VALIDATION: Never hit players (unless explicit PvP - which we don't support yet)
-                if (character.IsPlayer()) continue;
-                
-                // VALIDATION: Must have AI (is a monster/creature)
-                var ai = character.GetComponent<BaseAI>();
-                if (ai == null)
-                {
-                    // Could be a hostile companion - check if it's an enemy companion
-                    var companionController = character.GetComponent<CompanionController>();
-                    if (companionController == null) continue; // Unknown hostile entity without AI
-                }
-                
-                float distance = Vector3.Distance(sourcePos, character.transform.position);
-                if (distance > range) continue;
-                
-                if (ApplyEffectByName(character, effectName, duration, source))
+                if (character == null || character.IsDead() || character == source) continue;
+                if (Vector3.Distance(sourcePos, character.transform.position) > range) continue;
+                if (!ClassTargeting.IsEnemyTarget(source, character)) continue;
+
+                if (ApplyOnOwner(character, effectName, duration, source))
                 {
                     count++;
-                    
+
                     if (VerboseLogging)
                     {
                         Debug.Log($"[AbilityRPCManager] Applied AoE {effectName} to enemy: {character.m_name}");
                     }
                 }
             }
-            
+
             // Play AoE FX
             PlayEffectFX(source, effectName, range, duration, true);
-            
+
             return count;
         }
-        
+
         #endregion
-        
         #region Effect Application
         
         /// <summary>
@@ -659,13 +599,21 @@ namespace FiresCore.Npc.Archetypes
                     break;
 
                 default:
-                    if (VerboseLogging)
+                    // Every other class effect StatusEffectManager registers (Avatar of Light, Divine Shield, Consecration,
+                    // Lay on Hands, Meteor, Death Mark ... 24 of the 50) had no case here, so a companion casting one
+                    // applied nothing (class_test R37). They go on through the type they were registered with.
+                    success = ApplyRegisteredEffect(target, effectName, duration, source);
+                    if (!success)
                     {
-                        Debug.LogWarning($"[AbilityRPCManager] Unknown effect name: {effectName}");
+                        if (VerboseLogging)
+                        {
+                            Debug.LogWarning($"[AbilityRPCManager] Unknown effect name: {effectName}");
+                        }
+                        return false;
                     }
-                    return false;
+                    break;
             }
-            
+
             if (success && VerboseLogging)
             {
                 string targetType = target.IsPlayer() ? "PLAYER" : (target.GetComponent<CompanionController>() != null ? "COMPANION" : "NPC");
@@ -682,16 +630,30 @@ namespace FiresCore.Npc.Archetypes
         /// CRITICAL: m_icon MUST be set on the StatusEffect base class BEFORE AddStatusEffect
         /// because the game clones the effect and may not copy custom C# properties.
         /// </summary>
-        private static bool ApplyEffectDirect<T>(Character target, string effectName, float duration, Character source) 
+        private static bool ApplyEffectDirect<T>(Character target, string effectName, float duration, Character source)
             where T : StatusEffects.CompanionStatusEffectBase
         {
+            return ApplyEffectOfType(typeof(T), target, effectName, duration, source);
+        }
+
+        /// <summary>A class effect with no case of its own: the type StatusEffectManager registered under its name.</summary>
+        private static bool ApplyRegisteredEffect(Character target, string effectName, float duration, Character source)
+        {
+            if (ObjectDB.instance == null) return false;
+            StatusEffect template = ObjectDB.instance.GetStatusEffect(effectName.GetStableHashCode());
+            if (!(template is StatusEffects.CompanionStatusEffectBase)) return false;
+            return ApplyEffectOfType(template.GetType(), target, effectName, duration, source);
+        }
+
+        private static bool ApplyEffectOfType(System.Type effectType, Character target, string effectName, float duration, Character source)
+        {
             if (target == null) return false;
-            
+
             var seman = target.GetSEMan();
             if (seman == null) return false;
-            
+
             // Create the effect
-            var effect = ScriptableObject.CreateInstance<T>();
+            var effect = (StatusEffects.CompanionStatusEffectBase)ScriptableObject.CreateInstance(effectType);
             effect.name = effectName;
             effect.Duration = duration;
             effect.SourceCharacter = source;
@@ -817,9 +779,16 @@ namespace FiresCore.Npc.Archetypes
                 case StatusEffectManager.EFFECT_HUNTERS_MARK:
                 case StatusEffectManager.EFFECT_ROOTED:
                 case StatusEffectManager.EFFECT_SLOWDOWN:
+                case StatusEffectManager.EFFECT_DEATH_MARK: // the Rogue marks an enemy; as a "buff" it was refused on one
+                case StatusEffectManager.EFFECT_CLASS_STUN:
+                case StatusEffectManager.EFFECT_CLASS_KNOCKDOWN:
+                case StatusEffectManager.EFFECT_CLASS_FLEE:
+                case StatusEffectManager.EFFECT_CLASS_LOSE_TARGET:
+                case StatusEffectManager.EFFECT_CLASS_SLOW30:
+                case StatusEffectManager.EFFECT_CLASS_SLOW20:
                     return false;
             }
-            
+
             // Everything else is a buff
             return true;
         }

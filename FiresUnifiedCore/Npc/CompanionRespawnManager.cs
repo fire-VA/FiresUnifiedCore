@@ -1590,7 +1590,7 @@ private Vector3 GetSpawnPositionNearPlayer(Player player)
                 if (ZoneSystem.instance != null)
      {
          float groundHeight;
-       if (ZoneSystem.instance.GetGroundHeight(testPos, out groundHeight))
+       if (FiresCore.World.Surface.GroundNear(testPos, out groundHeight))
        {
                testPos.y = groundHeight + SpawnHeightOffset;
         return testPos;
@@ -1760,7 +1760,7 @@ private Vector3 GetSpawnPositionNearPlayer(Player player)
             if (ZoneSystem.instance != null)
             {
                 float groundHeight;
-                if (ZoneSystem.instance.GetGroundHeight(position, out groundHeight))
+                if (FiresCore.World.Surface.GroundNear(position, out groundHeight))
                 {
                     spawnPos.y = groundHeight + 0.5f;
                 }
