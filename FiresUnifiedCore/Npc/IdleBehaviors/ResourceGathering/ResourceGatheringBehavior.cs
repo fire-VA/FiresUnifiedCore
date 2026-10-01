@@ -72,6 +72,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             FindingResource,
             MovingToChestForTool,      // Walk to chest to get required tool
+            FetchingCraftStock,        // 0.2.274: walk to base chests and take what a tool (or its Bronze) costs
             RetrievingToolFromChest,   // Open chest and pull tool
             MovingToWorkbench,         // Walk to workbench to craft a tool
             CraftingTool,              // Stand at workbench and craft
@@ -171,9 +172,16 @@ namespace FiresCore.Npc.IdleBehaviors
             _commandedTarget = target;
         }
         
+        // 0.2.257 ([ghost]): the autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
+        // the next CanStart read it as a player command and skipped the gather toggle and the full-bag gate.
+        private GameObject _autoPick;
+
         public override bool CanStart()
         {
             if (Companion == null) return false;
+
+            if (_autoPick != null && ReferenceEquals(_commandedTarget, _autoPick)) _commandedTarget = null;
+            _autoPick = null;
 
             bool commanded = _commandedTarget != null;
 
@@ -233,7 +241,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (neededResource != null)
                 {
                     _commandedTarget = neededResource;
-                    
+                    _autoPick = neededResource;
+
                     if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[ResourceGathering] {Companion?.companionName} found resource to gather autonomously: {neededResource.name}");
                     
@@ -322,7 +331,9 @@ namespace FiresCore.Npc.IdleBehaviors
                     var resourceData = ResourceDataHelper.GetResourceData(oreDeposit);
                     if (resourceData != null && resourceData.IsValid)
                     {
-                        if (!resourceData.RequiresCombat || HasToolForResource(resourceData))
+                        // 0.2.274: or a tool for it can be crafted from base stock (FindNearbyOreDeposit only offers such a node then).
+                        if (!resourceData.RequiresCombat || HasToolForResource(resourceData)
+                            || CanCraftToolFromStock(resourceData.RequiredTool, resourceData.MinToolTier))
                         {
                             if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                                 Debug.Log($"[ResourceGathering] {Companion?.companionName} found ore deposit (smelter needs ore)");
@@ -635,6 +646,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 GatherPhase.RetrievingToolFromChest => "Retrieving tool",
                 GatherPhase.MovingToWorkbench => "Going to workbench",
                 GatherPhase.CraftingTool => "Crafting a tool",
+                GatherPhase.FetchingCraftStock => "Fetching materials for a tool",
                 GatherPhase.MovingToResource => $"Walking to {resourceName}",
                 GatherPhase.Interacting => $"Picking {resourceName}",
                 GatherPhase.Attacking => $"Gathering {resourceName}",

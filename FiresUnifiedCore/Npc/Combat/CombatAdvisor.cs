@@ -187,6 +187,7 @@ namespace FiresCore.Npc.Combat
                 if (other == null || other == self || other.IsDead() || other.m_aiSkipTarget) continue;
                 if (Vector3.Distance(at, other.transform.position) > range) continue;
                 if (!ClassTargeting.IsEnemyTarget(self, other)) continue;
+                if (Spare(other, out _)) continue;
                 if (!AI.CompanionBrain.IsThreat(self, other, at, self, ClosePressureRange, CombatLeash, false)) continue;
                 if (!AI.CompanionBrain.IsFairGame(self, other)) continue;
                 if (IsFutile(other)) continue;
@@ -401,7 +402,13 @@ namespace FiresCore.Npc.Combat
                 memory.ProgressHealth = target.GetHealth();
                 memory.ProgressSwings = 0;
             }
-            if (IsFutile(target))
+            bool spare = Spare(target, out string spareWhy);
+            if (spare && s_spareLogged.Add(target))
+            {
+                if (s_spareLogged.Count > 64) s_spareLogged.Clear();
+                Debug.Log($"[CombatAdvisor] {self.m_name}: sparing {spareWhy}; backing off with the guard up, no swing");
+            }
+            if (spare || IsFutile(target))
             {
                 Vector3 off = self.transform.position - target.transform.position;
                 off.y = 0f;
@@ -410,7 +417,7 @@ namespace FiresCore.Npc.Combat
                 order.Run = true;
                 order.Sprint = true;
                 order.Block = TargetSwingingAt(target, self);
-                return Finish(self, order, "Futile");
+                return Finish(self, order, spare ? "Spare" : "Futile");
             }
 
             Vector3 to = target.transform.position - self.transform.position;
@@ -1034,9 +1041,27 @@ namespace FiresCore.Npc.Combat
         /// The weapon to hold against <paramref name="target"/>, or null to keep what is in hand. The companions' rules: melee and
         /// ranged picked as a companion scans its slots (<see cref="AI.CompanionBrain.ChooseWeapons"/>, equipped items first), then
         /// <see cref="AI.CompanionBrain.WeighWeapons"/> when it has both; at most one swap every 5 s, never mid-attack. With nothing
-        /// in hand it returns the melee weapon (or the ranged one).
+        /// in hand it returns the melee weapon (or the ranged one). While a torch is held in the off hand beside a one-hander (the torch
+        /// tactic, <see cref="FireScare.HoldsTorchOffHand"/>), only a one-handed weapon is handed over (0.2.231).
         /// </summary>
         public static ItemDrop.ItemData ChooseWeapon(Humanoid self, Character target)
+        {
+            ItemDrop.ItemData pick = ChooseWeaponCore(self, target);
+            // Fire: "they have to hold the torch in their off hand and fight with a weapon in the main hand". A two-hander, bow or staff
+            // makes vanilla's EquipItem put the torch away, so while it is out the body keeps what is in hand instead.
+            if (pick?.m_shared == null || pick.m_shared.m_itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon || !FireScare.HoldsTorchOffHand(self)) return pick;
+            if (!s_torchKeptLogged.TryGetValue(self, out ItemDrop.ItemData logged) || logged != pick)
+            {
+                if (s_torchKeptLogged.Count > 32) s_torchKeptLogged.Clear();
+                s_torchKeptLogged[self] = pick;
+                Debug.Log($"[CombatAdvisor] {self.m_name}: keeping the torch: one-handers only, not {pick.m_shared.m_name} ({pick.m_shared.m_itemType})");
+            }
+            return null;
+        }
+
+        private static readonly Dictionary<Humanoid, ItemDrop.ItemData> s_torchKeptLogged = new Dictionary<Humanoid, ItemDrop.ItemData>();
+
+        private static ItemDrop.ItemData ChooseWeaponCore(Humanoid self, Character target)
         {
             if (self == null || self.IsDead() || self.InAttack()) return null;
             Inventory inventory = self.GetInventory();
@@ -1403,6 +1428,27 @@ namespace FiresCore.Npc.Combat
         private static readonly Dictionary<Character, float> s_futile = new Dictionary<Character, float>();
 
         /// <summary>A target this body gave up on as futile (its hits barely scratched it), for the next minute.</summary>
+        // ---- Wild companions: friends-to-be, never fought (0.2.228) ----
+
+        private static readonly HashSet<Character> s_spareLogged = new HashSet<Character>();
+
+        /// <summary>
+        /// <paramref name="target"/> is an untamed wild companion whose faction is no foe of players: Neutral (Dverger) or still the
+        /// prefab's Players baseline before the server dresses it. Such a one is hostile only because it was hit, and a body never
+        /// fights it: <see cref="PickTarget"/> skips it and <see cref="Advise(Humanoid, Character, float, float)"/> backs off with the
+        /// guard up (state "Spare"). R90 run 10: Coop1's chop swing caught Yrsa, a wild companion fighting the same Greydwarf; it hit
+        /// back and "defend" fought it dead in 13 hits. A Bandit (ForestMonsters) or Cultist (Demon) one is a real foe and is fought.
+        /// </summary>
+        public static bool Spare(Character target, out string why)
+        {
+            why = null;
+            if (target == null || target.IsTamed() || target.GetComponent<WildSpawn.WildCompanionDresser>() == null) return false;
+            Character.Faction faction = target.GetFaction();
+            if (faction != Character.Faction.Dverger && faction != Character.Faction.Players) return false;
+            why = $"{target.GetHoverName()} (a wild companion, faction {faction}: a friend-to-be, hostile only because it was hit)";
+            return true;
+        }
+
         public static bool IsFutile(Character target)
         {
             if (target == null || !s_futile.TryGetValue(target, out float until)) return false;
@@ -1608,21 +1654,37 @@ namespace FiresCore.Npc.Combat
 
         /// <summary>
         /// How far <paramref name="foe"/> shoots (its projectile weapon's attack range), or 0 for a melee foe. A monster's
-        /// inventory lives on its owner's peer only, so off the owner its right-hand item is read from the synced ZDO.
+        /// inventory lives on its owner's peer only, so off the owner its hand items are read from the synced ZDO.
         /// </summary>
         public static float RangedReach(Character foe)
         {
             ItemDrop.ItemData weapon = (foe as Humanoid)?.GetCurrentWeapon();
-            if ((weapon == null || !IsProjectileWeapon(weapon)) && ObjectDB.instance != null)
-            {
-                ZDO zdo = foe != null && foe.m_nview != null ? foe.m_nview.GetZDO() : null;
-                int hash = zdo != null ? zdo.GetInt(ZDOVars.s_rightItem, 0) : 0;
-                GameObject prefab = hash != 0 ? ObjectDB.instance.GetItemPrefab(hash) : null;
-                ItemDrop drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
-                if (drop != null) weapon = drop.m_itemData;
-            }
+            if (weapon == null || !IsProjectileWeapon(weapon)) weapon = SyncedWeapon(foe) ?? weapon;
             return weapon != null && IsProjectileWeapon(weapon) && weapon.m_shared.m_attack != null
                 ? weapon.m_shared.m_attack.m_attackRange : 0f;
+        }
+
+        /// <summary>
+        /// The weapon <paramref name="c"/>'s synced record says it holds, in vanilla's Humanoid.GetCurrentWeapon order: the right-hand
+        /// item when it is a weapon, else the left-hand one when it is a weapon and not a torch. A bow is a LEFT-hand item (vanilla
+        /// EquipItem), so reading only the right hand saw a Skeleton archer off its owner as unarmed (0.2.226, R90 run 8: its bow
+        /// read 0 m and the archer that shot Coop2 from 15.1 m dropped out of the threat reading). Null when neither hand holds one.
+        /// </summary>
+        public static ItemDrop.ItemData SyncedWeapon(Character c)
+        {
+            ZDO zdo = c != null && c.m_nview != null && c.m_nview.IsValid() ? c.m_nview.GetZDO() : null;
+            if (zdo == null || ObjectDB.instance == null) return null;
+            ItemDrop.ItemData right = SyncedItem(zdo.GetInt(ZDOVars.s_rightItem, 0));
+            if (right != null && right.IsWeapon()) return right;
+            ItemDrop.ItemData left = SyncedItem(zdo.GetInt(ZDOVars.s_leftItem, 0));
+            return left != null && left.IsWeapon() && left.m_shared.m_itemType != ItemDrop.ItemData.ItemType.Torch ? left : null;
+        }
+
+        private static ItemDrop.ItemData SyncedItem(int hash)
+        {
+            GameObject prefab = hash != 0 ? ObjectDB.instance.GetItemPrefab(hash) : null;
+            ItemDrop drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
+            return drop != null ? drop.m_itemData : null;
         }
 
         // A foe out of sight is only worth a path this much longer than the straight line (x + m).

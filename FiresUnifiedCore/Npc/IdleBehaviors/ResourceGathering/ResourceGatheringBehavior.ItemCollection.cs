@@ -61,6 +61,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     
                     if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[ResourceGathering] {Companion.companionName} picked {_targetResource.Name}");
+                    AI.ChoreBrain.ChoreDone(Companion?.companionName, "pickables", $"picked {Utils.GetPrefabName(pickable.gameObject)}");
                 }
                 
                 SetPhase(GatherPhase.WaitingForDrops);
@@ -86,6 +87,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     
                     if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[ResourceGathering] {Companion.companionName} picked up {_targetResource.Name}");
+                    AI.ChoreBrain.ChoreDone(Companion?.companionName, "pickables", $"picked up {_targetResource.Name}");
                 }
                 
                 SetPhase(GatherPhase.WaitingForDrops);
@@ -338,22 +340,27 @@ namespace FiresCore.Npc.IdleBehaviors
             
             int totalDeposited = 0;
             var depositedPrefabs = new HashSet<string>();
-            
+            var depositedList = new List<string>();
+
             // Weapons, tools and armor never qualify (GetDepositableItems), and each deposit moves exactly one prefab.
             foreach (var item in ChestHelper.GetDepositableItems(storageInv))
             {
                 string prefabName = item.m_dropPrefab?.name;
                 if (string.IsNullOrEmpty(prefabName) || !IsGatheredResource(prefabName) || !depositedPrefabs.Add(prefabName)) continue;
-                
+
                 var result = Core.InventoryTransferService.DepositItemSmart(storageInv, _nearbyChests, prefabName);
                 if (result.Success)
+                {
                     totalDeposited += result.AmountTransferred;
+                    if (result.AmountTransferred > 0) depositedList.Add($"{prefabName} x{result.AmountTransferred}");
+                }
             }
-            
+
             if (totalDeposited > 0)
             {
                 if (VerboseLogging)
                     Debug.Log($"[ResourceGathering] {Companion.companionName} deposited {totalDeposited} items to chests");
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "deposit", $"{totalDeposited} item(s) into chests: {string.Join(", ", depositedList)}");
                 
                 // Fire event for cross-cutting concerns
                 CompanionEvents.FireItemDeposited(Companion, "resources", totalDeposited);

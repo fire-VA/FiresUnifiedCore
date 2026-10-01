@@ -1,13 +1,16 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
+using System.Linq;
+using FiresCore.Npc.AI;
 using UnityEngine;
 
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Companion idle behavior: find a water spot near home, walk to shore,
-    /// cast a fishing rod, wait for a bite, reel in, and add the catch to inventory.
-    ///
-    /// Uses data-driven bait→fish mapping built from ZNetScene Fish prefabs.
+    /// Companion idle behavior: real fishing on the one fishing brain (Core 0.2.243, <see cref="FishingBrain"/>, the bot's too). Plan
+    /// a dry stand at the water's edge near home with deep water in reach (toward fish that take a carried bait), walk there, take out
+    /// the rod, throw the rod's own projectile with one bait at the planned point (the game drops a FishingFloat where it lands), then
+    /// each tick do what the brain advises: wait, hook and reel (hold the line in) on a bite, hold while a hooked fish runs, recast when
+    /// nothing bites. The game's float lands the catch into the companion's bag; it is moved into storage.
     /// </summary>
     public class FishingBehavior : WorkBehaviorBase<FishingBehavior.FishPhase>
     {
@@ -29,13 +32,16 @@ namespace FiresCore.Npc.IdleBehaviors
         #region Constants
 
         private const float ScanRadius = 30f;
+        /// <summary>0.2.268: how long a companion leaves fishing alone after a plan found no fish / water / shore near home.</summary>
+        private const float NoFishCooldown = 300f;
+        private float _noFishUntil;
+        private const float CommandedRadius = 14f;
         private const float MinWaterDepth = 0.5f;
-        private const float ShoreBackDist = 3f;
-        private const float CastWaitMin = 12f;
-        private const float CastWaitMax = 28f;
+        private const float CastReleaseTime = 0.55f;
         private const float CastAnimationDuration = 1.2f;
-        private const float ReelDuration = 2f;
-        private const string FishingRodPrefab = "FishingRod";
+        private const float RestandDistance = 2f;
+        private const int MaxCasts = 8;
+        private const int MaxCatches = 3;
 
         // Player rig parameters (player_animator): the throw, and the Bool that holds the rod's pull pose.
         private const string CastTrigger = "fishingrod_throw";
@@ -45,20 +51,19 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #region State
 
-        private Vector3 _fishingSpot;
-        private Vector3 _castTarget;
-        private string _activeBaitName;
+        private FishingBrain.FishPlan _plan;
+        private Vector3 _planNear;
+        private float _planRadius;
+        private bool _thrown;
+        private int _casts;
         private ItemDrop.ItemData _savedRightHand;
         private ItemDrop.ItemData _equippedRod;
         private int _fishCaught;
-        private float _waitDuration;
 
         // Set by the command system (Shift+MMB on a water surface) to force
         // this companion to fish at that spot. Bypasses the Stay-mode + home
         // checks. Cleared once consumed in Start().
         private Vector3? _commandedSpot;
-
-        private static Dictionary<string, List<(string fishPrefab, float weight)>> s_baitFishMap;
 
         #endregion
 
@@ -73,8 +78,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 FishPhase.Scanning => 10f,
                 FishPhase.MovingToShore => 35f,
                 FishPhase.Casting => 8f,
-                FishPhase.Waiting => _waitDuration + 10f,
-                FishPhase.Reeling => 8f,
+                FishPhase.Waiting => 45f,     // the brain recasts after 30 s without a bite
+                FishPhase.Reeling => 60f,
                 FishPhase.Collecting => 5f,
                 _ => 0f
             };
@@ -101,11 +106,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 case FishPhase.Scanning:     return UpdateScanning();
                 case FishPhase.MovingToShore:return UpdateMovingToShore();
                 case FishPhase.Casting:      return UpdateCasting();
-                case FishPhase.Waiting:      return UpdateWaiting();
-                case FishPhase.Reeling:      return UpdateReeling();
+                case FishPhase.Waiting:
+                case FishPhase.Reeling:      return UpdateLine();
                 case FishPhase.Collecting:   return UpdateCollecting();
                 case FishPhase.Complete:
-                    UnequipFishingRod();
+                    StopFishing();
+                    NotifyOwner();
                     Complete();
                     return true;
             }
@@ -126,8 +132,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         public override void Cancel()
         {
-            SetReelPose(false);
-            UnequipFishingRod();
+            StopFishing();
             base.Cancel();
         }
 
@@ -138,13 +143,34 @@ namespace FiresCore.Npc.IdleBehaviors
             LogVerbose($"Phase {timedOut} timed out");
             switch (timedOut)
             {
-                case FishPhase.Scanning:
-                case FishPhase.MovingToShore:
-                    return FishPhase.Complete;
                 case FishPhase.Casting:
-                    return FishPhase.Waiting;
                 case FishPhase.Waiting:
-                    return FishPhase.Reeling;
+                case FishPhase.Reeling:
+                    FishingBrain.Withdraw(Character);
+                    return FishPhase.Complete;
+                case FishPhase.MovingToShore:
+                {
+                    // 0.2.258 (R37: three stalled walks to the water's edge at a shelved pond): the stand wasn't reached; cast from where
+                    // it stands when deep water lies within a cast, else give up as before.
+                    var storage = GetStorageInventory();
+                    FishingBrain.FishPlan fromHere = null;
+                    string here = storage != null
+                        ? FishingBrain.PlanHere(Character, storage, _equippedRod ?? FishingBrain.RodIn(storage), out fromHere)
+                        : "missing: no storage";
+                    Vector3 at = Transform != null ? Transform.position : Vector3.zero;
+                    if (here == "")
+                    {
+                        Debug.Log($"[Fishing] {Companion?.companionName} did not reach the stand at ({_plan.Stand.x:0}, {_plan.Stand.z:0}) from ({at.x:0}, {at.z:0}); casting from here: {fromHere}");
+                        _plan = fromHere;
+                        StopMovement();
+                        FaceTarget(_plan.Aim);
+                        EquipFishingRod();
+                        _thrown = false;
+                        return FishPhase.Casting;
+                    }
+                    Debug.Log($"[Fishing] {Companion?.companionName} did not reach the stand at ({_plan.Stand.x:0}, {_plan.Stand.z:0}) from ({at.x:0}, {at.z:0}) and cannot cast from here: {here}");
+                    return FishPhase.Complete;
+                }
                 default:
                     return FishPhase.Complete;
             }
@@ -157,8 +183,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <summary>
         /// Set by the command system when the player Shift+MMBs a water
         /// surface. Forces this companion to fish at that location, bypassing
-        /// the Stay-mode requirement. Still requires a fishing rod to be
-        /// available — fishing without one is impossible.
+        /// the Stay-mode requirement. Still requires a fishing rod and bait.
         /// </summary>
         public void SetCommandedSpot(Vector3 waterPoint)
         {
@@ -169,13 +194,14 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (Companion == null) return false;
 
-            // Commanded path: skip the toggle + Stay-mode gates. The rod
-            // requirement still applies — no rod, no fishing.
+            // Commanded path: skip the toggle + Stay-mode gates. Rod and bait still apply: no rod or bait, no fishing.
             if (_commandedSpot.HasValue)
             {
-                if (!HasFishingRodAvailable())
+                string missing = MissingGear();
+                if (missing != null)
                 {
-                    LogVerbose("CanStart: FALSE — commanded but no fishing rod available");
+                    Debug.Log($"[Fishing] {Companion.companionName} cannot fish at the commanded spot: {missing}");
+                    _commandedSpot = null;
                     return false;
                 }
                 LogVerbose("CanStart: TRUE — commanded fishing spot");
@@ -183,14 +209,15 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             if (!CompanionBehaviorToggles.IsFishingEnabled(Companion)) return false;
+            // 0.2.268 (HR3: "Fishing after 0 s (done)" over and over at a pond with no fish): after a plan found no fish / water /
+            // shore near home, this companion leaves fishing alone for NoFishCooldown (a commanded spot above still goes).
+            if (Time.time < _noFishUntil) return false;
             if (!CanStartBase()) return false;
 
             if (IdleBehavior == null || !IdleBehavior.HasHomePosition) return false;
             if (Companion.ShouldBeFollowing) return false;
 
-            if (!HasFishingRodAvailable()) return false;
-
-            return true;
+            return MissingGear() == null;
         }
 
         #endregion
@@ -199,41 +226,34 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool UpdateScanning()
         {
-            // Commanded path: the player picked a specific water surface point.
-            // Find a shore stand-position near it instead of running the
-            // home-radius scan. If we can't, fall through to the autonomous
-            // scan below.
+            _casts = 0;
+            _fishCaught = 0;
             if (_commandedSpot.HasValue)
             {
-                var commandedSpot = FindShoreNearWaterPoint(_commandedSpot.Value);
+                _planNear = _commandedSpot.Value;
+                _planRadius = CommandedRadius;
                 _commandedSpot = null; // consume regardless of outcome
-                if (commandedSpot.HasValue)
-                {
-                    _fishingSpot = commandedSpot.Value.shore;
-                    _castTarget = commandedSpot.Value.water;
-                    _waitDuration = Random.Range(CastWaitMin, CastWaitMax);
-                    SetPhase(FishPhase.MovingToShore);
-                    MoveToPosition(_fishingSpot);
-                    return false;
-                }
-                LogVerbose("Commanded fishing spot has no reachable shore — falling back to autonomous scan");
-            }
-
-            var spot = FindWaterSpot();
-            if (spot.HasValue)
-            {
-                _fishingSpot = spot.Value.shore;
-                _castTarget = spot.Value.water;
-                _waitDuration = Random.Range(CastWaitMin, CastWaitMax);
-                SetPhase(FishPhase.MovingToShore);
-                MoveToPosition(_fishingSpot);
             }
             else
             {
-                LogVerbose("No suitable water found near home");
-                Complete();
-                return true;
+                _planNear = IdleBehavior?.HomePosition ?? Transform.position;
+                _planRadius = ScanRadius;
             }
+
+            string why = PlanCast();
+            if (why != "")
+            {
+                bool rest = why.StartsWith("nofish") || why.StartsWith("nowater") || why.StartsWith("noshore");
+                if (rest) _noFishUntil = Time.time + NoFishCooldown;
+                Debug.Log($"[Fishing] {Companion?.companionName} cannot fish near ({_planNear.x:0}, {_planNear.z:0}): {why}" +
+                          (rest ? $"; not trying again for {NoFishCooldown / 60f:0} min" : ""));
+                SetPhase(FishPhase.Complete);
+                return false;
+            }
+            // 0.2.258: the stand, how it was chosen and its reach, the cast distance (always on).
+            Debug.Log($"[Fishing] {Companion?.companionName} plans: {_plan}");
+            SetPhase(FishPhase.MovingToShore);
+            MoveToPosition(_plan.Stand);
             return false;
         }
 
@@ -242,8 +262,9 @@ namespace FiresCore.Npc.IdleBehaviors
             if (ContinueMovement())
             {
                 StopMovement();
-                FaceTarget(_castTarget);
+                FaceTarget(_plan.Aim);
                 EquipFishingRod();
+                _thrown = false;
                 SetPhase(FishPhase.Casting);
             }
             return false;
@@ -251,159 +272,135 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool UpdateCasting()
         {
-            FaceTarget(_castTarget);
+            FaceTarget(_plan.Aim);
 
-            bool stillThrowing = Character != null && Character.InAttack();
-            if (!stillThrowing && TimeInCurrentPhase > CastAnimationDuration)
+            // The throw animation releases about half a second in; the rod's projectile leaves then.
+            if (!_thrown && TimeInCurrentPhase >= CastReleaseTime)
             {
+                _thrown = true;
+                string why = FishingBrain.CastProjectile(Character, _plan, GetStorageInventory());
+                if (why != "")
+                {
+                    Debug.Log($"[Fishing] {Companion?.companionName} cannot cast: {why}");
+                    SetPhase(FishPhase.Complete);
+                    return false;
+                }
+                _casts++;
+                SaveInventory();
+            }
+            if (_thrown && TimeInCurrentPhase > CastAnimationDuration)
                 SetPhase(FishPhase.Waiting);
-            }
-
             return false;
         }
 
-        private bool UpdateWaiting()
+        // The line is out: what the brain says, every tick.
+        private bool UpdateLine()
         {
-            FaceTarget(_castTarget);
+            FaceTarget(_plan.Aim);
+            SweepBagIntoStorage();
 
-            if (TimeInCurrentPhase >= _waitDuration)
+            FishingBrain.FishMove move = FishingBrain.Advise(Character, out string why);
+            switch (move)
             {
-                // Fish on the line — reel in
-                SetPhase(FishPhase.Reeling);
+                case FishingBrain.FishMove.Wait:
+                case FishingBrain.FishMove.Rest:
+                    FishingBrain.SetReeling(Character, false);
+                    if (CurrentPhase != FishPhase.Waiting) SetPhase(FishPhase.Waiting);
+                    break;
+                case FishingBrain.FishMove.Hook:
+                case FishingBrain.FishMove.Reel:
+                    FishingBrain.SetReeling(Character, true);
+                    if (CurrentPhase != FishPhase.Reeling) SetPhase(FishPhase.Reeling);
+                    break;
+                case FishingBrain.FishMove.Landed:
+                    FishingBrain.SetReeling(Character, false);
+                    _fishCaught++;
+                    SetPhase(FishPhase.Collecting);
+                    break;
+                case FishingBrain.FishMove.Lost:
+                case FishingBrain.FishMove.Recast:
+                    FishingBrain.SetReeling(Character, false);
+                    NextCast(why);
+                    break;
+                default:
+                    Debug.Log($"[Fishing] {Companion?.companionName} stops fishing: {why}");
+                    SetPhase(FishPhase.Complete);
+                    break;
             }
-
-            return false;
-        }
-
-        private bool UpdateReeling()
-        {
-            FaceTarget(_castTarget);
-
-            if (TimeInCurrentPhase >= ReelDuration)
-            {
-                SetPhase(FishPhase.Collecting);
-            }
-
             return false;
         }
 
         private bool UpdateCollecting()
         {
-            // Rod first: the catch must not take the slot the rod came out of.
-            UnequipFishingRod();
+            SweepBagIntoStorage();
+            if (TimeInCurrentPhase < 0.5f) return false;
+            if (_fishCaught >= MaxCatches) { SetPhase(FishPhase.Complete); return false; }
+            NextCast("landed one");
+            return false;
+        }
 
-            string caught = DetermineCatch(_activeBaitName);
-            if (!string.IsNullOrEmpty(caught) && AddFishToInventory(caught))
+        // Another cast: the old float back in (its bait returned), a fresh plan (fish move), walking only when the stand moved.
+        private void NextCast(string why)
+        {
+            FishingBrain.Withdraw(Character);
+            SweepBagIntoStorage();
+            if (_casts >= MaxCasts) { LogVerbose($"Done after {_casts} casts"); SetPhase(FishPhase.Complete); return; }
+            Vector3 was = _plan.Stand;
+            string refusal = PlanCast();
+            if (refusal != "")
             {
-                _fishCaught++;
-                LogVerbose($"Caught {caught}");
+                Debug.Log($"[Fishing] {Companion?.companionName} stops fishing ({why}): {refusal}");
+                SetPhase(FishPhase.Complete);
+                return;
             }
+            if (Vector3.Distance(was, _plan.Stand) > RestandDistance)
+            {
+                SetPhase(FishPhase.MovingToShore);
+                MoveToPosition(_plan.Stand);
+                return;
+            }
+            _thrown = false;
+            SetPhase(FishPhase.Casting);
+        }
 
-            NotifyOwner();
-
-            Complete();
-            return true;
+        private string PlanCast()
+        {
+            var storage = GetStorageInventory();
+            if (storage == null) return "missing: no storage";
+            string why = FishingBrain.Plan(Character, storage, _equippedRod ?? FishingBrain.RodIn(storage), _planNear, _planRadius, IsReachable, out var plan);
+            if (why == "") _plan = plan;
+            return why;
         }
 
         #endregion
 
         #region Water Detection
 
-        private (Vector3 shore, Vector3 water)? FindWaterSpot()
-        {
-            Vector3 origin = IdleBehavior?.HomePosition ?? Transform.position;
-
-            for (float radius = 8f; radius <= ScanRadius; radius += 5f)
-            {
-                for (float angle = 0f; angle < 360f; angle += 30f)
-                {
-                    float rad = angle * Mathf.Deg2Rad;
-                    Vector3 waterCandidate = origin + new Vector3(
-                        Mathf.Cos(rad) * radius, 0f, Mathf.Sin(rad) * radius);
-
-                    if (!IsWaterAt(waterCandidate)) continue;
-
-                    // Step back toward origin to find shoreline
-                    Vector3 toOrigin = (origin - waterCandidate).normalized;
-                    Vector3 shoreCandidate = waterCandidate + toOrigin * ShoreBackDist;
-
-                    if (ZoneSystem.instance != null &&
-                        FiresCore.World.Surface.GroundNear(shoreCandidate, out float groundY))
-                    {
-                        shoreCandidate.y = groundY;
-                    }
-
-                    if (!IsWaterAt(shoreCandidate))
-                    {
-                        return (shoreCandidate, waterCandidate);
-                    }
-                }
-            }
-
-            return null;
-        }
-
-        /// <summary>True where the solid ground (terrain or pieces) lies at least MinWaterDepth below the sea level.
-        /// No hit means no ground was found, which is not water.</summary>
-        public static bool IsWaterAt(Vector3 pos)
-        {
-            var zoneSystem = ZoneSystem.instance;
-            if (zoneSystem == null || !zoneSystem.GetSolidHeight(pos, out float groundY)) return false;
-            return zoneSystem.m_waterLevel - groundY >= MinWaterDepth;
-        }
-
-        /// <summary>
-        /// Find a shore stand position adjacent to a specific water point. Used
-        /// by the command system: the player Shift+MMBs a water surface, we
-        /// receive the world-space hit point, and need to convert it into a
-        /// (shore, water) pair the rest of the fishing pipeline understands.
-        /// Returns null if no walkable shore is reachable nearby.
-        /// </summary>
-        private (Vector3 shore, Vector3 water)? FindShoreNearWaterPoint(Vector3 waterPoint)
-        {
-            if (!IsWaterAt(waterPoint)) return null;
-
-            // Sweep candidate shore points outward from the water point in
-            // every direction; pick the first that is solid ground.
-            for (float radius = ShoreBackDist; radius <= 12f; radius += 1.5f)
-            {
-                for (float angle = 0f; angle < 360f; angle += 30f)
-                {
-                    float rad = angle * Mathf.Deg2Rad;
-                    Vector3 shoreCandidate = waterPoint + new Vector3(
-                        Mathf.Cos(rad) * radius, 0f, Mathf.Sin(rad) * radius);
-
-                    if (ZoneSystem.instance != null &&
-                        FiresCore.World.Surface.GroundNear(shoreCandidate, out float groundY))
-                    {
-                        shoreCandidate.y = groundY;
-                    }
-
-                    if (!IsWaterAt(shoreCandidate))
-                    {
-                        return (shoreCandidate, waterPoint);
-                    }
-                }
-            }
-
-            return null;
-        }
+        /// <summary>True where water at least MinWaterDepth deep lies over the solid ground (terrain or pieces): the sea or inland
+        /// water (FishingBrain.WaterAt, the WaterVolume the fish use).</summary>
+        public static bool IsWaterAt(Vector3 pos) => FishingBrain.WaterAt(pos, out _, out float depth) && depth >= MinWaterDepth;
 
         #endregion
 
         #region Rod Equip / Unequip
 
+        // What is missing to fish: a rod (in storage or in hand) and bait for it; null when both are there.
+        private string MissingGear()
+        {
+            if (Inventory == null) return "no inventory";
+            var storage = GetStorageInventory();
+            ItemDrop.ItemData rod = FishingBrain.RodIn(storage);
+            var inHand = Inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
+            if (rod == null && FishingBrain.FloatPrefabOf(inHand) != null) rod = inHand;
+            if (rod == null) return "no fishing rod";
+            return FishingBrain.BestBait(storage, null, null, rod) == null ? "no bait" : null;
+        }
+
         private void EquipFishingRod()
         {
-            if (Inventory == null) return;
+            if (Inventory == null || _equippedRod != null) return;
             var storage = GetStorageInventory();
-            if (storage == null) return;
-
-            ItemDrop.ItemData rod = null;
-            foreach (var item in storage.GetAllItems())
-            {
-                if (item?.m_dropPrefab?.name == FishingRodPrefab) { rod = item; break; }
-            }
+            ItemDrop.ItemData rod = FishingBrain.RodIn(storage);
             if (rod == null) return;
 
             _savedRightHand = Inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
@@ -416,26 +413,8 @@ namespace FiresCore.Npc.IdleBehaviors
             Inventory.ApplyVisualEquipment();
             Inventory.SaveToZDO();
             _equippedRod = rod;
-
-            // Find and consume one bait from storage
-            EnsureBaitFishMapBuilt();
-            _activeBaitName = null;
-            foreach (var item in storage.GetAllItems())
-            {
-                if (item?.m_dropPrefab == null) continue;
-                string prefabName = item.m_dropPrefab.name;
-                if (!s_baitFishMap.ContainsKey(prefabName)) continue;
-                _activeBaitName = prefabName;
-                item.m_stack--;
-                if (item.m_stack <= 0) storage.RemoveItem(item);
-                Inventory.SaveToZDO();
-                break;
-            }
-
-            if (_activeBaitName != null)
-                LogVerbose($"Equipped rod with {_activeBaitName} bait");
-            else
-                LogVerbose("Equipped rod (no bait — low catch chance)");
+            if (_plan != null) _plan.Rod = rod;
+            LogVerbose($"Equipped {rod.m_dropPrefab?.name}");
         }
 
         private void UnequipFishingRod()
@@ -457,102 +436,44 @@ namespace FiresCore.Npc.IdleBehaviors
             Inventory.SaveToZDO();
         }
 
-        #endregion
-
-        #region Catch Determination
-
-        private string DetermineCatch(string baitPrefabName)
+        // The line in, the reel let go, the catch and any returned bait into storage, the rod away.
+        private void StopFishing()
         {
-            EnsureBaitFishMapBuilt();
-
-            List<(string prefab, float weight)> pool;
-            if (!string.IsNullOrEmpty(baitPrefabName) &&
-                s_baitFishMap.TryGetValue(baitPrefabName, out var specific))
+            if (Character != null)
             {
-                pool = specific;
+                FishingBrain.Withdraw(Character);
+                FishingBrain.SetReeling(Character, false);
             }
-            else
-            {
-                // No bait: pool all fish equally
-                pool = new List<(string, float)>();
-                foreach (var kvp in s_baitFishMap)
-                    foreach (var entry in kvp.Value)
-                        pool.Add(entry);
-            }
-
-            if (pool.Count == 0) return "Fish1";
-
-            float total = 0f;
-            foreach (var candidate in pool) total += candidate.weight;
-
-            float roll = Random.Range(0f, total);
-            float cumulative = 0f;
-            foreach (var candidate in pool)
-            {
-                cumulative += candidate.weight;
-                if (roll <= cumulative) return candidate.prefab;
-            }
-
-            return pool[pool.Count - 1].prefab;
-        }
-
-        private static void EnsureBaitFishMapBuilt()
-        {
-            if (s_baitFishMap != null) return;
-            s_baitFishMap = new Dictionary<string, List<(string, float)>>();
-
-            if (ZNetScene.instance == null) return;
-
-            foreach (var prefab in ZNetScene.instance.m_prefabs)
-            {
-                if (prefab == null) continue;
-                var fish = prefab.GetComponent<Fish>();
-                if (fish?.m_baits == null) continue;
-
-                foreach (var bait in fish.m_baits)
-                {
-                    if (bait?.m_bait == null) continue;
-                    string baitName = bait.m_bait.name;
-                    if (!s_baitFishMap.ContainsKey(baitName))
-                        s_baitFishMap[baitName] = new List<(string, float)>();
-                    s_baitFishMap[baitName].Add((prefab.name, bait.m_chance));
-                }
-            }
+            SetReelPose(false);
+            SweepBagIntoStorage();
+            UnequipFishingRod();
         }
 
         #endregion
 
         #region Inventory Helpers
 
-        // Created from the prefab so m_dropPrefab is set and the fish survives save/load (Inventory.cs:88-96).
-        private bool AddFishToInventory(string fishPrefabName)
+        // The game's float lands a catch (and returns an unused bait) into the companion's Humanoid bag, which nothing else uses; it all
+        // goes into storage.
+        private void SweepBagIntoStorage()
         {
-            var storage = GetStorageInventory();
-            if (storage == null || ZNetScene.instance == null) return false;
-
-            var prefab = ZNetScene.instance.GetPrefab(fishPrefabName);
-            if (prefab == null || prefab.GetComponent<ItemDrop>() == null) return false;
-
-            if (!storage.AddItem(prefab, 1)) return false;
-            SaveInventory();
-            return true;
-        }
-
-        private bool HasFishingRodAvailable()
-        {
-            if (Inventory == null) return false;
-
-            var storage = GetStorageInventory();
-            if (storage != null)
+            Inventory bag = Humanoid != null ? Humanoid.GetInventory() : null;
+            Inventory storage = GetStorageInventory();
+            if (bag == null || storage == null || bag.NrOfItems() == 0) return;
+            bool moved = false;
+            foreach (ItemDrop.ItemData item in bag.GetAllItems().ToList())
             {
-                foreach (var item in storage.GetAllItems())
+                if (item == null || !storage.CanAddItem(item)) continue;
+                bag.RemoveItem(item);
+                storage.AddItem(item);
+                moved = true;
+                if (item.m_dropPrefab != null && item.m_dropPrefab.GetComponent<Fish>() != null)
                 {
-                    if (item?.m_dropPrefab?.name == FishingRodPrefab) return true;
+                    Debug.Log($"[Fishing] {Companion?.companionName} stored {item.m_dropPrefab.name}{(item.m_quality > 1 ? $" (q{item.m_quality})" : "")}");
+                    AI.ChoreBrain.ChoreDone(Companion?.companionName, "fishing", $"caught {item.m_dropPrefab.name}{(item.m_quality > 1 ? $" (q{item.m_quality})" : "")}");
                 }
             }
-
-            var rightHandItem = Inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand);
-            return rightHandItem?.m_dropPrefab?.name == FishingRodPrefab;
+            if (moved) SaveInventory();
         }
 
         private void NotifyOwner()

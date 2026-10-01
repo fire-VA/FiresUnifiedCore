@@ -724,6 +724,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 PlayInteractAnimation();
                 LogVerbose($"Collected {pickups} of {doneCount + burnedCount} (skill={skill:F0}, fumble={fumblePerItem:P0})");
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "cook", $"collected {pickups} cooked item(s) from {Utils.GetPrefabName(_currentStation.gameObject)}");
 
                 // Award skill XP only for items that came off as Done (not burned
                 // and not fumbled).  doneToCollect is the perfect-skill count.
@@ -746,6 +747,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         SaveInventory();
                         actedThisTick = true;
                         LogVerbose($"Refilled slot with {raw.m_shared.m_name}");
+                        AI.ChoreBrain.ChoreDone(Companion?.companionName, "cook", $"put {raw.m_dropPrefab?.name ?? raw.m_shared.m_name} on {Utils.GetPrefabName(_currentStation.gameObject)}");
                     }
                     else break;
                 }
@@ -963,29 +965,12 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // helpers - stations
 
+        // One set of station rules with the bot's base chores (0.2.237): ChoreBrain.CookingStationsNear (fed directly, this
+        // companion's reservations), nearest first.
         private List<CookingStation> FindCookingStations()
         {
-            float radius  = GetEffectiveSearchRadius(StationScanRadius);
-            var result    = new List<CookingStation>();
-            var seen      = new HashSet<CookingStation>();
-            var colliders = Physics.OverlapSphere(SearchCenter, radius);
-
-            foreach (var collider in colliders)
-            {
-                if (collider == null) continue;
-                var station = collider.GetComponent<CookingStation>()
-                           ?? collider.GetComponentInParent<CookingStation>();
-                if (station == null || seen.Contains(station)) continue;
-                if (!TakesFoodDirectly(station)) continue;
-                if (!InteractableOccupancyManager.CanUseInteractable(station.gameObject, Character)) continue;
-                seen.Add(station);
-                result.Add(station);
-            }
-
-            // Nearest first.
-            result.Sort((a, b) =>
-                DistanceTo(a.transform.position).CompareTo(DistanceTo(b.transform.position)));
-            return result;
+            if (Transform == null) return new List<CookingStation>();
+            return AI.ChoreBrain.CookingStationsNear(SearchCenter, GetEffectiveSearchRadius(StationScanRadius), Transform.position, Character);
         }
 
         private void ReleaseStation()
@@ -1152,7 +1137,9 @@ namespace FiresCore.Npc.IdleBehaviors
         /// contains raw food <paramref name="station"/> can cook.</summary>
         private Container FindChestWithRawFood(CookingStation station)
         {
-            if (station == null || !Resources.HasNearbyChests) return null;
+            // 0.2.256 ([ghost]): CanStart asks here before any Start has filled the chest list, so a companion carrying no raw food never
+            // saw the base chests' meat. A throttled refresh (5 s / 5 m), as ChestDepositV2's CanStart does.
+            if (station == null || Resources.RefreshNearbyChests() == 0) return null;
 
             Container best     = null;
             float     bestDist = float.MaxValue;

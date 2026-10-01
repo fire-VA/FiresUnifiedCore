@@ -56,6 +56,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 // A tree no reachable axe can cut (a tier-2 birch nearest home) would block chopping for good.
                 if (target == null || !ResourceDataHelper.CanChop(target, axeTier)) continue;
+                if (IsUnreached(target)) continue;   // 0.2.268: a run timed out short of it lately
                 
                 float dist = Vector3.Distance(position, target.transform.position);
                 if (dist < closestDist)

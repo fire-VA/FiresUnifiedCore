@@ -203,6 +203,22 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         /// <param name="interactable">The GameObject to check</param>
         /// <param name="excludeCharacter">Optional character to exclude from the check (e.g., "is it occupied by someone other than me?")</param>
+        /// <summary>
+        /// The name of whoever holds <paramref name="interactable"/> other than <paramref name="excludeCharacter"/>, or null when nobody else
+        /// does (0.2.238: ChoreBrain's "is taken by" evidence line).
+        /// </summary>
+        public static string OccupantName(GameObject interactable, Character excludeCharacter = null)
+        {
+            if (interactable == null) return null;
+            int excludeId = excludeCharacter?.GetInstanceID() ?? 0;
+            lock (_lock)
+            {
+                if (!_occupiedObjects.TryGetValue(interactable.GetInstanceID(), out var existing) || existing.IsExpired) return null;
+                if (excludeCharacter != null && existing.OccupantInstanceId == excludeId) return null;
+                return existing.OccupantName;
+            }
+        }
+
         public static bool IsOccupied(GameObject interactable, Character excludeCharacter = null)
         {
             if (interactable == null)

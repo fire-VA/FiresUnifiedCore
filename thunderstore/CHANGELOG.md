@@ -1,3 +1,6 @@
+* v0.2.277 - updates and optimizations for Valheim 1.0
+  - fixes other mods' weapon and item textures being changed, companion fixes, and a Log Level setting
+
 * v0.2.219 - updates and optimizations for Valheim 1.0
   - smarter companions and better pathfinding
 

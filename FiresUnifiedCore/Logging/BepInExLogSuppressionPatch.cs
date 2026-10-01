@@ -114,6 +114,8 @@ namespace FiresCore.Logging
         internal static int SuppressedHarmonyMissing => _suppressedHarmonyMissing;
         internal static int QuietedOtherModLines => _quietedOtherModLines;
         internal static int PerModDroppedLines => _perModDroppedLines;
+        private static int _levelDroppedLines;
+        internal static int LevelDroppedLines => _levelDroppedLines;
 
         // Core binds these from its own config file at setup; nothing else should.
         internal static void BindConfig(ConfigFile config)
@@ -265,6 +267,15 @@ namespace FiresCore.Logging
                 return true;
             }
 
+            // 0.2.269 [Logging] Log Level: below Info, a family source's Message / Info / Debug lines are hidden (warnings and errors
+            // always print). The load line saying so is let through while it is written.
+            if (!FiresLogLevel.InfoOn && !FiresLogLevel.Announcing && (int)eventArgs.Level > (int)LogLevel.Warning
+                && IsFamilySource(sourceName))
+            {
+                _levelDroppedLines++;
+                return true;
+            }
+
             if (ShouldQuietOtherMod(sourceName, eventArgs.Level))
             {
                 _quietedOtherModLines++;
@@ -321,7 +332,7 @@ namespace FiresCore.Logging
         }
 
         /// <summary>"[&lt;Area&gt;Test] ..." with a letters-only area name, e.g. "[VedrTest] 3/9 providers PASS - ...".</summary>
-        private static bool IsTestLine(string message)
+        internal static bool IsTestLine(string message)
         {
             if (string.IsNullOrEmpty(message) || message[0] != TestMarkerOpen) return false;
             int close = message.IndexOf(TestMarkerClose, 1, Math.Min(TestMarkerSearchChars, message.Length - 1), StringComparison.Ordinal);

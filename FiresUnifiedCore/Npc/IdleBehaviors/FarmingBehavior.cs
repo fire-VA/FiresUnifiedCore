@@ -21,7 +21,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private const float BeehiveDetectionRange   = 30f;
         private const float CropDetectionRange      = 30f;
-        private const float PlantingDetectionRange  = 20f;
+        private const float PlantingDetectionRange  = AI.ChoreBrain.PlantSearchRadius;   // one radius with the bot's base chores (0.2.241)
         private const float InteractionDistance      = 2.5f;
         private const float ArrivalDistance          = 2.5f;
         private const float MovementTimeout          = 30f;
@@ -32,15 +32,8 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // ── Cultivator ────────────────────────────────────────────────────────
 
-        // Valheim prefab name for the Cultivator item.
+        // Valheim prefab name for the Cultivator item. Its cost and station are the game's recipe (ChoreBrain.CraftFromStock, 0.2.242).
         private const string CultivatorPrefab = "Cultivator";
-
-        // Forge recipe: 5 Core Wood (RoundLog) + 5 Bronze.
-        // Requires a Forge nearby.
-        private const string RecipeCorewood       = "RoundLog";
-        private const string RecipeBronze         = "Bronze";
-        private const int    RecipeCorewoodCount = 5;
-        private const int    RecipeBronzeCount   = 5;
 
         private float ChestSearchRadius => CompanionSettings.ChestSearchRadius;
 
@@ -53,6 +46,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Cultivator acquisition (only entered when planting is needed)
             GettingCultivator,
             MovingToCultivatorChest,
+            FetchingCraftMaterials,
             MovingToForge,
             CraftingCultivator,
 
@@ -95,7 +89,10 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // Cultivator acquisition
         private Container       _cultivatorChest;
-        private CraftingStation _targetForge;
+        private CraftingStation _targetForge;               // the Cultivator recipe's station (a forge in vanilla)
+        private Container       _materialChest;             // a CraftFromStock take: this chest, this prefab, this many
+        private string          _materialPrefab;
+        private int             _materialAmount;
         private bool            _cultivatorReadyThisSession; // true once we know we have (or got) one
 
         // Seed retrieval
@@ -175,10 +172,12 @@ namespace FiresCore.Npc.IdleBehaviors
 
             Vector3 home = IdleBehavior.HomePosition;
 
-            // Harvesting never requires a cultivator.
-            if (FarmingDataHelper.FindNearbyHarvestableBeehives(home, BeehiveDetectionRange).Count > 0)
+            // Harvesting never requires a cultivator. The same finders (and wards) the harvest itself uses (0.2.241), so a companion
+            // never starts for a crop it may not pick.
+            System.Func<Vector3, bool> wards = position => ChestHelper.WardsAllow(position, Companion);
+            if (AI.ChoreBrain.HivesToHarvest(home, BeehiveDetectionRange, home, wards).Count > 0)
                 return true;
-            if (FarmingDataHelper.FindNearbyHarvestableCrops(home, CropDetectionRange).Count > 0)
+            if (AI.ChoreBrain.CropsToHarvest(home, CropDetectionRange, home, wards).Count > 0)
                 return true;
 
             // Planting: need seeds (inventory or nearby chests) that grow on cultivated ground here + cultivator source.
@@ -238,6 +237,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 FarmPhase.Idle                    => UpdateIdle(),
                 FarmPhase.GettingCultivator       => UpdateGettingCultivator(),
                 FarmPhase.MovingToCultivatorChest => UpdateMovingToCultivatorChest(),
+                FarmPhase.FetchingCraftMaterials  => UpdateFetchingCraftMaterials(),
                 FarmPhase.MovingToForge           => UpdateMovingToForge(),
                 FarmPhase.CraftingCultivator      => UpdateCraftingCultivator(),
                 FarmPhase.GettingSeeds            => UpdateGettingSeeds(),
@@ -265,6 +265,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             FarmPhase.GettingCultivator       => "Looking for cultivator",
             FarmPhase.MovingToCultivatorChest => "Getting cultivator from chest",
+            FarmPhase.FetchingCraftMaterials  => "Getting cultivator materials",
             FarmPhase.MovingToForge           => "Walking to forge",
             FarmPhase.CraftingCultivator      => "Crafting cultivator",
             FarmPhase.GettingSeeds            => "Looking for seeds",
@@ -363,11 +364,14 @@ namespace FiresCore.Npc.IdleBehaviors
 
             Vector3 home = IdleBehavior?.HomePosition ?? Transform.position;
 
+            // One set of farming rules with the bot's base chores (0.2.239): ChoreBrain.HivesToHarvest / CropsToHarvest (this
+            // companion's wards, nearest first); reachability stays this behaviour's own.
+            System.Func<Vector3, bool> wards = position => ChestHelper.WardsAllow(position, Companion);
+
             // Priority 1: beehives (no tool required)
-            var beehives = FarmingDataHelper.FindNearbyHarvestableBeehives(home, BeehiveDetectionRange);
+            var beehives = AI.ChoreBrain.HivesToHarvest(home, BeehiveDetectionRange, Transform.position, wards, Companion?.companionName);
             foreach (var hive in beehives)
             {
-                if (!ChestHelper.WardsAllow(hive.transform.position, Companion)) continue;
                 if (!IsReachable(hive.transform.position)) continue;
 
                 _targetBeehive  = hive;
@@ -378,10 +382,9 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // Priority 2: harvestable crops (no tool required)
-            var crops = FarmingDataHelper.FindNearbyHarvestableCrops(home, CropDetectionRange);
+            var crops = AI.ChoreBrain.CropsToHarvest(home, CropDetectionRange, Transform.position, wards, Companion?.companionName);
             foreach (var crop in crops)
             {
-                if (!ChestHelper.WardsAllow(crop.transform.position, Companion)) continue;
                 if (!IsReachable(crop.transform.position)) continue;
 
                 _targetCrop     = crop;
@@ -420,26 +423,18 @@ namespace FiresCore.Npc.IdleBehaviors
             var storage = _inventory?.GetStorageInventory();
             if (storage == null) return false;
 
-            foreach (var item in storage.GetAllItems())
-            {
-                foreach (var crop in LeastPlantedFirst(FarmingDataHelper.SaplingsForSeed(item?.m_dropPrefab?.name)))
-                {
-                    if (!HasSeedsFor(storage, crop)) continue;
+            // One planting choice with the bot's base chores (0.2.239): ChoreBrain.ChoosePlanting (least-planted sapling first, seed
+            // cost covered, the nearest valid spot).
+            if (!AI.ChoreBrain.ChoosePlanting(storage, _plantSpots, Transform.position,
+                    sapling => _plantedCountBySapling.TryGetValue(sapling, out int planted) ? planted : 0, out var crop, out Vector3 pos))
+                return false;
 
-                    foreach (var pos in _plantSpots)
-                    {
-                        if (!FarmingDataHelper.IsValidPlantingPosition(pos, crop, PlantSpacing)) continue;
-
-                        _cropToPlant    = crop;
-                        _plantPosition  = pos;
-                        _targetPosition = pos;
-                        SetPhase(FarmPhase.MovingToPlantSpot);
-                        TryMoveToPosition(_targetPosition);
-                        return true;
-                    }
-                }
-            }
-            return false;
+            _cropToPlant    = crop;
+            _plantPosition  = pos;
+            _targetPosition = pos;
+            SetPhase(FarmPhase.MovingToPlantSpot);
+            TryMoveToPosition(_targetPosition);
+            return true;
         }
 
         /// <summary>A seed that grows into more than one sapling (1.0 KaleSeeds: kale or seed kale) alternates between them.</summary>
@@ -453,13 +448,8 @@ namespace FiresCore.Npc.IdleBehaviors
             return true;
         }
 
-        private bool IsSeedForPlantSpots(ItemDrop.ItemData item)
-        {
-            foreach (var crop in FarmingDataHelper.SaplingsForSeed(item?.m_dropPrefab?.name))
-                foreach (var spot in _plantSpots)
-                    if (FarmingDataHelper.CanGrowAt(crop, spot)) return true;
-            return false;
-        }
+        // One seed rule with the bot's base chores (0.2.241): ChoreBrain.IsSeedFor.
+        private bool IsSeedForPlantSpots(ItemDrop.ItemData item) => AI.ChoreBrain.IsSeedFor(item, _plantSpots);
 
         private bool HasAnySeeds()
             => StorageHas(FarmingDataHelper.CanBePlanted) || FindChestWith(FarmingDataHelper.CanBePlanted) != null;
@@ -469,41 +459,27 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // ── Cultivator helpers ────────────────────────────────────────────────
 
-        private static bool IsCultivator(ItemDrop.ItemData item)
-            => item?.m_dropPrefab?.name?.IndexOf("cultivator", System.StringComparison.OrdinalIgnoreCase) >= 0;
+        // One cultivator rule with the bot's base chores (0.2.241): ChoreBrain.IsCultivator.
+        private static bool IsCultivator(ItemDrop.ItemData item) => AI.ChoreBrain.IsCultivator(item);
 
         private bool HasCultivator() => StorageHas(IsCultivator);
 
-        private bool CanCraftCultivator()
+        // The one craft-from-stock rule with the bot (0.2.242, ChoreBrain.CraftFromStock): the game's Cultivator recipe, at a station of
+        // its kind and level near home (roof and fire checked), paid from storage plus the nearby chests, the whole cost covered.
+        // "" with plan when it can be made; otherwise the coded reason ("stock: Bronze 2/5 …", "nostation: …", "roof: …").
+        private string CultivatorCraft(out AI.ChoreBrain.StockCraft plan)
         {
+            plan = null;
             var storage = _inventory?.GetStorageInventory();
-            if (storage == null) return false;
-            return CountItems(storage, RecipeCorewood) >= RecipeCorewoodCount
-                && CountItems(storage, RecipeBronze)   >= RecipeBronzeCount;
+            if (storage == null) return "missing: no storage";
+            if (_nearbyChests == null || _nearbyChests.Count == 0) RefreshNearbyChests();
+            var chests = _nearbyChests;
+            Vector3 home = IdleBehavior?.HomePosition ?? Transform.position;
+            return AI.ChoreBrain.CraftFromStock(CultivatorPrefab, storage, Transform.position, home, CraftingStationRadius,
+                chest => chests.Contains(chest), out plan);
         }
 
-        private CraftingStation FindNearestForge()
-        {
-            var cols = Physics.OverlapSphere(Transform.position, CraftingStationRadius);
-            CraftingStation best    = null;
-            float           bestDist = float.MaxValue;
-            var             seen    = new HashSet<CraftingStation>();
-
-            foreach (var collider in cols)
-            {
-                if (collider == null) continue;
-                var station = collider.GetComponent<CraftingStation>() ?? collider.GetComponentInParent<CraftingStation>();
-                if (station == null || seen.Contains(station)) continue;
-                seen.Add(station);
-
-                string stName = (station.m_name ?? station.gameObject.name ?? "").ToLowerInvariant();
-                if (!stName.Contains("forge")) continue;
-
-                float stationDistance = Vector3.Distance(Transform.position, station.transform.position);
-                if (stationDistance < bestDist) { bestDist = stationDistance; best = station; }
-            }
-            return best;
-        }
+        private bool CanCraftCultivator() => CultivatorCraft(out _) == "";
 
         // ── General helpers ───────────────────────────────────────────────────
 

@@ -122,6 +122,11 @@ namespace FiresCore.Npc
             fishing.Initialize(_companion, this);
             _subBehaviors.Add(fishing);
 
+            // Haul (0.2.220) - carries out CompanionController.StartHaul; never in the idle rotation
+            var haul = new HaulBehavior();
+            haul.Initialize(_companion, this);
+            _subBehaviors.Add(haul);
+
             if (VerboseLogging)
                 Debug.Log($"[CompanionIdleBehavior] Initialized {_subBehaviors.Count} sub-behaviors");
         }
@@ -138,7 +143,7 @@ namespace FiresCore.Npc
             if (_companionAI != null && _companionAI.IsInCombat
                 && _npcModule != null && _npcModule.IsStationedAsNpc)
             {
-                CancelActiveSubBehavior();
+                CancelActiveSubBehavior("combat (a stationed NPC)");
                 return;
             }
 
@@ -151,8 +156,8 @@ namespace FiresCore.Npc
                 {
                     if (VerboseLogging)
                         Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} cancelling sub-behavior {_activeSubBehavior.BehaviorName} - player command has absolute priority");
-                    
-                    CancelActiveSubBehavior();
+
+                    CancelActiveSubBehavior($"a {_stateController.ActiveCommandType} command");
                     return;
                 }
             }
@@ -175,7 +180,7 @@ namespace FiresCore.Npc
                     {
                         if (VerboseLogging || Config.ConfigManager.Instance?.configCompanionFollowDiag?.Value == true)
                             Debug.Log($"[CompanionFollowDiag] {_companion?.companionName} dropping {_activeSubBehavior.BehaviorName} — owner has moved off");
-                        CancelActiveSubBehavior();
+                        CancelActiveSubBehavior("its owner moved off (following)");
                         return;
                     }
                 }
@@ -186,15 +191,32 @@ namespace FiresCore.Npc
 
             if (isComplete)
             {
-                if (VerboseLogging)
-                    Debug.Log($"[CompanionIdleBehavior] {_activeSubBehavior.BehaviorName} completed for {_companion?.companionName}");
-                
+                NoteSubBehaviorEnd(_activeSubBehavior, "done");
+                // 0.2.257: a behaviour that says "done" without its own Complete() keeps its reservations and movement authority
+                // (SmelterOperator did, [ghost]). Say so once per finish, always on, so the next one shows in the log.
+                if (_activeSubBehavior.IsActive)
+                    Debug.LogWarning($"[CompanionIdleBehavior] {_companion?.companionName} sub-behavior {_activeSubBehavior.BehaviorName} returned done while still active (its Complete() did not run)");
+
                 // Notify coordinator
                 BehaviorCoordinator?.NotifyBehaviorCompleted(_activeSubBehavior, true, "Completed");
                 
                 _activeSubBehavior = null;
                 SetIdleState(IdleState.Standing);
             }
+        }
+
+        // 0.2.255 (Fire's homestead test: chore vs idle vs standing time): when the running sub-behaviour started, and one always-on
+        // line when it ends, "[CompanionIdleBehavior] <name> ended sub-behavior: <behaviour> after N s (done | cancelled)".
+        private float _subStartedAt = -1f;
+
+        private void NoteSubBehaviorStart() => _subStartedAt = Time.time;
+
+        private void NoteSubBehaviorEnd(IdleSubBehavior behavior, string how)
+        {
+            if (behavior == null) return;
+            string took = _subStartedAt >= 0f ? $"{Time.time - _subStartedAt:0} s" : "? s";
+            Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} ended sub-behavior: {behavior.BehaviorName} after {took} ({how})");
+            _subStartedAt = -1f;
         }
 
         private bool TryStartSubBehavior()
@@ -296,6 +318,7 @@ namespace FiresCore.Npc
             _isRotating = false;      // sub-behavior owns rotation; stop any look-around that would fight it
             _activeSubBehavior = selectedBehavior;
             _activeSubBehavior.Start();
+            NoteSubBehaviorStart();
             SetIdleState(IdleState.SubBehavior);
             
             // Notify coordinator
@@ -352,13 +375,15 @@ namespace FiresCore.Npc
             TryStartSubBehavior<PatrolBehavior>();
         }
 
-        private void CancelActiveSubBehavior()
+        // 0.2.267 (HR2: "ended … after 0 s (cancelled)" with no way to tell why): every cancel names its reason on the end line.
+        private void CancelActiveSubBehavior(string why = "unnamed")
         {
             if (_activeSubBehavior != null)
             {
                 var behavior = _activeSubBehavior;
                 _activeSubBehavior.Cancel();
                 _activeSubBehavior = null;
+                NoteSubBehaviorEnd(behavior, $"cancelled: {why}");
                 
                 // Notify coordinator
                 BehaviorCoordinator?.NotifyBehaviorCompleted(behavior, false, "Cancelled");
@@ -385,6 +410,7 @@ namespace FiresCore.Npc
                     {
                         _activeSubBehavior = bowTraining;
                         _activeSubBehavior.StartAsCommand();
+                        NoteSubBehaviorStart();
                         SetIdleState(IdleState.SubBehavior);
                         
                         if (VerboseLogging)
@@ -443,6 +469,7 @@ namespace FiresCore.Npc
             
             _activeSubBehavior = behavior;
             _activeSubBehavior.StartAsCommand();
+            NoteSubBehaviorStart();
             SetIdleState(IdleState.SubBehavior);
             
             // Notify coordinator

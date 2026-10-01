@@ -185,6 +185,72 @@ namespace FiresCore.Npc
                 // Additional delay for non-owners to ensure ZDO is synced
                 Invoke(nameof(RestoreModelStateFromZDO), 1.5f);
             }
+
+            // 0.2.266: keep at it until the companion carries a real name, whichever peer owns it (see NameWatch).
+            _nameWatchUntil = Time.time + NameWatchSeconds;
+            InvokeRepeating(nameof(NameWatch), 4f, 2f);   // after a wild spawn's own loadout (3.5 s) has had its turn
+        }
+
+        // ── 0.2.266 (Fire's popup: "Core names them at spawn"; HR1's recruits all read "CompanionNpc_Wild") ─────────────────────────
+        // A companion's name lives on its ZDO ("companion_name", every peer reads it). Only the ZDO owner names it (at load, 0.7 s, or in
+        // GenerateRandomLoadout), and with ownership moving between peers that moment could pass with nobody naming it, or a peer keep the
+        // placeholder it loaded with. Every 2 s for NameWatchSeconds while the name is still a placeholder: a real name already on the ZDO
+        // (its owner named it) is taken here too; else the owner names it now: a wild one through AssignRandomVikingName, a tamed one
+        // (recruited before it was named) with a name of its own gender and nothing else changed. Never over a real name: a player's
+        // rename or an authored NPC ("Freya the Hunter") is not a placeholder. No two companions within NameUniqueRadius m share a name.
+
+        private const float NameWatchSeconds = 120f, NameUniqueRadius = 100f;
+        private float _nameWatchUntil;
+
+        /// <summary>0.2.266: the default names a companion carries before it is named (the prefab's, CompanionPrefabManager's).</summary>
+        public static bool IsPlaceholderName(string name) =>
+            string.IsNullOrEmpty(name) || name == "CompanionNpc" || name == "CompanionNpc_Wild" || name == "Companion NPC" || name == "Companion";
+
+        private void NameWatch()
+        {
+            if (_companion == null || Time.time > _nameWatchUntil || !IsPlaceholderName(_companion.companionName)) { CancelInvoke(nameof(NameWatch)); return; }
+            var nview = GetComponent<ZNetView>();
+            if (nview == null || !nview.IsValid()) return;
+            ZDO zdo = nview.GetZDO();
+            string stored = zdo.GetString("companion_name", "");
+            if (!IsPlaceholderName(stored))
+            {
+                _companion.companionName = stored;
+                _companion.UpdateCharacterName(stored);
+                Debug.Log($"[CompanionRandomLoadout] {stored}: name read from its ZDO (its owner named it)");
+                CancelInvoke(nameof(NameWatch));
+                return;
+            }
+            if (!nview.IsOwner()) return;
+            bool tamed = _companion.isTamed;
+            if (tamed) NameTamedPlaceholder(zdo); else AssignRandomVikingName();
+            if (!IsPlaceholderName(_companion.companionName))
+                Debug.Log($"[CompanionRandomLoadout] named {_companion.companionName} ({(tamed ? "tamed, it still had a placeholder name" : "wild")}; no other companion within {NameUniqueRadius:0} m has it)");
+        }
+
+        // A tamed companion that never got a name: one of its own gender (its body is already dressed; nothing else changes), unique nearby.
+        private void NameTamedPlaceholder(ZDO zdo)
+        {
+            bool female = zdo.GetBool("companion_isfemale", _isFemale);
+            string name = GetRandomVikingName(_isGiant, _isDwarf, female);
+            for (int tries = 0; tries < 8 && NameTakenNearby(name); tries++) name = GetRandomVikingName(_isGiant, _isDwarf, female);
+            _companion.companionName = name;
+            _companion.UpdateCharacterName(name);
+            zdo.Set("companion_name", name);
+            zdo.Set(ZDOVars.s_tamedName, name);
+        }
+
+        private bool NameTakenNearby(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            float r2 = NameUniqueRadius * NameUniqueRadius;
+            foreach (var other in CompanionController.AllCompanions)
+            {
+                if (other == null || other == _companion) continue;
+                if ((other.transform.position - transform.position).sqrMagnitude > r2) continue;
+                if (string.Equals(other.GetDisplayName(), name, System.StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
         
         /// <summary>
@@ -770,6 +836,8 @@ namespace FiresCore.Npc
                 isFemale = UnityEngine.Random.value < 0.5f;
                 vikingName = GetRandomVikingName(_isGiant, _isDwarf, isFemale);
             }
+            // 0.2.266: no two companions within NameUniqueRadius m share a name (the faction pool is seeded per ZDO, so re-roll from the generic one).
+            for (int tries = 0; tries < 8 && NameTakenNearby(vikingName); tries++) vikingName = GetRandomVikingName(_isGiant, _isDwarf, isFemale);
             _companion.companionName = vikingName;
             _companion.UpdateCharacterName(vikingName);
 

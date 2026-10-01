@@ -186,6 +186,7 @@
     <Compile Include="World\SpawnKnowledge.cs" />
     <Compile Include="World\ResourceMemory.cs" />
     <Compile Include="World\EnemyMemory.cs" />
+    <Compile Include="World\DeathRecorder.cs" />
     <Compile Include="Npc\Combat\GroupTactics.cs" />
     <Compile Include="Bridge\MonsterPresetBridge.cs" />
     <Compile Include="Bridge\GroupHudBridge.cs" />
@@ -310,6 +311,9 @@
     <Compile Include="Npc\AI\CompanionAI\CompanionAI.Pathfinding.cs" />
     <Compile Include="Npc\AI\CompanionAI\CompanionAI.Targeting.cs" />
     <Compile Include="Npc\AI\ChoreBrain.cs" />
+    <Compile Include="Npc\AI\ChoreBrainBase.cs" />
+    <Compile Include="Npc\AI\FishingBrain.cs" />
+    <Compile Include="Npc\AI\ArcheryBrain.cs" />
     <Compile Include="Npc\AI\CompanionBrain.cs" />
     <Compile Include="Npc\AI\ITaskBody.cs" />
     <Compile Include="Npc\AI\Perception.cs" />
@@ -599,6 +603,7 @@
     <Compile Include="UI\Chat\FiresChatSkin.cs" />
     <EmbeddedResource Include="UI\Chat\Art\*.png" />
     <EmbeddedResource Include="firescoreshaders" />
+    <EmbeddedResource Include="firesclimb" />
     <Compile Include="UI\ContextMenu\ContextTarget.cs" />
     <Compile Include="UI\ContextMenu\ContextMenuItem.cs" />
     <Compile Include="UI\ContextMenu\IContextMenuProvider.cs" />
@@ -739,6 +744,19 @@
     <Compile Include="Npc\AI\TerrainPlanner.cs" />
     <Compile Include="Npc\AI\RoomGraph.cs" />
     <Compile Include="Npc\AI\Party.cs" />
+    <Compile Include="Npc\AI\Trips.cs" />
+    <Compile Include="Npc\AI\Haul.cs" />
+    <Compile Include="Npc\AI\TaskBodyHands.cs" />
+    <Compile Include="Npc\AI\Hazards.cs" />
+    <Compile Include="Npc\AI\Swimming.cs" />
+    <Compile Include="Npc\AI\Foraging.cs" />
+    <Compile Include="Npc\Combat\FireScare.cs" />
+    <Compile Include="Npc\Combat\ColdRisk.cs" />
+    <Compile Include="Movement\Climbing.cs" />
+    <Compile Include="Movement\ClimbAnimator.cs" />
+    <Compile Include="Npc\AI\CompanionTaskBody.cs" />
+    <Compile Include="Npc\IdleBehaviors\HaulBehavior.cs" />
+    <Compile Include="Npc\CompanionHaulRunner.cs" />
     <Compile Include="World\DistantSectorSkip.cs" />
     <Compile Include="Lifecycle\FiresMod.cs" />
     <Compile Include="Lifecycle\PlayerSpawnGate.cs" />

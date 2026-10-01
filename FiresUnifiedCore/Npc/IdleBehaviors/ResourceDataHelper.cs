@@ -137,7 +137,12 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 return CreatePickableItemData(pickableItem);
             }
-            
+
+            // 0.2.268 ([lead], HR3): a build piece (anything with a Piece: walls, decorations, a player's stone or wood work) is never a
+            // tree, log or deposit to chop or mine, in players' bases too. Real nodes (MineRock, MineRock5, Destructible, TreeBase, TreeLog)
+            // carry no Piece, even when a builder placed them (the homestead's iron mudpile stays a target).
+            if (obj.GetComponentInParent<Piece>() != null) return null;
+
             // Check for TreeBase
             var treeBase = obj.GetComponent<TreeBase>() ?? obj.GetComponentInParent<TreeBase>();
             if (treeBase != null)
@@ -652,6 +657,66 @@ namespace FiresCore.Npc.IdleBehaviors
         private const float LogDamageMultiplier = 0.5f;        // Logs take ~2 hits
         private const float RockDamageMultiplier = 0.4f;       // Rocks take multiple hits
         
+        // ── 0.2.271 (Fire, watching the stream: "Companions get stuck in the minerock... make them do some damage or something if they
+        // cannot properly aim and connect with the minerock meshes when they break up into multiple parts"). One aim for every body
+        // that mines (companions here; FDT's bot can call the same): a rock is aimed at the closest point of its nearest live surface,
+        // never its root, which sits inside a fractured rock.
+
+        /// <summary>The closest point on <paramref name="collider"/> to <paramref name="from"/>. A concave mesh answers ClosestPoint with
+        /// the query point itself, so its bounds stand in.</summary>
+        public static Vector3 ClosestPointOn(Collider collider, Vector3 from)
+        {
+            if (collider == null) return from;
+            return !(collider is MeshCollider mesh) || mesh.convex ? collider.ClosestPoint(from) : collider.bounds.ClosestPoint(from);
+        }
+
+        /// <summary>A MineRock5's nearest hit area still standing (health above 0, collider on): its collider, the closest point on it to
+        /// <paramref name="from"/> and its index in the rock's area list (the index vanilla's own hit uses). False when none stands.</summary>
+        public static bool TryNearestMineArea(MineRock5 rock, Vector3 from, out Collider area, out Vector3 point, out int index)
+        {
+            area = null; point = from; index = -1;
+            if (rock == null || rock.m_hitAreas == null) return false;
+            float best = float.MaxValue;
+            for (int i = 0; i < rock.m_hitAreas.Count; i++)
+            {
+                var hitArea = rock.m_hitAreas[i];
+                var collider = hitArea?.m_collider;
+                if (collider == null || hitArea.m_health <= 0f || !collider.enabled || !collider.gameObject.activeInHierarchy) continue;
+                Vector3 closest = ClosestPointOn(collider, from);
+                float d = (closest - from).sqrMagnitude;
+                if (d < best) { best = d; area = collider; point = closest; index = i; }
+            }
+            return area != null;
+        }
+
+        /// <summary>Any other rock or deposit: its nearest solid, enabled collider and the closest point on it.</summary>
+        public static bool TryNearestSolidCollider(GameObject root, Vector3 from, out Collider nearest, out Vector3 point)
+        {
+            nearest = null; point = from;
+            if (root == null) return false;
+            float best = float.MaxValue;
+            foreach (var collider in root.GetComponentsInChildren<Collider>())
+            {
+                if (collider == null || collider.isTrigger || !collider.enabled || !collider.gameObject.activeInHierarchy) continue;
+                Vector3 closest = ClosestPointOn(collider, from);
+                float d = (closest - from).sqrMagnitude;
+                if (d < best) { best = d; nearest = collider; point = closest; }
+            }
+            return nearest != null;
+        }
+
+        /// <summary>Strikes one hit area of a MineRock5 through vanilla's own hit (MineRock5.Damage: the area by its collider, the owner's
+        /// RPC, the tool-tier check and damage modifiers, its own drops), with the same HitData a connecting swing carries.</summary>
+        public static bool StrikeMineArea(MineRock5 rock, Collider area, Vector3 point, HitData hit)
+        {
+            if (rock == null || area == null || hit == null) return false;
+            hit.m_hitCollider = area;
+            hit.m_point = point;
+            hit.m_radius = 0f;
+            rock.Damage(hit);
+            return true;
+        }
+
         /// <summary>
         /// Creates a HitData for attacking a resource.
         /// Damage is scaled down to prevent one-shotting resources with high-tier tools.

@@ -26,7 +26,14 @@ namespace FiresCore.Npc.AI
         /// <remarks>Door (appended): a passable closed door blocks the way (<see cref="DoorRule.DoorOnPath"/>); moveDir heads for it
         /// (zero within <see cref="DoorRule.InteractDistance"/>), <see cref="Door"/> names it. The caller opens it
         /// (<see cref="DoorRule.OpenFor"/>) and may <see cref="DoorRule.CloseBehind"/>; once it is open the walker asks for a new path.</remarks>
-        public enum WalkState { Arrived, Moving, Turning, NoPath, Pending, Partial, Door }
+        /// <remarks>Climb (appended, 0.2.252): the body is on a face (FiresCore.Movement.Climb runs the motion); moveDir / lookDir point at
+        /// the face. The walker asks the navmesh again from the top.</remarks>
+        public enum WalkState { Arrived, Moving, Turning, NoPath, Pending, Partial, Door, Climb }
+
+        // 0.2.252: climbing and swimming as route steps.
+        private bool _climbing;
+        private bool _swimHold;
+        private float _climbLogAt, _swimLogAt;
 
         /// <summary>The door this walk is waiting on (<see cref="WalkState.Door"/>), else null.</summary>
         public Door Door { get; private set; }
@@ -119,6 +126,52 @@ namespace FiresCore.Npc.AI
             WantsJump = false;
             if (body == null) { State = "no body"; return WalkState.NoPath; }
             Vector3 at = body.transform.position;
+            // 0.2.252: on a face, Core's climb moves the body; the walker points at the face and asks again from the top.
+            if (FiresCore.Movement.Climb.IsClimbing(body))
+            {
+                _climbing = true;
+                Vector3 face = FiresCore.Movement.Climb.FaceDirection(body);
+                moveDir = face;
+                lookDir = face;
+                State = $"climbing ({FiresCore.Movement.Climb.StateOf(body)})";
+                return WalkState.Climb;
+            }
+            if (_climbing)
+            {
+                _climbing = false;
+                _path.Clear();
+                _lastAsk = -999f;
+                _detour.Clear();
+                Debug.Log($"[PathWalker] {body.m_name}: climb over at ({at.x:0}, {at.y:0}, {at.z:0}); asking the navmesh from here");
+            }
+            // A planned climb: straight to its foot (the slope guard would turn away from the face), where Core's climb takes over.
+            if (FiresCore.Movement.Climb.TicketFor(body, out FiresCore.Movement.Climbing.ClimbPlan climbPlan))
+            {
+                if (FlatDistance(climbPlan.Goal, goal) > 3f) FiresCore.Movement.Climb.CancelPlan(body);
+                else
+                {
+                    Vector3 toFace = climbPlan.Top - at;
+                    toFace.y = 0f;
+                    if (toFace.sqrMagnitude > 0.0001f)
+                    {
+                        moveDir = toFace.normalized;
+                        lookDir = moveDir;
+                        State = $"climb planned: to the face, {FlatDistance(at, climbPlan.Foot):0.0} m";
+                        return WalkState.Moving;
+                    }
+                }
+            }
+            // A goal in a fire's damage: its edge instead (0.2.220, R90: the bot's route ran through the base campfire, 25 -> 16 HP).
+            Vector3 safeGoal = Hazards.SafeGoal(goal, at, out string goalHazard);
+            if (goalHazard != null)
+            {
+                if ((safeGoal - _hazardGoal).sqrMagnitude > 1f)
+                {
+                    _hazardGoal = safeGoal;
+                    Debug.Log($"[PathWalker] {body.m_name}: goal ({goal.x:0}, {goal.z:0}) is in {goalHazard}; walking to its edge ({safeGoal.x:0}, {safeGoal.z:0})");
+                }
+                goal = safeGoal;
+            }
             float cornerReach = run ? CornerRun : CornerWalk;
             float goalFlat = FlatDistance(at, goal);
             // Arrived = near AND no wall between (0.2.213, R84 corridor: the goal in the corridor's closed end was "reached" from outside
@@ -277,6 +330,8 @@ namespace FiresCore.Npc.AI
                         if (!PlanRooms(body, at, goal, $"the navmesh path ends {goalFlat:0.0} m short") && !PlanRound(body, at, goal, null)
                             && !PlanTerrain(body, at, goal, $"the navmesh path ends {goalFlat:0.0} m short"))
                         {
+                            if (PlanClimbStep(body, at, goal, $"the navmesh path ends {goalFlat:0.0} m short and no way round"))
+                                return WalkState.Moving;
                             State = $"partial (end {goalFlat:0.0} m short)";
                             GaveUp = State;
                             return WalkState.Partial;
@@ -293,6 +348,28 @@ namespace FiresCore.Npc.AI
                     if (_checkRidge)
                     {
                         _checkRidge = false;
+                        // 0.2.252 (the overnight pond, 117 swims): a fresh route's swims judged against the stamina. No swim route ->
+                        // a planned climb if one fits, else no path (the planner picks another goal); a swim it can do rested -> wait on
+                        // the bank first.
+                        var swim = Swimming.JudgeRoute(body, at, _path, out string swimWhy);
+                        if (swim == Swimming.RouteSwim.TooFar)
+                        {
+                            Debug.Log($"[PathWalker] {body.m_name}: route: navmesh crosses water it can't swim: {swimWhy}");
+                            _path.Clear();
+                            if (PlanClimbStep(body, at, goal, $"no swim route ({swimWhy})")) return WalkState.Moving;
+                            State = "no swim route";
+                            GaveUp = $"no swim route: {swimWhy}";
+                            return WalkState.NoPath;
+                        }
+                        _swimHold = swim == Swimming.RouteSwim.RestFirst;
+                        // The better route (Fire: climb "if they need to"): a navmesh way round more than 3x the straight way + 30 m,
+                        // when a planned climb fits.
+                        float roundTrip = PathRemaining(at, _path);
+                        if (roundTrip > goalFlat * 3f + 30f && PlanClimbStep(body, at, goal, $"the navmesh way is {roundTrip:0} m against {goalFlat:0} m straight"))
+                        {
+                            _path.Clear();
+                            return WalkState.Moving;
+                        }
                         if (RidgeOnPath(body, at, out string ridge) && PlanTerrain(body, at, goal, ridge))
                             return Steer(body, facing, _detour[0] - at, goalFlat, out moveDir, out lookDir);
                         // A navmesh leg a body-wide capsule can't walk (0.2.209, R80 l_corner / u_trap on both bodies: "route: navmesh,
@@ -325,6 +402,18 @@ namespace FiresCore.Npc.AI
                                   (LastClearance >= 0f ? $", clearance kept {LastClearance:0.0} m (target {WantedCornerClearance:0.0})" : ", clear of walls"));
                         }
                     }
+                    // A swim the body can do once rested: it waits on the bank (no move) until the stamina pays for it.
+                    if (_swimHold)
+                    {
+                        var held = Swimming.JudgeRoute(body, at, _path, out string holdWhy);
+                        if (held == Swimming.RouteSwim.RestFirst && !body.IsSwimming())
+                        {
+                            if (Time.time >= _swimLogAt) { _swimLogAt = Time.time + 10f; Debug.Log($"[PathWalker] {body.m_name}: waiting on the bank: {holdWhy}"); }
+                            State = "resting before a swim";
+                            return WalkState.Pending;
+                        }
+                        _swimHold = false;
+                    }
                     want = _path[0] - at;
                     State = $"moving to corner {_pathCorners - _path.Count + 1}/{_pathCorners}";
                     // One shoulder on a corner: a short sidestep off it, still facing the way on (0.2.209, Fire: "simply move a little
@@ -345,7 +434,7 @@ namespace FiresCore.Npc.AI
                 State = "pending";
                 return WalkState.Pending;
             }
-            else if (goalFlat <= FeelRange)
+            else if (goalFlat <= FeelRange && !Hazards.Crosses(at, goal, out _, out _))
             {
                 if (WayOut(body, at, goal, goalFlat)) { if (Door != null) return ToDoor(body, at, out moveDir, out lookDir); want = _detour[0] - at; }
                 else want = Feel(body, goal);
@@ -357,6 +446,7 @@ namespace FiresCore.Npc.AI
                 // minutes): go round its footprint, corner by corner, the shorter way.
                 if (!PlanRooms(body, at, goal, "no navmesh path") && !PlanRound(body, at, goal, null) && !PlanTerrain(body, at, goal, "no navmesh path"))
                 {
+                    if (PlanClimbStep(body, at, goal, "no navmesh path and no way round")) return WalkState.Moving;
                     State = "no path";
                     GaveUp = "no path";
                     return WalkState.NoPath;
@@ -365,6 +455,26 @@ namespace FiresCore.Npc.AI
             }
 
             return Steer(body, facing, want, goalFlat, out moveDir, out lookDir);
+        }
+
+        // A planned climb as a route step (0.2.252, Fire: climb "if they need to", never as a stuck reflex): Core's PlanClimb on the
+        // straight way to a real goal (higher, the top known, the stamina for all of it with a margin) -> Climb.Plan, and the next ticks
+        // walk to its face, where the climb starts. Logged either way, rate-limited.
+        private bool PlanClimbStep(Character body, Vector3 at, Vector3 goal, string why)
+        {
+            if (FiresCore.Movement.Climbing.PlanClimb(body, at, goal, out FiresCore.Movement.Climbing.ClimbPlan plan, out string refusal))
+            {
+                FiresCore.Movement.Climb.Plan(body, plan, why);
+                Debug.Log($"[PathWalker] {body.m_name}: path: climb {plan.Height:0.0} m at {plan.Angle:0} deg up {plan.Surface} (est {plan.Stamina:0} stamina of " +
+                          $"{FiresCore.Movement.Climbing.StaminaOf(body):0}) to reach ({goal.x:0}, {goal.z:0}): {why}");
+                return true;
+            }
+            if (Time.time >= _climbLogAt)
+            {
+                _climbLogAt = Time.time + 10f;
+                Debug.Log($"[PathWalker] {body.m_name}: path: no climb ({refusal})");
+            }
+            return false;
         }
 
         // The last step of every tick: the slope guard, turn-then-move.
@@ -629,6 +739,13 @@ namespace FiresCore.Npc.AI
                 return _lastFound;   // keep the route being walked
             _lastFound = found;
             _path.Clear();
+            // A navmesh path through a fire's damage is no path (0.2.220): the walk plans round it (PlanRooms / PlanRound / PlanTerrain,
+            // and TerrainPlanner refuses those cells).
+            if (_lastFound && CrossesHazard(at, s_fresh, out Vector3 fireAt, out string fire))
+            {
+                _lastFound = false;
+                _cornerNote = $"the navmesh path crosses {fire} at ({fireAt.x:0}, {fireAt.z:0}); planning round it";
+            }
             if (_lastFound)
             {
                 _path.AddRange(s_fresh);
@@ -638,6 +755,22 @@ namespace FiresCore.Npc.AI
             }
             _pathCorners = _path.Count;
             return _lastFound;
+        }
+
+        private Vector3 _hazardGoal = new Vector3(float.NaN, 0f, 0f);
+
+        // Whether the route from at along path passes through a hazard's damage (Hazards), and where first.
+        private static bool CrossesHazard(Vector3 at, List<Vector3> path, out Vector3 where, out string what)
+        {
+            Vector3 last = at;
+            foreach (Vector3 corner in path)
+            {
+                if (Hazards.Crosses(last, corner, out where, out what) && FlatDistance(where, at) > 1.5f) return true;
+                last = corner;
+            }
+            where = at;
+            what = null;
+            return false;
         }
 
         /// <summary>A fresh route replaces the one being walked only when it is shorter than this share of the rest of it.</summary>

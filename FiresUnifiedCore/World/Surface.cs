@@ -48,4 +48,69 @@ namespace FiresCore.World
         /// <summary>As <see cref="Height"/>, or <paramref name="near"/> itself when nothing is there.</summary>
         public static float HeightOr(Vector3 at, float near) => Height(at, near, out float h) ? h : near;
     }
+
+    /// <summary>
+    /// 0.2.256 (Fire 10-01: "make sure the core fix goes in so that it can see the water"). Vanilla's Floating.GetLiquidLevel only
+    /// knows vanilla water volumes. FAT's generated lakes and rivers, tool pours, WaterDisk ponds and voxel sheet are invisible to it, so
+    /// R36's climb drill at the CoopStream pond read "0 deep-water cell(s) tried" where Coop1 had swum 117 times. FAT 0.2.673 answers all
+    /// of them in one query, FatWaterChecks.TryWaterAt. Core asks it through this soft hook (by name, no reference to FAT), so Core
+    /// still runs alone, on vanilla water only. Callers take the higher of vanilla's surface and FAT's.
+    /// </summary>
+    public static class Water
+    {
+        private const string FatAssembly = "FiresAdminTerrain", FatType = "VerdantsAscent.Water.Core.FatWaterChecks", FatMethod = "TryWaterAt";
+        private delegate bool TryWaterAtFn(float x, float z, float minDepth, bool includeSea, out float surface, out float bed);
+        private static TryWaterAtFn s_fatWaterAt;
+        private static bool s_resolved;
+
+        /// <summary>True once FAT's water query is hooked.</summary>
+        public static bool FatHooked { get { Resolve(); return s_fatWaterAt != null; } }
+
+        /// <summary>Finds FAT's query once and says which water Core reads ("[Water] …"). Safe to call again.</summary>
+        public static void Resolve()
+        {
+            if (s_resolved) return;
+            s_resolved = true;
+            string why = "";
+            try
+            {
+                System.Reflection.Assembly fat = null;
+                foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                    if (asm.GetName().Name == FatAssembly) { fat = asm; break; }
+                System.Type type = fat?.GetType(FatType, false);
+                var method = type?.GetMethod(FatMethod, System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic,
+                    null, new[] { typeof(float), typeof(float), typeof(float), typeof(bool), typeof(float).MakeByRefType(), typeof(float).MakeByRefType() }, null);
+                if (method != null && method.ReturnType == typeof(bool))
+                    s_fatWaterAt = (TryWaterAtFn)System.Delegate.CreateDelegate(typeof(TryWaterAtFn), method, false);
+                why = fat == null ? $"{FatAssembly} not loaded" : type == null ? $"{FatType} not in {FatAssembly} (FAT older than 0.2.673?)"
+                    : method == null ? $"{FatMethod}(float, float, float, bool, out float, out float) not found (FAT older than 0.2.673?)" : "";
+            }
+            catch (System.Exception e) { s_fatWaterAt = null; why = e.GetType().Name + ": " + e.Message; }
+            Debug.Log(s_fatWaterAt != null ? "[Water] FAT water query hooked: FatWaterChecks.TryWaterAt"
+                                            : $"[Water] vanilla only ({why})");
+        }
+
+        /// <summary>
+        /// FAT's water at (x, z) at least <paramref name="minDepth"/> deep, sea included: its surface and the solid bed under it. False
+        /// without FAT 0.2.673, or where FAT knows no water. A throwing query is unhooked once (one line) and Core goes on with vanilla water.
+        /// </summary>
+        public static bool FatWaterAt(float x, float z, float minDepth, out float surface, out float bed)
+        {
+            surface = bed = 0f;
+            Resolve();
+            if (s_fatWaterAt == null) return false;
+            try { return s_fatWaterAt(x, z, minDepth, true, out surface, out bed); }
+            catch (System.Exception e)
+            {
+                s_fatWaterAt = null;
+                Debug.LogWarning($"[Water] FAT water query threw ({e.GetType().Name}: {e.Message}); vanilla only from now on");
+                surface = bed = 0f;
+                return false;
+            }
+        }
+
+        /// <summary>The higher of <paramref name="vanillaSurface"/> and FAT's surface at (x, z) (FAT's only where it knows water).</summary>
+        public static float SurfaceOr(float x, float z, float vanillaSurface) =>
+            FatWaterAt(x, z, 0f, out float surface, out _) ? Mathf.Max(vanillaSurface, surface) : vanillaSurface;
+    }
 }

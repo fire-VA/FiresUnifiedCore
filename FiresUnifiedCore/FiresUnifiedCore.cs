@@ -23,7 +23,7 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.2.219";
+        public const string PluginVersion = "0.2.277";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -76,6 +76,8 @@ namespace FiresCore
             // Consolidate + group the whole Fires-family config folder before anything reads it this session.
             FiresCore.Storage.FiresConfigPaths.Migrate();
 
+            // [Logging] Log Level first, so the family's info lines are held back (or not) from the next one on.
+            FiresCore.Logging.FiresLogLevel.Bind(Config);
             FiresCore.Logging.StatusBanner.BindConfig(Config);
             FiresCore.Logging.BepInExLogSuppressionPatch.BindConfig(Config);
             FiresCore.Logging.LoadSummary.BindConfig(Config);
@@ -89,6 +91,7 @@ namespace FiresCore
             FiresCore.World.DistantSectorSkip.Initialize(Config);
             FiresCore.Bridge.SeasonBridge.Bind();
             InstallLogFilter();
+            FiresCore.Logging.FiresLogLevel.Announce(Log);
             InitializeConfigAndSync();
 
             // The Diagnostics guards attach EXPLICITLY with read-back verification - the
@@ -136,10 +139,13 @@ namespace FiresCore
 
         protected override void TitleScene(bool isFirstBoot)
         {
+            // Every mod is loaded by the title scene: say once which water Core reads ("[Water] FAT water query hooked: …" or "vanilla only").
+            FiresCore.World.Water.Resolve();
         }
 
         protected override void WorldStart()
         {
+            FiresCore.World.Water.Resolve();   // the dedicated server has no title scene
             FiresCoreBanner.Print();
             FiresCore.Npc.CompanionGroupHudProvider.RegisterIfCompanionHostLoaded();
 
@@ -202,6 +208,8 @@ namespace FiresCore
             FiresCore.Npc.WildSpawn.WildNoPark.Bind(Config, configSync);
             // Companion attachments: the skinned-rescale switch (server-set) for the R78 A/B.
             FiresCore.Npc.NpcAttachmentScaleFix.Bind(Config, configSync);
+            // Climbing (0.2.252, Tools\CLIMBING.md): building pieces climbable (server-set) and the players' input switch.
+            FiresCore.Movement.Climbing.Bind(Config, configSync);
 
             // BalrondCompat: server-locked toggles for our neutralization patches against specific
             // BalrondAmazingNature behaviors. Patches auto-activate through Harmony.PatchAll and

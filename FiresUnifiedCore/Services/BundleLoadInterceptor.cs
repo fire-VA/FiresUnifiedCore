@@ -9,7 +9,7 @@ namespace FiresCore.Services
 {
     // Redirects AssetBundle.LoadFromMemory(bytes) to LoadFromFile(path) when the bytes came from a recent
     // File.ReadAllBytes(path), skipping the managed read and native copy that the common mod pattern pays for.
-    // Only mods that load bundles after Core's patches attach benefit. Arrays are tracked in a
+    // Only Fires-family mods (0.2.269: other mods' loads pass through untouched) that load bundles after Core's patches attach benefit. Arrays are tracked in a
     // ConditionalWeakTable, and any LoadFromFile failure falls back to the original call.
     public static class BundleLoadInterceptor
     {
@@ -74,6 +74,42 @@ namespace FiresCore.Services
             try { return FiresCore.Logging.FiresLogger.VerboseEnabled; }
             catch { return false; }
         }
+
+        // 0.2.269: only a Fires-family mod's own LoadFromMemory is redirected. Another mod's bytes may not be the file's any more
+        // (patched or decrypted in place after the read), and its bundle loading is not ours to change. The first frame outside
+        // this interceptor, Harmony's patched copy of LoadFromMemory and UnityEngine's AssetBundle module names the caller; any
+        // failure answers no (the original call runs).
+        private const int MaxCallerFrames = 12;
+        private static readonly string[] FamilyAssemblyNames =
+            { "VAInventory", "VABackpacks", "VAassets", "VerdantsAscentShips", "VAGhettoNetworking", "TechPriestDhakharsPrefabs", "IsThisThingOn", "Vedr", "Norger.Vedr" };
+
+        internal static bool CallerIsFamily()
+        {
+            try
+            {
+                var unityBundles = typeof(AssetBundle).Assembly;
+                var self = typeof(BundleLoadInterceptor).Assembly;
+                for (int i = 1; i < 1 + MaxCallerFrames; i++)
+                {
+                    var type = new System.Diagnostics.StackFrame(i, false).GetMethod()?.DeclaringType;
+                    if (type == null) continue;   // Harmony's patched copy (a dynamic method), or past the top
+                    var assembly = type.Assembly;
+                    if (assembly == unityBundles) continue;
+                    if (assembly == self && type.Namespace == typeof(BundleLoadInterceptor).Namespace
+                        && type.Name.IndexOf("LoadFromMemory", StringComparison.Ordinal) >= 0) continue;
+                    if (assembly == self && type == typeof(BundleLoadInterceptor)) continue;
+                    string name = assembly.GetName().Name ?? "";
+                    if (name.StartsWith("DMD", StringComparison.Ordinal) || name.StartsWith("MonoMod", StringComparison.Ordinal)
+                        || name.StartsWith("HarmonySharedState", StringComparison.Ordinal) || name == "0Harmony") continue;
+                    if (name.StartsWith("Fires", StringComparison.OrdinalIgnoreCase)) return true;
+                    foreach (string known in FamilyAssemblyNames)
+                        if (string.Equals(name, known, StringComparison.OrdinalIgnoreCase)) return true;
+                    return false;
+                }
+            }
+            catch { }
+            return false;
+        }
     }
 
     // Postfix on File.ReadAllBytes(string). Records the (path, bytes)
@@ -111,6 +147,11 @@ namespace FiresCore.Services
                 return true;
             }
             if (!File.Exists(path))
+            {
+                BundleLoadInterceptor.RecordMiss();
+                return true;
+            }
+            if (!BundleLoadInterceptor.CallerIsFamily())
             {
                 BundleLoadInterceptor.RecordMiss();
                 return true;

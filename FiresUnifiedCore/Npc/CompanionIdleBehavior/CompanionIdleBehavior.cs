@@ -524,9 +524,26 @@ namespace FiresCore.Npc
         }
 
         /// <summary>Drops the chore, seat and emote this machine was running once another machine owns the companion.</summary>
+        // 0.2.267: who called CancelAllIdleBehaviors (the two frames above it), for the sub-behaviour's "cancelled:" end line.
+        private static string CallerChain()
+        {
+            try
+            {
+                var trace = new System.Diagnostics.StackTrace(2, false);   // 0 = CallerChain, 1 = CancelAllIdleBehaviors
+                var parts = new System.Collections.Generic.List<string>();
+                for (int i = 0; i < trace.FrameCount && parts.Count < 2; i++)
+                {
+                    var method = trace.GetFrame(i)?.GetMethod();
+                    if (method != null) parts.Add($"{method.DeclaringType?.Name}.{method.Name}");
+                }
+                return parts.Count > 0 ? string.Join(" < ", parts) : "?";
+            }
+            catch { return "?"; }
+        }
+
         private void ReleaseIdleOnOwnershipLoss()
         {
-            CancelActiveSubBehavior();
+            CancelActiveSubBehavior("another machine owns the companion now");
             if (_isSittingOnChair) StandUpFromChair();
             if (_character != null) InteractableOccupancyManager.ReleaseAllForOccupant(_character);
             _isPlayingEmote = false;
@@ -658,7 +675,7 @@ namespace FiresCore.Npc
                 }
                 else
                 {
-                    CancelActiveSubBehavior();
+                    CancelActiveSubBehavior("combat (it can't resume)");
                 }
             }
             else
@@ -1039,7 +1056,7 @@ namespace FiresCore.Npc
             if (_isSittingOnChair)
                 StandUpFromChair();
 
-            CancelActiveSubBehavior();
+            CancelActiveSubBehavior($"CancelAllIdleBehaviors from {CallerChain()}");
 
             if (_interactionBehavior != null)
             {

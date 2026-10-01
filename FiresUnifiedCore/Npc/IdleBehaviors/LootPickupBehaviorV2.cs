@@ -313,22 +313,11 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private List<ItemDrop> ScanForLoot(float range)
         {
-            var result = new List<ItemDrop>();
-            
-            Vector3 center = SearchCenter;
-            float searchRadius = GetEffectiveSearchRadius(range);
-
-            foreach (var itemDrop in ChestHelper.FindLooseItems(center, searchRadius))
-            {
-                if (IsPositionLooted(itemDrop.transform.position)) continue;
-
-                float pickupChance = GetPickupChance(itemDrop.m_itemData);
-                if (Random.value > pickupChance) continue;
-
-                result.Add(itemDrop);
-            }
-            
-            return result;
+            // One set of loot rules with the bot's base chores (0.2.239): ChoreBrain.LootToTake (loose items, not floating in deep
+            // water, by ChoreBrain.LootPriority then nearest); this companion's looted spots and pickup chances on top.
+            Vector3 from = Transform != null ? Transform.position : SearchCenter;
+            return AI.ChoreBrain.LootToTake(SearchCenter, GetEffectiveSearchRadius(range), from,
+                drop => !IsPositionLooted(drop.transform.position) && Random.value <= GetPickupChance(drop.m_itemData));
         }
         
         private ItemDrop GetNextItemToLoot()
@@ -376,38 +365,17 @@ namespace FiresCore.Npc.IdleBehaviors
             return OtherPickupChance;
         }
         
-        private float GetItemPriority(ItemDrop.ItemData item)
-        {
-            if (item == null) return 0f;
-            
-            var itemType = item.m_shared.m_itemType;
-            string name = item.m_shared.m_name?.ToLowerInvariant() ?? "";
-            
-            if (itemType == ItemDrop.ItemData.ItemType.Trophy || name.Contains("trophy"))
-                return 100f;
-            
-            if (name.Contains("black") || name.Contains("silver") || name.Contains("gold") ||
-                name.Contains("flametal") || name.Contains("iron") || name.Contains("copper"))
-                return 80f;
-            
-            if (itemType == ItemDrop.ItemData.ItemType.Material)
-                return 50f;
-            
-            if (itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
-                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon)
-                return 40f;
-            
-            if (itemType == ItemDrop.ItemData.ItemType.Consumable)
-                return 30f;
-            
-            return 10f;
-        }
+        // One priority with the bot's base chores (0.2.239).
+        private float GetItemPriority(ItemDrop.ItemData item) => AI.ChoreBrain.LootPriority(item);
         
         private bool TryPickupItem(ItemDrop itemDrop)
         {
             int taken = ChestHelper.TryTakeLooseItem(itemDrop, GetStorageInventory());
             if (taken > 0)
+            {
                 LogVerbose($"Picked up {taken}x {itemDrop.m_itemData.m_shared.m_name}");
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "loot", $"picked up {taken} {Utils.GetPrefabName(itemDrop.gameObject)}");
+            }
             return taken > 0;
         }
         

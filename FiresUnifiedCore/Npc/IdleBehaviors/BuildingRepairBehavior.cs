@@ -43,7 +43,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private const float ScanRadius         = 40f;
         private const float InteractionRange   = 2.5f;
-        private const float RepairThreshold    = 0.95f;  // Repair if health below 95%
+        private const float RepairThreshold    = AI.ChoreBrain.PieceRepairBelow;  // Repair if health below 95% (one rule with the bot's base chores, 0.2.236)
         private const float RepairDuration     = 2.0f;   // Animation hold time
         private const float MaxRepairTime     = 180f;
         private const float ScanCacheDuration = 30f;
@@ -523,6 +523,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 _totalRepaired++;
                 PlayRepairHitEffect();
                 LogVerbose($"Repaired piece ({_totalRepaired} total)");
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "repair", $"repaired {Utils.GetPrefabName(_currentPiece.gameObject)} (hp was {hpBefore:P0})");
             }
             else
             {
@@ -638,49 +639,16 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
 
+        // One set of repair rules with the bot's base chores (0.2.237): ChoreBrain.DamagedPieces / PieceWantsRepair (loaded,
+        // player-built, under PieceRepairBelow), most damaged first; this companion's wards on top.
         private List<WearNTear> ScanForDamagedPieces()
         {
-            var result    = new List<WearNTear>();
-            var processed = new HashSet<int>();
-
-            if (Transform == null) return result;
-
-            var colliders = Physics.OverlapSphere(Transform.position, ScanRadius);
-            foreach (var collider in colliders)
-            {
-                if (collider == null) continue;
-
-                var wearNTear = collider.GetComponent<WearNTear>() ?? collider.GetComponentInParent<WearNTear>();
-                if (wearNTear == null) continue;
-
-                int id = wearNTear.GetInstanceID();
-                if (processed.Contains(id)) continue;
-                processed.Add(id);
-
-                if (!IsRepairCandidate(wearNTear)) continue;
-                result.Add(wearNTear);
-            }
-
-            // Most-damaged first
-            result.Sort((a, b) => a.GetHealthPercentage().CompareTo(b.GetHealthPercentage()));
-            return result;
+            if (Transform == null) return new List<WearNTear>();
+            return AI.ChoreBrain.DamagedPieces(Transform.position, ScanRadius, position => ChestHelper.WardsAllow(position, Companion));
         }
 
-        private bool IsRepairCandidate(WearNTear wearNTear)
-        {
-            if (wearNTear == null) return false;
-
-            var nview = wearNTear.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return false;
-
-            if (wearNTear.GetHealthPercentage() >= RepairThreshold) return false;
-
-            // Only repair player-placed pieces
-            var piece = wearNTear.GetComponent<Piece>();
-            if (piece == null || piece.GetCreator() == 0L) return false;
-
-            return ChestHelper.WardsAllow(wearNTear.transform.position, Companion);
-        }
+        private bool IsRepairCandidate(WearNTear wearNTear) =>
+            AI.ChoreBrain.PieceWantsRepair(wearNTear) && ChestHelper.WardsAllow(wearNTear.transform.position, Companion);
 
         private WearNTear PickNextPiece()
         {
@@ -882,29 +850,8 @@ namespace FiresCore.Npc.IdleBehaviors
             if (nview == null || !nview.IsValid()) return false;
             if (!ChestHelper.WardsAllow(wearNTear.transform.position, Companion)) return false;
 
-            // Claim ownership so WearNTear.Repair()'s IsOwner() check passes
-            nview.ClaimOwnership();
-
-            // Try vanilla repair first — this is correct and syncs to all clients
-            if (wearNTear.Repair()) return true;
-
-            // Fallback: ClaimOwnership is not instant (ZNet ownership propagates
-            // over the network), so IsOwner() may still return false in the same
-            // frame. Write the health ZDO key directly as a fallback. This is the
-            // same write that WearNTear.RPC_Repair() does internally.
-            float maxHealth = wearNTear.m_health; // world-level-scaled max, same value RPC_Repair uses
-            if (maxHealth <= 0f) return false;
-
-            var zdo = nview.GetZDO();
-            if (zdo == null) return false;
-
-            float currentHealth = zdo.GetFloat(ZDOVars.s_health, maxHealth);
-            if (currentHealth >= maxHealth) return false; // Already at max
-
-            zdo.Set(ZDOVars.s_health, maxHealth);
-            nview.InvokeRPC(ZNetView.Everybody, "RPC_HealthChanged", (object)maxHealth);
-            LogVerbose($"RepairPiece: direct ZDO write (health {currentHealth:F0} → {maxHealth:F0})");
-            return true;
+            // One copy with the bot's base chores (0.2.236): claim, vanilla Repair, the direct health write as the fallback.
+            return AI.ChoreBrain.RepairPiece(wearNTear);
         }
 
         #endregion

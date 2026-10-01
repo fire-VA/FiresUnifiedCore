@@ -105,6 +105,8 @@ namespace FiresCore.Npc.IdleBehaviors
             
             if (addedAnything && CompanionIdleBehavior.VerboseLogging)
                 Debug.Log($"[SmelterOperator] Added {addedCount} wood to kiln");
+            if (addedAnything)
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "kiln", $"added {addedCount} wood to {(_nearbyKiln != null ? Utils.GetPrefabName(_nearbyKiln.gameObject) : "the kiln")}");
             
             // Check if kiln is full or we're out of wood
             if (!CanAddToKiln() || !HasWoodForKiln())
@@ -141,20 +143,15 @@ namespace FiresCore.Npc.IdleBehaviors
                 string dropName = item.m_dropPrefab?.name ?? "";
                 if (!PieceDataHelper.StationAccepts(_nearbyKiln, dropName)) continue;
 
-                // CRITICAL FIX: Remove from inventory FIRST, then call RPC
-                // This matches TryAddOre() behavior and prevents item duplication
+                // One copy with the bot's base chores (0.2.236): ChoreBrain.AddSmelterOreOne removes the unit FIRST, then RPC_AddOre.
                 string itemName = item.m_shared?.m_name ?? dropName;
                 int stackBefore = item.m_stack;
-                bool cheated = item.m_cheated;
-
-                if (!storageInv.RemoveOneItem(item))
+                if (!AI.ChoreBrain.AddSmelterOreOne(_nearbyKiln, storageInv, item))
                 {
                     if (CompanionIdleBehavior.VerboseLogging)
-                        Debug.LogWarning($"[SmelterOperator] Failed to remove wood from inventory: {itemName}");
+                        Debug.LogWarning($"[SmelterOperator] Failed to add wood to the kiln: {itemName}");
                     continue; // Try next item
                 }
-
-                nview.InvokeRPC(AddOreRpc, dropName, cheated);
                 _inventory.SaveToZDO();
 
                 if (CompanionIdleBehavior.VerboseLogging)

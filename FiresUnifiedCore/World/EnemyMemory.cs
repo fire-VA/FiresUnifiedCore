@@ -117,6 +117,74 @@ namespace FiresCore.World
             MarkDirty();
         }
 
+        private static readonly Dictionary<string, float> s_lastDeath = new Dictionary<string, float>();
+
+        /// <summary>
+        /// A body killed by <paramref name="killer"/> (0.2.221, Core's own death record; R90 run 4: the bot's death to a Skeleton ★2
+        /// was never written, so nothing learned from it): the foe's spot gains a fight lost to death, and World.Danger a death with
+        /// the killing hit's share of <paramref name="maxHealth"/> (≥ 1 from full health is a one-shot). Once per killer and victim
+        /// within a few seconds, whoever else reports the same death.
+        /// </summary>
+        public static void Died(Character victim, Character killer, float hitDamage, float maxHealth, float healthBefore)
+        {
+            if (victim == null || killer == null || !EnsureLoaded()) return;
+            string prefab = Utils.GetPrefabName(killer.gameObject);
+            int level = killer.GetLevel();
+            string who = victim is Player p ? p.GetPlayerName() : victim.m_name;
+            string key = prefab + ":" + level + ":" + who;
+            if (s_lastDeath.TryGetValue(key, out float at) && Time.time - at < 5f) return;
+            s_lastDeath[key] = Time.time;
+            Vector3 pos = killer.transform.position;
+            Entry e = Spot(prefab, level, pos, null);
+            e.Fights++;
+            e.Died++;
+            e.LastSeen = GameTime();
+            float share = maxHealth > 0f ? hitDamage / maxHealth : 1f;
+            bool oneShot = maxHealth > 0f && healthBefore >= maxHealth * 0.99f && hitDamage >= healthBefore;
+            Debug.Log($"[EnemyMemory] foe: {prefab} {Stars(level)} at ({pos.x:0}, {pos.z:0}){(IsNight() ? " (night)" : "")}: Died, " +
+                      $"last hit {hitDamage:0} vs hp {healthBefore:0} of {maxHealth:0}{(oneShot ? " (one-shot)" : "")} ({who})");
+            Danger.Record(prefab, level, DangerEvent.Died, oneShot ? 1f : Mathf.Min(0.99f, share), victim.transform.position, who);
+            Danger.NoteHit(prefab, level, hitDamage);
+            MarkDirty();
+        }
+
+        /// <summary>
+        /// How dangerous the ground round <paramref name="at"/> is, 0..1 (0.2.221; for the grave walk, trip targets and the haul): the
+        /// worst remembered foe spot within <paramref name="radius"/> m by World.Danger's level for its kind★, at least 0.6 where that
+        /// kind killed a body. <paramref name="why"/> names it, and says when one of that kind is there right now.
+        /// </summary>
+        public static float DangerAt(Vector3 at, float radius, out string why) => DangerAt(at, radius, out why, out _);
+
+        /// <summary>
+        /// <see cref="DangerAt(Vector3, float, out string)"/> with <paramref name="liveNow"/>: how many of the worst spot's kind★ are within
+        /// <paramref name="radius"/> + 10 m of <paramref name="at"/> right now (0.2.222, [seasons]: so callers don't parse <paramref name="why"/>).
+        /// </summary>
+        public static float DangerAt(Vector3 at, float radius, out string why, out int liveNow)
+        {
+            why = "nothing remembered";
+            liveNow = 0;
+            if (!EnsureLoaded()) return 0f;
+            float worst = 0f;
+            Entry worstSpot = null;
+            foreach (Entry e in s_data.Enemies)
+            {
+                float d = Vector2.Distance(new Vector2(e.X, e.Z), new Vector2(at.x, at.z));
+                if (d > radius) continue;
+                float level = Danger.Level(e.Prefab, e.Level, out _);
+                if (e.Died > 0) level = Mathf.Max(level, 0.6f);
+                if (level > worst) { worst = level; worstSpot = e; }
+            }
+            if (worstSpot == null) return 0f;
+            int live = 0;
+            foreach (Character c in Character.GetAllCharacters())
+                if (c != null && !c.IsDead() && c.GetLevel() == worstSpot.Level && Utils.GetPrefabName(c.gameObject) == worstSpot.Prefab
+                    && Vector3.Distance(c.transform.position, at) <= radius + 10f) live++;
+            why = $"{worstSpot.Prefab} {Stars(worstSpot.Level)} at ({worstSpot.X:0}, {worstSpot.Z:0}): {worstSpot.Died} death(s), {worstSpot.Fights} fight(s), danger {worst:0.00}" +
+                  (live > 0 ? $"; {live} there now" : "; none in sight now");
+            liveNow = live;
+            return worst;
+        }
+
         /// <summary>Known spots of <paramref name="prefab"/> (null: any foe) within <paramref name="leash"/> m of <paramref name="from"/>, nearest first.</summary>
         public static List<EnemySpot> Search(string prefab, Vector3 from, float leash = float.PositiveInfinity, int max = 20)
         {
@@ -259,6 +327,9 @@ namespace FiresCore.World
             public string Prefab;
             public int Level, Deaths, NearDeaths, OneShots, Hits;
             public float BiggestHitShare;
+            /// <summary>The biggest hit it landed, in health (0.2.221; 0 in older records): compared with a body's health today, so a
+            /// foe that one-shot a 25 hp body isn't a one-hit threat forever once the body has 100.</summary>
+            public float BiggestHit;
             public string LastBy;
         }
 
@@ -312,6 +383,36 @@ namespace FiresCore.World
             why = $"{prefab}: {r.Deaths} death(s), {r.NearDeaths} near, one-shot {(r.OneShots > 0 ? "yes" : "no")}, biggest hit {r.BiggestHitShare:P0}" +
                   (scale != 1f ? $" (from {EnemyMemory.Stars(r.Level)} x{scale:0.##})" : "");
             return score;
+        }
+
+        /// <summary>
+        /// The biggest hit <paramref name="prefab"/> ★<paramref name="level"/>-1 has landed in this world as a share of the body's max
+        /// health: 1 when it has one-shot a body, 0 without a record (0.2.221; ThreatLevel weighs it as a learned one-hit threat).
+        /// </summary>
+        public static float BiggestHitShare(string prefab, int level)
+        {
+            List<Entry> records = EnemyMemory.DangerRecords();
+            Entry r = records != null && !string.IsNullOrEmpty(prefab) ? Find(records, prefab, level) : null;
+            if (r == null) return 0f;
+            return r.OneShots > 0 ? 1f : r.BiggestHitShare;
+        }
+
+        /// <summary>The biggest hit (in health) <paramref name="prefab"/> ★<paramref name="level"/>-1 has landed in this world; 0 unknown.</summary>
+        public static float BiggestHit(string prefab, int level)
+        {
+            List<Entry> records = EnemyMemory.DangerRecords();
+            Entry r = records != null && !string.IsNullOrEmpty(prefab) ? Find(records, prefab, level) : null;
+            return r != null ? r.BiggestHit : 0f;
+        }
+
+        // A landed hit's size (0.2.221): kept as the biggest for its kind★.
+        internal static void NoteHit(string prefab, int level, float damage)
+        {
+            List<Entry> records = EnemyMemory.DangerRecords();
+            if (records == null || string.IsNullOrEmpty(prefab) || damage <= 0f) return;
+            Entry r = Find(records, prefab, level);
+            if (r == null) { r = new Entry { Prefab = prefab, Level = level }; records.Add(r); }
+            if (damage > r.BiggestHit) { r.BiggestHit = damage; EnemyMemory.MarkDirty(); }
         }
 
         /// <summary>The health share under which a body should flee <paramref name="prefab"/>: 25 %, rising to 50 % at danger ≥ 0.6.</summary>

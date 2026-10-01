@@ -45,7 +45,6 @@ namespace FiresCore.Npc.IdleBehaviors
         private const float CookCheckInterval = 2f;
         private const float MaxTendTime = 120f;
         private const float FuelAddInterval = 1f;
-        private const float RefuelBelowFuelFraction = 0.7f;
         private const float CookTimeoutMargin = 5f;
         
         #endregion
@@ -146,6 +145,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 LogVerbose($"CanStart: TRUE - found fire needing {fireplace.m_fuelItem.gameObject.name}, have fuel available");
                 return true;
             }
+            // 0.2.255: a fire the rain switched off (fuel still in it) is lit again (the bot's relight rule, ChoreBrain.FiresToRelight).
+            if (FindFireToRelight() != null) return true;
             
             var cookingStation = FindNearbyCookingStation();
             if (cookingStation != null && HasFoodToCook(cookingStation))
@@ -163,6 +164,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             _fuelAdded = 0;
             _foodCooked = 0;
+            _relight = false;
             _nextFuelAddTime = 0f;
             _foodCollector.Begin();
             _fuelChest = null;
@@ -182,6 +184,12 @@ namespace FiresCore.Npc.IdleBehaviors
             else
             {
                 _targetFireplace = FindFireNeedingFuel();
+                _relight = false;
+                if (_targetFireplace == null)
+                {
+                    _targetFireplace = FindFireToRelight();
+                    _relight = _targetFireplace != null;
+                }
                 _targetCookingStation = FindNearbyCookingStation();
 
                 if (_targetFireplace != null)
@@ -266,6 +274,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
+            // A relight: straight to the fire, no fuel needed.
+            if (_relight && _targetFireplace != null)
+            {
+                SetPhase(TendPhase.MovingToFire);
+                MoveToPosition(_targetPosition);
+                return false;
+            }
+
             // Check if fire needs fuel
             if (_targetFireplace != null && !NeedsFuel(_targetFireplace))
             {
@@ -396,7 +412,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 
                 // Decide what to do
-                if (_targetFireplace != null && NeedsFuel(_targetFireplace))
+                if (_relight && _targetFireplace != null)
+                {
+                    Relight();
+                    SetPhase(TendPhase.Complete);
+                }
+                else if (_targetFireplace != null && NeedsFuel(_targetFireplace))
                 {
                     SetPhase(TendPhase.AddingFuel);
                 }
@@ -544,6 +565,15 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private bool CompleteAndNotify()
         {
+            // 0.2.255: the outcome, always on.
+            if (_fuelAdded > 0 && _targetFireplace != null)
+            {
+                var view = _targetFireplace.GetComponent<ZNetView>();
+                float fuel = view != null && view.IsValid() ? view.GetZDO().GetFloat(ZDOVars.s_fuel, 0f) : 0f;
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "fuel",
+                    $"{Utils.GetPrefabName(_targetFireplace.gameObject)} +{_fuelAdded} {_fuelItemName} (now {fuel:0}/{_targetFireplace.m_maxFuel:0})");
+            }
+            if (_foodCooked > 0) AI.ChoreBrain.ChoreDone(Companion?.companionName, "cook", $"{_foodCooked} item(s) on the fire's cooking station");
             CompanionChatHelper.ClearWorkingStatus(Companion);
             ReleaseOccupancy();
             NotifyOwner();
@@ -580,6 +610,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private Container FindChestWithFuel(string fuelName)
         {
+            // 0.2.256 ([ghost]): CanStart asks here before any Start has filled the chest list, so a companion carrying no fuel never saw
+            // the base chests' wood. A throttled refresh (5 s / 5 m), as ChestDepositV2's CanStart does.
+            Resources.RefreshNearbyChests();
             foreach (var chest in Resources.NearbyChests)
             {
                 if (chest != null && ChestHelper.CountPrefabInInventory(chest.GetInventory(), fuelName) > 0)
@@ -633,51 +666,20 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_targetFireplace == null) return false;
             if (!_targetFireplace.m_canRefill || _targetFireplace.m_infiniteFuel) return false;
             
-            var storage = GetStorageInventory();
-            if (storage == null) return false;
-            
-            // Find fuel in inventory
-            ItemDrop.ItemData fuelItem = null;
-            foreach (var item in storage.GetAllItems())
-            {
-                if (item == null) continue;
-                string prefab = item.m_dropPrefab?.name ?? "";
-                if (prefab.Equals(_fuelItemName, System.StringComparison.OrdinalIgnoreCase))
-                {
-                    fuelItem = item;
-                    break;
-                }
-            }
-            
-            if (fuelItem == null) return false;
-            
-            var nview = _targetFireplace.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return false;
-            // RPC_AddFuel only runs on an owner (Fireplace.cs:350); vanilla Interact claims an unowned fire the same way.
-            if (!nview.HasOwner()) nview.ClaimOwnership();
+            if (GetStorageInventory() == null) return false;
 
-            float currentFuel = nview.GetZDO().GetFloat(ZDOVars.s_fuel, 0f);
-            if (Mathf.CeilToInt(currentFuel) >= _targetFireplace.m_maxFuel) return false;
-            
-            // Remove from inventory FIRST
-            if (!storage.RemoveOneItem(fuelItem)) return false;
-            
-            nview.InvokeRPC("RPC_AddFuel");
+            // One copy with the bot's base chores (0.2.236): ChoreBrain.AddFuel takes one unit out of the storage this body carries
+            // (CompanionTaskBody.Inventory) and sends RPC_AddFuel to the fire's owner, claiming an unowned fire first.
+            int added = AI.ChoreBrain.AddFuel(new AI.CompanionTaskBody(Companion), _targetFireplace, 1, out string why);
+            if (added <= 0) return false;
             SaveInventory();
-            
+
             LogVerbose($"Added {_fuelItemName} to fire");
             return true;
         }
         
-        private bool NeedsFuel(Fireplace fireplace)
-        {
-            if (fireplace == null || !fireplace.m_canRefill || fireplace.m_infiniteFuel || fireplace.m_fuelItem == null) return false;
-            var nview = fireplace.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return false;
-
-            float currentFuel = nview.GetZDO().GetFloat(ZDOVars.s_fuel, 0f);
-            return currentFuel < fireplace.m_maxFuel * RefuelBelowFuelFraction;
-        }
+        // One rule with the bot's base chores (0.2.237): ChoreBrain.FireWantsFuel (refillable, finite, under ChoreBrain.RefuelBelow).
+        private bool NeedsFuel(Fireplace fireplace) => AI.ChoreBrain.FireWantsFuel(fireplace);
         
         private void NotifyNoFuelAvailable()
         {
@@ -693,28 +695,34 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Fire Finding
         
+        // One set of fire rules with the bot's base chores (0.2.237): ChoreBrain.FiresToFuel (FireWantsFuel, this companion's
+        // reservations, fuel it can get from storage or a nearby chest), nearest on the ground plane first.
+        private bool _relight;
+
+        private Fireplace FindFireToRelight()
+        {
+            if (Transform == null) return null;
+            var fires = AI.ChoreBrain.FiresToRelight(SearchCenter, GetEffectiveSearchRadius(FireDetectionRange), Transform.position, Character);
+            return fires.Count > 0 ? fires[0] : null;
+        }
+
+        // The player's E on a switched-off fire with fuel in it (Fireplace.Interact toggles it on); checked again at the fire.
+        private void Relight()
+        {
+            string off = AI.ChoreBrain.FireOffReason(_targetFireplace);
+            if (!off.StartsWith("switched off (rain") || Humanoid == null) return;
+            FaceTarget(_targetFireplace.transform.position);
+            _targetFireplace.Interact(Humanoid, false, false);
+            PlayInteractAnimation();
+            Vector3 p = _targetFireplace.transform.position;
+            AI.ChoreBrain.ChoreDone(Companion?.companionName, "relight", $"{Utils.GetPrefabName(_targetFireplace.gameObject)} at ({p.x:0}, {p.z:0}) was switched off (rain), lit again");
+        }
+
         private Fireplace FindFireNeedingFuel()
         {
-            Fireplace nearest = null;
-            float nearestDist = float.MaxValue;
-
-            var colliders = Physics.OverlapSphere(SearchCenter, GetEffectiveSearchRadius(FireDetectionRange));
-            foreach (var collider in colliders)
-            {
-                if (collider == null) continue;
-                var fireplace = collider.GetComponent<Fireplace>() ?? collider.GetComponentInParent<Fireplace>();
-                if (fireplace == null) continue;
-
-                // XZ-only distance: wall-mounted torches are at various heights
-                float dist = DistanceXZ(fireplace.transform.position);
-                if (dist >= nearestDist || !NeedsFuel(fireplace)) continue;
-                if (!InteractableOccupancyManager.CanUseInteractable(fireplace.gameObject, Character)) continue;
-                if (!CanGetFuel(fireplace.m_fuelItem.gameObject.name)) continue;
-
-                nearestDist = dist;
-                nearest = fireplace;
-            }
-            return nearest;
+            if (Transform == null) return null;
+            var fires = AI.ChoreBrain.FiresToFuel(SearchCenter, GetEffectiveSearchRadius(FireDetectionRange), Transform.position, Character, CanGetFuel);
+            return fires.Count > 0 ? fires[0] : null;
         }
 
         private CookingStation FindNearbyCookingStation()

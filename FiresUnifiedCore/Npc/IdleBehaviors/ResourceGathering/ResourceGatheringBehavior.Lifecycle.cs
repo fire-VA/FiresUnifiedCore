@@ -67,6 +67,11 @@ namespace FiresCore.Npc.IdleBehaviors
                             if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                                 Debug.Log($"[ResourceGathering] {Companion?.companionName} no tool in chests - will craft {_craftRecipe.m_item.name}");
                         }
+                        else if (TryBeginStockToolCraft(_targetResource))
+                        {
+                            // 0.2.274: from the base chests (and one intermediate such as Bronze), then the tool.
+                            CompanionChatHelper.ShowWorkingStatus(Companion, "Crafting a tool...");
+                        }
                         else
                         {
                             // No tool available anywhere - can't gather this resource
@@ -134,6 +139,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 case GatherPhase.RetrievingToolFromChest:
                     return UpdateRetrievingToolFromChest();
 
+                case GatherPhase.FetchingCraftStock:
+                    return UpdateFetchingCraftStock();
+
                 case GatherPhase.MovingToWorkbench:
                     return UpdateMovingToWorkbench();
 
@@ -181,13 +189,17 @@ namespace FiresCore.Npc.IdleBehaviors
             _combatMovement?.ClearCommandPriority();
             
             NotifyOwner();
-            
+            SayChoreHits("left standing, gathering cancelled");
+            EndStockCraft();
+
             base.Cancel();
         }
-        
+
         protected override void Complete()
         {
             StopCraftingPose();
+            SayChoreHits("left standing, gathering done");
+            EndStockCraft();
             base.Complete();
         }
 
@@ -236,9 +248,13 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
-            _targetPosition = _targetResource.InteractionPosition;
-            float dist = Vector3.Distance(Transform.position, _targetPosition);
-            
+            // 0.2.271 (Fire: "Companions get stuck in the minerock"): a rock is approached at its nearest face, from just off it, and
+            // reached when that face is in reach; its root sits inside a fractured rock and was never reached.
+            bool rock = IsRockTarget;
+            _targetPosition = rock ? StandPointFor(GatherAim()) : _targetResource.InteractionPosition;
+            float dist = rock ? GatherReach() : Vector3.Distance(Transform.position, _targetPosition);
+            if (rock && RockUnwedge(dist)) return false;
+
             float requiredRange = _targetResource.IsPickable ? PickableRange : AttackRange;
             
             if (dist < requiredRange)
@@ -291,12 +307,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
-            Vector3 resourceCenter = _targetResource.InteractionPosition;
+            // 0.2.271: around a rock's nearest face, 1.6 m out (centre + 2 m put the body inside a big fractured rock).
+            bool rock = IsRockTarget;
+            Vector3 resourceCenter = rock ? GatherAim() : _targetResource.InteractionPosition;
             Vector3 currentDir = (Transform.position - resourceCenter).normalized;
-            
+
             float angle = Random.Range(90f, 120f) * (Random.value > 0.5f ? 1f : -1f);
             Vector3 newDir = Quaternion.Euler(0, angle, 0) * currentDir;
-            Vector3 newPosition = resourceCenter + newDir * AttackRange * 0.8f;
+            Vector3 newPosition = resourceCenter + newDir * (rock ? 1.6f : AttackRange * 0.8f);
             
             if (ZoneSystem.instance != null)
             {
@@ -366,13 +384,29 @@ namespace FiresCore.Npc.IdleBehaviors
 
             StopCraftingPose();
 
+            string made = _craftRecipe != null && _craftRecipe.m_item != null ? _craftRecipe.m_item.name : null;
+            bool stockChain = _stockPlan != null;
             bool crafted = CraftPlannedTool();
             _craftRecipe = null;
             _craftWorkbench = null;
 
+            // 0.2.274: an intermediate (Bronze) goes on to the next step of the base-stock chain.
+            if (crafted && ContinueStockCraft(made)) return false;
+            if (!crafted && stockChain)
+            {
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "crafting", $"{made ?? "?"} for {_stockFor}: the craft failed at the station (cost, room or station level changed)");
+                EndStockCraft();
+            }
+
             if (crafted)
             {
                 EquipBestToolForResource(_targetResource);
+                if (stockChain)
+                {
+                    var inHand = GetEquippedWeaponOrTool();
+                    AI.ChoreBrain.ChoreDone(Companion?.companionName, "crafting",
+                        $"crafted {made} for {_stockFor}; in hand: {(inHand?.m_dropPrefab != null ? inHand.m_dropPrefab.name : inHand?.m_shared?.m_name ?? "nothing")}");
+                }
                 if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                     Debug.Log($"[ResourceGathering] {Companion?.companionName} crafted tool, heading to resource");
                 SetPhase(GatherPhase.MovingToResource);

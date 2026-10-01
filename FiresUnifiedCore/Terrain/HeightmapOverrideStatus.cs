@@ -65,20 +65,58 @@ namespace FiresCore.Terrain
                 + $"{HeightmapOverrideLimits.MinAbs()} m from its generated height.");
         }
 
+        // 0.2.266 (a user's log: all three "was never transpiled" at Error level): a warning that says why, once per method. Nothing
+        // breaks either way: the method stays vanilla, so terrain keeps vanilla's +/-8 m limit from its generated height there.
         private static bool ReportMethod(string method)
         {
             if (!s_found.TryGetValue(method, out var count))
             {
-                FiresLogger.LogError($"{Tag} TerrainComp.{method} was never transpiled - its height limit is NOT applied.");
+                FiresLogger.LogWarning($"{Tag} TerrainComp.{method} not patched ({WhyNotTranspiled(method)}); "
+                    + $"terrain keeps vanilla's +/-{HeightmapOverrideLimits.VanillaClamp} m height limit there.");
                 return false;
             }
 
             if (count.IsPaired) return true;
 
-            FiresLogger.LogError($"{Tag} TerrainComp.{method}: expected paired +/-{HeightmapOverrideLimits.VanillaClamp} m "
-                + $"bounds, found {count.Lower} lower / {count.Upper} upper. Left VANILLA. Valheim's terrain code has "
-                + "changed, or another mod (HeightmapUnlimited?) already replaced these bounds.");
+            FiresLogger.LogWarning($"{Tag} TerrainComp.{method}: expected paired +/-{HeightmapOverrideLimits.VanillaClamp} m "
+                + $"bounds, found {count.Lower} lower / {count.Upper} upper. Left VANILLA (+/-{HeightmapOverrideLimits.VanillaClamp} m). "
+                + $"Valheim's terrain code has changed, or another mod already replaced these bounds{OtherPatchers(method)}.");
             return false;
+        }
+
+        // Why a transpiler never ran: the method missing or overloaded in this Valheim build, or its patch class failing to attach
+        // (FiresMod logs "Harmony patch class '...' failed to attach: <reason>" for that), with whoever else patches the method.
+        private static string WhyNotTranspiled(string method)
+        {
+            System.Reflection.MethodInfo original;
+            try { original = HarmonyLib.AccessTools.DeclaredMethod(typeof(TerrainComp), method); }
+            catch (System.Reflection.AmbiguousMatchException) { return $"this Valheim build has more than one TerrainComp.{method}, so the patch could not pick one"; }
+            if (original == null) return $"this Valheim build has no TerrainComp.{method}";
+            return $"its patch class did not attach - look for \"Harmony patch class 'FiresCore.Terrain.HeightmapOverridePatches+{method}Patch' failed to attach\" "
+                + $"above{OtherPatchers(method)}";
+        }
+
+        // ", other patches there: Owner (prefix), Owner (transpiler)" for every patch on TerrainComp.method not Core's own; "" when none.
+        private static string OtherPatchers(string method)
+        {
+            try
+            {
+                var original = HarmonyLib.AccessTools.DeclaredMethod(typeof(TerrainComp), method);
+                var info = original != null ? HarmonyLib.Harmony.GetPatchInfo(original) : null;
+                if (info == null) return "";
+                var others = new List<string>();
+                void Add(IEnumerable<HarmonyLib.Patch> patches, string kind)
+                {
+                    foreach (var p in patches)
+                        if (p.owner != FiresUnifiedCore.PluginGUID) others.Add($"{p.owner} ({kind})");
+                }
+                Add(info.Prefixes, "prefix");
+                Add(info.Transpilers, "transpiler");
+                Add(info.Postfixes, "postfix");
+                Add(info.Finalizers, "finalizer");
+                return others.Count == 0 ? "" : $"; other patches on it: {string.Join(", ", others)}";
+            }
+            catch (System.Exception) { return ""; }
         }
     }
 }

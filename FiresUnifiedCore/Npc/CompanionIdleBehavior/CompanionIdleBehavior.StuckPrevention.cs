@@ -184,7 +184,7 @@ namespace FiresCore.Npc
             if (_isSittingOnChair)
                 StandUpFromChair();
 
-            CancelActiveSubBehavior();
+            CancelActiveSubBehavior("stuck-prevention reset");
 
             ForceAnimationStateReset();
 

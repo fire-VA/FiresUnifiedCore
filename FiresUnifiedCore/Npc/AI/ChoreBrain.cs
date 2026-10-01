@@ -25,6 +25,17 @@ namespace FiresCore.Npc.AI
         /// opens it and repairs as a player does (vanilla InventoryGui repair); <see cref="ChoreBrain.RepairAt"/> does it directly.
         /// </summary>
         Repair,
+        /// <summary>
+        /// Place the piece <see cref="TaskOrder.PieceName"/> at <see cref="TaskOrder.Point"/> facing <see cref="TaskOrder.Rotation"/>,
+        /// paid from the body's bag: a player places it as a player does (Core 0.2.220, the haul's chest); a companion through
+        /// <see cref="ChoreBrain.PlacePiece"/>. Either way it is a real piece with the body's owner as its creator.
+        /// </summary>
+        Build,
+        /// <summary>
+        /// Craft <see cref="TaskOrder.Recipe"/> at the station <see cref="TaskOrder.Target"/> (null when the recipe needs none): a
+        /// player through the crafting GUI, a companion through ResourceDataHelper.CraftTool (Core 0.2.220, the haul's pickaxe).
+        /// </summary>
+        Craft,
     }
 
     /// <summary>One step of a chore, from <see cref="ChoreBrain"/>; the body carries it out and asks again.</summary>
@@ -35,12 +46,18 @@ namespace FiresCore.Npc.AI
         public GameObject Target;
         public ItemDrop.ItemData Item;
         public string Reason = "";
+        /// <summary><see cref="TaskKind.Build"/>: the piece prefab's name (e.g. piece_chest_wood).</summary>
+        public string PieceName;
+        /// <summary><see cref="TaskKind.Build"/>: the piece's rotation.</summary>
+        public Quaternion Rotation = Quaternion.identity;
+        /// <summary><see cref="TaskKind.Craft"/>: the vanilla recipe, at quality 1.</summary>
+        public Recipe Recipe;
 
         public static TaskOrder Move(Vector3 point) => new TaskOrder { Kind = TaskKind.Move, Point = point };
         public static TaskOrder Done(string reason = "") => new TaskOrder { Kind = TaskKind.Done, Reason = reason };
         public static TaskOrder Failed(string reason) => new TaskOrder { Kind = TaskKind.Failed, Reason = reason };
 
-        public override string ToString() => $"{Kind}{(Target != null ? " " + Target.name : "")}{(Item != null ? " " + Item.m_shared.m_name : "")}{(Reason.Length > 0 ? " (" + Reason + ")" : "")}";
+        public override string ToString() => $"{Kind}{(PieceName != null ? " " + PieceName : "")}{(Recipe != null && Recipe.m_item != null ? " " + Recipe.m_item.name : "")}{(Target != null ? " " + Target.name : "")}{(Item != null ? " " + Item.m_shared.m_name : "")}{(Reason.Length > 0 ? " (" + Reason + ")" : "")}";
     }
 
     /// <summary>What a workbench can upgrade for a body, and what it costs.</summary>
@@ -57,7 +74,7 @@ namespace FiresCore.Npc.AI
     /// tree, rock or pickable to gather with which tool, and which station can upgrade which item. Chest writes go through
     /// ChestHelper's claim with the body's owner id, so a player body (the FDT bot) and a companion use the same rights.
     /// </summary>
-    public static class ChoreBrain
+    public static partial class ChoreBrain
     {
         // ---- Chests ----
 
@@ -134,6 +151,87 @@ namespace FiresCore.Npc.AI
             return moved > 0 ? TaskOrder.Done($"deposited {moved}") : TaskOrder.Failed("the chest took nothing");
         }
 
+        // ---- Base upkeep (0.2.233; Fire 23:0x: "they also dont bother keeping their fires lit, or any of that, our companions once
+        // again have better work logic than the bots when it comes to what to do around base"). The companions' FireTendingBehaviorV2
+        // rule for any body: a refillable fire near the base under half its fuel, fed from the bag or a base chest ----
+
+        /// <summary>A fire under this share of its max fuel is refuelled: the companions' proven value, one rule for every body (0.2.236; FireTendingBehaviorV2 reads it).</summary>
+        public const float RefuelBelow = 0.7f;
+        /// <summary>The body adds fuel within this (m) of the fire, and takes it from a chest within this of the chest.</summary>
+        private const float BaseUseDistance = 2.5f;
+
+        /// <summary>A fire that wants fuel (<see cref="FiresNeedingFuel"/>).</summary>
+        public struct FireNeed
+        {
+            public Fireplace Fire;
+            /// <summary>The fuel's prefab name (Wood, Resin …) and its shared name (vanilla Inventory counts by it).</summary>
+            public string FuelPrefab, FuelName;
+            public int Fuel, Max;
+            /// <summary>Units to fill it.</summary>
+            public int Need => Mathf.Max(0, Max - Fuel);
+        }
+
+        private static readonly List<FireNeed> s_fires = new List<FireNeed>();
+
+        /// <summary>
+        /// The fires within <paramref name="radius"/> of <paramref name="basePos"/> that burn below <see cref="RefuelBelow"/> of their max
+        /// fuel (refillable, not infinite, with a fuel item), nearest the base first. The list is reused: copy it to keep it.
+        /// </summary>
+        public static IReadOnlyList<FireNeed> FiresNeedingFuel(Vector3 basePos, float radius)
+        {
+            s_fires.Clear();
+            var seen = new HashSet<Fireplace>();
+            foreach (Collider collider in Physics.OverlapSphere(basePos, radius))
+            {
+                Fireplace fire = collider != null ? collider.GetComponentInParent<Fireplace>() : null;
+                if (fire == null || !seen.Add(fire) || !fire.m_canRefill || fire.m_infiniteFuel || fire.m_fuelItem == null) continue;
+                ZNetView view = fire.GetComponent<ZNetView>();
+                if (view == null || !view.IsValid()) continue;
+                float fuel = view.GetZDO().GetFloat(ZDOVars.s_fuel, 0f);
+                if (fuel >= fire.m_maxFuel * RefuelBelow) continue;
+                s_fires.Add(new FireNeed
+                {
+                    Fire = fire, FuelPrefab = fire.m_fuelItem.gameObject.name, FuelName = fire.m_fuelItem.m_itemData.m_shared.m_name,
+                    Fuel = Mathf.FloorToInt(fuel), Max = Mathf.RoundToInt(fire.m_maxFuel),
+                });
+            }
+            s_fires.Sort((a, b) => (a.Fire.transform.position - basePos).sqrMagnitude.CompareTo((b.Fire.transform.position - basePos).sqrMagnitude));
+            return s_fires;
+        }
+
+        /// <summary>
+        /// Add up to <paramref name="units"/> of <paramref name="fire"/>'s fuel from <paramref name="body"/>'s bag, the way a companion
+        /// tends it: claim an unowned fire (vanilla Interact does too), take one unit out of the bag, RPC_AddFuel, and again until it is
+        /// full or the bag is out. Not vanilla Interact: on a fire that can be turned off, Interact with fuel in it turns it OFF. Returns
+        /// the units added.
+        /// </summary>
+        public static int AddFuel(ITaskBody body, Fireplace fire, int units, out string why)
+        {
+            why = "";
+            if (body?.Inventory == null || fire == null || fire.m_fuelItem == null) { why = "no body or fire"; return 0; }
+            ZNetView view = fire.GetComponent<ZNetView>();
+            if (view == null || !view.IsValid()) { why = "the fire isn't loaded"; return 0; }
+            if (!view.HasOwner()) view.ClaimOwnership();
+            string fuelName = fire.m_fuelItem.m_itemData.m_shared.m_name;
+            int fuel = Mathf.CeilToInt(view.GetZDO().GetFloat(ZDOVars.s_fuel, 0f));
+            int added = 0;
+            while (added < units && fuel + added < fire.m_maxFuel && body.Inventory.CountItems(fuelName) > 0)
+            {
+                body.Inventory.RemoveItem(fuelName, 1);
+                view.InvokeRPC("RPC_AddFuel");
+                added++;
+            }
+            if (added == 0) why = body.Inventory.CountItems(fuelName) == 0 ? $"no {fire.m_fuelItem.gameObject.name} in the bag" : "already full";
+            return added;
+        }
+
+        /// <summary>
+        /// 0.2.233's form of <see cref="NextBaseChore(ITaskBody, Vector3, float, BaseChores, out string)"/>: every base chore, with
+        /// <paramref name="repair"/> false leaving out the two repairs. Kept for callers built on 0.2.233.
+        /// </summary>
+        public static TaskOrder NextBaseChore(ITaskBody body, Vector3 basePos, float radius = 30f, bool repair = true) =>
+            NextBaseChore(body, basePos, radius, repair ? BaseChores.All : BaseChores.All & ~(BaseChores.RepairGear | BaseChores.RepairPieces), out _);
+
         // ---- Gathering ----
 
         /// <summary>The best item in <paramref name="items"/> for <paramref name="tool"/> work at <paramref name="minTier"/> or above (ResourceDataHelper.IsBetterTool).</summary>
@@ -208,10 +306,12 @@ namespace FiresCore.Npc.AI
             public float Distance;
             public ResourceDataHelper.ResourceType Type;
             public bool Usable;
-            /// <summary>"ok", or why not: "wards", "doesn't drop X", "needs an axe of tier N (best carried M)", "no path", "path … x the straight …".</summary>
+            /// <summary>"ok", or why not: "wards", "needs an axe of tier N (best carried M)", "no path", "path … x the straight …".</summary>
             public string Reason;
             /// <summary>Metres along the navmesh path when it was checked, else -1.</summary>
             public float PathLength;
+            /// <summary>Where the path ends: the node's interaction point, or a stand point on its reach ring when that is what the path reached (0.2.228).</summary>
+            public Vector3 Stand;
         }
 
         // Path checks cost a navmesh search each: only the nearest few candidates that pass everything else get one.
@@ -222,9 +322,10 @@ namespace FiresCore.Npc.AI
         private static readonly List<Vector3> s_path = new List<Vector3>();
 
         /// <summary>
-        /// Every gatherable node within <paramref name="range"/> of <paramref name="at"/> (up to <paramref name="max"/>, nearest first)
-        /// with a verdict: usable or the reason not (wards, doesn't drop what is <paramref name="wanted"/>, the tool carried is missing or
-        /// too weak, no navmesh path or a path over twice the straight line). <see cref="FindGatherTarget"/> takes the first usable one,
+        /// Every gatherable node within <paramref name="range"/> of <paramref name="at"/> that drops one of <paramref name="wanted"/> (any
+        /// node when it is empty; up to <paramref name="max"/>, nearest first) with a verdict: usable or the reason not (wards, the tool
+        /// carried is missing or too weak, no navmesh path or a path over twice the straight line). Nodes that don't drop what is
+        /// wanted are left out, not listed, so they never use up <paramref name="max"/> (0.2.223). <see cref="FindGatherTarget"/> takes the first usable one,
         /// so a planner asking this and a body gathering agree. With <paramref name="log"/>, one "[ChoreBrain] candidate" line each.
         /// The list is reused: copy it to keep it.
         /// </summary>
@@ -243,25 +344,24 @@ namespace FiresCore.Npc.AI
             foreach (var data in found)
             {
                 if (s_candidates.Count >= max) break;
+                // Asked for something: a node that doesn't drop it isn't a candidate at all, so it can't fill the list (0.2.223, [seasons],
+                // R90 run 6: the 16 nearest nodes were stones and dandelions, "doesn't drop Wood", and the beech forest never made the list).
+                if (filterDrops && !ResourceDataHelper.YieldsAnyOf(data.GameObject, wanted)) continue;
                 string reason = null;
                 if (!ChestHelper.WardsAllow(data.InteractionPosition, ownerId)) reason = "wards";
-                else if (filterDrops && !ResourceDataHelper.YieldsAnyOf(data.GameObject, wanted)) reason = "doesn't drop " + string.Join("/", wanted);
                 else reason = ToolReason(data, axeTier, pickTier);
 
                 float straight = Vector3.Distance(at, data.InteractionPosition);
                 float pathLength = -1f;
+                Vector3 stand = data.InteractionPosition;
                 if (reason == null && pathChecked < PathChecks && Pathfinding.instance != null)
                 {
                     pathChecked++;
-                    if (!Pathfinding.instance.GetPath(at, data.InteractionPosition, s_path, Pathfinding.AgentType.Humanoid, requireFullPath: true))
+                    if (!PathToNode(at, data, out pathLength, out stand))
                         reason = "no path";
-                    else
-                    {
-                        pathLength = 0f;
-                        for (int i = 1; i < s_path.Count; i++) pathLength += Vector3.Distance(s_path[i - 1], s_path[i]);
-                        if (pathLength > straight * DetourFactor + DetourSlack)
-                            reason = $"path {pathLength:0} m, over {DetourFactor:0}x the straight {straight:0} m";
-                    }
+                    else if (pathLength > straight * DetourFactor + DetourSlack)
+                        reason = $"path {pathLength:0} m, over {DetourFactor:0}x the straight {straight:0} m";
+                    if (stand != data.InteractionPosition) NoteStand(data.GameObject, stand);
                 }
 
                 var candidate = new GatherCandidate
@@ -275,11 +375,97 @@ namespace FiresCore.Npc.AI
                     Usable = reason == null,
                     Reason = reason ?? "ok",
                     PathLength = pathLength,
+                    Stand = stand,
                 };
                 s_candidates.Add(candidate);
-                if (log) Debug.Log($"[ChoreBrain] candidate {candidate.Prefab} {straight:0.0} m: {candidate.Reason}");
+                if (log) Debug.Log($"[ChoreBrain] candidate {candidate.Prefab} {straight:0.0} m: {candidate.Reason}" +
+                                   $"{(stand != data.InteractionPosition ? $" (stand point {Vector3.Distance(stand, data.InteractionPosition):0.0} m off its centre)" : "")}");
             }
             return s_candidates;
+        }
+
+        // ---- The path to a node: its centre, else a stand point on its reach ring (0.2.228) ----
+
+        /// <summary>Stand points tried on a node's reach ring when the path to its centre fails (nearest the body first).</summary>
+        private const int RingTries = 3;
+        private const int RingDirections = 8;
+        private static readonly Dictionary<GameObject, Vector3> s_stand = new Dictionary<GameObject, Vector3>();
+        private static readonly List<Vector3> s_ring = new List<Vector3>();
+        private static int s_ringLogged;
+
+        /// <summary>
+        /// A navmesh path from <paramref name="at"/> that ends within reach of <paramref name="data"/>: to its centre (vanilla snaps the
+        /// goal onto the navmesh), else to one of <see cref="RingTries"/> stand points on its reach ring, nearest the body first. A
+        /// trunk's centre lies in the hole its collider cuts in the navmesh, and vanilla's snap can land it on an island there or on
+        /// ground 6-12 m off; either read "no path" (or a false "ok") for a tree in open ground (R90 run 10, Coop2: "Beech1 5 m no
+        /// path, Beech1 16 m no path … Beech1 27 m ok"). A path counts only when its end is within the node's reach.
+        /// </summary>
+        public static bool PathToNode(Vector3 at, ResourceDataHelper.ResourceData data, out float length, out Vector3 stand)
+        {
+            length = -1f;
+            stand = data != null ? data.InteractionPosition : at;
+            if (data == null || Pathfinding.instance == null) return false;
+            float reach = Mathf.Max(1.5f, data.InteractionRadius);
+            Vector3 centre = data.InteractionPosition;
+            if (PathEndingNear(at, centre, centre, reach, out length)) return true;
+
+            float ring = Mathf.Max(1f, reach - 0.5f);
+            s_ring.Clear();
+            for (int i = 0; i < RingDirections; i++)
+            {
+                float a = i * Mathf.PI * 2f / RingDirections;
+                Vector3 p = centre + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * ring;
+                if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(p, out float ground)) p.y = ground;
+                if (!Pathfinding.instance.FindValidPoint(out Vector3 valid, p, 0.75f, Pathfinding.AgentType.Humanoid)) continue;
+                s_ring.Add(valid);
+            }
+            s_ring.Sort((a, b) => (a - at).sqrMagnitude.CompareTo((b - at).sqrMagnitude));
+            int tries = 0;
+            foreach (Vector3 p in s_ring)
+            {
+                if (tries++ >= RingTries) break;
+                if (!PathEndingNear(at, p, centre, reach, out length)) continue;
+                stand = p;
+                if (s_ringLogged < 8)
+                {
+                    s_ringLogged++;
+                    Debug.Log($"[ChoreBrain] {Utils.GetPrefabName(data.GameObject)} at ({centre.x:0}, {centre.z:0}): no path to its centre; reached by a stand point " +
+                              $"{Vector3.Distance(p, centre):0.0} m off it, path {length:0} m");
+                }
+                return true;
+            }
+            length = -1f;
+            return false;
+        }
+
+        // A full navmesh path to goal whose end lies within reach (+0.5 m) of node, with its length.
+        private static bool PathEndingNear(Vector3 at, Vector3 goal, Vector3 node, float reach, out float length)
+        {
+            length = -1f;
+            if (!Pathfinding.instance.GetPath(at, goal, s_path, Pathfinding.AgentType.Humanoid, requireFullPath: true) || s_path.Count == 0) return false;
+            Vector3 end = s_path[s_path.Count - 1];
+            end.y = node.y = 0f;
+            if (Vector3.Distance(end, node) > reach + 0.5f) return false;
+            length = 0f;
+            for (int i = 1; i < s_path.Count; i++) length += Vector3.Distance(s_path[i - 1], s_path[i]);
+            return true;
+        }
+
+        private static void NoteStand(GameObject node, Vector3 stand)
+        {
+            if (node == null) return;
+            if (s_stand.Count > 64) s_stand.Clear();
+            s_stand[node] = stand;
+        }
+
+        /// <summary>
+        /// Where to stand to work <paramref name="node"/>: the stand point <see cref="GatherCandidates"/> found when the path to its
+        /// centre failed (0.2.228), else its interaction point. Walk to this, not the trunk centre.
+        /// </summary>
+        public static Vector3 StandPoint(ResourceDataHelper.ResourceData node)
+        {
+            if (node == null) return Vector3.zero;
+            return node.GameObject != null && s_stand.TryGetValue(node.GameObject, out Vector3 stand) ? stand : node.InteractionPosition;
         }
 
         /// <summary>
@@ -293,13 +479,14 @@ namespace FiresCore.Npc.AI
 
             float reach = Mathf.Max(1.5f, target.InteractionRadius);
             if (Vector3.Distance(body.Position, target.InteractionPosition) > reach)
-                return new TaskOrder { Kind = TaskKind.Move, Point = target.InteractionPosition, Target = target.GameObject };
+                return new TaskOrder { Kind = TaskKind.Move, Point = StandPoint(target), Target = target.GameObject };
 
             if (target.IsPickable)
                 return new TaskOrder { Kind = TaskKind.Interact, Target = target.GameObject, Point = target.InteractionPosition };
 
-            ItemDrop.ItemData held = body.Character != null ? body.Character.GetCurrentWeapon() : null;
-            ItemDrop.ItemData tool = BestTool(body.Inventory != null ? body.Inventory.GetAllItems() : null, target.RequiredTool, target.MinToolTier);
+            // Through TaskBodyHands: a companion's hand and equipment aren't the vanilla ones (0.2.220).
+            ItemDrop.ItemData held = TaskBodyHands.Held(body);
+            ItemDrop.ItemData tool = BestTool(TaskBodyHands.Carried(body), target.RequiredTool, target.MinToolTier);
             if (tool == null) return TaskOrder.Failed($"no {target.RequiredTool} of tier {target.MinToolTier}");
             if (held != tool) return new TaskOrder { Kind = TaskKind.Equip, Item = tool, Target = target.GameObject };
 
@@ -730,6 +917,93 @@ namespace FiresCore.Npc.AI
                 if (!underRoof || coverPercentage < MinStationCover) return false;
             }
             return !station.m_craftRequireFire || EffectArea.IsPointPlus025InsideBurningArea(station.transform.position);
+        }
+
+        // ---- Building + crafting for any body (Core 0.2.220, Tools\COMPANION_HAUL.md §2 / §2a) ----
+
+        private static readonly List<IPlaced> s_placed = new List<IPlaced>();
+        private static readonly List<CraftingStation> s_stations = new List<CraftingStation>();
+
+        /// <summary>
+        /// Places <paramref name="pieceName"/> for a body with no build GUI (a companion), the way Player.PlacePiece does: paid from
+        /// <paramref name="pay"/> first (every requirement or nothing), then instantiated under the terrain trigger with creator =
+        /// <paramref name="ownerId"/>, WearNTear.OnPlaced, the IPlaced hooks and the place effect. Returns the piece, or null with
+        /// <paramref name="reason"/>. Where it goes is the caller's call (the haul checks the spot first).
+        /// </summary>
+        public static Piece PlacePiece(string pieceName, Vector3 pos, Quaternion rot, Inventory pay, long ownerId, out string reason)
+        {
+            reason = "";
+            GameObject prefab = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(pieceName) : null;
+            Piece piece = prefab != null ? prefab.GetComponent<Piece>() : null;
+            if (piece == null) { reason = $"no piece {pieceName}"; return null; }
+            if (pay == null) { reason = "no bag to pay from"; return null; }
+            foreach (Piece.Requirement req in piece.m_resources)
+            {
+                if (req.m_resItem == null || req.m_upgraderResource || req.m_amount <= 0) continue;
+                int have = pay.CountItems(req.m_resItem.m_itemData.m_shared.m_name);
+                if (have < req.m_amount) { reason = $"missing {req.m_resItem.name} {have}/{req.m_amount}"; return null; }
+            }
+            foreach (Piece.Requirement req in piece.m_resources)
+                if (req.m_resItem != null && !req.m_upgraderResource && req.m_amount > 0)
+                    pay.RemoveItem(req.m_resItem.m_itemData.m_shared.m_name, req.m_amount);
+
+            TerrainModifier.SetTriggerOnPlaced(true);
+            GameObject placed = UnityEngine.Object.Instantiate(prefab, pos, rot);
+            TerrainModifier.SetTriggerOnPlaced(false);
+            Piece made = placed.GetComponent<Piece>();
+            if (made != null) made.SetCreator(ownerId, CreatorPlatformId(ownerId));
+            placed.GetComponent<WearNTear>()?.OnPlaced();
+            s_placed.Clear();
+            placed.GetComponents(s_placed);
+            foreach (IPlaced hook in s_placed) hook.OnPlaced();
+            piece.m_placeEffect.Create(pos, rot, placed.transform);
+            return made;
+        }
+
+        // Vanilla records the placer's platform id beside the creator; only the local player's is known here.
+        private static Splatform.PlatformUserID CreatorPlatformId(long ownerId)
+        {
+            Player local = Player.m_localPlayer;
+            if (local == null || local.GetPlayerID() != ownerId) return default;
+            try { return Splatform.PlatformManager.DistributionPlatform.LocalUser.PlatformUserID; }
+            catch { return default; }
+        }
+
+        /// <summary>
+        /// Why <paramref name="recipe"/> can't be crafted near <paramref name="at"/> as far as its station goes, with a stable code
+        /// first (COMPANION_HAUL §2a): "nostation: …" (none of its kind within <paramref name="radius"/>), "station: …" (too low a
+        /// level, or no fire) or "roof: …" (vanilla's roof test, in the words a player sees). "" when one can, returned in
+        /// <paramref name="station"/> (null for a recipe that needs none). The reason given is the nearest station's.
+        /// </summary>
+        public static string CraftStationRefusal(Recipe recipe, Vector3 at, float radius, out CraftingStation station)
+        {
+            station = null;
+            if (recipe == null) return "missing: no recipe";
+            CraftingStation need = recipe.GetRequiredStation(1);
+            if (need == null) return "";
+            string kind = Utils.GetPrefabName(need.gameObject);
+            s_stations.Clear();
+            CraftingStation.FindStationsInRange(need.m_name, at, radius, s_stations);
+            if (s_stations.Count == 0) return $"nostation: no {kind} within {radius:0} m";
+            s_stations.Sort((a, b) => (a.transform.position - at).sqrMagnitude.CompareTo((b.transform.position - at).sqrMagnitude));
+            int level = recipe.GetRequiredStationLevel(1);
+            string nearestWhy = null;
+            foreach (CraftingStation candidate in s_stations)
+            {
+                string why = null;
+                if (candidate.GetLevel() < level) why = $"station: {kind} is level {candidate.GetLevel()}, {recipe.m_item.name} needs {level}";
+                else if (candidate.m_craftRequireRoof)
+                {
+                    Cover.GetCoverForPoint(candidate.m_roofCheckPoint.position, out float cover, out bool underRoof);
+                    if (!underRoof || cover < MinStationCover)
+                        why = $"roof: {Localization.instance.Localize("$msg_stationneedsroof")} ({kind} at ({candidate.transform.position.x:0}, {candidate.transform.position.z:0}), {cover * 100f:0} % cover)";
+                }
+                if (why == null && candidate.m_craftRequireFire && !EffectArea.IsPointPlus025InsideBurningArea(candidate.transform.position))
+                    why = $"station: {kind} needs a fire";
+                if (why == null) { station = candidate; return ""; }
+                nearestWhy = nearestWhy ?? why;
+            }
+            return nearestWhy;
         }
     }
 }

@@ -1272,6 +1272,9 @@ if (isTamed && ownerPlayerId == 0 &&
             Debug.Log($"[CompanionController] {companionName} now following {player.GetPlayerName()}");
         }
 
+        /// <summary>0.2.268: a stay order sends no walk to an anchor the companion already stands this close to.</summary>
+        private const float StayArriveRadius = 4f;
+
         public void CommandStay()
         {
             CommandStay(transform.position);
@@ -1316,9 +1319,12 @@ if (isTamed && ownerPlayerId == 0 &&
             if (_combatMovement != null)
             {
                 _combatMovement.SetHomePosition(stayPosition);
-                // CRITICAL: Also set move destination so companion moves to the stay position
-                // This matches what CompanionCommandSystem.CommandCompanionStay() does
-                _combatMovement.SetMoveDestination(stayPosition);
+                // Walk to the stay position. 0.2.268 (HR3: "ended … after 0 s (cancelled: a Move command)" for every chore started
+                // right after the drill's stay order): a normal move, not an ABSOLUTE Move command (which cancelled every sub-behavior until
+                // it arrived, up to 120 s; five companions sent to one anchor could never all arrive). None at all when it already stands
+                // within StayArriveRadius of the anchor.
+                if (Vector3.Distance(transform.position, stayPosition) > StayArriveRadius)
+                    _combatMovement.SetMoveDestination(stayPosition, useWalk: false, skipCommandOverride: true);
             }
 
             // CRITICAL: Also set home position on idle behavior
@@ -3145,6 +3151,36 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         /// Use this instead of IsFollowing for behavior decisions.
         /// </summary>
         public bool ShouldBeFollowing => _companionAI?.ShouldBeFollowing ?? false;
+
+        // ---- Haul (Core 0.2.220, Tools\COMPANION_HAUL.md; the brain is FiresCore.Npc.AI.Haul, shared with the FDT bot bodies) ----
+
+        /// <summary>
+        /// Starts a haul: gather to <paramref name="quota"/> (item prefab → count), carry it home at 80 % of the carry limit, deposit
+        /// into chests within 10 m of <paramref name="home"/>, build a chest there when none has room, and go again until the quota
+        /// is in the chests. The companion stays at home for the haul (no follow teleports) and follows again afterwards if it was
+        /// following. Read <see cref="HaulProgress"/> here, or Haul.ReadPublished(humanoid) on any peer.
+        /// </summary>
+        public HaulJob StartHaul(Vector3 home, IReadOnlyDictionary<string, int> quota, bool pickFood)
+        {
+            if (_nview == null || !_nview.IsValid() || _humanoid == null) return null;
+            if (!_nview.IsOwner()) _nview.ClaimOwnership();
+            var runner = GetComponent<CompanionHaulRunner>();
+            bool wasFollowing = runner != null ? runner.WasFollowing : ShouldBeFollowing;
+            HaulJob job = Haul.Start(new CompanionTaskBody(this), home, quota, pickFood,
+                () => _inventory != null ? _inventory.GetMaxCarryWeight() : 300f);
+            if (job == null) return null;
+            if (ShouldBeFollowing) CommandStay(home);
+            if (runner == null) runner = gameObject.AddComponent<CompanionHaulRunner>();
+            runner.Job = job;
+            runner.WasFollowing = wasFollowing;
+            return job;
+        }
+
+        /// <summary>Stops the running haul (the job logs "stopped: …"); the runner then ends it.</summary>
+        public void StopHaul(string why = "stopped by a command") => Haul.For(_humanoid)?.Stop(why);
+
+        /// <summary>This companion's haul progress on this machine (null without a haul).</summary>
+        public HaulProgress HaulProgress => Haul.For(_humanoid)?.Progress;
 
         /// <summary>
         /// Sets whether this companion should be following or staying.

@@ -97,9 +97,76 @@ namespace FiresCore.Logging
             AddCount(counts, UnityLogSuppressionPatch.SuppressedHeadlessRenderErrors, "headless render/video");
             AddCount(counts, BepInExLogSuppressionPatch.QuietedOtherModLines, "other mods quieted");
             AddCount(counts, BepInExLogSuppressionPatch.PerModDroppedLines, "dropped by PerModLogLevel");
+            AddCount(counts, s_levelDroppedLines + BepInExLogSuppressionPatch.LevelDroppedLines, "Fires info lines below Log Level");
             AddCount(counts, BepInExLogSuppressionPatch.SuppressedHarmonyMissing, "HarmonyX probe misses");
             AddCount(counts, _suppressedValheimNreBugs, "known no-fix NRE");
             return counts.Count == 0 ? null : $"log filter held back {string.Join(", ", counts)} (verbose shows them)";
+        }
+
+        // ── 0.2.269: is a plain Debug.Log line from a Fires-family assembly? ────────────────────────────────────────────────────────
+        // A line tagged for the family ("[FiresUnifiedCore] …") is, at once. Else the leading "[Tag]" of the line ("[Chore]",
+        // "[PathWalker]") is looked up in a cache filled by ONE stack walk per tag: the first frame outside UnityEngine's logger, this
+        // handler and the FiresLog engine names the calling assembly. An untagged line walks every time (rare in our code). Any failure
+        // answers no, so the line prints. Only reached below Info, for LogType.Log lines.
+        private static int s_levelDroppedLines;
+        internal static int LevelDroppedLines => s_levelDroppedLines;
+        private static readonly ConcurrentDictionary<string, bool> s_tagIsFamily = new ConcurrentDictionary<string, bool>(StringComparer.Ordinal);
+        private static readonly ConcurrentDictionary<Assembly, bool> s_assemblyIsFamily = new ConcurrentDictionary<Assembly, bool>();
+        private static readonly Assembly s_unityLoggerAssembly = typeof(Debug).Assembly;
+        private const int MaxWalkFrames = 16;
+        private const int MaxCachedTags = 1024;   // past this a tag carrying a counter or a clock walks every time instead of growing the cache
+        // Assembly (DLL) names, which are not the BepInEx source names BepInExLogSuppressionPatch lists: the family members not named "Fires…".
+        private static readonly string[] FamilyAssemblyNames =
+            { "VAInventory", "VABackpacks", "VAassets", "VerdantsAscentShips", "VAGhettoNetworking", "TechPriestDhakharsPrefabs", "IsThisThingOn", "Vedr", "Norger.Vedr" };
+
+        private static bool IsFamilyLine(string message)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(message)) return false;
+                if (BepInExLogSuppressionPatch.IsTestLine(message)) return false;   // F5 test lines always print
+                if (FiresLogColorPatch.IsOurModMessage(message)) return true;
+                string tag = LeadingTag(message);
+                if (tag != null && s_tagIsFamily.TryGetValue(tag, out bool known)) return known;
+                bool family = CallerIsFamily();
+                if (tag != null && s_tagIsFamily.Count < MaxCachedTags) s_tagIsFamily[tag] = family;
+                return family;
+            }
+            catch { return false; }
+        }
+
+        // "[Chore]" from "[Chore] Freya: …"; null when the line doesn't start with a short bracket tag.
+        private static string LeadingTag(string message)
+        {
+            int start = 0;
+            while (start < message.Length && message[start] == ' ') start++;
+            if (start >= message.Length || message[start] != '[') return null;
+            int end = message.IndexOf(']', start + 1);
+            return end > start + 1 && end - start <= 48 ? message.Substring(start, end - start + 1) : null;
+        }
+
+        // One StackFrame at a time: Mono's StackFrame(i) stops at frame i, where StackTrace resolves the whole stack (measured on the
+        // game's Mono 6.13: ~6 us a line at any depth, against 32 us at 10 frames deep and 210 us at 40 for StackTrace).
+        private static bool CallerIsFamily()
+        {
+            for (int i = 2; i < 2 + MaxWalkFrames; i++)   // 0 = CallerIsFamily, 1 = IsFamilyLine
+            {
+                Type type = new System.Diagnostics.StackFrame(i, false).GetMethod()?.DeclaringType;
+                if (type == null) continue;   // a Harmony-patched (dynamic) frame, or past the top: look further up, within the bound
+                Assembly assembly = type.Assembly;
+                if (assembly == s_unityLoggerAssembly || type == typeof(RateLimitedLogHandler) || type == typeof(FiresLog)) continue;
+                return s_assemblyIsFamily.GetOrAdd(assembly, IsFamilyAssembly);
+            }
+            return false;
+        }
+
+        private static bool IsFamilyAssembly(Assembly assembly)
+        {
+            string name = assembly.GetName().Name ?? "";
+            if (name.StartsWith("Fires", StringComparison.OrdinalIgnoreCase)) return true;
+            foreach (string known in FamilyAssemblyNames)
+                if (string.Equals(name, known, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
         }
 
         private static void AddCount(List<string> counts, int count, string label)
@@ -110,6 +177,12 @@ namespace FiresCore.Logging
         public void LogFormat(LogType logType, UnityEngine.Object context, string format, params object[] args)
         {
             string message = ResolveMessage(format, args);
+            // 0.2.269 ([Logging] Log Level): below Info, a plain Debug.Log line from a Fires-family assembly is dropped here.
+            if (logType == LogType.Log && !FiresLogLevel.InfoOn && !FiresLogLevel.Announcing && IsFamilyLine(message))
+            {
+                Interlocked.Increment(ref s_levelDroppedLines);
+                return;
+            }
             if (TryWriteOurModLineToBepInEx(logType, message)) return;
 
             if (!VerbosePassThrough() && ShouldSuppress(logType, message)) return;

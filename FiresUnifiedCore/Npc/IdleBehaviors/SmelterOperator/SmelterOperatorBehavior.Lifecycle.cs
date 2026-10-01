@@ -279,7 +279,22 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Show current status above companion's head
             ShowCurrentStatus();
-            
+
+            // 0.2.257 ([ghost]): every phase handler ends with SetPhase(Complete) + return true in the same tick, so the Complete case
+            // below never ran and the idle loop dropped the behaviour as it was: the smelter and kiln stayed reserved against every other
+            // companion for MaxOperateTime (NotifyOwner releases them), the behaviour stayed active, and the "[Chore] … smelter:" line
+            // (in Complete) never printed. Finish here; after Complete IsActive is false, so nothing runs twice.
+            bool done = UpdatePhase();
+            if (done && IsActive)
+            {
+                NotifyOwner();
+                Complete();
+            }
+            return done;
+        }
+
+        private bool UpdatePhase()
+        {
             switch (_currentPhase)
             {
                 case OperatePhase.FindingStation:
@@ -393,15 +408,26 @@ namespace FiresCore.Npc.IdleBehaviors
             // CRITICAL: Release movement authority when cancelled
             // We don't release during normal stop-and-interact cycles, only at the end
             ReleaseMovementAuthorityFinal();
-            
+
             NotifyOwner();
+            SayOutcome("cancelled");
             base.Cancel();
         }
-        
+
         protected override void Complete()
         {
             ReleaseStationVisuals();
+            SayOutcome("done");
             base.Complete();
+        }
+
+        // 0.2.255 (Fire's homestead test): one always-on line per smelter / kiln session with what it did.
+        private void SayOutcome(string how)
+        {
+            if (_itemsAdded <= 0 && _itemsCollected <= 0 && _itemsDeposited <= 0) return;
+            string station = _targetSmelter != null ? Utils.GetPrefabName(_targetSmelter.gameObject) : "smelter";
+            AI.ChoreBrain.ChoreDone(Companion?.companionName, "smelter",
+                $"{station}: added {_itemsAdded} item(s) (ore / fuel), collected {_itemsCollected}, deposited {_itemsDeposited} ({how})");
         }
         
         public override void InterruptForCombat()

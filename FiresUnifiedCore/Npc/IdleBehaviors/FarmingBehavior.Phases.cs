@@ -42,11 +42,30 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            // No cultivator in chests — try crafting at a Forge.
-            if (CanCraftCultivator())
+            // No cultivator in chests: craft one by the game's recipe (0.2.242, ChoreBrain.CraftFromStock, the bot's rule too). Materials
+            // missing from storage are fetched from the nearby chests one take at a time (this phase re-plans after each), then the
+            // recipe's station.
+            string why = CultivatorCraft(out var plan);
+            if (why == "" && plan.Fetch.Count > 0)
             {
-                _targetForge = FindNearestForge();
-                if (_targetForge != null && IsReachable(_targetForge.transform.position))
+                var (chest, prefab, amount) = plan.Fetch[0];
+                if (IsReachable(chest.transform.position))
+                {
+                    _materialChest  = chest;
+                    _materialPrefab = prefab;
+                    _materialAmount = amount;
+                    _targetPosition = InteractionPointHelper.GetContainerInteractionPoint(chest, Transform.position, InteractionDistance);
+                    SetPhase(FarmPhase.FetchingCraftMaterials);
+                    TryMoveToPosition(_targetPosition);
+                    return false;
+                }
+                why = $"the chest holding {prefab} at ({chest.transform.position.x:0}, {chest.transform.position.z:0}) is out of reach";
+            }
+            else if (why == "")
+            {
+                _targetForge = plan.Station;
+                if (_targetForge == null) { SetPhase(FarmPhase.CraftingCultivator); return false; }   // made by hand
+                if (IsReachable(_targetForge.transform.position))
                 {
                     _targetPosition = InteractionPointHelper.GetInteractionPoint(
                         _targetForge.gameObject, Transform.position, InteractionDistance);
@@ -54,11 +73,42 @@ namespace FiresCore.Npc.IdleBehaviors
                     TryMoveToPosition(_targetPosition);
                     return false;
                 }
+                why = $"{plan.StationName} at ({_targetForge.transform.position.x:0}, {_targetForge.transform.position.z:0}) is out of reach";
+                _targetForge = null;
             }
 
             // Cannot acquire a cultivator this session — skip planting entirely.
-            Debug.Log($"[Farming] {Companion?.companionName} cannot acquire cultivator — planting skipped");
+            Debug.Log($"[Farming] {Companion?.companionName} cannot acquire cultivator ({why}) — planting skipped");
             return true; // signal Complete
+        }
+
+        private bool UpdateFetchingCraftMaterials()
+        {
+            if (_materialChest == null) { SetPhase(FarmPhase.GettingCultivator); return false; }
+
+            TryMoveToPosition(_targetPosition);
+
+            if (Vector3.Distance(Transform.position, _targetPosition) <= ArrivalDistance)
+            {
+                StopMovement();
+                int took = TakeFromChest(_materialChest, _materialPrefab, _materialAmount);
+                Debug.Log($"[Farming] {Companion?.companionName} took {took} {_materialPrefab} from {Utils.GetPrefabName(_materialChest.gameObject)} to craft a Cultivator");
+                if (took > 0) PlayInteractAnimation();
+                bool failed = took <= 0;
+                _materialChest = null;
+                // Re-plan from what storage and the chests hold now: the next take, or the station.
+                if (failed) { Debug.Log($"[Farming] {Companion?.companionName} cannot acquire cultivator (the chest gave no {_materialPrefab}) — planting skipped"); return true; }
+                SetPhase(FarmPhase.GettingCultivator);
+                return false;
+            }
+
+            if (MovementTimedOut())
+            {
+                Debug.LogWarning($"[Farming] {Companion?.companionName} timeout moving to the chest with {_materialPrefab}");
+                _materialChest = null;
+                SetPhase(FarmPhase.Idle);
+            }
+            return false;
         }
 
         private bool UpdateMovingToCultivatorChest()
@@ -122,29 +172,43 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Time.time - _phaseStartTime < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
             if (Time.time - _phaseStartTime < CraftingPauseDuration) return false;
 
+            // The game's recipe at the checked station, crafted as InventoryGui.DoCrafting does (ResourceDataHelper.CraftTool: station,
+            // resources and room checked before anything is spent; the item from its prefab, so it survives save/load).
             var storage = _inventory?.GetStorageInventory();
-            if (storage != null && CanCraftCultivator())
+            string why = CultivatorCraft(out var plan);
+            if (storage != null && why == "" && plan.Fetch.Count == 0 && ResourceDataHelper.CraftTool(plan.Recipe, plan.Station, storage))
             {
-                // Created from its prefab so m_dropPrefab is set and the tool survives save/load (Inventory.cs:88-96).
-                var cultivator = ObjectDB.instance?.GetItemPrefab(CultivatorPrefab);
-                if (cultivator != null && storage.CanAddItem(cultivator, 1))
-                {
-                    RemoveItems(storage, RecipeCorewood, RecipeCorewoodCount);
-                    RemoveItems(storage, RecipeBronze,   RecipeBronzeCount);
-                    storage.AddItem(cultivator, 1);
-                    _cultivatorReadyThisSession = true;
-                    _inventory?.SaveToZDO();
-                    Debug.Log($"[Farming] {Companion?.companionName} crafted a Cultivator");
-                }
-                else
-                {
-                    Debug.LogWarning($"[Farming] {Companion?.companionName} crafting failed - prefab '{CultivatorPrefab}' not found or no inventory space");
-                }
+                _cultivatorReadyThisSession = true;
+                _inventory?.SaveToZDO();
+                Debug.Log($"[Farming] {Companion?.companionName} crafted a Cultivator at {plan.StationName} ({plan.Cost})");
+            }
+            else
+            {
+                string reason = why != "" ? why : plan.Fetch.Count > 0 ? "materials are still in the chests" : "no room in storage";
+                Debug.LogWarning($"[Farming] {Companion?.companionName} crafting a Cultivator failed ({reason})");
             }
 
             _targetForge = null;
             SetPhase(FarmPhase.Idle);
             return false;
+        }
+
+        // Transfer up to amount of prefabName from a container into the companion's storage inventory; how many moved.
+        private int TakeFromChest(Container chest, string prefabName, int amount)
+        {
+            var chestInv = chest != null && ChestHelper.TryClaimForWrite(chest, Companion) ? chest.GetInventory() : null;
+            var storage  = _inventory?.GetStorageInventory();
+            if (chestInv == null || storage == null) return 0;
+
+            int taken = 0;
+            foreach (var item in new List<ItemDrop.ItemData>(chestInv.GetAllItems()))
+            {
+                if (taken >= amount) break;
+                if (item?.m_dropPrefab?.name != prefabName) continue;
+                taken += ChestHelper.MoveItem(chestInv, storage, item, Mathf.Min(item.m_stack, amount - taken));
+            }
+            if (taken > 0) _inventory?.SaveToZDO();
+            return taken;
         }
 
         // Transfer one of the first matching items from a container into the companion's storage inventory.
@@ -297,6 +361,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 _targetBeehive.Interact(_humanoid, false, false);
                 _hiveProduceHarvested += stored;
                 Debug.Log($"[Farming] {Companion?.companionName} collected {stored} {FarmingDataHelper.GetProduceName(_targetBeehive)}");
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "farm", $"collected {stored} {FarmingDataHelper.GetProduceName(_targetBeehive)} from {Utils.GetPrefabName(_targetBeehive.gameObject)}");
             }
 
             _targetBeehive = null;
@@ -354,6 +419,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     _cropsHarvested++;
                     Debug.Log($"[Farming] {Companion?.companionName} harvested {_targetCrop.name.Replace("(Clone)", "").Trim()}");
+                    AI.ChoreBrain.ChoreDone(Companion?.companionName, "farm", $"harvested {Utils.GetPrefabName(_targetCrop.gameObject)}");
                 }
             }
 
@@ -425,6 +491,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 _plantedCountBySapling[sapling] = planted + 1;
                 _seedsPlanted++;
                 Debug.Log($"[Farming] {Companion?.companionName} planted {sapling}");
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "farm", $"planted {sapling}");
             }
 
             _cropToPlant = null;
@@ -571,6 +638,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             Debug.Log($"[Farming] {Companion?.companionName} deposited {_itemsDeposited} farming items");
+            if (_itemsDeposited > 0) AI.ChoreBrain.ChoreDone(Companion?.companionName, "deposit", $"{_itemsDeposited} farming stack(s) into chests");
             _targetChest = null;
             SetPhase(FarmPhase.Complete);
             return false;

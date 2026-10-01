@@ -879,23 +879,16 @@ namespace FiresCore.Npc.IdleBehaviors
 
                         if (matches)
                     {
-                        // CRITICAL: Remove from inventory FIRST, then call RPC
-                        // This ensures we don't add ore to smelter without consuming it
-                        // Clone the item data before removal for logging
+                        // One copy with the bot's base chores (0.2.236): ChoreBrain.AddSmelterOreOne removes the unit FIRST, then
+                        // RPC_AddOre(prefab, cheated) as vanilla Smelter.OnAddOre does.
                         string itemName = item.m_shared?.m_name ?? dropName;
                         int stackBefore = item.m_stack;
-                        bool cheated = item.m_cheated;
-
-                        // Try to remove one item from the stack
-                        if (!storageInv.RemoveOneItem(item))
+                        if (!AI.ChoreBrain.AddSmelterOreOne(_targetSmelter, storageInv, item))
                         {
                             if (CompanionIdleBehavior.VerboseLogging)
-                                Debug.LogWarning($"[SmelterOperator] Failed to remove ore from inventory: {itemName}");
+                                Debug.LogWarning($"[SmelterOperator] Failed to add ore: {itemName}");
                             continue; // Try next item
                         }
-                        
-                        // 1.0 registers RPC_AddOre as (string name, bool cheated); see Smelter.OnAddOre.
-                        nview.InvokeRPC(AddOreRpc, dropName, cheated);
                         _inventory.SaveToZDO();
                         
                         if (CompanionIdleBehavior.VerboseLogging)
@@ -952,21 +945,16 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 if (dropName.Equals(fuelPrefabName, System.StringComparison.OrdinalIgnoreCase))
                 {
-                    // CRITICAL: Remove from inventory FIRST, then call RPC
-                    // This ensures we don't add fuel to smelter without consuming it
+                    // One copy with the bot's base chores (0.2.236): ChoreBrain.AddSmelterFuelOne removes the unit FIRST, then
+                    // RPC_AddFuel as vanilla Smelter.OnAddFuel does.
                     string itemName = item.m_shared?.m_name ?? dropName;
                     int stackBefore = item.m_stack;
-                    
-                    // Try to remove one item from the stack
-                    if (!storageInv.RemoveOneItem(item))
+                    if (!AI.ChoreBrain.AddSmelterFuelOne(_targetSmelter, storageInv, item))
                     {
                         if (CompanionIdleBehavior.VerboseLogging)
-                            Debug.LogWarning($"[SmelterOperator] Failed to remove fuel from inventory: {itemName}");
+                            Debug.LogWarning($"[SmelterOperator] Failed to add fuel: {itemName}");
                         continue; // Try next item
                     }
-                    
-                    // Successfully removed from inventory - now add to smelter via RPC
-                    nview.InvokeRPC(AddFuelRpc);
                     _inventory.SaveToZDO();
                     
                     if (CompanionIdleBehavior.VerboseLogging)

@@ -1,5 +1,7 @@
 ﻿using UnityEngine;
 using FiresCore.Npc.Events;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace FiresCore.Npc.IdleBehaviors
 {
@@ -739,8 +741,10 @@ namespace FiresCore.Npc.IdleBehaviors
         // Tool crafting helpers
         // -----------------------------------------------------------------------
 
-        private static readonly string[] CraftablePickaxes = { "PickaxeAntler" };
-        private static readonly string[] CraftableAxes = { "AxeStone", "AxeFlint" };
+        // 0.2.274 (Fire: "put enough resources in the yard for them to create themselves. A pickaxe for the mud pile"): the ladders
+        // by tier, cheapest first; the tiers are the runtime prefabs'. Both the bag-only craft and the base-stock craft below use them.
+        private static readonly string[] CraftablePickaxes = { "PickaxeAntler", "PickaxeBronze", "PickaxeIron", "PickaxeBlackMetal" };
+        private static readonly string[] CraftableAxes = { "AxeStone", "AxeFlint", "AxeBronze", "AxeIron", "AxeBlackMetal" };
         private const float WorkbenchSearchRadiusRg = 30f;
 
         /// <summary>
@@ -775,6 +779,261 @@ namespace FiresCore.Npc.IdleBehaviors
             _inventory.SaveToZDO();
             Debug.Log($"[ResourceGathering] {Companion?.companionName} crafted {_craftRecipe.m_item.name}");
             return true;
+        }
+
+        // ── 0.2.274: a tool crafted from base stock ──────────────────────────────────────────────────────────────────────────────
+        // Paid from the bag plus the base chests the owner may use, through ChoreBrain.CraftFromStock (the bot's decision: the whole cost
+        // or nothing fetched; station kind, level, roof and fire checked). At most one intermediate: when the tool is short of exactly
+        // one item that has its own recipe (Bronze <- Copper + Tin at the forge) and stock covers k crafts of it plus the rest of the
+        // tool, the k come first. Each step takes what its plan lists from each chest (FetchingCraftStock), walks to its station and
+        // crafts (MovingToWorkbench / CraftingTool), then the next step is planned on the bag as it now is. No item is made from nothing.
+        private const float StockPlanCacheSeconds = 30f, StockFetchTimeout = 30f;
+
+        private sealed class StockToolPlan
+        {
+            internal string Tool;
+            internal string Intermediate;        // crafted first, or null
+            internal int IntermediateCrafts;
+            internal string Summary;             // for the line
+        }
+
+        private readonly Dictionary<long, (float At, StockToolPlan Plan, string Why)> _stockPlanCache = new Dictionary<long, (float, StockToolPlan, string)>();
+        private StockToolPlan _stockPlan;
+        private int _stockIntermediateDone;
+        private AI.ChoreBrain.StockCraft _stockStep;
+        private int _stockFetchIndex;
+        private string _stockFor;
+
+        private Vector3 StockBase => IdleBehavior?.HasHomePosition == true ? IdleBehavior.HomePosition : Transform.position;
+        private float StockRadius => Mathf.Max(CompanionSettings.ChestSearchRadius, WorkbenchSearchRadiusRg);
+
+        private System.Func<Container, bool> StockMayUse
+        {
+            get
+            {
+                long owner = ChestHelper.ChestOwnerIdFor(Companion);
+                return chest => ChestHelper.OwnerMayWrite(chest, owner);
+            }
+        }
+
+        private bool CanCraftToolFromStock(ResourceDataHelper.ToolType tool, int minTier) => PlanStockTool(tool, minTier, out _) != null;
+
+        private string StockCraftWhy(ResourceDataHelper.ToolType tool, int minTier)
+        {
+            PlanStockTool(tool, minTier, out string why);
+            return why;
+        }
+
+        // The cheapest tool on the ladder that suits (tool, minTier) and stock can pay for, directly or with one intermediate; cached.
+        private StockToolPlan PlanStockTool(ResourceDataHelper.ToolType tool, int minTier, out string why)
+        {
+            long key = ((long)tool << 32) | (uint)minTier;
+            if (_stockPlanCache.TryGetValue(key, out var cached) && Time.time - cached.At < StockPlanCacheSeconds)
+            {
+                why = cached.Why;
+                return cached.Plan;
+            }
+            StockToolPlan plan = ComputeStockTool(tool, minTier, out why);
+            _stockPlanCache[key] = (Time.time, plan, why);
+            return plan;
+        }
+
+        private StockToolPlan ComputeStockTool(ResourceDataHelper.ToolType tool, int minTier, out string why)
+        {
+            why = $"no {tool.ToString().ToLower()} of tier {minTier} or above on the craft ladder";
+            string[] ladder = tool == ResourceDataHelper.ToolType.Pickaxe ? CraftablePickaxes
+                : tool == ResourceDataHelper.ToolType.Axe ? CraftableAxes : null;
+            var bag = _inventory?.GetStorageInventory();
+            if (ladder == null || bag == null || ObjectDB.instance == null || Companion == null) return null;
+            string firstWhy = null;
+            foreach (string prefab in ladder)
+            {
+                var drop = ObjectDB.instance.GetItemPrefab(prefab)?.GetComponent<ItemDrop>();
+                if (drop == null || !ResourceDataHelper.IsToolAppropriate(drop.m_itemData, tool, minTier)) continue;
+                string direct = AI.ChoreBrain.CraftFromStock(prefab, bag, Transform.position, StockBase, StockRadius, StockMayUse, out var stock);
+                if (direct == "")
+                    return new StockToolPlan { Tool = prefab, Summary = $"{prefab} at {stock.StationName} ({stock.Cost})" };
+                string interWhy = null;
+                if (direct.StartsWith("stock: ", System.StringComparison.Ordinal)
+                    && TryPlanIntermediate(prefab, bag, out string inter, out int crafts, out string interSummary, out interWhy))
+                    return new StockToolPlan { Tool = prefab, Intermediate = inter, IntermediateCrafts = crafts,
+                        Summary = $"{inter} x{crafts} first ({interSummary}), then {prefab}" };
+                firstWhy ??= $"{prefab}: {direct}" + (interWhy != null ? $"; {interWhy}" : "");
+            }
+            why = firstWhy ?? why;
+            return null;
+        }
+
+        // The one intermediate a tool may need: the tool is short of exactly one item with its own recipe, its station is in reach, and
+        // stock covers the k crafts of it plus everything else the tool takes.
+        private bool TryPlanIntermediate(string toolPrefab, Inventory bag, out string inter, out int crafts, out string summary, out string why)
+        {
+            inter = null; crafts = 0; summary = null; why = null;
+            Recipe toolRecipe = AI.ChoreBrain.RecipeFor(toolPrefab);
+            if (toolRecipe == null) return false;
+            var chests = ChestHelper.FindNearbyChests(StockBase, StockRadius).Where(c => c != null && StockMayUse(c)).ToList();
+            int Have(ItemDrop item) => bag.CountItems(item.m_itemData.m_shared.m_name)
+                + chests.Sum(c => Core.InventoryTransferService.CountItem(c, item.gameObject.name));
+            var need = new Dictionary<string, (ItemDrop Item, int Amount)>();
+            void Need(ItemDrop item, int amount)
+            {
+                string name = item.gameObject.name;
+                need[name] = need.TryGetValue(name, out var had) ? (item, had.Amount + amount) : (item, amount);
+            }
+
+            ItemDrop shortItem = null;
+            int shortBy = 0;
+            foreach (var req in AI.ChoreBrain.UpgradeRequirements(toolRecipe, 1))
+            {
+                int have = Have(req.m_resItem);
+                if (have >= req.m_amount) { Need(req.m_resItem, req.m_amount); continue; }
+                if (shortItem != null) { why = $"short of both {shortItem.gameObject.name} and {req.m_resItem.gameObject.name}"; return false; }
+                shortItem = req.m_resItem;
+                shortBy = req.m_amount - have;
+                if (have > 0) Need(req.m_resItem, have);
+            }
+            if (shortItem == null) return false;
+            Recipe sub = AI.ChoreBrain.RecipeFor(shortItem.gameObject.name);
+            if (sub == null) { why = $"{shortItem.gameObject.name} has no recipe"; return false; }
+            string stationWhy = AI.ChoreBrain.CraftStationRefusal(sub, StockBase, StockRadius, out CraftingStation subStation);
+            if (stationWhy != "") { why = $"{shortItem.gameObject.name}: {stationWhy}"; return false; }
+            crafts = (shortBy + Mathf.Max(1, sub.m_amount) - 1) / Mathf.Max(1, sub.m_amount);
+            var subCost = AI.ChoreBrain.UpgradeRequirements(sub, 1);
+            foreach (var req in subCost) Need(req.m_resItem, req.m_amount * crafts);
+            var shortOf = new List<string>();
+            foreach (var n in need.Values)
+            {
+                int have = Have(n.Item);
+                if (have < n.Amount) shortOf.Add($"{n.Item.gameObject.name} {have}/{n.Amount}");
+            }
+            int craftsWanted = crafts;
+            if (shortOf.Count > 0) { why = $"for {craftsWanted} {shortItem.gameObject.name} too: stock {string.Join(", ", shortOf)}"; crafts = 0; return false; }
+            inter = shortItem.gameObject.name;
+            summary = string.Join(", ", subCost.Select(r => $"{r.m_resItem.gameObject.name} {r.m_amount * craftsWanted}"))
+                + $" at {(subStation != null ? Utils.GetPrefabName(subStation.gameObject) : "hand")}";
+            return true;
+        }
+
+        // Start crafting a tool for the resource from base stock; false (with the reason as a line) when stock can't make one.
+        private bool TryBeginStockToolCraft(ResourceDataHelper.ResourceData resource)
+        {
+            if (resource == null || resource.RequiredTool == ResourceDataHelper.ToolType.None || Companion == null) return false;
+            _stockPlanCache.Clear();   // decide on the stock as it is now
+            string forWhat = resource.GameObject != null ? Utils.GetPrefabName(resource.GameObject) : resource.Name;
+            string toolName = resource.RequiredTool.ToString().ToLower();
+            StockToolPlan plan = PlanStockTool(resource.RequiredTool, resource.MinToolTier, out string why);
+            if (plan == null)
+            {
+                AI.ChoreBrain.ChoreDone(Companion.companionName, "crafting", $"can't craft a tier-{resource.MinToolTier} {toolName} for {forWhat}: {why}");
+                return false;
+            }
+            int has = GetBestObtainableToolTier(resource.RequiredTool);
+            _stockPlan = plan;
+            _stockIntermediateDone = 0;
+            _stockFor = forWhat;
+            // The crafting is the work: the run gets its full gather time after it, not what is left of it.
+            MaxDuration = Mathf.Max(MaxDuration, Time.time - StartTime + MaxGatherTime + 30f);
+            AI.ChoreBrain.ChoreDone(Companion.companionName, "crafting",
+                $"{plan.Tool} for {forWhat} (needs {toolName} tier {resource.MinToolTier}, has {(has == NoObtainableTool ? "none" : has.ToString())}): {plan.Summary}");
+            return StartStockCraftStep();
+        }
+
+        // The next step: an intermediate still owed, else the tool itself. False (with a line) when stock no longer covers it.
+        private bool StartStockCraftStep()
+        {
+            var bag = _inventory?.GetStorageInventory();
+            if (_stockPlan == null || bag == null) return false;
+            string step = _stockPlan.Intermediate != null && _stockIntermediateDone < _stockPlan.IntermediateCrafts ? _stockPlan.Intermediate : _stockPlan.Tool;
+            string why = AI.ChoreBrain.CraftFromStock(step, bag, Transform.position, StockBase, StockRadius, StockMayUse, out var stock);
+            if (why != "")
+            {
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "crafting", $"{step} for {_stockFor}: stopped, {why}");
+                EndStockCraft();
+                return false;
+            }
+            _stockStep = stock;
+            _stockFetchIndex = 0;
+            _craftRecipe = stock.Recipe;
+            _craftWorkbench = stock.Station;
+            if (stock.Fetch.Count > 0)
+            {
+                SetPhase(GatherPhase.FetchingCraftStock);
+                return true;
+            }
+            BeginToolCraft();
+            return true;
+        }
+
+        private void EndStockCraft()
+        {
+            _stockPlan = null;
+            _stockStep = null;
+            _stockFetchIndex = 0;
+            _stockIntermediateDone = 0;
+        }
+
+        // Walk to each chest the step's plan lists and take exactly what it lists; then to the station.
+        private bool UpdateFetchingCraftStock()
+        {
+            if (_stockStep == null || _stockFetchIndex >= _stockStep.Fetch.Count)
+            {
+                BeginToolCraft();
+                return false;
+            }
+            var (chest, prefab, amount) = _stockStep.Fetch[_stockFetchIndex];
+            string step = _stockStep.Recipe != null && _stockStep.Recipe.m_item != null ? _stockStep.Recipe.m_item.name : "?";
+            if (chest == null)
+            {
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "crafting", $"{step} for {_stockFor}: stopped, the chest holding {prefab} is gone");
+                EndStockCraft();
+                SetPhase(GatherPhase.Complete);
+                return true;
+            }
+            Vector3 interactionPoint = Core.InteractionPointHelper.GetContainerInteractionPoint(chest, Transform.position, ChestInteractionDistance);
+            if (Vector3.Distance(Transform.position, interactionPoint) > Core.InteractionPointHelper.ARRIVAL_THRESHOLD)
+            {
+                MoveToPosition(interactionPoint);
+                if (Time.time - _phaseStartTime > StockFetchTimeout)
+                {
+                    AI.ChoreBrain.ChoreDone(Companion?.companionName, "crafting",
+                        $"{step} for {_stockFor}: stopped, couldn't reach {Utils.GetPrefabName(chest.gameObject)} for {prefab} in {StockFetchTimeout:0} s");
+                    EndStockCraft();
+                    SetPhase(GatherPhase.Complete);
+                }
+                return false;
+            }
+            StopMovement();
+            int got = AI.ChoreBrain.Withdraw(chest, _inventory.GetStorageInventory(), prefab, amount, ChestHelper.ChestOwnerIdFor(Companion));
+            if (got < amount)
+            {
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "crafting",
+                    $"{step} for {_stockFor}: stopped, took {got}/{amount} {prefab} from {Utils.GetPrefabName(chest.gameObject)}");
+                EndStockCraft();
+                SetPhase(GatherPhase.Complete);
+                return true;
+            }
+            _inventory.SaveToZDO();
+            AI.ChoreBrain.ChoreDone(Companion?.companionName, "crafting", $"took {got} {prefab} from {Utils.GetPrefabName(chest.gameObject)} for {step}");
+            _stockFetchIndex++;
+            SetPhase(GatherPhase.FetchingCraftStock);   // each chest gets its own walk time
+            if (_stockFetchIndex >= _stockStep.Fetch.Count) BeginToolCraft();
+            return false;
+        }
+
+        // After a craft in a stock chain: an intermediate starts the next step; the tool ends the chain (the caller equips it).
+        // True when the chain goes on (the caller does nothing else).
+        private bool ContinueStockCraft(string made)
+        {
+            if (_stockPlan == null) return false;
+            if (_stockPlan.Intermediate != null && _stockIntermediateDone < _stockPlan.IntermediateCrafts && made == _stockPlan.Intermediate)
+            {
+                _stockIntermediateDone++;
+                AI.ChoreBrain.ChoreDone(Companion?.companionName, "crafting", $"crafted {made} ({_stockIntermediateDone}/{_stockPlan.IntermediateCrafts}) for {_stockPlan.Tool}");
+                if (!StartStockCraftStep()) SetPhase(GatherPhase.Complete);
+                return true;
+            }
+            EndStockCraft();
+            return false;
         }
 
         private ItemDrop.ItemData TryGetToolFromNearbyChests(ResourceDataHelper.ToolType requiredTool, int minTier, Inventory storage)

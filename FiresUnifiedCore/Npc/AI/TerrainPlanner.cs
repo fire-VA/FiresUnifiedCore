@@ -92,6 +92,10 @@ namespace FiresCore.Npc.AI
             s_clearanceWeight = clearanceWeight > 0f ? clearanceWeight : DefaultClearanceWeight;
             s_start = from;
             s_terrainOnly = false;
+            // A goal in a fire's damage goes to its edge (0.2.220, R90: the route's first waypoint was the base campfire).
+            Vector3 asked = goal;
+            goal = Hazards.SafeGoal(goal, from, out string goalHazard);
+            string goalNote = goalHazard != null ? $"goal ({asked.x:0}, {asked.z:0}) moved out of {goalHazard}; " : "";
             route.Clear();
             why = null;
             if (body == null) { why = "no body"; return false; }
@@ -120,7 +124,7 @@ namespace FiresCore.Npc.AI
             s_height.Clear(); s_loaded.Clear(); s_blocked.Clear(); s_clear.Clear(); s_nodeY.Clear();
             s_g.Clear(); s_from.Clear(); s_closed.Clear(); s_open.Clear();
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            s_rejWall = s_rejRise = s_rejDrop = s_rejBlocked = 0;
+            s_rejWall = s_rejRise = s_rejDrop = s_rejBlocked = s_rejHazard = 0;
             float closest = float.MaxValue;
             int closestNode = -1;
 
@@ -156,6 +160,7 @@ namespace FiresCore.Npc.AI
                     // the start's: level by level, the way a body would climb.
                     Vector3 there = Surface(new Vector3(s_minX + mx * s_cell, here.y, s_minZ + mz * s_cell));
                     if (next != end && Flat(there, from) > StartFreeRadius && Blocked(there)) { s_rejBlocked++; continue; }
+                    if (next != end && Flat(there, from) > StartFreeRadius && Hazards.Inside(there, out _)) { s_rejHazard++; continue; }
                     float step = EdgeCost(here, there);
                     if (float.IsInfinity(step)) continue;
                     float cand = g + step;
@@ -190,7 +195,7 @@ namespace FiresCore.Npc.AI
                 why = expanded > MaxExpanded
                     ? $"no walkable way found within {MaxExpanded} cells ({clock.ElapsedMilliseconds} ms)"
                     : $"no walkable way on the terrain (searched {expanded} cells of {s_cell:0} m; slope limit {s_limit:0}°; {clock.ElapsedMilliseconds} ms; " +
-                      $"nearest reached {closest:0.0} m from the goal; refused: {s_rejWall} wall, {s_rejRise} rise over {Jumping.MaxLip:0.0} m, {s_rejDrop} drop-off, {s_rejBlocked} blocked cell{nearWhy})";
+                      $"nearest reached {closest:0.0} m from the goal; refused: {s_rejWall} wall, {s_rejRise} rise over {Jumping.MaxLip:0.0} m, {s_rejDrop} drop-off, {s_rejBlocked} blocked cell, {s_rejHazard} in fire or damage{nearWhy})";
                 return false;
             }
 
@@ -237,7 +242,7 @@ namespace FiresCore.Npc.AI
             string clearance = (s_doorsCrossed > 0 ? $"through {s_doorsCrossed} door(s), " : "") +
                                (tightest >= WantedClearance - 0.5f ? $"clearance {tightest:0} m+ (target {WantedClearance:0}, open ground)"
                 : $"clearance {tightest:0} m at ({tightAt.x:0}, {tightAt.z:0}) (target {WantedClearance:0}; the tightest point on the best way, wall weight x{s_clearanceWeight:0})");
-            why = $"{route.Count} waypoint(s), {length:0} m vs straight {Flat(from, goal):0} m, {clearance} (searched {expanded} cells in {clock.ElapsedMilliseconds} ms; {unloaded} of {s_raw.Count} on unloaded ground)";
+            why = $"{goalNote}{route.Count} waypoint(s), {length:0} m vs straight {Flat(from, goal):0} m, {clearance} (searched {expanded} cells in {clock.ElapsedMilliseconds} ms; {unloaded} of {s_raw.Count} on unloaded ground)";
             return true;
         }
 
@@ -448,7 +453,7 @@ namespace FiresCore.Npc.AI
         private static Humanoid s_body;
         private static int s_doorsCrossed;
         // Why moves were refused in the last plan (a failed plan says which rule stopped it).
-        private static int s_rejWall, s_rejRise, s_rejDrop, s_rejBlocked;
+        private static int s_rejWall, s_rejRise, s_rejDrop, s_rejBlocked, s_rejHazard;
 
         // What stands across the flat line a→b at knee and chest height: nothing (0), only a door the body may pass (DoorCost:
         // 0.2.205, R78 doorway: a closed gate read as a wall and the plan went 26 m round it), or a wall (infinity).
@@ -524,6 +529,8 @@ namespace FiresCore.Npc.AI
             {
                 Vector3 q = Vector3.Lerp(a, b, i / (float)steps);
                 Vector3 p = Surface(q);
+                // Through a fire's damage never (0.2.220), a smoothed shortcut included; round the start the body may be walking out of one.
+                if (Flat(p, s_start) > StartFreeRadius && Hazards.Inside(p, out _)) { s_rejHazard++; return float.PositiveInfinity; }
                 float run = Flat(prev, p);
                 float rise = p.y - prev.y;
                 float step = run;

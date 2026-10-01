@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using System.Collections;
+using System.Linq;
 using FiresCore.Npc.Combat;
 
 namespace FiresCore.Npc.IdleBehaviors
@@ -19,6 +20,12 @@ namespace FiresCore.Npc.IdleBehaviors
         /// kicks in when nothing more useful can start.
         /// </summary>
         public override int InventoryPriority => -1;
+
+        /// <summary>
+        /// In the idle rotation (0.2.255, Fire's homestead test: archery never started on its own, only by command), at its low
+        /// priority, so productive work still wins.
+        /// </summary>
+        public override bool AvailableForIdleRotation => true;
         
         #region Settings
         
@@ -50,6 +57,7 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         private TrainingPhase _currentPhase = TrainingPhase.FindingTarget;
+        private AI.ArcheryBrain.Practice _plan;
         private ArcheryTarget _archeryTarget;
         private Vector3 _targetCenterPosition;
         private Vector3 _firingPosition;
@@ -72,6 +80,8 @@ namespace FiresCore.Npc.IdleBehaviors
         
         // Arrow retrieval
         private bool _hasRetrievedArrows = false;
+        private bool _hasPickedUpArrows = false;
+        private float _retrievedAt;
         
         // Perpendicular firing angle (80-100 degrees to target face)
         private const float MinFiringAngle = 80f;
@@ -117,6 +127,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
+            // Real arrows (0.2.244): every practice shot uses one; the target hands back the hits.
+            if (AI.ArcheryBrain.ArrowsFor(_inventory?.GetStorageInventory(), TrainingBow(), target) == null)
+            {
+                if (CompanionIdleBehavior.VerboseLogging)
+                    Debug.Log($"[BowTraining] {Companion.companionName} has no arrows for its bow");
+                return false;
+            }
+
             if (CompanionIdleBehavior.VerboseLogging)
                 Debug.Log($"[BowTraining] {Companion.companionName} CAN start training (target: {target.m_name})");
             return true;
@@ -131,7 +149,8 @@ namespace FiresCore.Npc.IdleBehaviors
             _totalShots = Random.Range(MinShots, MaxShots + 1);
             _phaseStartTime = Time.time;
             _hasRetrievedArrows = false;
-            
+            _hasPickedUpArrows = false;
+
             // Ensure bow is equipped (not holstered) - CRITICAL: Must verify before animations
             EnsureBowEquipped();
             
@@ -240,23 +259,22 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private bool UpdateFindingTarget()
         {
-            _archeryTarget = FindNearbyArcheryTarget();
-            
-            if (_archeryTarget == null)
+            // The one practice plan with the bot (0.2.244, ArcheryBrain): the nearest target, a clear reachable spot in front of it,
+            // the arrows, and no more shots than arrows carried.
+            string why = AI.ArcheryBrain.Plan(_character, _inventory?.GetStorageInventory(), TrainingBow(), SearchCenter,
+                GetEffectiveSearchRadius(TargetDetectionRange), IsReachable, out _plan);
+            if (why != "")
             {
-                if (CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[BowTraining] {Companion.companionName} couldn't find archery target");
+                Debug.Log($"[BowTraining] {Companion.companionName} cannot practice: {why}");
                 Complete();
                 return true;
             }
-            
-            // Use the ArcheryTarget's center point for aiming
-            _targetCenterPosition = _archeryTarget.m_center != null 
-                ? _archeryTarget.m_center.transform.position 
-                : _archeryTarget.transform.position;
-            
-            _firingPosition = CalculateFiringPosition();
-            
+
+            _archeryTarget = _plan.Target;
+            _targetCenterPosition = _plan.Center;
+            _firingPosition = _plan.Spot;
+            _totalShots = _plan.Shots;
+
             SetPhase(TrainingPhase.MovingToPosition);
             MoveToPosition(_firingPosition);
             
@@ -358,9 +376,12 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Time.time - _phaseStartTime > 0.3f)
             {
                 _shotsFired++;
-                
-                if (_shotsFired >= _totalShots)
+
+                string stop = _shotsFired >= _totalShots ? $"done: {_shotsFired} shot(s)"
+                    : AI.ArcheryBrain.ShouldStop(_character, _plan, _inventory?.GetStorageInventory(), _shotsFired);
+                if (stop != "")
                 {
+                    Debug.Log($"[BowTraining] {Companion.companionName} stops shooting ({stop}); collecting arrows");
                     // Done shooting, go retrieve arrows
                     SetPhase(TrainingPhase.RetrievingArrows);
                     
@@ -420,10 +441,18 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     RetrieveArrowsFromTarget();
                     _hasRetrievedArrows = true;
+                    _retrievedAt = Time.time;
                 }
-                
+
+                // The target drops the arrows at its return point a moment later: pick them up into storage.
+                if (!_hasPickedUpArrows && Time.time - _retrievedAt > 0.6f)
+                {
+                    PickUpReturnedArrows();
+                    _hasPickedUpArrows = true;
+                }
+
                 // Wait a moment after retrieving arrows
-                if (Time.time - _phaseStartTime > ArrowRetrieveTime)
+                if (_hasPickedUpArrows && Time.time - _phaseStartTime > ArrowRetrieveTime)
                 {
                     if (CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[BowTraining] {Companion.companionName} finished training - {_shotsFired} shots fired, arrows retrieved");
@@ -524,63 +553,19 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"[BowTraining] {Companion.companionName} fired practice shot {_shotsFired + 1}/{_totalShots} (stamina cost: {staminaCost:F1})");
         }
         
+        // A real arrow out of storage on the arc that reaches the bullseye (0.2.244, ArcheryBrain.Shoot: the arrow's own projectile and
+        // gravity, the bow's speed; the target counts it for its return). The old practice shot spent no arrow, yet the target handed
+        // arrows back for it.
         private void SpawnPracticeArrow()
         {
-            // Get arrow projectile
-            GameObject projectilePrefab = GetArrowProjectile();
-            if (projectilePrefab == null) return;
-            
-            Vector3 spawnPos = Transform.position + Vector3.up * 1.5f + Transform.forward * 0.3f;
-            
-            // Aim at the target's center point
-            Vector3 targetPos = _targetCenterPosition;
-            Vector3 direction = (targetPos - spawnPos).normalized;
-            
-            // Calculate proper arc for gravity compensation
-            float distance = Vector3.Distance(spawnPos, targetPos);
-            float velocity = 50f; // Standard arrow speed
-            float flightTime = distance / velocity;
-            float gravityCompensation = 0.5f * 9.81f * flightTime * flightTime;
-            float arcHeight = gravityCompensation / Mathf.Max(1f, distance);
-            arcHeight = Mathf.Clamp(arcHeight, 0f, 0.3f);
-            
-            // Add skill-based accuracy variation
-            float skillLevel = _skills?.GetSkillLevel(Skills.SkillType.Bows) ?? 0f;
-            float accuracyBonus = Mathf.Lerp(0.03f, 0.005f, skillLevel / 100f);
-            
-            // Add slight randomness to simulate imperfect aim (based on skill)
-            Vector3 randomOffset = new Vector3(
-                Random.Range(-accuracyBonus, accuracyBonus),
-                Random.Range(-accuracyBonus, accuracyBonus),
-                Random.Range(-accuracyBonus, accuracyBonus)
-            );
-            
-            direction = (direction + Vector3.up * arcHeight + randomOffset).normalized;
-            
-            Quaternion rotation = Quaternion.LookRotation(direction);
-            GameObject projectileObj = Object.Instantiate(projectilePrefab, spawnPos, rotation);
-            
-            var projectile = projectileObj.GetComponent<Projectile>();
-            if (projectile != null)
+            string why = AI.ArcheryBrain.Shoot(_character, _plan, _inventory?.GetStorageInventory(), _shotsFired + 1);
+            if (why != "")
             {
-                // Set up projectile - the ArcheryTarget's OnProjectileHit will handle scoring
-                HitData hitData = new HitData();
-                hitData.m_damage.m_pierce = 1f; // Minimal damage
-                hitData.m_skill = Skills.SkillType.Bows;
-                
-                // Set the skill raise amount - ArcheryTarget will multiply by m_raiseSkillMultiplier
-                projectile.m_skill = Skills.SkillType.Bows;
-                projectile.m_raiseSkillAmount = 1f;
-                
-                projectile.Setup(
-                    _character,
-                    direction * velocity,
-                    0f, // No noise
-                    hitData,
-                    null,
-                    null
-                );
+                Debug.Log($"[BowTraining] {Companion.companionName} cannot shoot: {why}");
+                _totalShots = _shotsFired;   // ends the session at the next count: walk over and collect what hit
+                return;
             }
+            _inventory?.SaveToZDO();
         }
         
         private void ResetBowAnimation()
@@ -599,52 +584,23 @@ namespace FiresCore.Npc.IdleBehaviors
             }
         }
         
-        private GameObject GetArrowProjectile()
-        {
-            // Try to get from equipped bow's attack data
-            var bowItem = _inventory?.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftHand);
-            if (bowItem?.m_shared?.m_attack?.m_attackProjectile != null)
-            {
-                return bowItem.m_shared.m_attack.m_attackProjectile;
-            }
-            
-            // Check right back for holstered bow
-            var rightBack = _inventory?.GetEquippedItem(CompanionInventory.EquipmentSlot.RightBack);
-            if (IsTrainingBow(rightBack))
-            {
-                if (rightBack.m_shared?.m_attack?.m_attackProjectile != null)
-                {
-                    return rightBack.m_shared.m_attack.m_attackProjectile;
-                }
-            }
-            
-            // Fallback to basic wood arrow
-            if (ObjectDB.instance != null)
-            {
-                var arrowPrefab = ObjectDB.instance.GetItemPrefab("ArrowWood");
-                if (arrowPrefab != null)
-                {
-                    var itemDrop = arrowPrefab.GetComponent<ItemDrop>();
-                    if (itemDrop?.m_itemData?.m_shared?.m_attack?.m_attackProjectile != null)
-                    {
-                        return itemDrop.m_itemData.m_shared.m_attack.m_attackProjectile;
-                    }
-                }
-            }
-            
-            return null;
-        }
-        
         #endregion
         
         #region Helpers
         
-        /// <summary>Crossbows are ItemType Bow too, but train the Crossbows skill, not Bows.</summary>
-        private static bool IsTrainingBow(ItemDrop.ItemData item)
+        /// <summary>Crossbows are ItemType Bow too, but train the Crossbows skill, not Bows (one rule with the bot: ArcheryBrain).</summary>
+        private static bool IsTrainingBow(ItemDrop.ItemData item) => AI.ArcheryBrain.IsTrainingBow(item);
+
+        // The training bow wherever it is equipped (hand or back), or null.
+        private ItemDrop.ItemData TrainingBow()
         {
-            return item?.m_shared != null
-                && item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Bow
-                && item.m_shared.m_skillType == Skills.SkillType.Bows;
+            if (_inventory == null) return null;
+            foreach (var slot in new[] { CompanionInventory.EquipmentSlot.LeftHand, CompanionInventory.EquipmentSlot.LeftBack, CompanionInventory.EquipmentSlot.RightBack })
+            {
+                var item = _inventory.GetEquippedItem(slot);
+                if (IsTrainingBow(item)) return item;
+            }
+            return null;
         }
 
         /// <summary>A crossbow held in the left hand would be overwritten by equipping a bow from the back.</summary>
@@ -853,127 +809,34 @@ namespace FiresCore.Npc.IdleBehaviors
             
             try
             {
-                // ArcheryTarget implements Interactable - calling Interact removes all stuck arrows
-                bool interacted = _archeryTarget.Interact(_humanoid, false, false);
-                
-                if (CompanionIdleBehavior.VerboseLogging)
-                {
-                    Debug.Log($"[BowTraining] {Companion.companionName} retrieved arrows from target (interact result: {interacted})");
-                }
+                // ArcheryTarget.Interact drops the arrows that hit at its return point (ArcheryBrain logs hits and points).
+                AI.ArcheryBrain.CollectArrows(_humanoid, _plan);
             }
             catch (System.Exception ex)
             {
                 Debug.LogWarning($"[BowTraining] Failed to retrieve arrows: {ex.Message}");
             }
         }
-        
-        private ArcheryTarget FindNearbyArcheryTarget()
+
+        // The arrows the target dropped, into storage (the companions' loose-item take).
+        private void PickUpReturnedArrows()
         {
-            // Look for ArcheryTarget components within range
-            // This is the proper Valheim component for archery targets
-            
-            ArcheryTarget bestTarget = null;
-            float bestDistance = float.MaxValue;
-            
-            // Use the effective search radius (50m for staying companions)
-            float searchRadius = GetEffectiveSearchRadius(TargetDetectionRange);
-            
-            // Find all ArcheryTarget components in the scene
-            var allTargets = Object.FindObjectsByType<ArcheryTarget>(FindObjectsSortMode.None);
-            
-            foreach (var target in allTargets)
+            var storage = _inventory?.GetStorageInventory();
+            string arrow = _plan?.Arrows?.m_dropPrefab != null ? _plan.Arrows.m_dropPrefab.name : null;
+            if (storage == null || arrow == null) return;
+            int taken = 0;
+            foreach (ItemDrop drop in ChestHelper.FindLooseItems(_plan.ReturnPoint, 3f))
             {
-                if (target == null) continue;
-                
-                // Get distance to target from SearchCenter (home position for staying companions)
-                Vector3 targetPos = target.m_center != null 
-                    ? target.m_center.transform.position 
-                    : target.transform.position;
-                    
-                float dist = Vector3.Distance(SearchCenter, targetPos);
-                
-                if (dist <= searchRadius && dist < bestDistance)
-                {
-                    bestDistance = dist;
-                    bestTarget = target;
-                }
+                if (drop == null || Utils.GetPrefabName(drop.gameObject) != arrow) continue;
+                taken += ChestHelper.TryTakeLooseItem(drop, storage);
             }
-            
-            // Fallback: Also check by collider overlap for targets that might not be found via FindObjectsOfType
-            if (bestTarget == null)
-            {
-                Collider[] colliders = Physics.OverlapSphere(SearchCenter, searchRadius);
-                
-                foreach (var collider in colliders)
-                {
-                    if (collider == null) continue;
-                    
-                    // Check for ArcheryTarget component
-                    var archeryTarget = collider.GetComponent<ArcheryTarget>() ?? collider.GetComponentInParent<ArcheryTarget>();
-                    if (archeryTarget != null)
-                    {
-                        Vector3 targetPos = archeryTarget.m_center != null 
-                            ? archeryTarget.m_center.transform.position 
-                            : archeryTarget.transform.position;
-                            
-                        float dist = Vector3.Distance(Transform.position, targetPos);
-                        
-                        if (dist < bestDistance)
-                        {
-                            bestDistance = dist;
-                            bestTarget = archeryTarget;
-                        }
-                    }
-                }
-            }
-            
-            return bestTarget;
+            if (taken > 0) _inventory.SaveToZDO();
+            Debug.Log($"[BowTraining] {Companion.companionName} picked up {taken} {arrow} at the target");
         }
         
-        private Vector3 CalculateFiringPosition()
-        {
-            // Calculate a good position to fire from
-            // MUST be at 80-100 degrees (perpendicular) to target's facing direction
-            // and at OptimalFiringDistance from target
-            
-            Vector3 targetPos = _targetCenterPosition;
-            
-            // Get the target's forward direction (the direction the target "faces")
-            // ArcheryTarget typically faces the direction players should shoot from
-            Vector3 targetForward = _archeryTarget.transform.forward;
-            targetForward.y = 0;
-            targetForward.Normalize();
-            
-            // The ideal firing position is BEHIND the target's forward (shooting into the target)
-            // i.e., we shoot FROM the direction the target is facing
-            Vector3 idealShootFromDir = -targetForward;
-            
-            // Add a small random angle variation within the 80-100 degree range
-            // 90 degrees = perfectly perpendicular, so we vary by +/- 10 degrees
-            float angleVariation = UnityEngine.Random.Range(-10f, 10f);
-            idealShootFromDir = Quaternion.Euler(0, angleVariation, 0) * idealShootFromDir;
-            
-            // Calculate position at optimal distance
-            Vector3 firingPos = targetPos + idealShootFromDir * OptimalFiringDistance;
-            
-            // Get ground height at that position
-            if (ZoneSystem.instance != null)
-            {
-                float groundHeight;
-                if (FiresCore.World.Surface.GroundNear(firingPos, out groundHeight))
-                {
-                    firingPos.y = groundHeight;
-                }
-            }
-            
-            if (CompanionIdleBehavior.VerboseLogging)
-            {
-                float actualAngle = Vector3.Angle(targetForward, (Transform.position - targetPos).normalized);
-                Debug.Log($"[BowTraining] Calculated firing position: angle to target face = {actualAngle:F1} degrees");
-            }
-            
-            return firingPos;
-        }
+        // The nearest archery target around the search center (one finder with the bot: ArcheryBrain.TargetsNear).
+        private ArcheryTarget FindNearbyArcheryTarget() =>
+            AI.ArcheryBrain.TargetsNear(SearchCenter, GetEffectiveSearchRadius(TargetDetectionRange)).FirstOrDefault();
         
         private void SetPhase(TrainingPhase newPhase)
         {

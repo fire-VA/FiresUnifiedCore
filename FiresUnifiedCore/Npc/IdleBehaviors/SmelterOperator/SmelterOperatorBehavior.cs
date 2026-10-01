@@ -260,6 +260,10 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region CanStart
         
+        // 0.2.257 ([ghost]): the autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
+        // the next CanStart read it as a player command, which bypasses the occupancy checks (two companions on one smelter).
+        private GameObject _autoPick;
+
         public override bool CanStart()
         {
             if (Companion == null)
@@ -267,6 +271,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"[SmelterOperator] CanStart FAILED: Companion is null");
                 return false;
             }
+
+            if (_autoPick != null && ReferenceEquals(_commandedTarget, _autoPick)) _commandedTarget = null;
+            _autoPick = null;
 
             // Player can disable smelter operation entirely from the radial menu.
             if (!CompanionBehaviorToggles.IsSmelterEnabled(Companion)) return false;
@@ -324,6 +331,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (nearbySmelter != null)
                 {
                     _commandedTarget = nearbySmelter.gameObject;
+                    _autoPick = _commandedTarget;
                     if (CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[SmelterOperator] {Companion.companionName} CanStart SUCCESS: Found smelter/kiln for autonomous operation: {nearbySmelter.m_name}");
                     return true;
@@ -380,22 +388,13 @@ namespace FiresCore.Npc.IdleBehaviors
             // companion's configured wander radius so they never walk outside their boundary.
             float searchRadius = GetEffectiveSearchRadius(StationDetectionRange);
             
-            var colliders = Physics.OverlapSphere(homePos, searchRadius);
-            
             Smelter bestSmelter = null;
             float bestScore = 0f;
-            
-            foreach (var collider in colliders)
+
+            // One set of station rules with the bot's base chores (0.2.237): ChoreBrain.SmeltersNear (operable stations this
+            // companion may use); the attention score below stays this behaviour's own.
+            foreach (var smelter in AI.ChoreBrain.SmeltersNear(homePos, searchRadius, _character))
             {
-                if (collider == null) continue;
-                
-                var smelter = collider.GetComponent<Smelter>() ?? collider.GetComponentInParent<Smelter>();
-                if (smelter == null) continue;
-                
-                // Check if available
-                if (!InteractableOccupancyManager.CanUseInteractable(smelter.gameObject, _character))
-                    continue;
-                
                 // Score this smelter based on how much it needs attention
                 float score = ScoreSmelterNeedsAttention(smelter);
 
@@ -423,213 +422,12 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private float ScoreSmelterNeedsAttention(Smelter smelter)
         {
-            // Battering ram engines and the bathtub are Smelters too; only a player command sends a companion to them.
-            if (!PieceDataHelper.IsOperableStation(smelter)) return 0f;
-            
-            var nview = smelter.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return 0f;
-            
-            float score = 0f;
-            
-            // Check current state
-            int queued = nview.GetZDO().GetInt(ZDOVars.s_queued, 0);
-            float fuel = nview.GetZDO().GetFloat(ZDOVars.s_fuel, 0f);
-            
-            bool isEmpty = queued == 0;
-            bool needsFuel = smelter.m_maxFuel > 0 && fuel < smelter.m_maxFuel * 0.5f;
-            bool hasCapacity = queued < smelter.m_maxOre;
-            
-            // CRITICAL: Check for output first - collecting finished products is highest priority
-            // Check spawn area for any items (spawned output)
-            if (smelter.m_spawnStack && smelter.m_outputPoint != null)
-            {
-                var outputItems = Physics.OverlapSphere(smelter.m_outputPoint.position, 2f);
-                foreach (var item in outputItems)
-                {
-                    if (item != null && item.GetComponent<ItemDrop>() != null)
-                    {
-                        score += 2.0f; // High priority - collect output!
-                        break;
-                    }
-                }
-            }
-            
-            // Find nearby chests - single scan from midpoint between smelter and companion
-            // with enough radius to cover both, instead of doing two separate scans + merge
-            Vector3 smelterPos = smelter.transform.position;
-            Vector3 companionPos = Transform?.position ?? smelterPos;
-            Vector3 midpoint = (smelterPos + companionPos) * 0.5f;
-            float halfDist = Vector3.Distance(smelterPos, companionPos) * 0.5f;
-            float effectiveRadius = CHEST_SEARCH_RADIUS + halfDist;
-            
-            var nearbyChests = ChestHelper.FindNearbyChests(midpoint, effectiveRadius);
-            
+            // One score with the bot's base chores (0.2.239): ChoreBrain.SmelterAttention, the same terms as before (output waiting
+            // +2, room and an input to hand +1, fuel to hand when under half +0.5, empty +0.5), chests round the smelter and this companion.
+            Vector3 companionPos = Transform != null ? Transform.position : smelter.transform.position;
+            float score = AI.ChoreBrain.SmelterAttention(smelter, companionPos, CHEST_SEARCH_RADIUS, _inventory?.GetStorageInventory(), out string why);
             if (CompanionIdleBehavior.VerboseLogging)
-            {
-                Debug.Log($"[SmelterOperator] {Companion?.companionName} ScoreSmelterNeedsAttention for {smelter.m_name}:");
-                Debug.Log($"[SmelterOperator]   - Smelter pos: {smelterPos}, Companion pos: {companionPos}");
-                Debug.Log($"[SmelterOperator]   - Found {nearbyChests.Count} chests within {effectiveRadius:F0}m of midpoint");
-                Debug.Log($"[SmelterOperator]   - State: queued={queued}/{smelter.m_maxOre}, fuel={fuel:F0}/{smelter.m_maxFuel}, hasCapacity={hasCapacity}, needsFuel={needsFuel}");
-            }
-            
-            bool isKiln = PieceDataHelper.IsCharcoalKiln(smelter);
-            
-            if (CompanionIdleBehavior.VerboseLogging)
-                Debug.Log($"[SmelterOperator]   - Station type: {PieceDataHelper.GetSmelterType(smelter)}, isKiln={isKiln}");
-            
-            if (isKiln)
-            {
-                // Kiln needs wood
-                if (hasCapacity)
-                {
-                    var woodTypes = PieceDataHelper.GetStationInputs(smelter);
-                    bool foundWoodInChest = false;
-                    foreach (string woodType in woodTypes)
-                    {
-                        int count = ChestHelper.GetAvailableItemCount(nearbyChests, woodType);
-                        if (count > 0)
-                        {
-                            if (CompanionIdleBehavior.VerboseLogging)
-                                Debug.Log($"[SmelterOperator]   - Found {count}x {woodType} in chests!");
-                            score += 1f;
-                            foundWoodInChest = true;
-                            break;
-                        }
-                    }
-                    
-                    if (!foundWoodInChest && CompanionIdleBehavior.VerboseLogging)
-                    {
-                        Debug.Log($"[SmelterOperator]   - No wood found in {nearbyChests.Count} chests");
-                    }
-                    
-                    // Also check companion's own inventory for wood
-                    if (!foundWoodInChest && _inventory != null)
-                    {
-                        var storage = _inventory.GetStorageInventory();
-                        if (storage != null)
-                        {
-                            foreach (string woodType in woodTypes)
-                            {
-                                if (ChestHelper.CountPrefabInInventory(storage, woodType) > 0)
-                                {
-                                    if (CompanionIdleBehavior.VerboseLogging)
-                                        Debug.Log($"[SmelterOperator]   - Found {woodType} in companion inventory!");
-                                    score += 1f;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            else
-            {
-                // Smelter needs ore and possibly fuel
-                if (hasCapacity)
-                {
-                    // Check for ore in chests
-                    bool foundOre = false;
-                    foreach (var conversion in smelter.m_conversion)
-                    {
-                        if (conversion.m_from != null)
-                        {
-                            string oreName = conversion.m_from.name;
-                        int count = ChestHelper.GetAvailableItemCount(nearbyChests, oreName);
-                            if (count > 0)
-                            {
-                                if (CompanionIdleBehavior.VerboseLogging)
-                                    Debug.Log($"[SmelterOperator]   - Found {count}x {oreName} in chests!");
-                                score += 1f;
-                                foundOre = true;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (!foundOre && CompanionIdleBehavior.VerboseLogging)
-                    {
-                        // Log what ores we looked for
-                        var oreNames = new List<string>();
-                        foreach (var conversion in smelter.m_conversion)
-                        {
-                            if (conversion.m_from != null)
-                                oreNames.Add(conversion.m_from.name);
-                        }
-                        Debug.Log($"[SmelterOperator]   - No ore found in chests. Searched for: {string.Join(", ", oreNames)}");
-                        
-                        // Log what IS in the chests
-                        foreach (var chest in nearbyChests)
-                        {
-                            if (chest == null) continue;
-                            var inv = chest.GetInventory();
-                            if (inv == null) continue;
-                            var items = inv.GetAllItems();
-                            if (items.Count > 0)
-                            {
-                                var itemNames = new List<string>();
-                                foreach (var item in items)
-                                {
-                                    if (item?.m_dropPrefab != null)
-                                        itemNames.Add($"{item.m_dropPrefab.name}x{item.m_stack}");
-                                }
-                                Debug.Log($"[SmelterOperator]     Chest '{chest.name}' at {chest.transform.position} contains: {string.Join(", ", itemNames)}");
-                            }
-                        }
-                    }
-                    
-                    // Also check companion's own inventory for ore
-                    if (!foundOre && _inventory != null)
-                    {
-                        var storage = _inventory.GetStorageInventory();
-                        if (storage != null)
-                        {
-                            foreach (var conversion in smelter.m_conversion)
-                            {
-                                if (conversion.m_from != null && ChestHelper.CountPrefabInInventory(storage, conversion.m_from.name) > 0)
-                                {
-                                    if (CompanionIdleBehavior.VerboseLogging)
-                                        Debug.Log($"[SmelterOperator]   - Found {conversion.m_from.name} in companion inventory!");
-                                    score += 1f;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Bonus if needs fuel and we have it
-                if (needsFuel && smelter.m_fuelItem != null)
-                {
-                    string fuelName = smelter.m_fuelItem.name;
-                    int fuelCount = ChestHelper.GetAvailableItemCount(nearbyChests, fuelName);
-                    if (fuelCount > 0)
-                    {
-                        if (CompanionIdleBehavior.VerboseLogging)
-                            Debug.Log($"[SmelterOperator]   - Found {fuelCount}x {fuelName} (fuel) in chests!");
-                        score += 0.5f;
-                    }
-                    else if (_inventory != null)
-                    {
-                        var storage = _inventory.GetStorageInventory();
-                        if (storage != null && ChestHelper.CountPrefabInInventory(storage, fuelName) > 0)
-                        {
-                            if (CompanionIdleBehavior.VerboseLogging)
-                                Debug.Log($"[SmelterOperator]   - Found {fuelName} (fuel) in companion inventory!");
-                            score += 0.5f;
-                        }
-                    }
-                }
-            }
-            
-            // Bonus for completely empty (more urgent to fill)
-            if (isEmpty && score > 0)
-            {
-                score += 0.5f;
-            }
-            
-            if (CompanionIdleBehavior.VerboseLogging)
-                Debug.Log($"[SmelterOperator]   - FINAL SCORE: {score:F1}");
-            
+                Debug.Log($"[SmelterOperator] {Companion?.companionName} ScoreSmelterNeedsAttention for {smelter.m_name}: {score:F1} ({why})");
             return score;
         }
         

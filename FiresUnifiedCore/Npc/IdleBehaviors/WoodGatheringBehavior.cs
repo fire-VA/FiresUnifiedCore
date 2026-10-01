@@ -135,9 +135,16 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #region CanStart
 
+        // 0.2.257 ([ghost]): the autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
+        // the next CanStart read it as a player command and skipped the gather toggle and the full-bag gate (an old, maybe far tree).
+        private GameObject _autoPick;
+
         public override bool CanStart()
         {
             if (Companion == null) return false;
+
+            if (_autoPick != null && ReferenceEquals(_commandedTarget, _autoPick)) _commandedTarget = null;
+            _autoPick = null;
 
             bool commanded = _commandedTarget != null;
 
@@ -189,6 +196,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (tree != null && HasAxeAvailable())
                 {
                     _commandedTarget = tree;
+                    _autoPick = tree;
                     return true;
                 }
             }
