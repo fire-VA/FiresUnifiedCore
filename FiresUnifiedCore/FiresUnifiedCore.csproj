@@ -733,6 +733,7 @@
     <Compile Include="Npc\Combat\BossTactics.cs" />
     <Compile Include="Npc\Combat\OwnerAssist.cs" />
     <Compile Include="Npc\CompanionOwnershipKeeper.cs" />
+    <Compile Include="Npc\CompanionPossession.cs" />
     <Compile Include="Npc\AI\DoorRule.cs" />
     <Compile Include="Npc\AI\SlopeGuide.cs" />
     <Compile Include="Npc\AI\CarryRules.cs" />
@@ -749,6 +750,8 @@
     <Compile Include="Npc\AI\TaskBodyHands.cs" />
     <Compile Include="Npc\AI\Hazards.cs" />
     <Compile Include="Npc\AI\Swimming.cs" />
+    <Compile Include="Npc\AI\CompanionExits.cs" />
+    <Compile Include="Npc\AI\TamingGuard.cs" />
     <Compile Include="Npc\AI\Foraging.cs" />
     <Compile Include="Npc\Combat\FireScare.cs" />
     <Compile Include="Npc\Combat\ColdRisk.cs" />

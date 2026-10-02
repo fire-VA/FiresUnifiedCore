@@ -155,8 +155,14 @@ namespace FiresCore.Npc.AI
                     if (toFace.sqrMagnitude > 0.0001f)
                     {
                         moveDir = toFace.normalized;
+                        // 0.2.282 (HR5be pit, Fire: "he's facing the wrong way"): at the face, square up to it (into its surface, not
+                        // along the line to the top), so the climb starts facing the wall.
+                        bool atFace = FiresCore.Movement.Climbing.FaceAhead(body, moveDir, out RaycastHit faceHit, out _, out _);
+                        Vector3 into = atFace ? -faceHit.normal : Vector3.zero;
+                        into.y = 0f;
+                        if (into.sqrMagnitude > 0.0001f) moveDir = into.normalized;
                         lookDir = moveDir;
-                        State = $"climb planned: to the face, {FlatDistance(at, climbPlan.Foot):0.0} m";
+                        State = $"climb planned: {(into.sqrMagnitude > 0.0001f ? "squaring up to" : "to")} the face, {FlatDistance(at, climbPlan.Foot):0.0} m";
                         return WalkState.Moving;
                     }
                 }
@@ -190,6 +196,18 @@ namespace FiresCore.Npc.AI
             // route (it sees built walls on its fine grid), whatever the navmesh says.
             if (float.IsNaN(_bestGoal.x) || FlatDistance(goal, _bestGoal) > 3f) { _bestGoal = goal; _bestFlat = goalFlat; _bestAt = Time.time; }
             else if (goalFlat < _bestFlat - NoProgressMetres) { _bestFlat = goalFlat; _bestAt = Time.time; }
+            // 0.2.283 (HR5c pit, Fire: "It's not trying to jump or climb out of the pit at all"; the lead: a body below a rim it can't walk
+            // over plans a climb or mantle at the nearest wall after no headway for 3 s): below the goal and stalled -> a planned climb, on
+            // the straight way to the goal or else up the nearest wall.
+            else if (goal.y - at.y >= PitRiseMetres && Time.time - _bestAt > PitStallSeconds && Time.time >= _pitNextAt && Door == null)
+            {
+                _pitNextAt = Time.time + PitStallSeconds;
+                if (PlanClimbStep(body, at, goal, $"{goal.y - at.y:0.0} m below the goal and no nearer in {Time.time - _bestAt:0} s", nearestWall: true))
+                {
+                    _bestAt = Time.time;
+                    return WalkState.Moving;
+                }
+            }
             else if (Time.time - _bestAt > NoProgressSeconds && Door == null
                      && (_detour.Count == 0 || (_detour[0].y - at.y >= WaypointLevelMetres && FlatDistance(at, _detour[0]) < CornerRun + 0.5f)))   // or below a step waypoint it can't get up (0.2.209)
             {
@@ -204,6 +222,9 @@ namespace FiresCore.Npc.AI
                 if (PlanRooms(body, at, goal, $"no progress: {NoProgressSeconds:0} s without getting nearer than {_bestFlat:0.0} m")
                     || PlanTerrain(body, at, goal, $"no progress: {NoProgressSeconds:0} s without getting nearer than {_bestFlat:0.0} m"))
                     return Steer(body, facing, _detour[0] - at, goalFlat, out moveDir, out lookDir);
+                // 0.2.283: no way round on the grid either -> a climb (the straight way, else the nearest wall), before pressing on.
+                if (PlanClimbStep(body, at, goal, $"no progress: {NoProgressSeconds:0} s without getting nearer than {_bestFlat:0.0} m and no way round", nearestWall: true))
+                    return WalkState.Moving;
                 if (at.y > IndoorsHeight)
                 {
                     // Vanilla-style indoors (0.2.209): nothing better planned -> a fresh navmesh path from here, not pressing on.
@@ -330,7 +351,7 @@ namespace FiresCore.Npc.AI
                         if (!PlanRooms(body, at, goal, $"the navmesh path ends {goalFlat:0.0} m short") && !PlanRound(body, at, goal, null)
                             && !PlanTerrain(body, at, goal, $"the navmesh path ends {goalFlat:0.0} m short"))
                         {
-                            if (PlanClimbStep(body, at, goal, $"the navmesh path ends {goalFlat:0.0} m short and no way round"))
+                            if (PlanClimbStep(body, at, goal, $"the navmesh path ends {goalFlat:0.0} m short and no way round", nearestWall: true))
                                 return WalkState.Moving;
                             State = $"partial (end {goalFlat:0.0} m short)";
                             GaveUp = State;
@@ -356,7 +377,10 @@ namespace FiresCore.Npc.AI
                         {
                             Debug.Log($"[PathWalker] {body.m_name}: route: navmesh crosses water it can't swim: {swimWhy}");
                             _path.Clear();
-                            if (PlanClimbStep(body, at, goal, $"no swim route ({swimWhy})")) return WalkState.Moving;
+                            // 0.2.282: a refused route is no route (HR5b: the cleared path read as "partial (end 7.2 m short)" on the next
+                            // ticks, and the driver's no-path fallback jogged the straight line into the hall's woodwall).
+                            _lastFound = false;
+                            if (PlanClimbStep(body, at, goal, $"no swim route ({swimWhy})", nearestWall: true)) return WalkState.Moving;
                             State = "no swim route";
                             GaveUp = $"no swim route: {swimWhy}";
                             return WalkState.NoPath;
@@ -446,7 +470,7 @@ namespace FiresCore.Npc.AI
                 // minutes): go round its footprint, corner by corner, the shorter way.
                 if (!PlanRooms(body, at, goal, "no navmesh path") && !PlanRound(body, at, goal, null) && !PlanTerrain(body, at, goal, "no navmesh path"))
                 {
-                    if (PlanClimbStep(body, at, goal, "no navmesh path and no way round")) return WalkState.Moving;
+                    if (PlanClimbStep(body, at, goal, "no navmesh path and no way round", nearestWall: true)) return WalkState.Moving;
                     State = "no path";
                     GaveUp = "no path";
                     return WalkState.NoPath;
@@ -460,12 +484,25 @@ namespace FiresCore.Npc.AI
         // A planned climb as a route step (0.2.252, Fire: climb "if they need to", never as a stuck reflex): Core's PlanClimb on the
         // straight way to a real goal (higher, the top known, the stamina for all of it with a margin) -> Climb.Plan, and the next ticks
         // walk to its face, where the climb starts. Logged either way, rate-limited.
-        private bool PlanClimbStep(Character body, Vector3 at, Vector3 goal, string why)
+        // 0.2.283: nearestWall (a body stalled below the goal, boxed in: a pit, a ledge): when the straight way has no climb, the nearest
+        // climbable wall round it instead (Climbing.PlanNearestWall), its plan still serving this goal.
+        private bool PlanClimbStep(Character body, Vector3 at, Vector3 goal, string why, bool nearestWall = false)
         {
-            if (FiresCore.Movement.Climbing.PlanClimb(body, at, goal, out FiresCore.Movement.Climbing.ClimbPlan plan, out string refusal))
+            bool planned = FiresCore.Movement.Climbing.PlanClimb(body, at, goal, out FiresCore.Movement.Climbing.ClimbPlan plan, out string refusal);
+            string where = "";
+            if (!planned && nearestWall && goal.y - at.y >= PitRiseMetres)
+            {
+                if (FiresCore.Movement.Climbing.PlanNearestWall(body, at, goal, out plan, out string wallWhy))
+                {
+                    planned = true;
+                    where = $" at the nearest wall ({FlatDistance(at, plan.Foot):0.0} m; the straight way: {refusal})";
+                }
+                else refusal += "; the nearest wall: " + wallWhy;
+            }
+            if (planned)
             {
                 FiresCore.Movement.Climb.Plan(body, plan, why);
-                Debug.Log($"[PathWalker] {body.m_name}: path: climb {plan.Height:0.0} m at {plan.Angle:0} deg up {plan.Surface} (est {plan.Stamina:0} stamina of " +
+                Debug.Log($"[PathWalker] {body.m_name}: path: climb {plan.Height:0.0} m at {plan.Angle:0} deg up {plan.Surface}{where} (est {plan.Stamina:0} stamina of " +
                           $"{FiresCore.Movement.Climbing.StaminaOf(body):0}) to reach ({goal.x:0}, {goal.z:0}): {why}");
                 return true;
             }
@@ -1125,6 +1162,8 @@ namespace FiresCore.Npc.AI
 
         /// <summary>How far (m) a corner at an obstacle edge is kept off it where the room is there (Fire: walk AROUND, not along the edge).</summary>
         public const float WantedCornerClearance = 2f;
+        /// <summary>0.2.278: path points within this (flat m) of the goal are not pushed off nearby solids (see <see cref="ClearCorners"/>).</summary>
+        public const float NoPushNearGoal = 2.5f;
 
         // Flat distance from a point at chest height to the nearest point of a collider (0 without one).
         private static float WallDistance(Vector3 point, Collider wall)
@@ -1235,9 +1274,14 @@ namespace FiresCore.Npc.AI
             // vanilla ai monsters navigate crypts no problem"): centred in a passage, never pushed off a wall ("kept 0.0 m off
             // stonewall (1) … room 0.2; 34 of 35 point(s) moved" in a crypt corridor).
             bool indoors = path.Count > 0 && path[0].y > IndoorsHeight;
+            Vector3 end = path.Count > 0 ? path[path.Count - 1] : Vector3.zero;
             for (int i = 0; i < path.Count - 1; i++)
             {
                 Vector3 corner = path[i];
+                // 0.2.278 (HR4: "kept 1.1 m off StandInCollider (wanted 2.0, room 0.2; 10 of 12 point(s) moved)" on the way to a fractured
+                // copper rock, then "never reached it (10.7 m off)"): near the goal the body has to get to the goal, so the points there are
+                // not pushed off the solids around it (the rock, a chest, a bench being walked to).
+                if (FlatDistance(corner, end) < NoPushNearGoal) continue;
                 Vector3 probe = corner + Vector3.up * 1f;
                 // In a passage narrower than the wanted clearance both sides (a corridor, a doorway, a gap between pieces): the middle
                 // of it, never out of it (0.2.209, R80 corridor 1.8 m, Fire: "they chose to go around instead of down the hallway").
@@ -1717,6 +1761,9 @@ namespace FiresCore.Npc.AI
 
         /// <summary>A walk not nearer its goal by this much (m) in this long (s) asks the terrain planner.</summary>
         public const float NoProgressMetres = 0.5f, NoProgressSeconds = 6f;
+        /// <summary>0.2.283: a walk this far (m) below its goal and no nearer in PitStallSeconds (s) plans a climb (the straight way, else the nearest wall).</summary>
+        public const float PitRiseMetres = 0.8f, PitStallSeconds = 3f;
+        private float _pitNextAt;
         private Vector3 _bestGoal = new Vector3(float.NaN, 0f, 0f);
         private float _bestFlat, _bestAt;
 
@@ -1727,6 +1774,9 @@ namespace FiresCore.Npc.AI
         private Vector3 _terrainFailedGoal = new Vector3(float.NaN, 0f, 0f);
         private float _terrainFailedUntil;
         private static readonly List<Vector3> s_terrainRoute = new List<Vector3>();
+        // 0.2.287: walls the leg check found across a terrain route, blocked in the re-plans (TerrainPlanner's hard walls).
+        private static readonly List<Collider> s_hardWalls = new List<Collider>();
+        private const int WallReplans = 3;
 
         /// <summary>
         /// A terrain route from <paramref name="at"/> to <paramref name="goal"/> (TerrainPlanner) as this walk's detour. True with
@@ -1781,20 +1831,33 @@ namespace FiresCore.Npc.AI
             // A route through a wall the grid couldn't see (0.2.209, R80 Crypt4: "route: terrain (the navmesh path ends 8.0 m short) via
             // (-2369, -2624) -> (-2370, -2626): 8 m vs straight 8 m" straight through a 4.9 m crypt wall, then 7 s against it: cells
             // inside a thick mesh wall read as open floor) is no route: the walk reports it instead of jogging into the wall.
-            if (planned && s_terrainRoute.Count > 0)
+            // 0.2.287 (the lead: the bot ran into the hall wall twice): the wall the leg check found is blocked in the grid (a hard wall) and
+            // the plan made again, up to WallReplans times, before the walk reports no way.
+            s_hardWalls.Clear();
+            for (int tries = 0; planned && s_terrainRoute.Count > 0; tries++)
             {
                 Vector3 legFrom = at;
+                RaycastHit wall = default;
+                bool crossed = false;
                 foreach (Vector3 p in s_terrainRoute)
                 {
-                    if (WallAcross(legFrom, p, body.GetRadius() * 0.8f, out RaycastHit wall))
-                    {
-                        planned = false;
-                        why = $"its way crosses {wall.collider.name} at ({wall.point.x:0.0}, {wall.point.z:0.0}), a wall the grid didn't see; no walkable way";
-                        break;
-                    }
+                    if (WallAcross(legFrom, p, body.GetRadius() * 0.8f, out wall)) { crossed = true; break; }
                     legFrom = p;
                 }
+                if (!crossed) break;
+                string seen = $"its way crosses {wall.collider.name} at ({wall.point.x:0.0}, {wall.point.z:0.0}), a wall the grid didn't see ({TerrainPlanner.Describe(wall.collider)}; " +
+                              $"{TerrainPlanner.CellReport(new Vector3(wall.point.x, legFrom.y, wall.point.z))})";
+                if (tries >= WallReplans || s_hardWalls.Contains(wall.collider))
+                {
+                    planned = false;
+                    why = $"{seen}; no walkable way{(tries > 0 ? $" after blocking {s_hardWalls.Count} wall(s)" : "")}";
+                    break;
+                }
+                s_hardWalls.Add(wall.collider);
+                Debug.Log($"[PathWalker] {body.m_name}: {seen}; blocking it in the grid and planning again ({tries + 1}/{WallReplans})");
+                planned = TerrainPlanner.Plan(body, at, goal, s_terrainRoute, out why, _stalls.Count > 0 ? _stalls : null, RetryAvoidMetres, weight, s_hardWalls);
             }
+            if (planned && s_hardWalls.Count > 0) why = $"{why} (round {s_hardWalls.Count} wall(s) the grid hadn't seen)";
             if (!planned || s_terrainRoute.Count == 0)
             {
                 _terrainFailedGoal = goal;

@@ -97,7 +97,7 @@ namespace FiresCore.Logging
             AddCount(counts, UnityLogSuppressionPatch.SuppressedHeadlessRenderErrors, "headless render/video");
             AddCount(counts, BepInExLogSuppressionPatch.QuietedOtherModLines, "other mods quieted");
             AddCount(counts, BepInExLogSuppressionPatch.PerModDroppedLines, "dropped by PerModLogLevel");
-            AddCount(counts, s_levelDroppedLines + BepInExLogSuppressionPatch.LevelDroppedLines, "Fires info lines below Log Level");
+            AddCount(counts, s_levelDroppedLines + BepInExLogSuppressionPatch.LevelDroppedLines, "Fires lines below Log Level");
             AddCount(counts, BepInExLogSuppressionPatch.SuppressedHarmonyMissing, "HarmonyX probe misses");
             AddCount(counts, _suppressedValheimNreBugs, "known no-fix NRE");
             return counts.Count == 0 ? null : $"log filter held back {string.Join(", ", counts)} (verbose shows them)";
@@ -118,6 +118,13 @@ namespace FiresCore.Logging
         // Assembly (DLL) names, which are not the BepInEx source names BepInExLogSuppressionPatch lists: the family members not named "Fires…".
         private static readonly string[] FamilyAssemblyNames =
             { "VAInventory", "VABackpacks", "VAassets", "VerdantsAscentShips", "VAGhettoNetworking", "TechPriestDhakharsPrefabs", "IsThisThingOn", "Vedr", "Norger.Vedr" };
+
+        // 0.2.279: the line starts with one of Core's per-action tags ("[Chore] …", "[PathWalker] …"); any failure answers no.
+        private static bool IsDebugTagged(string message)
+        {
+            try { return !string.IsNullOrEmpty(message) && message[0] == '[' && FiresLogLevel.IsDebugTag(LeadingTag(message)); }
+            catch { return false; }
+        }
 
         private static bool IsFamilyLine(string message)
         {
@@ -177,8 +184,10 @@ namespace FiresCore.Logging
         public void LogFormat(LogType logType, UnityEngine.Object context, string format, params object[] args)
         {
             string message = ResolveMessage(format, args);
-            // 0.2.269 ([Logging] Log Level): below Info, a plain Debug.Log line from a Fires-family assembly is dropped here.
-            if (logType == LogType.Log && !FiresLogLevel.InfoOn && !FiresLogLevel.Announcing && IsFamilyLine(message))
+            // 0.2.269 ([Logging] Log Level): below Info, a plain Debug.Log line from a Fires-family assembly is dropped here. 0.2.279 (Fire:
+            // noisy evidence lines are debug lines): below Debug, so is one that starts with one of Core's per-action tags.
+            if (logType == LogType.Log && !FiresLogLevel.DebugOn && !FiresLogLevel.Announcing
+                && (!FiresLogLevel.InfoOn || IsDebugTagged(message)) && IsFamilyLine(message))
             {
                 Interlocked.Increment(ref s_levelDroppedLines);
                 return;

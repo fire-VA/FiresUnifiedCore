@@ -44,6 +44,113 @@ namespace FiresCore.Npc.AI
             public float BestDistance, BestAt, ReachedSince = -1f;
             // Picked as the nearest ground (low stamina or no goal): a stamina drop has nothing left to re-pick for.
             public bool Nearest;
+            // 0.2.280: the nearest reachable rim (NearestRim): given up after RimNoProgressSeconds without headway, not NoProgressSeconds.
+            public bool Rim;
+            // 0.2.281: where the body last moved from, and when (RimStillSeconds without RimStillMetres = blocked right here).
+            public Vector3 StillFrom;
+            public float StillSince = -1f;
+        }
+
+        // ── 0.2.280 (Fire, HR5: "the bot is stuck in the pond at a hip level ledge because you do not make it climb or jump out"; "It
+        // should be more than capable of climbing or jumping out"). From any water the nearest REACHABLE rim comes first: a rim up to
+        // Climbing.MantleMaxHeight over the surface is a mantle (the climb engine's short top-out, "jumping out"), a 38°+ face up to
+        // BankMaxAbove a planned climb, and a far shore only when it is nearer than both. The rim is read with physics (Climbing.TopSolid:
+        // terrain with its voxel edits, rock, pieces) on fine rings: the heightmap rings every 4 m stepped over the 6 m pond's rim and can't
+        // see FAT's carving, so the pick went to shores 72 m off ("committed to the exit at (-142, -60), 72 m: the nearest ground").
+        private const float RimStep = 0.75f, RimSearch = 16f, RimBarRadius = 1.5f, RimNoProgressSeconds = 5f;
+        // 0.2.281: a given-up rim bars its direction ±this (°); a body that hasn't moved RimStillMetres in RimStillSeconds is blocked there.
+        private const float RimBarDegrees = 40f, RimStillMetres = 0.3f, RimStillSeconds = 3f;
+        private const int RimDirections = 24;
+
+        // 0.2.285 (the lead, HR5de: the 4.4 m face was picked over the 0.9 m yard rim, and a "0.6 m rim" was a shelf under the cliff with
+        // its top 4.7 m up): ranked by COST. The nearest MANTLE rim (a walk-out or up to MantleMaxHeight, with a spot to stand on its top:
+        // out of the water, room for a body) within RimSearch beats any climb; a climb only when the stamina pays for its whole height x1.2.
+        // A rim reading with no spot to stand is not a rim: the direction scans on up the face. mantle says which kind was found.
+        private static bool NearestRim(Character body, Vector3 from, float liquid, List<Vector3> barred, float budget,
+            out Vector3 top, out Vector3 foot, out float above, out float angle, out string surface, out bool mantle)
+        {
+            top = foot = from;
+            above = angle = 0f;
+            surface = "the rim";
+            mantle = false;
+            if (body == null) return false;
+            FiresCore.Movement.ClimbTerms terms = FiresCore.Movement.Climbing.TermsFor(body);
+            // 0.2.281: never capped by the swim budget (HR5b: at "stamina for 2 m only" no rim was seen and a 32 m shore was taken).
+            float reach = RimSearch;
+            float bestMantleR = float.MaxValue, bestClimbR = float.MaxValue;
+            Vector3 cTop = from, cFoot = from;
+            float cAbove = 0f, cAngle = 0f;
+            string cSurface = "the rim";
+            float stamina = FiresCore.Movement.Climbing.StaminaOf(body);
+            for (int i = 0; i < RimDirections; i++)
+            {
+                float a = i * Mathf.PI * 2f / RimDirections;
+                Vector3 dir = new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a));
+                // 0.2.281: a rim given up this swim bars its whole direction as seen from here (HR5b: the second pick lay 2 m from the
+                // first, the same blocked way).
+                if (barred != null && barred.Exists(b => { Vector3 to = b - from; to.y = 0f; return to.sqrMagnitude < RimSearch * RimSearch * 2.25f
+                        && to.sqrMagnitude > 0.01f && Vector3.Angle(dir, to) < RimBarDegrees; })) continue;
+                float under = float.NaN;
+                Vector3 underAt = from;
+                for (float r = RimStep; r <= reach && r < bestMantleR; r += RimStep)
+                {
+                    Vector3 p = from + dir * r;
+                    if (!FiresCore.Movement.Climbing.TopSolid(p.x, p.z, out float h, out Collider col)) continue;
+                    if (h < liquid + Lip) { under = h; underAt = p; continue; }          // still under the water
+                    if (FiresCore.World.Water.SurfaceOr(p.x, p.z, Floating.GetLiquidLevel(p + Vector3.up * 0.1f)) > h + 0.1f) break;   // other water
+                    float up = h - liquid;
+                    if (up > FiresCore.Movement.Climbing.BankMaxAbove) break;              // a wall too high this way
+                    if (barred != null && barred.Exists(b => Flat(b, p) < RimBarRadius)) break;
+                    float from0 = float.IsNaN(under) ? liquid : Mathf.Max(under, liquid - 3f);
+                    float faceAngle = Mathf.Atan2(Mathf.Max(0f, h - from0), RimStep) * Mathf.Rad2Deg;
+                    bool steep = faceAngle >= FiresCore.Movement.Climbing.MinAngle;
+                    if (steep)
+                    {
+                        if (!terms.Allowed || faceAngle > terms.MaxAngle + 0.5f) break;
+                        if (col != null && !FiresCore.Movement.Climbing.ClimbableCollider(col, out _)) break;
+                    }
+                    if (!steep || up <= FiresCore.Movement.Climbing.MantleMaxHeight)
+                    {
+                        // A mantle rim only with a spot to stand on its top (the rim point, or a little further in).
+                        if (!FiresCore.Movement.Climbing.StandSpot(p, dir, liquid, FiresCore.Movement.Climbing.MantleMaxHeight + 0.4f, out Vector3 spot, out _))
+                        {
+                            under = h;
+                            underAt = p;
+                            continue;   // a shelf under a face, not a rim: on up the face
+                        }
+                        if (r < bestMantleR)
+                        {
+                            bestMantleR = r;
+                            top = spot;
+                            foot = new Vector3(underAt.x, liquid, underAt.z);
+                            above = Mathf.Max(0f, spot.y - liquid);
+                            angle = faceAngle;
+                            surface = col != null ? col.name : "the rim";
+                        }
+                        break;
+                    }
+                    // A climb out: only when the stamina pays for the whole face x1.2.
+                    if (FiresCore.Movement.Climbing.StaminaFor(body, up, faceAngle) * 1.2f > stamina) break;
+                    if (r < bestClimbR)
+                    {
+                        bestClimbR = r;
+                        cTop = new Vector3(p.x, h, p.z);
+                        cFoot = new Vector3(underAt.x, liquid, underAt.z);
+                        cAbove = up;
+                        cAngle = faceAngle;
+                        cSurface = col != null ? col.name : "the rim";
+                    }
+                    break;
+                }
+            }
+            if (bestMantleR < float.MaxValue) { mantle = true; return true; }
+            if (bestClimbR == float.MaxValue) return false;
+            top = cTop;
+            foot = cFoot;
+            above = cAbove;
+            angle = cAngle;
+            surface = cSurface;
+            return true;
         }
 
         private const float FallbackSeconds = 3f;
@@ -103,9 +210,19 @@ namespace FiresCore.Npc.AI
                     if (d < held.BestDistance - 1f) { held.BestDistance = d; held.BestAt = Time.time; }
                     if (d <= ReachMetres) { if (held.ReachedSince < 0f) held.ReachedSince = Time.time; }
                     else held.ReachedSince = -1f;
+                    float noProgress = held.Rim ? RimNoProgressSeconds : NoProgressSeconds;
+                    // 0.2.281 (HR5b: "swim at (-91.7, 35.9, -119.5)" twice in a row while "no nearer to it in 5 s"): a rim exit the body
+                    // hasn't moved toward at all in RimStillSeconds is blocked from right here.
+                    bool still = false;
+                    if (held.Rim)
+                    {
+                        if (held.StillSince < 0f || Flat(at, held.StillFrom) > RimStillMetres) { held.StillFrom = at; held.StillSince = Time.time; }
+                        else still = d > ReachMetres && Time.time - held.StillSince >= RimStillSeconds;
+                    }
                     string bar = held.ReachedSince >= 0f && Time.time - held.ReachedSince >= StuckAtExitSeconds
                         ? $"reached it and still swimming after {StuckAtExitSeconds:0} s (a bank it can't climb)"
-                        : Time.time - held.BestAt >= NoProgressSeconds ? $"no nearer to it in {NoProgressSeconds:0} s" : null;
+                        : still ? $"hasn't moved toward it in {RimStillSeconds:0} s (blocked from here)"
+                        : Time.time - held.BestAt >= noProgress ? $"no nearer to it in {noProgress:0} s" : null;
                     if (bar != null)
                     {
                         if (!s_barred.TryGetValue(body, out List<Vector3> list)) s_barred[body] = list = new List<Vector3>();
@@ -129,19 +246,63 @@ namespace FiresCore.Npc.AI
             s_barred.TryGetValue(body, out List<Vector3> barred);
             float budget = SwimBudgetMetres(body);
             bool ground = Exit(at, toward, stamina, liquid, barred, budget, out exit, out why, body);
+            // 0.2.280: never commit to an exit farther than the nearest reachable rim (Fire: "climbing or jumping out"). 0.2.281: measured
+            // from FAT's steady surface where FAT has the water (HR5b: the body's own liquid level rides the waves, so one ledge read 0.9 m
+            // one moment and 0.3 m "a gentle rise" the next, and the gentle reading planned no mantle).
+            float fatSurface = FiresCore.World.Water.SurfaceOr(at.x, at.z, float.MinValue);
+            float rimLiquid = fatSurface > -1e30f ? fatSurface : liquid;
+            bool rim = NearestRim(body, at, rimLiquid, barred, budget, out Vector3 rimTop, out Vector3 rimFoot, out float rimAbove, out float rimAngle, out string rimSurface, out bool rimMantle)
+                && (!ground || (rimMantle && s_pickClimb) || Flat(at, rimTop) + 1f < Flat(at, exit));   // 0.2.285: a mantle rim beats a climb out, nearer or not
+            // 0.2.282 ([visual], HR5be wade: after three rims were given up, "committed to the exit at (-78, -88), 24 m: stamina for 14 m
+            // only"): with every way to a rim barred and the other exit past the stamina, the nearest rim again from where the body is now.
+            if (!rim && barred != null && barred.Count > 0 && (!ground || Flat(at, exit) > budget)
+                && NearestRim(body, at, rimLiquid, null, budget, out rimTop, out rimFoot, out rimAbove, out rimAngle, out rimSurface, out rimMantle)
+                && (!ground || Flat(at, rimTop) + 1f < Flat(at, exit)))
+            {
+                Debug.Log($"[Swimming] {Name(body)}: every rim way was given up ({barred.Count}) and the other exit is {(ground ? $"{Flat(at, exit):0} m off on stamina for {budget:0} m" : "none")}; " +
+                          $"the nearest rim again from here, {Flat(at, rimTop):0.0} m");
+                barred.Clear();
+                rim = true;
+            }
+            if (rim)
+            {
+                ground = true;
+                s_pickClimb = false;
+                Vector3 inward = rimTop - rimFoot;
+                inward.y = 0f;
+                inward = inward.sqrMagnitude > 0.01f ? inward.normalized : body.transform.forward;
+                exit = rimMantle ? rimTop : rimTop + inward * 0.6f;   // 0.2.285: a mantle rim lands on its checked spot
+                bool mantle = rimAbove <= FiresCore.Movement.Climbing.MantleMaxHeight;
+                bool steep = rimAngle >= FiresCore.Movement.Climbing.MinAngle;
+                string verb = !steep ? "walking" : mantle ? "jumping" : "climbing";
+                why = !steep ? $"the nearest rim, {rimAbove:0.0} m above the water: walking out"
+                    : mantle ? $"the nearest rim, {rimAbove:0.0} m above the water: jumping out"
+                    : $"the nearest rim, a {rimAngle:0}° face {rimAbove:0.0} m above the water: climbing out";
+                // 0.2.281: always the plan: the climb engine starts it only where it meets a 38-90° face, so a real gentle shore is still
+                // walked, and a ledge the probe read as gentle is still mantled.
+                FiresCore.Movement.Climb.Plan(body, new FiresCore.Movement.Climbing.ClimbPlan
+                {
+                    Foot = rimFoot, Top = exit, Goal = rimTop + inward * 1.5f, Height = Mathf.Max(0.3f, rimAbove),
+                    Angle = Mathf.Max(rimAngle, FiresCore.Movement.Climbing.MinAngle),
+                    Stamina = FiresCore.Movement.Climbing.StaminaFor(body, Mathf.Max(0.3f, rimAbove), Mathf.Max(rimAngle, FiresCore.Movement.Climbing.MinAngle)),
+                    Surface = rimSurface,
+                }, mantle ? $"jumping out of the water over a {rimAbove:0.0} m rim" : $"climbing out of the water up a {rimAngle:0}° {rimAbove:0.0} m face", 30f);
+                Debug.Log($"[Swimming] {Name(body)}: {verb} out at ({rimTop.x:0}, {rimTop.z:0}): rim {rimAbove:0.0} m above the water"
+                          + (steep ? $", a {rimAngle:0}° face, {Flat(at, rimTop):0.0} m away" : $", a gentle rise {Flat(at, rimTop):0.0} m away"));
+            }
             // 0.2.252: a climb exit is a PLANNED climb: Core's climb starts once the swimmer reaches the bank's face.
             if (ground && s_pickClimb)
             {
                 Vector3 inland = exit - at;
                 inland.y = 0f;
                 inland = inland.sqrMagnitude > 0.01f ? inland.normalized : body.transform.forward;
-                Vector3 onward = toward - at;
-                onward.y = 0f;
                 // 0.2.258: past a shelf the face is where the probe found it, not at the exit.
                 FiresCore.Movement.Climbing.BankFace face = s_pickFace;
                 FiresCore.Movement.Climb.Plan(body, new FiresCore.Movement.Climbing.ClimbPlan
                 {
-                    Foot = face != null ? face.Foot : exit - inland * 1.5f, Top = (face != null ? face.Top : exit) + inland * 0.6f, Goal = onward.sqrMagnitude > 4f ? toward : exit,
+                    // 0.2.283 (HR5cc: planned "0.8 m" but aimed at the 12 m cliff top 11 m above): a water exit's climb serves the RIM; the walk
+                    // climbs on from dry ground.
+                    Foot = face != null ? face.Foot : exit - inland * 1.5f, Top = (face != null ? face.Top : exit) + inland * 0.6f, Goal = (face != null ? face.Top : exit) + inland * 0.6f,
                     Height = s_pickHeight, Angle = s_pickAngle, Stamina = FiresCore.Movement.Climbing.StaminaFor(body, s_pickHeight, s_pickAngle),
                     Surface = face != null ? face.Surface : "the bank",
                 }, face != null ? $"climbing out of the water past a shelf up a {s_pickAngle:0}° {s_pickHeight:0.0} m face" : $"climbing out of the water up a {s_pickAngle:0}° bank", 60f);
@@ -151,7 +312,7 @@ namespace FiresCore.Npc.AI
             s_held[body] = new Held
             {
                 Exit = exit, Why = why, Fallback = !ground, PickedAt = Time.time, BestDistance = Flat(at, exit), BestAt = Time.time,
-                Nearest = stamina < LowStamina || heading.sqrMagnitude <= 4f || GoalInDeepWater(toward, out _),
+                Nearest = rim || stamina < LowStamina || heading.sqrMagnitude <= 4f || GoalInDeepWater(toward, out _), Rim = rim,
             };
             if (ground) Debug.Log($"[Swimming] {Name(body)}: committed to the exit at ({exit.x:0}, {exit.z:0}), {Flat(at, exit):0} m: {why}");
             // 0.2.250: the stamina didn't pay for the far side and the exit is the bank behind (no nearer the goal): remembered.
@@ -491,9 +652,12 @@ namespace FiresCore.Npc.AI
             why = "";
             if (body == null || corners == null || corners.Count == 0) { why = "no route"; return RouteSwim.Dry; }
             Vector3 goal = corners[corners.Count - 1];
-            if (TurnedBackToward(body, goal, out string turned)) { why = turned; return RouteSwim.TooFar; }
+            // 0.2.282 (HR5b hall wall: "route: navmesh crosses water it can't swim: turned back 2 times swimming toward (-109, -134)"
+            // refused a dry 2-3 corner way round the hall on land, re-path after re-path, and the bot jogged the straight line into the
+            // woodwall): the turn-back memory is about swims, so a route with no deep water on it is never refused by it.
             float swim = LongestSwim(from, corners, out Vector3 start, out Vector3 end);
             if (swim <= 0f) { why = "no deep water on the route"; return RouteSwim.Dry; }
+            if (TurnedBackToward(body, goal, out string turned)) { why = turned; return RouteSwim.TooFar; }
             float now = SwimBudgetMetres(body), rested = SwimBudgetRestedMetres(body);
             string where = $"{swim:0} m of swimming from ({start.x:0}, {start.z:0}) to ({end.x:0}, {end.z:0})";
             if (swim <= now) { why = $"{where}; stamina pays for {now:0} m"; return RouteSwim.Go; }
@@ -506,7 +670,10 @@ namespace FiresCore.Npc.AI
         private const float TurnBackRadius = 10f, TurnBackWindow = 300f, NoSwimSeconds = 600f;
         private const int TurnBacksToGiveUp = 2;
         private static readonly Dictionary<Character, List<(Vector3 goal, float at)>> s_turnBacks = new Dictionary<Character, List<(Vector3, float)>>();
-        private static readonly Dictionary<Character, List<(Vector3 goal, float until, string why)>> s_noSwim = new Dictionary<Character, List<(Vector3, float, string)>>();
+        private static readonly Dictionary<Character, List<(Vector3 goal, float until, string why, Vector3 from)>> s_noSwim = new Dictionary<Character, List<(Vector3, float, string, Vector3)>>();
+        // 0.2.282 ([visual], HR5be: the pond's memory planned the pit's climb after the drill moved the bot): a body that has since been
+        // teleported or gone this far from where it turned back has no such memory.
+        private const float NoSwimMovedMetres = 50f;
 
         private static void NoteTurnBack(Character body, Vector3 goal, float budget)
         {
@@ -516,22 +683,30 @@ namespace FiresCore.Npc.AI
             int count = list.Count(t => Flat(t.goal, goal) < TurnBackRadius);
             Debug.Log($"[Swimming] {Name(body)}: turned back toward the bank behind it (stamina for {budget:0} m, the goal at ({goal.x:0}, {goal.z:0}) further): {count} time(s) in {TurnBackWindow / 60f:0} min");
             if (count < TurnBacksToGiveUp) return;
-            if (!s_noSwim.TryGetValue(body, out var no)) s_noSwim[body] = no = new List<(Vector3, float, string)>();
+            if (!s_noSwim.TryGetValue(body, out var no)) s_noSwim[body] = no = new List<(Vector3, float, string, Vector3)>();
             string why = $"turned back {count} times swimming toward ({goal.x:0}, {goal.z:0}) (stamina for {budget:0} m): no swim route there for {NoSwimSeconds / 60f:0} min";
             no.RemoveAll(n => Flat(n.goal, goal) < TurnBackRadius);
-            no.Add((goal, Time.time + NoSwimSeconds, why));
+            no.Add((goal, Time.time + NoSwimSeconds, why, body.transform.position));
             Debug.Log($"[Swimming] {Name(body)}: {why}");
         }
 
         /// <summary>
         /// This body was turned back twice in 5 min swimming toward somewhere within 10 m of <paramref name="goal"/>: for 10 min there is
         /// no swim route there for it (a planner skips the goal, a walker walks round or gives up). <paramref name="why"/> says so.
+        /// Forgotten once the body is <see cref="NoSwimMovedMetres"/> from where it turned back (a teleport, a new drill).
         /// </summary>
         public static bool TurnedBackToward(Character body, Vector3 goal, out string why)
         {
             why = "";
             if (body == null || !s_noSwim.TryGetValue(body, out var no)) return false;
-            no.RemoveAll(n => Time.time >= n.until);
+            Vector3 at = body.transform.position;
+            for (int i = no.Count - 1; i >= 0; i--)
+            {
+                if (Time.time >= no[i].until) { no.RemoveAt(i); continue; }
+                if (Flat(at, no[i].from) <= NoSwimMovedMetres) continue;
+                Debug.Log($"[Swimming] {Name(body)}: forgot \"no swim route\" toward ({no[i].goal.x:0}, {no[i].goal.z:0}): now {Flat(at, no[i].from):0} m from where it turned back");
+                no.RemoveAt(i);
+            }
             foreach (var n in no)
                 if (Flat(n.goal, goal) < TurnBackRadius) { why = n.why; return true; }
             return false;

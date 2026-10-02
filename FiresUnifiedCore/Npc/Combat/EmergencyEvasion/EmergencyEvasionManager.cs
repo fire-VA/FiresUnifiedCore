@@ -124,6 +124,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private void Update()
         {
             if (_companion == null || _companion.isDefeated) return;
+            if (_companion.IsPossessed) return;   // 0.2.292: a player is driving it
             if (_nview == null || !_nview.IsOwner()) return;
             if (_isEvading) return;
             if (_evasionType == EvasionType.None) return;

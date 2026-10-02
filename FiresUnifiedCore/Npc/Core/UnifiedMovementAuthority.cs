@@ -218,6 +218,9 @@ namespace FiresCore.Npc.Core
         
         private void Update()
         {
+            // 0.2.292: a player is driving this body (FiresValcast possession); no SetMoveDir of ours until they let go.
+            if (_companion != null && _companion.IsPossessed) return;
+
             // Check authority timeout
             if (CurrentAuthority != MovementSource.None && AuthorityDuration > 0)
             {

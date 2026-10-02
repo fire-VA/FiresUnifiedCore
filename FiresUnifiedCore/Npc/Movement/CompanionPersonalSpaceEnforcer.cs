@@ -33,6 +33,7 @@ namespace FiresCore.Npc.Movement
         {
             if (_rigidbody == null || _rigidbody.isKinematic) return;
             if (_companion == null || !_companion.isTamed) return;
+            if (_companion.IsPossessed) return;   // 0.2.292: no push off its driver's own frozen body
             if (_character == null || _character.IsDead()) return;
 
             Vector3 myPos = transform.position;

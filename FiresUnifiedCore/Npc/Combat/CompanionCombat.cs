@@ -321,6 +321,7 @@ if (characterInParent == null)
             // Wild companions need to defend themselves against hostile creatures
             if (_companion == null) return;
             if (_nview == null || !_nview.IsValid()) return;
+            if (_companion.IsPossessed) return;   // 0.2.292: a player is driving it; its own attacks come from them
             if (_companion.isDefeated) return;
 
             _equipmentData?.UpdateFoodTimers();

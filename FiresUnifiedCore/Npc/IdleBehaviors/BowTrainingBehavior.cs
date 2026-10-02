@@ -234,10 +234,18 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (CompanionIdleBehavior.VerboseLogging)
                 Debug.Log($"[BowTraining] {Companion?.companionName} cancelled (phase: {_currentPhase})");
-            
+
             ResetBowAnimation();
             _combatMovement?.UnlockMovement();
             base.Cancel();
+        }
+
+        // 0.2.278: a finished session lets go of the bow pose and the movement lock as a cancelled one does.
+        protected override void Complete()
+        {
+            ResetBowAnimation();
+            _combatMovement?.UnlockMovement();
+            base.Complete();
         }
         
         public override string GetStatusDescription()
@@ -457,7 +465,10 @@ namespace FiresCore.Npc.IdleBehaviors
                     if (CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[BowTraining] {Companion.companionName} finished training - {_shotsFired} shots fired, arrows retrieved");
                     
+                    // 0.2.278 (HR4: "BowTraining returned done while still active (its Complete() did not run)"): the idle loop
+                    // ends a behaviour as soon as it returns true, so the Complete phase's own Complete() never ran.
                     SetPhase(TrainingPhase.Complete);
+                    Complete();
                     return true;
                 }
             }
@@ -466,11 +477,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 // CRITICAL FIX: Call MoveToPosition EVERY FRAME!
                 MoveToPosition(targetPos);
             }
-            
+
             // Timeout on retrieval
             if (Time.time - _phaseStartTime > 15f)
             {
                 SetPhase(TrainingPhase.Complete);
+                Complete();
                 return true;
             }
             

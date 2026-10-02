@@ -2602,6 +2602,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup - avoids GetComponent on every Character every frame
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true; // Not a companion, allow normal execution
+                if (companion.IsPossessed) return true; // 0.2.292: its driver's move (FiresValcast possession) always lands
 
                 // Check if rigidbody is kinematic (Unity 6 compatibility)
                 var rigidbody = GetCachedRigidbody(__instance);
@@ -2659,6 +2660,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true;
+                if (companion.IsPossessed) return true; // 0.2.292: its driver's motion, unbent (no exit / taming-guard steering)
 
                 var rigidbody = GetCachedRigidbody(__instance);
                 if (rigidbody != null && rigidbody.isKinematic)
@@ -2671,6 +2673,14 @@ namespace FiresCore.Npc
                 {
                     return false;
                 }
+
+                // 0.2.283: out of water and pits the bot's way (Swimming.ExitFor, Climb.Plan), whoever moves the companion: the move it
+                // was given (authority or vanilla pathfinding, both via SetMoveDir) is bent here, on the owner, before the motion runs.
+                Vector3 move = __instance.m_moveDir;
+                CompanionExits.Steer(__instance, companion.companionName, ref move);
+                // 0.2.286 (Fire, RIDEj: companions walked over and aggroed the lox being tamed): keep 10 m off a creature a player is taming.
+                TamingGuard.KeepAway(__instance, companion.GetOwner(), companion.companionName, ref move);
+                __instance.m_moveDir = move;
 
                 return true;
             }
@@ -2694,6 +2704,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true;
+                if (companion.IsPossessed) return true; // 0.2.292: a driven body syncs as vanilla does
 
                 var rigidbody = GetCachedRigidbody(__instance);
                 if (rigidbody != null && rigidbody.isKinematic)

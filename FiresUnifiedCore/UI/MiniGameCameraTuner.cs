@@ -60,6 +60,7 @@ namespace FiresCore.UI
         private void OnGUI()
         {
             if (!MiniGameCamera.Active) return;
+            if (Hud.IsUserHidden() && !MiniGameCamera.IsTuning) return;   // 0.2.293: the readout only while tuning when the HUD is hidden
             EnsureStyle();
 
             var offset = MiniGameCamera.TuneOffset;

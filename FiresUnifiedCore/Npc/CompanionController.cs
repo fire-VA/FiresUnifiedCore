@@ -133,6 +133,9 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
 
         // Core Valheim components
         private ZNetView _nview;
+
+        /// <summary>0.2.292: a player is driving this body (FiresValcast possession); Core's brain stands down (CompanionPossession).</summary>
+        internal bool IsPossessed => CompanionPossession.IsPossessed(_nview);
         private Humanoid _humanoid;
         private CompanionAI _companionAI;
         private Tameable _tameable;
@@ -730,6 +733,7 @@ if (isTamed && ownerPlayerId == 0 &&
         private void CheckFollowTeleport()
         {
             if (!isTamed || ownerPlayerId == 0) return;
+            if (IsPossessed) return;   // 0.2.292: a possessed body goes where its driver takes it
 
             // Always consume throttle
             if (Time.time - _lastTeleportCheck < teleportCheckInterval) return;
@@ -1781,7 +1785,7 @@ _isRespawning = false;
 
       if (_companionAI != null)
    {
-      _companionAI.enabled = !defeated;
+      _companionAI.enabled = !defeated && !IsPossessed;   // 0.2.292: a revive mid-possession leaves the AI to the possessor's release
             }
    
     if (_character != null && defeated)
@@ -2146,6 +2150,7 @@ private void RPC_TameCompanion(long sender)
         private void RPC_ReelIn(long sender, Vector3 landing)
         {
             if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
+            if (IsPossessed) return;   // 0.2.292: never yank a body its driver holds (an older server may still ask)
             Vector3 spawnPos = GetSafeTeleportPositionNearPoint(landing);
             TeleportToPositionInternal(spawnPos, GetOwner(), isPortal: false);
             Debug.Log($"[CompanionController] {companionName} reeled in to its owner at {spawnPos}");

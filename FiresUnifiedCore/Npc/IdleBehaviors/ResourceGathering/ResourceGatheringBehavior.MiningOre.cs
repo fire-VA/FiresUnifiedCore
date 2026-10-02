@@ -544,6 +544,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private float _stepBackUntil;
         private Vector3 _stepBackTo;
         private readonly HashSet<int> _wedgeSaid = new HashSet<int>();
+        private float _sideSign = 1f;   // 0.2.278: which way round the rock the next re-approach goes
 
         private Vector3 Chest => Transform.position + Vector3.up;
 
@@ -578,7 +579,11 @@ namespace FiresCore.Npc.IdleBehaviors
             away.y = 0f;
             if (away.sqrMagnitude < 0.01f) { away = -Transform.forward; away.y = 0f; }
             Vector3 stand = face + away.normalized * StandOffFace;
-            if (FiresCore.World.Surface.GroundNear(stand, out float groundY)) stand.y = groundY;
+            // 0.2.278: onto the navmesh, where the body can stand. A ground probe also hits static_solid, so beside a fragment it could put
+            // the stand point on top of the rock, where no path goes.
+            if (Pathfinding.instance != null && Pathfinding.instance.FindValidPoint(out Vector3 onMesh, stand, 2f, Pathfinding.AgentType.Humanoid))
+                return onMesh;
+            if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(stand, out float groundY)) stand.y = groundY;
             return stand;
         }
 
@@ -596,17 +601,28 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             if (Time.time - _wedgeSince < WedgeSeconds) return false;
 
-            Vector3 away = Transform.position - _targetResource.GameObject.transform.position;
-            away.y = 0f;
-            if (away.sqrMagnitude < 0.01f) { away = -Transform.forward; away.y = 0f; }
-            _stepBackTo = Transform.position + away.normalized * StepBackDistance;
-            if (FiresCore.World.Surface.GroundNear(_stepBackTo, out float groundY)) _stepBackTo.y = groundY;
-            _stepBackUntil = Time.time + StepBackSeconds;
+            // 0.2.278 (HR4: "wedged … (7.5 m from the nearest face); stepping back 2.5 m" then "never reached it (10.7 m off)", and at 2.6 m
+            // a step back from a face it could nearly reach): within MineDirectStrikeReach the body stays put and the direct strike takes the
+            // node; farther out the way in is blocked from this side, so it walks round to another side of the rock (±70°, alternating).
+            if (reach <= MineDirectStrikeReach) { _wedgeSince = -1f; return false; }
+            Vector3 center = _targetResource.GameObject.transform.position;
+            Vector3 from = Transform.position - center;
+            from.y = 0f;
+            if (from.sqrMagnitude < 0.01f) { from = -Transform.forward; from.y = 0f; }
+            _sideSign = -_sideSign;
+            float radius = Mathf.Max(1.5f, from.magnitude - reach + StandOffFace);   // roughly the rock's own radius plus the stand-off
+            Vector3 side = Quaternion.Euler(0f, 70f * _sideSign, 0f) * from.normalized;
+            _stepBackTo = center + side * (radius + 0.5f);
+            if (Pathfinding.instance != null && Pathfinding.instance.FindValidPoint(out Vector3 onMesh, _stepBackTo, 2f, Pathfinding.AgentType.Humanoid))
+                _stepBackTo = onMesh;
+            else if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(_stepBackTo, out float groundY))
+                _stepBackTo.y = groundY;
+            _stepBackUntil = Time.time + StepBackSeconds * 2f;
             _wedgeSince = -1f;
-            _aimAt = -1f;   // aim again from where the step ends
+            _aimAt = -1f;   // aim again from the new side
             if (_wedgeSaid.Add(_targetResource.GameObject.GetInstanceID()))
                 AI.ChoreBrain.ChoreDone(Companion?.companionName, "mining",
-                    $"{Utils.GetPrefabName(_targetResource.GameObject)}: wedged among the fragments for {WedgeSeconds:0} s ({reach:0.0} m from the nearest face); stepping back {StepBackDistance:0.0} m");
+                    $"{Utils.GetPrefabName(_targetResource.GameObject)}: no headway for {WedgeSeconds:0} s at {reach:0.0} m from the nearest face; trying another side of it");
             MoveToPosition(_stepBackTo);
             return true;
         }
