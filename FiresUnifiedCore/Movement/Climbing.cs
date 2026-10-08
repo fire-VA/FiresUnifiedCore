@@ -88,8 +88,50 @@ namespace FiresCore.Movement
         private static readonly List<IClimbModifier> s_modifiers = new List<IClimbModifier>();
         private static int s_mask, s_terrainMask;
 
+        /// <summary>Whether climbing exists at all: Auto (on only beside FiresAdminTerrain or FiresRPGClasses), On, Off.</summary>
+        public enum ClimbingMode { Auto, On, Off }
+
+        private static ConfigEntry<ClimbingMode> s_mode;
+        private static int s_resolvedFor = -1;   // the mode the cached answer belongs to (-1: not resolved yet)
+        private static bool s_enabled;
+
+        private const string AdminTerrainGuid = "com.Fire.FiresAdminTerrain", RpgClassesGuid = "com.Fire.FiresRPGClasses";
+
+        /// <summary>
+        /// True when climbing may start (Core 0.2.294, Fire 10-05: "climbing should be off by default and only toggle on automatically if we
+        /// have admin terrain or RPG classes installed"). Auto reads the loaded plugins on first use, after every plugin has loaded.
+        /// </summary>
+        public static bool Enabled
+        {
+            get
+            {
+                ClimbingMode mode = s_mode != null ? s_mode.Value : ClimbingMode.Auto;
+                if (s_resolvedFor == (int)mode) return s_enabled;
+                string why;
+                if (mode == ClimbingMode.On) { s_enabled = true; why = "On (config)"; }
+                else if (mode == ClimbingMode.Off) { s_enabled = false; why = "Off (config)"; }
+                else
+                {
+                    bool fat = BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey(AdminTerrainGuid);
+                    bool rpg = BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey(RpgClassesGuid);
+                    s_enabled = fat || rpg;
+                    why = s_enabled
+                        ? $"Auto: {(fat && rpg ? "FiresAdminTerrain and FiresRPGClasses" : fat ? "FiresAdminTerrain" : "FiresRPGClasses")} present"
+                        : "Auto: neither FiresAdminTerrain nor FiresRPGClasses loaded";
+                }
+                s_resolvedFor = (int)mode;
+                FiresCore.Logging.FiresLogger.LogDebug($"[Climb] climbing {(s_enabled ? "ON" : "OFF")} ({why})");
+                return s_enabled;
+            }
+        }
+
         internal static void Bind(ConfigFile config, FiresCore.Sync.ConfigSync configSync)
         {
+            s_mode = config.Bind("Climbing", "Climbing", ClimbingMode.Auto,
+                "SERVER. Whether players, bots and companions can climb at all. Auto: on only when FiresAdminTerrain or FiresRPGClasses is installed. On / Off: always.");
+            configSync?.AddConfigEntry(s_mode);
+            // Re-resolved on the next check; an Off mid-climb drops the body into vanilla movement on its next motion step.
+            s_mode.SettingChanged += (sender, args) => s_resolvedFor = -1;
             s_pieces = config.Bind("Climbing", "Climb building pieces", true,
                 "SERVER. Players, bots and companions may climb player-built walls (38-90 deg) as well as terrain and rock. Off: terrain and rock only (a PvP / raid lever).");
             s_playerInput = config.Bind("Climbing", "Player climb input", true,
@@ -589,6 +631,7 @@ namespace FiresCore.Movement
         {
             plan = null;
             why = "";
+            if (!Enabled) { why = "climbing is off (config)"; return false; }
             if (body == null) { why = "no body"; return false; }
             ClimbTerms terms = TermsFor(body);
             if (!terms.Allowed) { why = "climbing is not allowed for this body"; return false; }
@@ -653,6 +696,7 @@ namespace FiresCore.Movement
         {
             plan = null;
             why = $"no wall that tops out 0.8 m+ above within {NearestWallReach:0.0} m";
+            if (!Enabled) { why = "climbing is off (config)"; return false; }
             if (body == null) { why = "no body"; return false; }
             float best = float.MaxValue;
             string last = null;
@@ -805,6 +849,7 @@ namespace FiresCore.Movement
 
         private static bool TryBegin(Character body, RaycastHit face, float angle, string surface, bool planned, string reason, Vector3 goal, float height, Vector3 planTop)
         {
+            if (!Climbing.Enabled) return false;
             if (body.IsDead() || body.InAttack() || body.InDodge() || body.IsAttached()) return false;
             ClimbTerms terms = Climbing.TermsFor(body);
             if (!terms.Allowed) return false;
@@ -987,6 +1032,32 @@ namespace FiresCore.Movement
         private const float SquareUpDegreesPerSecond = 720f;
         private static float s_facingLogAt;
 
+        // 0.2.306 (the lead 10-06: core_today's climb "states Idle" with no [Climb] line at all): while the local player holds Jump,
+        // the gate that kept the climb from starting, at Debug, at most once a second.
+        private static float s_whyNotAt;
+
+        private static void WhyNot(Player player, string why)
+        {
+            if (Time.time < s_whyNotAt) return;
+            s_whyNotAt = Time.time + 1f;
+            FiresCore.Logging.FiresLogger.LogDebug($"[Climb] climb: {Name(player)} Jump held, not started: {why}");
+        }
+
+        // What the knee / waist / chest rays hit straight ahead, for the why-line (any layer of the climb mask, any distance up to 3 m).
+        private static string AheadHit(Player player, Vector3 forward)
+        {
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 0.0001f) return "no forward";
+            forward.Normalize();
+            foreach (float h in new[] { 0.4f, 1.0f, 1.6f })
+            {
+                if (!Physics.Raycast(player.transform.position + Vector3.up * h, forward, out RaycastHit hit, 3f, FiresCore.World.Surface.Mask, QueryTriggerInteraction.Ignore)) continue;
+                Climbing.ClimbableCollider(hit.collider, out string what);
+                return $"at {h:0.0} m up: {what} at {hit.distance:0.00} m, {Vector3.Angle(hit.normal, Vector3.up):0}° steep";
+            }
+            return "nothing within 3 m at knee, waist or chest height";
+        }
+
         private static Vector3 Flat(Vector3 v)
         {
             v.y = 0f;
@@ -1040,6 +1111,12 @@ namespace FiresCore.Movement
                 try
                 {
                     if (s_runs.Count == 0 && s_tickets.Count == 0 && __instance != Player.m_localPlayer) return;
+                    if (!Climbing.Enabled)
+                    {
+                        // Climbing switched off: a body still on a face ends its climb now and moves as vanilla (0.2.294).
+                        if (s_runs.TryGetValue(__instance, out Run off)) End(__instance, off, "climbing is off (config)");
+                        return;
+                    }
                     if (s_runs.TryGetValue(__instance, out Run run)) { Step(__instance, run, dt); return; }
                     if (s_tickets.Count > 0 && TicketFor(__instance, out Climbing.ClimbPlan plan)) { TryPlanned(__instance, plan, dt); return; }
                     if (__instance == Player.m_localPlayer) TryPlayerInput((Player)__instance);
@@ -1082,14 +1159,23 @@ namespace FiresCore.Movement
             bool jumpHeld = JumpHeld();
             // 0.2.284: after a release (Space while attached) a new grab needs Space let go and pressed again, so the release press itself
             // never re-grabs the face it just left.
-            if (s_jumpMustRise) { if (!jumpHeld) s_jumpMustRise = false; return; }
-            if (!Climbing.PlayerInputClimbs || player.m_moveDir.sqrMagnitude < 0.01f) return;
+            if (s_jumpMustRise) { if (!jumpHeld) s_jumpMustRise = false; else WhyNot(player, "Jump must be let go and pressed again after a release"); return; }
+            if (!Climbing.PlayerInputClimbs) { if (jumpHeld) WhyNot(player, "[Climbing] Player climb input is off"); return; }
+            if (player.m_moveDir.sqrMagnitude < 0.01f) { if (jumpHeld) WhyNot(player, "no move direction (Forward not held)"); return; }
             if (!jumpHeld) return;
             Vector3 forward = player.transform.forward;
-            if (!Climbing.FaceAhead(player, forward, out RaycastHit face, out float angle, out string surface)) return;
+            if (!Climbing.FaceAhead(player, forward, out RaycastHit face, out float angle, out string surface))
+            {
+                WhyNot(player, $"no climbable face within {Climbing.FaceReach} m ahead ({AheadHit(player, forward)})");
+                return;
+            }
             Vector3 into = -face.normal;
             into.y = 0f;
-            if (into.sqrMagnitude < 0.0001f || Vector3.Dot(forward, into.normalized) < 0.5f) return;
+            if (into.sqrMagnitude < 0.0001f || Vector3.Dot(forward, into.normalized) < 0.5f)
+            {
+                WhyNot(player, $"not facing {surface} squarely (facing {Yaw(forward):0}°, the face {Yaw(into):0}°, {angle:0}° steep)");
+                return;
+            }
             TryBegin(player, face, angle, surface, false, "forward + jump against the face", face.point, 0f, new Vector3(float.NaN, 0f, 0f));
         }
 

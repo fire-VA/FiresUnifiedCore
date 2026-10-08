@@ -23,7 +23,7 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.2.293";
+        public const string PluginVersion = "0.2.319";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -210,6 +210,15 @@ namespace FiresCore
             FiresCore.Npc.NpcAttachmentScaleFix.Bind(Config, configSync);
             // Climbing (0.2.252, Tools\CLIMBING.md): building pieces climbable (server-set) and the players' input switch.
             FiresCore.Movement.Climbing.Bind(Config, configSync);
+            FiresCore.Movement.Headroom.Bind(Config);
+            FiresCore.Movement.MonsterFallDamage.Bind(Config, configSync);
+            FiresCore.Loot.LocationLootRefresh.Bind(Config, configSync);
+            FiresCore.Building.NewPieceFacesAway.Bind(Config);
+            FiresCore.Movement.Crawl.Bind(Config);
+            FiresCore.Movement.CrawlCamera.Bind(Config);
+            FiresCore.Movement.PlayerSwim.Bind(Config);
+            FiresCore.Tutorials.TutorialBridge.Bind(Config);
+            FiresCore.Undo.UndoHistory.Bind(Config);
 
             // BalrondCompat: server-locked toggles for our neutralization patches against specific
             // BalrondAmazingNature behaviors. Patches auto-activate through Harmony.PatchAll and

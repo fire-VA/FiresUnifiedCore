@@ -75,6 +75,37 @@ namespace FiresCore.Input
             Recompute();
         }
 
+        // 0.2.312: tokens whose owning window is gone (see FiresInputBlockDriver.LateUpdate).
+        internal static void PruneStaleTokens()
+        {
+            if (_tokens.Count == 0) return;
+            List<object> stale = null;
+            foreach (object t in _tokens)
+            {
+                string why = null;
+                if (t is UnityEngine.Object u)
+                {
+                    if (u == null) why = "destroyed";
+                    else if (u is Behaviour b && !b.isActiveAndEnabled) why = "disabled";
+                    else if (u is Component c && !c.gameObject.activeInHierarchy) why = "inactive";
+                    else if (u is GameObject g && !g.activeInHierarchy) why = "inactive";
+                }
+                if (why == null) continue;
+                (stale ?? (stale = new List<object>())).Add(t);
+                try { FiresCore.Logging.FiresLogger.LogDebug($"[{LogTag}] text-capture gate: released a stale token from {t.GetType().FullName} ({why})"); } catch { }
+            }
+            if (stale == null) return;
+            foreach (object t in stale) _tokens.Remove(t);
+            Recompute();
+        }
+
+        internal static string TokenOwners()
+        {
+            var names = new List<string>();
+            foreach (object t in _tokens) names.Add(t.GetType().FullName);
+            return names.Count > 0 ? string.Join(", ", names.ToArray()) : "none";
+        }
+
         public static void ReleaseAll()
         {
             if (_tokens.Count == 0) return;
@@ -122,9 +153,21 @@ namespace FiresCore.Input
     // jumped while typing in a Fires field.
     public static class FiresInputBlockClientGates
     {
-        private static bool Gate(ref bool __result)
+        // 0.2.312 (Fire 10-06: "Up Arrow in chat still doesn't recall"): the keys a text field itself needs always pass the gate,
+        // whatever is focused: vanilla's chat/console history (Terminal.UpdateInput reads ZInput.GetButtonDown("ChatUp"/"ChatDown")),
+        // and close/submit. Read through __args, so no parameter name is assumed.
+        private static readonly HashSet<string> s_passButtons = new HashSet<string>(StringComparer.Ordinal) { "ChatUp", "ChatDown", "JoyDPadUp", "JoyDPadDown" };
+        private static readonly HashSet<KeyCode> s_passKeys = new HashSet<KeyCode> { KeyCode.Escape, KeyCode.Return, KeyCode.KeypadEnter };
+
+        private static bool Passes(object[] args)
         {
-            if (!FiresInputBlock.IsCapturing) return true;
+            object first = args != null && args.Length > 0 ? args[0] : null;
+            return (first is string button && s_passButtons.Contains(button)) || (first is KeyCode key && s_passKeys.Contains(key));
+        }
+
+        private static bool Gate(object[] __args, ref bool __result)
+        {
+            if (!FiresInputBlock.IsCapturing || Passes(__args)) return true;
             FiresInputBlock.LogZInputSuppressOnce();
             __result = false;
             return false;
@@ -143,22 +186,22 @@ namespace FiresCore.Input
         }
 
         [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetButtonDown))]
-        private static class GetButtonDownGate { private static bool Prefix(ref bool __result) => Gate(ref __result); }
+        private static class GetButtonDownGate { private static bool Prefix(object[] __args, ref bool __result) => Gate(__args, ref __result); }
 
         [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetButtonUp))]
-        private static class GetButtonUpGate { private static bool Prefix(ref bool __result) => Gate(ref __result); }
+        private static class GetButtonUpGate { private static bool Prefix(object[] __args, ref bool __result) => Gate(__args, ref __result); }
 
         [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetKeyDown))]
-        private static class GetKeyDownGate { private static bool Prefix(ref bool __result) => Gate(ref __result); }
+        private static class GetKeyDownGate { private static bool Prefix(object[] __args, ref bool __result) => Gate(__args, ref __result); }
 
         [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetKeyUp))]
-        private static class GetKeyUpGate { private static bool Prefix(ref bool __result) => Gate(ref __result); }
+        private static class GetKeyUpGate { private static bool Prefix(object[] __args, ref bool __result) => Gate(__args, ref __result); }
 
         [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetMouseButtonDown))]
-        private static class GetMouseButtonDownGate { private static bool Prefix(ref bool __result) => Gate(ref __result); }
+        private static class GetMouseButtonDownGate { private static bool Prefix(object[] __args, ref bool __result) => Gate(__args, ref __result); }
 
         [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetMouseButtonUp))]
-        private static class GetMouseButtonUpGate { private static bool Prefix(ref bool __result) => Gate(ref __result); }
+        private static class GetMouseButtonUpGate { private static bool Prefix(object[] __args, ref bool __result) => Gate(__args, ref __result); }
 
         // BepInEx KeyboardShortcut hotkeys (the standard `ConfigEntry<KeyboardShortcut>` pattern most mods use,
         // e.g. another mod's [G] toggle firing while you type a 'g' into a Fires field). IsDown/IsUp/IsPressed
@@ -213,10 +256,14 @@ namespace FiresCore.Input
             var go = eventSystem != null ? eventSystem.currentSelectedGameObject : null;
             if (go == null) return false;
 
+            // A field hidden with its panel (inactive, or the component disabled) can stay the selected object with isFocused
+            // still true; it is not taking keys, so it must not hold the gate (the lead, 10-06: only this AutoToken; window-wide
+            // tokens other UIs hold are theirs to release).
+            if (!go.activeInHierarchy) return false;
             bool focused;
             var tmp = go.GetComponent<TMPro.TMP_InputField>();
-            if (tmp != null) focused = tmp.isFocused;
-            else { var leg = go.GetComponent<UnityEngine.UI.InputField>(); focused = leg != null && leg.isFocused; }
+            if (tmp != null) focused = tmp.isActiveAndEnabled && tmp.isFocused;
+            else { var leg = go.GetComponent<UnityEngine.UI.InputField>(); focused = leg != null && leg.isActiveAndEnabled && leg.isFocused; }
             if (!focused) return false;
 
             // Only a FIRES UI field should drive the gate. Vanilla text inputs — the F5 console and chat (both
@@ -225,7 +272,34 @@ namespace FiresCore.Input
             // them (the reported "typing in the vanilla console affects inputs" bug). Skip anything under them.
             if (go.GetComponentInParent<Terminal>() != null) return false;
             if (go.GetComponentInParent<TextInput>() != null) return false;
+            // 0.2.312: and by identity. Chat's and the console's input field need not sit under their Terminal component.
+            if (IsTerminalField(Chat.instance, go) || IsTerminalField(global::Console.instance, go)) return false;
             return true;
+        }
+
+        private static bool IsTerminalField(Terminal terminal, GameObject go)
+            => terminal != null && terminal.m_input != null && terminal.m_input.gameObject == go;
+
+        // ── 0.2.312: stale tokens ────────────────────────────────────────────────────────────────────────────────────────
+        // A window that holds a token and is destroyed or switched off without releasing it would keep every hotkey dead.
+        // Once a second: a token that is a UnityEngine.Object (most windows pass `this`) and is destroyed, disabled or inactive is
+        // released, with a Debug line naming its type. A token that is a plain object (a static key) can't be judged and stays: a
+        // window may hold the gate on purpose with no text field focused (the minigames, the lobby, the config windows), so there is
+        // NO blind "no field focused" release; instead a gate held over 30 s with no field focused is named once at Debug.
+        private float _nextPrune;
+        private float _heldNoFieldSince = -1f;
+        private bool _heldLogged;
+
+        private void LateUpdate()
+        {
+            if (Time.unscaledTime < _nextPrune) return;
+            _nextPrune = Time.unscaledTime + 1f;
+            FiresInputBlock.PruneStaleTokens();
+            if (!FiresInputBlock.IsCapturing || IsTextFieldFocused() || GUIUtility.keyboardControl != 0) { _heldNoFieldSince = -1f; _heldLogged = false; return; }
+            if (_heldNoFieldSince < 0f) _heldNoFieldSince = Time.unscaledTime;
+            if (_heldLogged || Time.unscaledTime - _heldNoFieldSince < 30f) return;
+            _heldLogged = true;
+            try { FiresCore.Logging.FiresLogger.LogDebug($"[{FiresInputBlock.LogTag}] text-capture gate held {Time.unscaledTime - _heldNoFieldSince:0} s with no text field focused, by: {FiresInputBlock.TokenOwners()}"); } catch { }
         }
     }
 }

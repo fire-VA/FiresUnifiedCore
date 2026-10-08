@@ -311,7 +311,8 @@ namespace FiresCore.Npc.Archetypes
         {
             Initialize();
             
-            var character = __instance.GetComponent<Character>();
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            var character = __instance.m_character;
             if (character == null) return;
             
             // Check if this monster is taunted
@@ -355,7 +356,8 @@ namespace FiresCore.Npc.Archetypes
         [HarmonyPostfix]
         public static void MonsterAI_GetTargetCreature_Postfix(MonsterAI __instance, ref Character __result)
         {
-            var character = __instance.GetComponent<Character>();
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            var character = __instance.m_character;
             if (character == null) return;
             
             // Check if taunted - if so, return the taunter
@@ -379,7 +381,8 @@ namespace FiresCore.Npc.Archetypes
         [HarmonyPostfix]
         public static void BaseAI_FindEnemy_Postfix(BaseAI __instance, ref Character __result)
         {
-            var character = __instance.GetComponent<Character>();
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            var character = __instance.m_character;
             if (character == null) return;
             
             // Check if this character is taunted
@@ -406,7 +409,8 @@ namespace FiresCore.Npc.Archetypes
             // If already has target, don't interfere
             if (__result) return;
             
-            var character = __instance.GetComponent<Character>();
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            var character = __instance.m_character;
             if (character == null) return;
             
             // If taunted, we should always "have a target"
@@ -428,7 +432,8 @@ namespace FiresCore.Npc.Archetypes
             // Skip if this is a MonsterAI - it has its own patch
             if (__instance is MonsterAI) return;
             
-            var character = __instance.GetComponent<Character>();
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            var character = __instance.m_character;
             if (character == null) return;
             
             // Check if taunted - if so, return the taunter
@@ -450,7 +455,8 @@ namespace FiresCore.Npc.Archetypes
         {
             Initialize();
             
-            var character = __instance.GetComponent<Character>();
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            var character = __instance.m_character;
             if (character == null) return;
             
             // Check if this monster is taunted

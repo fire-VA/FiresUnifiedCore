@@ -36,7 +36,8 @@ namespace FiresCore.Logging
         private const float SecondsMax = 600f;
         private const string EnabledDescription =
             "Print one combined status box from every Fires mod that reports one, instead of each mod printing its own " +
-            "periodic lines. A box that would repeat the last one is skipped. This machine only.";
+            "periodic lines. A box that would repeat the last one is skipped. Off by default; its lines are Debug, so they show at " +
+            "[Logging] Log Level = Debug. This machine only.";
         private const string SecondsDescription = "Seconds between status boxes.";
 
         private static readonly List<KeyValuePair<string, Func<string>>> Providers = new List<KeyValuePair<string, Func<string>>>();
@@ -49,7 +50,9 @@ namespace FiresCore.Logging
         // Core binds these from its own config file at setup; nothing else should.
         internal static void BindConfig(ConfigFile config)
         {
-            _enabled = config.Bind(ConfigSection, EnabledKey, true, EnabledDescription);
+            // 0.2.297 ([release]'s log-defaults audit, Fire 10-05: every mod defaults to message-level logging, no periodic
+            // chatter): off unless asked for, and a box it prints is Debug.
+            _enabled = config.Bind(ConfigSection, EnabledKey, false, EnabledDescription);
             _seconds = config.Bind(ConfigSection, SecondsKey, SecondsDefault,
                 new ConfigDescription(SecondsDescription, new AcceptableValueRange<float>(SecondsMin, SecondsMax)));
         }
@@ -102,7 +105,14 @@ namespace FiresCore.Logging
             string title = $"{TitlePrefix} {FormatUptime(Time.realtimeSinceStartup)}";
             int innerWidth = title.Length + TitleMargin;
             foreach (string line in Lines) innerWidth = Math.Max(innerWidth, line.Length);
-            LoadSummary.EmitBox(title, Lines.ToArray(), Tag, Math.Min(innerWidth, MaxInnerWidth));
+            // Debug (0.2.297): formatted by LoadSummary's one width model, printed at Debug through Core's source (the load boxes
+            // keep LoadSummary.EmitBox at Info).
+            try
+            {
+                foreach (string line in LoadSummary.FormatBox(title, Lines.ToArray(), Math.Min(innerWidth, MaxInnerWidth)))
+                    FiresLogger.LogDebug($"{Tag} {line}");
+            }
+            catch (Exception ex) { Debug.LogWarning($"{Tag} status box failed: {ex.Message}"); }
         }
 
         // A line wider than the box continues on the next rows, indented under its text, instead of being cut off at the edge.

@@ -154,8 +154,8 @@ namespace FiresCore.Input
                     entry.CoreBinding.Alt.Value = false;
                 }
                 else if (entry.Entry == null) return false;
-                else if (entry.Entry.SettingType == typeof(KeyboardShortcut)) entry.Entry.BoxedValue = KeyboardShortcut.Empty;
-                else entry.Entry.BoxedValue = KeyCode.None;
+                else if (entry.Entry.SettingType == typeof(KeyboardShortcut)) FiresCore.UI.CfgDiscovery.Write(entry.Entry, KeyboardShortcut.Empty, "keybinds unbind");
+                else FiresCore.UI.CfgDiscovery.Write(entry.Entry, KeyCode.None, "keybinds unbind");
             }
             catch (Exception ex)
             {
@@ -181,8 +181,8 @@ namespace FiresCore.Input
                 }
                 else if (entry.Entry == null) return false;
                 else if (entry.Entry.SettingType == typeof(KeyboardShortcut))
-                    entry.Entry.BoxedValue = KeyCombination.ToShortcut(key, modifiers);
-                else entry.Entry.BoxedValue = key;
+                    FiresCore.UI.CfgDiscovery.Write(entry.Entry, KeyCombination.ToShortcut(key, modifiers), "keybinds");
+                else FiresCore.UI.CfgDiscovery.Write(entry.Entry, key, "keybinds");
             }
             catch (Exception ex)
             {

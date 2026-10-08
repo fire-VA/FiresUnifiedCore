@@ -628,6 +628,7 @@
     <Compile Include="UI\ConfigFilesEditor.cs" />
     <Compile Include="UI\SettingEditWindow.cs" />
     <Compile Include="UI\ConfigPanel.cs" />
+    <Compile Include="UI\FiresGuiTest.cs" />
     <Compile Include="UI\ConfigMenuButton.cs" />
     <Compile Include="UI\FiresRoundedSkin.cs" />
     <Compile Include="UI\FiresPopupTheme.cs" />
@@ -757,6 +758,14 @@
     <Compile Include="Npc\Combat\ColdRisk.cs" />
     <Compile Include="Movement\Climbing.cs" />
     <Compile Include="Movement\ClimbAnimator.cs" />
+    <Compile Include="Movement\Headroom.cs" />
+    <Compile Include="Movement\MonsterFallDamage.cs" />
+    <Compile Include="Loot\LocationLootRefresh.cs" />
+    <Compile Include="Building\NewPieceFacesAway.cs" />
+    <Compile Include="Movement\Crawl.cs" />
+    <Compile Include="Movement\CrawlCamera.cs" />
+    <Compile Include="Movement\PlayerSwim.cs" />
+    <Compile Include="Input\UndoHistory.cs" />
     <Compile Include="Npc\AI\CompanionTaskBody.cs" />
     <Compile Include="Npc\IdleBehaviors\HaulBehavior.cs" />
     <Compile Include="Npc\CompanionHaulRunner.cs" />
@@ -780,6 +789,7 @@
     <Compile Include="Materials\VanillaShaderRebindMenuHook.cs" />
     <Compile Include="Materials\VanillaShaderSources.cs" />
     <Compile Include="Materials\FiresShaderBroker.cs" />
+    <Compile Include="Materials\DepthTextureGuarantee.cs" />
     <Compile Include="Net\NetworkObjectHelper.cs" />
     <Compile Include="Net\SafeRoutedRpc.cs" />
     <Compile Include="Net\WorldCacheSync.cs" />
@@ -842,6 +852,17 @@
     <Compile Include="$(FiresLogAnalysisDir)**\*.cs" Exclude="$(FiresLogAnalysisDir)bin\**;$(FiresLogAnalysisDir)obj\**">
       <Link>SourceLinked\FiresLogAnalysis\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </Compile>
+  </ItemGroup>
+  <!-- 0.2.300: [ghost]'s shared tutorial manager (FiresTutorial, all types internal), linked like FiresLogAnalysis.
+       Every edit there changes Core's next build: core Apply gates its hashes (SHARED_FiresTutorial.txt). -->
+  <PropertyGroup>
+    <FiresTutorialDir>..\..\FiresTutorial\</FiresTutorialDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(FiresTutorialDir)*.cs">
+      <Link>SourceLinked\FiresTutorial\%(Filename)%(Extension)</Link>
+    </Compile>
+    <Compile Include="Tutorials\TutorialBridge.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
