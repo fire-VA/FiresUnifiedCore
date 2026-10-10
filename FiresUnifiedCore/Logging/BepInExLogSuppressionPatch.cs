@@ -350,8 +350,10 @@ namespace FiresCore.Logging
         private static bool IsFamilySource(string sourceName)
         {
             if (sourceName.StartsWith(FiresSourcePrefix, StringComparison.OrdinalIgnoreCase)) return true;
+            // A family mod's own sub-sources count too, e.g. VAInventory's "VAInventory.Panel" (0.2.320, [wishbone]).
             foreach (string known in FamilySourceNames)
-                if (string.Equals(sourceName, known, StringComparison.OrdinalIgnoreCase)) return true;
+                if (string.Equals(sourceName, known, StringComparison.OrdinalIgnoreCase)
+                    || (sourceName.Length > known.Length && sourceName[known.Length] == '.' && sourceName.StartsWith(known, StringComparison.OrdinalIgnoreCase))) return true;
             return false;
         }
 

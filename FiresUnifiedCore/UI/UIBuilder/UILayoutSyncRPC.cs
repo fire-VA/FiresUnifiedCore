@@ -38,7 +38,7 @@ namespace FiresCore.UI
         private static bool _rpcsRegistered;
 
         // Track which ZRoutedRpc instance we registered against. After a plugin
-        // hot-reload (r2modman / dnSpy) our static `_rpcsRegistered` resets to
+        // hot-reload (r2modman / a script reloader) our static `_rpcsRegistered` resets to
         // false, but Valheim's ZRoutedRpc.instance survives — the names are
         // STILL in its handler dict. Without this guard, EnsureRpcsRegistered
         // tries to re-add and every call throws "An item with the same key has
@@ -631,7 +631,7 @@ namespace FiresCore.UI
                     Directory.CreateDirectory(dir);
 
                 // Mark as admin-synced so FileWatcher excludes the sender from broadcast
-                UIBuilderHost.MarkFileAdminSynced?.Invoke("UILayouts", relativePath, senderUid);
+                UIBuilderHost.MarkAdminSynced("UILayouts", relativePath, senderUid); // every mod's watcher (0.2.330)
 
                 if (string.IsNullOrEmpty(jsonContent))
                 {

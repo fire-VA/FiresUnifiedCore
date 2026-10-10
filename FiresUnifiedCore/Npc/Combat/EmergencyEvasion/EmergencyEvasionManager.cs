@@ -79,7 +79,9 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             ShieldCharge,       // Tank - charge through + knockback
             DivineRetreat,      // Paladin - blind + reposition
             WindStep,           // Monk - rapid dodge + afterimages
-            InfernalBlink       // Pyromancer hybrid - teleport + Fader Fire AOE
+            InfernalBlink,      // Pyromancer hybrid - teleport + Fader Fire AOE
+            BeastPounce,        // Druid - beast roll + pounce
+            ShadowStep          // Necromancer - fade + blink
         }
         
         #endregion
@@ -124,6 +126,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private void Update()
         {
             if (_companion == null || _companion.isDefeated) return;
+            if (_companion.IsPossessed) return;   // 0.2.292: a player is driving it
             if (_nview == null || !_nview.IsOwner()) return;
             if (_isEvading) return;
             if (_evasionType == EvasionType.None) return;
@@ -191,6 +194,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 case ArchetypeClass.Tank: return EvasionType.ShieldCharge;
                 case ArchetypeClass.Paladin: return EvasionType.DivineRetreat;
                 case ArchetypeClass.Monk: return EvasionType.WindStep;
+                case ArchetypeClass.Druid: return EvasionType.BeastPounce;
+                case ArchetypeClass.Necromancer: return EvasionType.ShadowStep;
                 default: return EvasionType.None;
             }
         }
@@ -209,6 +214,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 case EvasionType.ShieldCharge: cost = 35f; usesEitr = false; cooldown = 40f; return;
                 case EvasionType.DivineRetreat: cost = 30f; usesEitr = false; cooldown = 40f; return;
                 case EvasionType.WindStep: cost = 20f; usesEitr = false; cooldown = 25f; return;
+                case EvasionType.BeastPounce: cost = 30f; usesEitr = false; cooldown = 30f; return;
+                case EvasionType.ShadowStep: cost = 25f; usesEitr = true; cooldown = 35f; return;
                 default: cost = 0f; usesEitr = false; cooldown = BaseCooldown; return;
             }
         }
@@ -394,6 +401,14 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                     
                 case EvasionType.WindStep:
                     yield return ExecuteWindStep(originPos);
+                    break;
+
+                case EvasionType.BeastPounce:
+                    yield return ExecuteBeastPounce(originPos);
+                    break;
+
+                case EvasionType.ShadowStep:
+                    yield return ExecuteShadowStep(originPos);
                     break;
             }
 
@@ -853,6 +868,57 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// <summary>
         /// Finds a safe position away from enemies.
         /// </summary>
+        /// <summary>
+        /// Beast Pounce - Druid evasion (Fire 10-07, themed): a low, fast beast roll out of danger, no damage.
+        /// The same auto-jump as Savage Leap, flatter and shorter.
+        /// </summary>
+        private IEnumerator ExecuteBeastPounce(Vector3 origin)
+        {
+            Vector3 destination = FindSafePosition(origin, LeapDistance * 0.75f);
+            Vector3 dir = destination - origin;
+            dir.y = 0f;
+            if (dir.sqrMagnitude < 0.01f) dir = transform.forward;
+            dir.Normalize();
+
+            SpawnVFX("vfx_wolf_attack_hit", origin);
+            if (_character != null)
+            {
+                transform.rotation = Quaternion.LookRotation(dir);
+                _character.OnAutoJump(dir, 4f, (LeapDistance * 0.75f) / 0.35f);
+            }
+
+            float start = Time.time;
+            yield return new WaitForSeconds(0.1f);
+            while (Time.time - start < 0.6f && (_character == null || !_character.IsOnGround())) yield return null;
+
+            SpawnVFX("vfx_boar_hit", transform.position);
+            yield return new WaitForSeconds(0.1f);
+        }
+
+        /// <summary>
+        /// Shadow Step - Necromancer evasion (Fire 10-07, themed): fade out, blink a short distance, fade back in.
+        /// </summary>
+        private IEnumerator ExecuteShadowStep(Vector3 origin)
+        {
+            Vector3 destination = FindSafePosition(origin, BlinkDistance);
+
+            SpawnVFX("vfx_ghost_death", origin);
+            CharacterVisibilityController visibility = null;
+            if (_character != null)
+            {
+                visibility = new CharacterVisibilityController(_character);
+                visibility.SetHidden(true);
+            }
+
+            yield return new WaitForSeconds(0.2f);
+            TeleportTo(destination);
+            SpawnVFX("vfx_ghost_death", destination);
+            yield return new WaitForSeconds(0.1f);
+
+            visibility?.Restore();
+            yield return new WaitForSeconds(0.1f);
+        }
+
         private Vector3 FindSafePosition(Vector3 origin, float distance)
         {
             if (_playerDirection.HasValue) return FindValidPosition(origin + _playerDirection.Value * distance);
@@ -1411,6 +1477,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 case EvasionType.ShieldCharge: return "Shield Charge";
                 case EvasionType.DivineRetreat: return "Divine Retreat";
                 case EvasionType.WindStep: return "Wind Step";
+                case EvasionType.BeastPounce: return "Beast Pounce";
+                case EvasionType.ShadowStep: return "Shadow Step";
                 default: return "None";
             }
         }

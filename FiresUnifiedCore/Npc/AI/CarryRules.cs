@@ -57,6 +57,8 @@ namespace FiresCore.Npc.AI
             why = null;
             if (item?.m_shared == null) { why = "no item"; return true; }
             if (item.m_equipped) { why = "equipped"; return true; }
+            // 0.2.361: a companion bag's pouch, equipment and spare cells are never hauled; only its STORAGE rows are.
+            if (CompanionGridLayout.IsCompanionBag(inventory) && !CompanionGridLayout.IsStorage(item.m_gridPos)) { why = "companion pouch/equipment cell"; return true; }
             if (item.m_shared.m_questItem) { why = "quest item"; return true; }
             if (IsAmmoForCarriedWeapon(inventory, item)) { why = "ammo for a carried bow/crossbow"; return true; }
             var type = item.m_shared.m_itemType;

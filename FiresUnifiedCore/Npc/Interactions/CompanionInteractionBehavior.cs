@@ -119,7 +119,9 @@ namespace FiresCore.Npc.Interactions
             Bench,
             Bed,
             ShipMast,
-            ShipSeat
+            ShipSeat,
+            // 0.2.372: pillion seat behind the rider (FiresCore.Mounts.PillionApi); no occupancy, timers or follow-break.
+            MountPillion
         }
 
         #endregion
@@ -512,6 +514,59 @@ namespace FiresCore.Npc.Interactions
             Detach();
         }
 
+        // 0.2.372: pillion body work for FiresCore.Mounts.PillionApi.
+        private const string PillionFallbackPose = "attach_chair";
+        private const float PillionHoldSeconds = 1000000f;
+
+        /// <summary>
+        /// Seats this companion on a mount node with the given pose bool. Returns the pose actually used (the chair
+        /// pose when the animator lacks the requested bool), or null when the attach could not start.
+        /// No occupancy, timers or follow-break: it stays until <see cref="DetachTo"/>.
+        /// </summary>
+        public string AttachToMount(Transform node, string pose)
+        {
+            if (node == null) return null;
+            if (_isAttached) Detach();
+
+            string used = !string.IsNullOrEmpty(pose) && AnimatorHasBool(pose) ? pose : PillionFallbackPose;
+            if (used != pose)
+                FiresCore.Logging.FiresLogger.LogDebug($"[Pillion] {_companion?.companionName} animator has no bool '{pose}', using '{used}'");
+
+            // sourceObject null: AttachTo then skips InteractableOccupancyManager.
+            if (!AttachTo(node, used, Vector3.zero, AttachType.MountPillion, null, isCommanded: true))
+                return null;
+            return used;
+        }
+
+        /// <summary>Detaches and places the body at <paramref name="setDown"/> with zero velocity.</summary>
+        public void DetachTo(Vector3 setDown)
+        {
+            // An attach coroutine still in flight would re-seat after this; stop it.
+            StopAllCoroutines();
+            if (_isAttached) Detach();
+            else if (_combatMovement != null && _combatMovement.IsMovementLocked) _combatMovement.UnlockMovement();
+
+            transform.position = setDown;
+            if (_rigidbody != null)
+            {
+                _rigidbody.position = setDown;
+                if (!_rigidbody.isKinematic)
+                {
+                    _rigidbody.linearVelocity  = Vector3.zero;
+                    _rigidbody.angularVelocity = Vector3.zero;
+                }
+            }
+        }
+
+        private bool AnimatorHasBool(string name)
+        {
+            if (_animator == null) _animator = GetComponentInChildren<Animator>(true);
+            if (_animator == null || _animator.runtimeAnimatorController == null) return false;
+            foreach (var p in _animator.parameters)
+                if (p.type == AnimatorControllerParameterType.Bool && p.name == name) return true;
+            return false;
+        }
+
         /// <summary>
         /// Called when combat starts - detaches immediately.
         /// </summary>
@@ -774,6 +829,14 @@ namespace FiresCore.Npc.Interactions
             _targetSitRotation     = attachPoint.rotation;
             _ownerAnchor           = _companion?.GetOwner()?.transform.position ?? transform.position;
 
+            // 0.2.372: a pillion has no sit timer; it holds until PillionApi.Unseat.
+            if (attachType == AttachType.MountPillion)
+            {
+                duration               = PillionHoldSeconds;
+                _attachEndTime         = Time.time + PillionHoldSeconds;
+                _attachHardTimeoutTime = Time.time + PillionHoldSeconds;
+            }
+
             LockMovementForDuration(duration);
 
             Debug.Log($"[CompanionInteractionBehavior] {_companion?.companionName} attached to {attachType} " +
@@ -966,6 +1029,10 @@ namespace FiresCore.Npc.Interactions
                 Detach();
                 return;
             }
+
+            // 0.2.372: a pillion stays seated until PillionApi.Unseat; combat, timeouts, the null source object,
+            // ZDO divergence and the follow-break anchor would all dismount it mid-ride.
+            if (_currentAttachType == AttachType.MountPillion) return;
 
             // Check for combat - always interrupt for combat
             if (IsInCombat())

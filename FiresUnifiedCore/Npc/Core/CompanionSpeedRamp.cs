@@ -76,6 +76,8 @@ namespace FiresCore.Npc.Core
             __state.Walk = -1f;
             __state.Run = -1f;
             if (__instance == null) return;
+            var driven = CompanionPatches.GetCachedCompanion(__instance);
+            if (driven != null && driven.IsPossessed) return;   // 0.2.292: a player is driving it: vanilla speeds, no ramp or patrol tier
 
             // DBSM patrol takes priority: while a fresh patrol multiplier is published it owns the active
             // tier's speed scalar. Independent of the cosmetic follow-ramp toggle (a slow/fast patrol is a

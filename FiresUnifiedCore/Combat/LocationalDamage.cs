@@ -111,6 +111,7 @@ namespace FiresCore.Combat
                 + "Because vanilla armour cuts small hits harder, a head hit's x1.5 before armour lands as MORE than x1.5 through armour "
                 + "(about x2.25 when the hit and the armour are close); the other parts land exactly as listed.");
             s_verbose = config.Bind("Combat", "Locational Damage Log Every Hit", false, "One log line per located hit (testing).");
+            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.LocationalCombat, false, s_override, s_verbose);   // 0.2.387: RPGClasses only (neither key is a ConfigSync entry)
             s_override.SettingChanged += (_, __) => Recompute();
             HitLocator.RegisterCommand();
         }

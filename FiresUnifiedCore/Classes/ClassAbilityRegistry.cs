@@ -360,6 +360,29 @@ namespace FiresCore.Classes
                     "Achieve martial perfection. Attack speed doubled, all attacks critically hit for 15 seconds.", 
                     100, ArchetypeClass.Monk, AbilityCategory.Ultimate, "#FFD700"),
             };
+
+            // ===== DRUID / NECROMANCER (scaffolding: the Starter signature + the evasion; the rest is [wishbone]'s tree) =====
+            s_abilitiesByArchetype[ArchetypeClass.Druid] = new List<ClassAbility>
+            {
+                new ClassAbility("druid_wildshape", "Wildshape",
+                    "Consume a beaten creature under your crosshair and take its form and attacks for a time.",
+                    1, ArchetypeClass.Druid, AbilityCategory.Starter, "#5AA640"),
+
+                new ClassAbility("druid_beast_pounce", "Beast Pounce",
+                    "Emergency evasion: roll and pounce a short distance like a beast.",
+                    EvasionUnlockLevel, ArchetypeClass.Druid, AbilityCategory.Advanced, "#8CC63F"),
+            };
+
+            s_abilitiesByArchetype[ArchetypeClass.Necromancer] = new List<ClassAbility>
+            {
+                new ClassAbility("necromancer_bind_dead", "Bind the Dead",
+                    "Possess an undead humanoid while your body channels, untouchable.",
+                    1, ArchetypeClass.Necromancer, AbilityCategory.Starter, "#73408C"),
+
+                new ClassAbility("necromancer_shadow_step", "Shadow Step",
+                    "Emergency evasion: fade into shadow and blink a short distance.",
+                    EvasionUnlockLevel, ArchetypeClass.Necromancer, AbilityCategory.Advanced, "#4B2A5C"),
+            };
         }
 
         /// <summary>Every archetype the roster defines.</summary>

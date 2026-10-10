@@ -25,8 +25,8 @@ namespace FiresCore.Npc
         [Header("Inventory Settings")]
         // The backing inventory holds every visible UI cell (storage plus the food and ammo rows); a smaller one silently
         // ate items dropped onto unbacked cells. Growing it is save-safe because items keep their stored grid positions.
-        public int inventoryWidth = 6;
-        public int inventoryHeight = 4;
+        public int inventoryWidth = CompanionGridLayout.Width;   // 0.2.361 (Fire): fixed 8 x 11 VA-style grid (CompanionGridLayout)
+        public int inventoryHeight = CompanionGridLayout.Height;
         public float maxCarryWeight = 150f;
 
         [Header("Equipment Bonuses")]
@@ -34,35 +34,23 @@ namespace FiresCore.Npc
         public float bonusArmor = 0f;
         public float bonusMovementSpeed = 0f;
 
-     // Equipment prefab names for persistence (stored separately from ItemData)
-        // This mirrors how NpcController stores equipment
-        private string _equipHelmet = "";
-        private string _equipChest = "";
-      private string _equipLegs = "";
-        private string _equipShoulder = "";
-   private string _equipUtility = "";
-    private string _equipRightHand = "";
-        private string _equipLeftHand = "";
-        private string _equipRightBack = "";
-        private string _equipLeftBack = "";
-      
-        // Quality values for equipped items
-        private int _equipHelmetQuality = 1;
-        private int _equipChestQuality = 1;
-        private int _equipLegsQuality = 1;
-        private int _equipShoulderQuality = 1;
-        private int _equipUtilityQuality = 1;
-   private int _equipRightHandQuality = 1;
-        private int _equipLeftHandQuality = 1;
-        private int _equipRightBackQuality = 1;
-        private int _equipLeftBackQuality = 1;
-
-        // Stack counts for equipped items (throwables/bombs deplete per attack). Absent slot = 1.
-        private readonly Dictionary<EquipmentSlot, int> _equipStacks = new Dictionary<EquipmentSlot, int>();
-
-        // Durability read back from the ZDO, applied when the slot's item is rebuilt from its prefab.
-        private readonly Dictionary<EquipmentSlot, float> _loadedDurability = new Dictionary<EquipmentSlot, float>();
+        // 0.2.361 (Fire 10-08): no separate equipment record any more. The bag is laid out like VA Inventory's player inventory
+        // (CompanionGridLayout): a worn item is the item in its equip cell, equipped on the Humanoid by vanilla EquipItem
+        // (Reconcile keeps the two together). Durability, quality and stack live on the ItemData and save with the bag.
         private const float DurabilityUnset = -1f;
+        private const string GridVersionKey = "companion_grid_v";
+
+        // Reconcile state: re-entrancy guard, a retry when vanilla refused an equip (attacking, dodging, broken), and the
+        // legacy vault equipment queued until the bag that follows it has loaded.
+        private int _reconcileDepth;
+        private bool _reconcileAgain;
+        private bool _reconcileRetry;
+        private float _nextReconcileRetry;
+        private bool _loggedDimensions;
+        // 0.2.362: legacy vault equipment is only COLLECTED here; CommitLegacyVaultEquipment places it synchronously right
+        // after the vault's bag Load (no timed queue, so no window in which an emptied cell is re-filled with a copy).
+        private readonly List<(EquipmentSlot slot, string prefab, int quality, int stack)> _pendingLegacyEquip = new List<(EquipmentSlot, string, int, int)>();
+        private const string LegacyVaultMigratedKey = "companion_legacy_vault_migrated";
 
         private ZNetView _nview;
         private Inventory _inventory; // General storage inventory
@@ -81,8 +69,6 @@ namespace FiresCore.Npc
         private const float RemoteSyncInterval = 2f; // Check every 2 seconds for remote changes
         private int _lastEquipmentHash = 0; // Hash of equipment state for change detection
 
-        // Equipment slots matching player equipment
-        private Dictionary<EquipmentSlot, ItemDrop.ItemData> _equippedItems = new Dictionary<EquipmentSlot, ItemDrop.ItemData>();
 
         // Events for equipment changes
         public event Action<EquipmentSlot, ItemDrop.ItemData> OnEquipmentChanged;
@@ -140,6 +126,21 @@ namespace FiresCore.Npc
         private void Update()
         {
             if (_nview == null || !_nview.IsValid()) return;
+
+            // 0.2.361: vanilla refused an equip (attacking, dodging, broken): retry shortly; the item never bounces.
+            if (_reconcileRetry && Time.time >= _nextReconcileRetry)
+            {
+                _nextReconcileRetry = Time.time + 0.5f;
+                Reconcile("retry");
+            }
+
+            // Every peer: re-apply the look when the barber (or anything) changes it in the ZDO.
+            _lastAppearanceCheck += Time.deltaTime;
+            if (_lastAppearanceCheck >= RemoteSyncInterval)
+            {
+                _lastAppearanceCheck = 0f;
+                CheckForAppearanceChanges();
+            }
 
             // Owner: tick the debounced vault auto-save so picked-up items survive
             // logout/login.
@@ -202,6 +203,8 @@ namespace FiresCore.Npc
             // Hash the packed equipment field if present, else fall back to the
             // legacy per-slot fields. Either way we get a stable signature for the
             // current equipment state to detect changes.
+            // 0.2.361: worn gear lives in the bag (grid cells), so the bag itself is the equipment signature.
+            hash = hash * 31 + zdo.GetString("companion_inventory", "").GetHashCode();
             string packed = zdo.GetString("companion_equipment", "");
             if (!string.IsNullOrEmpty(packed))
             {
@@ -224,9 +227,45 @@ namespace FiresCore.Npc
             hash = hash * 31 + zdo.GetString("companion_hair", "").GetHashCode();
             hash = hash * 31 + zdo.GetString("companion_beard", "").GetHashCode();
             hash = hash * 31 + (zdo.GetBool("companion_isfemale", false) ? 1 : 0);
+            hash = hash * 31 + CalculateAppearanceHash(zdo);
 
             return hash;
         }
+
+        // 0.2.357: the look alone (barber changes: styles, colours, model, scale). Checked on every peer, owner included.
+        private static int CalculateAppearanceHash(ZDO zdo)
+        {
+            int hash = 17;
+            hash = hash * 31 + zdo.GetString("companion_hair", "").GetHashCode();
+            hash = hash * 31 + zdo.GetString("companion_beard", "").GetHashCode();
+            hash = hash * 31 + (zdo.GetBool("companion_isfemale", false) ? 1 : 0);
+            hash = hash * 31 + zdo.GetInt(ZDOVars.s_modelIndex, 0);
+            hash = hash * 31 + zdo.GetVec3(ZDOVars.s_hairColor, Vector3.one).GetHashCode();
+            hash = hash * 31 + zdo.GetVec3(ZDOVars.s_skinColor, Vector3.one).GetHashCode();
+            hash = hash * 31 + zdo.GetFloat("companion_scale", 1f).GetHashCode();
+            hash = hash * 31 + zdo.GetVec3(CompanionAppearanceService.BeardColorKey, Vector3.zero).GetHashCode();
+            return hash;
+        }
+
+        private float _lastAppearanceCheck;
+        private int _lastAppearanceHash;
+        private bool _appearanceHashSeeded;
+
+        private void CheckForAppearanceChanges()
+        {
+            var zdo = _nview?.GetZDO();
+            if (zdo == null) return;
+            int h = CalculateAppearanceHash(zdo);
+            if (!_appearanceHashSeeded) { _appearanceHashSeeded = true; _lastAppearanceHash = h; return; }
+            if (h == _lastAppearanceHash) return;
+            _lastAppearanceHash = h;
+            FiresLogger.LogDebug($"[CompanionInventory] {_companion?.companionName}: look changed in its ZDO, re-applying");
+            GetComponent<CompanionRandomLoadout>()?.RefreshAppearanceFromZDO();
+            if (_nview.IsOwner()) MarkVaultDirty();
+        }
+
+        /// <summary>0.2.357: queue the debounced vault save (the barber's new look survives a respawn).</summary>
+        public void MarkVaultDirty() => _vaultDirtySinceTime = Time.unscaledTime;
 
         #endregion
 
@@ -238,10 +277,30 @@ namespace FiresCore.Npc
             
     // Create inventory with custom size (storage grid)
    string inventoryName = $"Companion_{_companion?.companionName ?? "Unknown"}";
-   _inventory = new Inventory(inventoryName, null, inventoryWidth, inventoryHeight);
+            // Audit slice 5 (0.2.331): the storage IS the Humanoid's own bag, so vanilla's UseItem, Pickup, CookingStation,
+            // fishing float and door-key paths (all Humanoid.GetInventory()) act on it directly. Humanoid's field initializer
+            // made it before any Awake; it is sized to the companion grid here, while still empty (GiveDefaultItems is
+            // skipped for companions below, so nothing lands in it before LoadFromZDO).
+            // 0.2.358: a prefab may carry the old serialized 6-wide value; the companion grid is 8 x 4 (32 slots)
+            // 0.2.361: fixed 8 x 11 (CompanionGridLayout). Growing never moves an item (each keeps its saved grid position), so a
+            // bag that already holds items is grown too; it is never shrunk.
+            inventoryWidth = CompanionGridLayout.Width;
+            inventoryHeight = CompanionGridLayout.Height;
+            Humanoid body = GetComponent<Humanoid>();
+            _inventory = body != null ? body.GetInventory() : null;
+            if (_inventory == null)
+                _inventory = new Inventory(inventoryName, null, inventoryWidth, inventoryHeight);
+            else
+            {
+                if (_inventory.NrOfItems() == 0) _inventory.m_name = inventoryName;
+                else FiresLogger.LogDebug($"[CompanionInventory] {inventoryName}: the Humanoid bag already holds {_inventory.NrOfItems()} item(s) at init; growing {_inventory.GetWidth()}x{_inventory.GetHeight()} in place");
+                if (_inventory.m_width < inventoryWidth) _inventory.m_width = inventoryWidth;
+                if (_inventory.m_height < inventoryHeight) _inventory.m_height = inventoryHeight;
+            }
 
     // Hook into inventory change events
             _inventory.m_onChanged += OnStorageInventoryChanged;
+            CompanionGridLayout.Register(_inventory, this);
 
        _initialized = true;
        // Only log inventory initialization for tamed companions when verbose is enabled
@@ -264,6 +323,8 @@ namespace FiresCore.Npc
        {
   // Don't trigger saves during initial load
           if (_isLoadingFromZDO) return;
+
+            Reconcile("bag changed");
 
             SaveToZDO();
             OnInventoryChanged?.Invoke();
@@ -344,6 +405,10 @@ namespace FiresCore.Npc
         /// Gets the underlying Valheim Inventory object for storage.
         /// This can be used with InventoryGrid for container-like UI.
         /// </summary>
+        /// <summary>True once the storage has been filled from the ZDO (LoadFromZDO, after Awake). Until then a freshly
+        /// re-created companion's storage reads empty.</summary>
+        public bool StorageLoaded => _hasCompletedInitialLoad;
+
       public Inventory GetStorageInventory()
         {
 EnsureInitialized();
@@ -355,10 +420,12 @@ EnsureInitialized();
         {
             string ammoType = weapon?.m_shared?.m_ammoType;
             if (string.IsNullOrEmpty(ammoType)) return null;
-            return GetStorageInventory()?.GetAllItems().FirstOrDefault(item =>
+            var pick = GetStorageInventory()?.GetAllItems().FirstOrDefault(item =>
                 item.m_shared.m_ammoType == ammoType
                 && (item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Ammo || item.m_shared.m_itemType == ItemDrop.ItemData.ItemType.AmmoNonEquipable)
                 && item.m_shared.m_attack?.m_attackProjectile != null);
+            // 0.2.356: the Ammo pouch stack first when it fits the weapon.
+            return CompanionPouchRules.PreferPouchAmmo(this, weapon, pick, _companion?.companionName);
         }
 
 /// <summary>
@@ -376,16 +443,8 @@ EnsureInitialized();
  public float GetTotalWeight()
 {
      EnsureInitialized();
+            // 0.2.361: worn and pouch items are in the bag, so the bag's weight already counts them.
             float weight = _inventory?.GetTotalWeight() ?? 0f;
-   
-            // Add equipped item weights
-          foreach (var item in _equippedItems.Values)
-  {
-       if (item != null)
-  {
-     weight += item.GetWeight();
-          }
-       }
   
  return weight;
         }
@@ -436,7 +495,7 @@ EnsureInitialized();
                 }
                 
                 // Alternative: Check by prefab name for known utility items
-                string prefabName = _equipUtility?.ToLower() ?? "";
+                string prefabName = GetItemPrefabName(utilityItem).ToLower();
                 if (prefabName.Contains("beltstrength") || prefabName.Contains("megingjord"))
                 {
                     // Megingjord adds +150 carry weight
@@ -481,13 +540,13 @@ EnsureInitialized();
             var utilityItem = GetEquippedItem(EquipmentSlot.Utility);
             if (utilityItem != null)
             {
-                utilityName = utilityItem.m_shared.m_name ?? _equipUtility ?? "Unknown";
+                utilityName = utilityItem.m_shared.m_name ?? "Unknown";
                 var statusEffect = utilityItem.m_shared.m_equipStatusEffect;
                 if (statusEffect != null && statusEffect is SE_Stats seStats)
                 {
                     utilityBonus = seStats.m_addMaxCarryWeight;
                 }
-                string prefabName = _equipUtility?.ToLower() ?? "";
+                string prefabName = GetItemPrefabName(utilityItem).ToLower();
                 if ((prefabName.Contains("beltstrength") || prefabName.Contains("megingjord")) && utilityBonus == 0f)
                 {
                     utilityBonus = MegingjordCarryWeightBonus;
@@ -527,6 +586,8 @@ EnsureInitialized();
        EnsureInitialized();
     if (_inventory == null || item == null) return false;
 
+         // 0.2.361: the same ItemData twice in the bag would be a dupe (worn and pouch items live in the bag now).
+         if (_inventory.ContainsItem(item)) return true;
          bool added = _inventory.AddItem(item);
          if (added && !_isLoadingFromZDO)
           {
@@ -554,10 +615,226 @@ EnsureInitialized();
     /// <summary>
         /// Gets all items in the storage inventory.
         /// </summary>
-        public List<ItemDrop.ItemData> GetAllStorageItems()
+        public List<ItemDrop.ItemData> GetAllStorageItems() => GetStorageItems();
+
+        /// <summary>0.2.361: the items in the STORAGE rows only (rows 0-3): never worn gear, never pouch stacks. Deposits,
+        /// hauling, free-space checks and "what do I carry" readers use this.</summary>
+        public List<ItemDrop.ItemData> GetStorageItems()
         {
             EnsureInitialized();
-      return _inventory?.GetAllItems() ?? new List<ItemDrop.ItemData>();
+            var list = new List<ItemDrop.ItemData>();
+            if (_inventory == null) return list;
+            foreach (var it in _inventory.GetAllItems())
+                if (it != null && CompanionGridLayout.IsStorage(it.m_gridPos)) list.Add(it);
+            return list;
+        }
+
+        /// <summary>0.2.361: the items in the equipment cells (armour, hands, back).</summary>
+        public List<ItemDrop.ItemData> GetWornItems()
+        {
+            EnsureInitialized();
+            var list = new List<ItemDrop.ItemData>();
+            if (_inventory == null) return list;
+            foreach (var it in _inventory.GetAllItems())
+                if (it != null && CompanionGridLayout.TryGetEquipSlot(it.m_gridPos, out _)) list.Add(it);
+            return list;
+        }
+
+        /// <summary>0.2.361: the stacks in one pouch row, in cell order (null for an empty cell).</summary>
+        public ItemDrop.ItemData[] GetPouchItems(CompanionPouchRules.PouchKind kind)
+        {
+            EnsureInitialized();
+            int n = CompanionGridLayout.PouchCapacity(kind);
+            var cells = new ItemDrop.ItemData[n];
+            if (_inventory == null) return cells;
+            for (int i = 0; i < n; i++)
+            {
+                var p = CompanionGridLayout.PouchCell(kind, i);
+                cells[i] = _inventory.GetItemAt(p.x, p.y);
+            }
+            return cells;
+        }
+
+        /// <summary>Storage items plus the hand cells (weapon pickers choose from what is carried and what is held).</summary>
+        public List<ItemDrop.ItemData> GetStorageAndHandItems()
+        {
+            var list = GetStorageItems();
+            var r = GetEquippedItem(EquipmentSlot.RightHand);
+            var l = GetEquippedItem(EquipmentSlot.LeftHand);
+            if (r != null) list.Add(r);
+            if (l != null && l != r) list.Add(l);
+            return list;
+        }
+
+        // ---- 0.2.367: ONE tool lookup for every chore and the command selector: hands (equip cells), then the Tools pouch, then
+        // storage. The first place holding a fitting tool wins (best tool within it). ----
+
+        private static readonly EquipmentSlot[] ToolHandSlots = { EquipmentSlot.RightHand, EquipmentSlot.LeftHand, EquipmentSlot.RightBack, EquipmentSlot.LeftBack };
+
+        /// <summary>
+        /// 0.2.367: the tool for <paramref name="tool"/> work of at least <paramref name="minTier"/>: hands/equip cells first, then the
+        /// Tools pouch cells, then the storage rows. <paramref name="where"/> is "hands", "pouch" or "storage" ("" when none);
+        /// <paramref name="bestTierAnywhere"/> is the best tier of that tool kind found anywhere (-1: none at all), so callers can say
+        /// "no axe" vs "my axe is too weak". Logs "[Tools] name task: ..." at Debug (rate-limited).
+        /// </summary>
+        public ItemDrop.ItemData FindTool(FiresCore.Npc.IdleBehaviors.ResourceDataHelper.ToolType tool, int minTier, out string where, out int bestTierAnywhere, string task = null)
+        {
+            EnsureInitialized();
+            where = "";
+            bestTierAnywhere = -1;
+            if (_inventory == null) return null;
+            if (tool == FiresCore.Npc.IdleBehaviors.ResourceDataHelper.ToolType.None) { where = "none needed"; return null; }
+
+            var hands = new List<ItemDrop.ItemData>();
+            foreach (var s in ToolHandSlots) { var it = GetEquippedItem(s); if (it != null && !hands.Contains(it)) hands.Add(it); }
+            var pouch = new List<ItemDrop.ItemData>();
+            foreach (var it in GetPouchItems(CompanionPouchRules.PouchKind.Tool)) if (it != null) pouch.Add(it);
+            var storage = GetStorageItems();
+
+            ItemDrop.ItemData found = null;
+            foreach (var (list, name) in new[] { (hands, "hands"), (pouch, "pouch"), (storage, "storage") })
+            {
+                ItemDrop.ItemData best = null;
+                foreach (var it in list)
+                {
+                    if (!FiresCore.Npc.IdleBehaviors.ResourceDataHelper.IsToolAppropriate(it, tool, 0)) continue;
+                    bestTierAnywhere = Mathf.Max(bestTierAnywhere, it.m_shared.m_toolTier);
+                    if (it.m_shared.m_toolTier < minTier) continue;
+                    if (FiresCore.Npc.IdleBehaviors.ResourceDataHelper.IsBetterTool(it, best, tool)) best = it;
+                }
+                if (best != null && found == null) { found = best; where = name; }
+            }
+
+            string kind = tool.ToString().ToLowerInvariant();
+            string t = string.IsNullOrEmpty(task) ? kind : task;
+            if (found != null)
+                LogTools(t, $"{kind} {GetItemPrefabName(found)} from {where}");
+            else if (bestTierAnywhere < 0)
+                LogTools(t, $"no {kind} (checked hands/pouch/storage)");
+            else
+                LogTools(t, $"{kind} tier {bestTierAnywhere} < needed {minTier}");
+            return found;
+        }
+
+        public ItemDrop.ItemData FindTool(FiresCore.Npc.IdleBehaviors.ResourceDataHelper.ToolType tool, int minTier, string task = null) =>
+            FindTool(tool, minTier, out _, out _, task);
+
+        /// <summary>0.2.367: the player-facing reason a tool lookup failed: "no axe", "my axe is too weak for this tree", or null.</summary>
+        public static string ToolRefusal(FiresCore.Npc.IdleBehaviors.ResourceDataHelper.ToolType tool, int bestTierAnywhere, string targetNoun)
+        {
+            string kind = tool.ToString().ToLowerInvariant();
+            return bestTierAnywhere < 0 ? $"no {kind}" : $"my {kind} is too weak for this {targetNoun}";
+        }
+
+        /// <summary>0.2.367: puts a FindTool result in the RIGHT-hand cell (from an equip cell, the pouch or storage; what the hand
+        /// held goes to the back or storage, ResourceDataHelper.TryEquipInRightHand), then Reconcile equips it. False when no room.</summary>
+        public bool EquipToolInHand(ItemDrop.ItemData tool, string task = null)
+        {
+            if (tool == null || _inventory == null) return false;
+            if (GetEquippedItem(EquipmentSlot.RightHand) == tool) return true;
+            EquipmentSlot? slot = null;
+            if (_inventory.ContainsItem(tool) && CompanionGridLayout.TryGetEquipSlot(tool.m_gridPos, out var s)) slot = s;
+            if (!FiresCore.Npc.IdleBehaviors.ResourceDataHelper.TryEquipInRightHand(this, tool, slot, holsterWeaponOnBack: true))
+            {
+                LogTools(task ?? "tool", $"no room to free the hand for {GetItemPrefabName(tool)}");
+                return false;
+            }
+            Reconcile($"equip tool for {task ?? "task"}");
+            RecalculateEquipmentBonusesPublic();
+            ApplyVisualEquipment();
+            SaveToZDO();
+            LogTools(task ?? "tool", $"{GetItemPrefabName(tool)} -> right hand");
+            return true;
+        }
+
+        private static readonly Dictionary<string, (string Line, float Time)> s_toolLog = new Dictionary<string, (string, float)>();
+
+        private void LogTools(string task, string what)
+        {
+            string line = $"[Tools] {CompanionNameForLog()} {task}: {what}";
+            string key = GetInstanceID() + "|" + task;
+            float now = Time.time;
+            if (s_toolLog.TryGetValue(key, out var last) && last.Line == line && now - last.Time < 10f) return;
+            if (s_toolLog.Count > 256) s_toolLog.Clear();
+            s_toolLog[key] = (line, now);
+            FiresLogger.LogDebug(line);
+        }
+
+        /// <summary>0.2.361: true when the item sits in one of the equipment cells (what the panel shows in its equip column).</summary>
+        public bool IsInEquipmentRecord(ItemDrop.ItemData item) => IsWorn(item);
+
+        /// <summary>0.2.361: true when the item sits in an equipment cell of this bag (reference check).</summary>
+        public bool IsWorn(ItemDrop.ItemData item)
+        {
+            if (item == null || _inventory == null || !_inventory.ContainsItem(item)) return false;
+            return CompanionGridLayout.TryGetEquipSlot(item.m_gridPos, out _);
+        }
+
+        // ---- 0.2.362: storage-only material helpers. Consumers (cooking, smelting, fuel, seeds, bait, crafting, repair,
+        // building, feeding, payment) use these so a worn piece or a pouch stack is never spent by a name-based read. ----
+
+        /// <summary>Total stack of items with this shared name in the STORAGE rows only.</summary>
+        public int CountStorage(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return 0;
+            int n = 0;
+            foreach (var it in GetStorageItems())
+                if (it.m_shared != null && it.m_shared.m_name == name) n += it.m_stack;
+            return n;
+        }
+
+        /// <summary>True when the STORAGE rows hold at least <paramref name="amount"/> of this shared name.</summary>
+        public bool HaveInStorage(string name, int amount = 1) => CountStorage(name) >= Mathf.Max(1, amount);
+
+        /// <summary>Removes up to <paramref name="amount"/> of this shared name from the STORAGE rows only (smallest stacks
+        /// first), through vanilla Inventory.RemoveItem(item, amount) so Changed fires. Returns the amount removed.</summary>
+        public int RemoveFromStorage(string name, int amount)
+        {
+            if (string.IsNullOrEmpty(name) || amount <= 0 || _inventory == null) return 0;
+            var stacks = GetStorageItems().Where(it => it.m_shared != null && it.m_shared.m_name == name).OrderBy(it => it.m_stack).ToList();
+            int removed = 0;
+            foreach (var it in stacks)
+            {
+                if (removed >= amount) break;
+                int take = Mathf.Min(it.m_stack, amount - removed);
+                if (_inventory.RemoveItem(it, take)) removed += take;
+            }
+            return removed;
+        }
+
+        /// <summary>Storage-only count for any bag: a companion bag counts its storage rows, any other inventory counts all.</summary>
+        public static int CountStorage(Inventory bag, string name)
+        {
+            if (bag == null) return 0;
+            var owner = CompanionGridLayout.OwnerOf(bag);
+            return owner != null ? owner.CountStorage(name) : bag.CountItems(name);
+        }
+
+        /// <summary>Storage-only have-check for any bag (vanilla for non-companion inventories).</summary>
+        public static bool HaveInStorage(Inventory bag, string name, int amount = 1) => CountStorage(bag, name) >= Mathf.Max(1, amount);
+
+        /// <summary>Storage-only remove for any bag (vanilla RemoveItem(name, amount) for non-companion inventories).</summary>
+        public static void RemoveFromStorage(Inventory bag, string name, int amount)
+        {
+            if (bag == null) return;
+            var owner = CompanionGridLayout.OwnerOf(bag);
+            if (owner != null) owner.RemoveFromStorage(name, amount);
+            else bag.RemoveItem(name, amount);
+        }
+
+        /// <summary>Storage-only item list for any bag (all items for non-companion inventories).</summary>
+        public static List<ItemDrop.ItemData> StorageItemsOf(Inventory bag)
+        {
+            if (bag == null) return new List<ItemDrop.ItemData>();
+            var owner = CompanionGridLayout.OwnerOf(bag);
+            return owner != null ? owner.GetStorageItems() : bag.GetAllItems();
+        }
+
+        /// <summary>Free STORAGE cells (rows 0-3).</summary>
+        public int GetFreeStorageSlots()
+        {
+            EnsureInitialized();
+            return CompanionGridLayout.FreeStorageCells(_inventory);
         }
 
         #endregion
@@ -577,17 +854,8 @@ EnsureInitialized();
       // These don't have valid ZNetViews and will cause errors
       if (IsGhostPreview()) return false;
 
-       // Unequip current item in slot first
-            UnequipSlot(slot);
-
-            // Store equipped item
-    _equippedItems[slot] = item;
-    
-  // Get the proper prefab name for persistence
-      string prefabName = GetItemPrefabName(item);
-      
-     // Store prefab name for persistence
-      SetEquipmentPrefabName(slot, prefabName, item.m_quality, item.m_stack);
+            // 0.2.361: move the item into the slot's cell (the old occupant goes to storage); Reconcile equips it.
+            if (!PlaceInSlot(slot, item, "EquipItem")) return false;
 
             // Recalculate stats
           RecalculateEquipmentBonuses();
@@ -628,16 +896,8 @@ EnsureInitialized();
                 return false;
             }
 
-            // Store equipped item
-            _equippedItems[slot] = item;
-    
-            // Get the proper prefab name for persistence
-   string prefabName = GetItemPrefabName(item);
-      
-            // Store prefab name for persistence
-   SetEquipmentPrefabName(slot, prefabName, item.m_quality, item.m_stack);
-
-            return true;
+            // 0.2.361: move the item into the slot's cell (the old occupant goes to storage); Reconcile equips it.
+            return PlaceInSlot(slot, item, "EquipItemSilent");
         }
         
         /// <summary>
@@ -728,13 +988,8 @@ EnsureInitialized();
    /// </summary>
       public ItemDrop.ItemData UnequipSlot(EquipmentSlot slot)
         {
-  if (!_equippedItems.TryGetValue(slot, out var item))
-           return null;
-
-      _equippedItems.Remove(slot);
-
-  // Clear prefab name
-    SetEquipmentPrefabName(slot, "", 1);
+            var item = TakeOutOfSlot(slot, "UnequipSlot");
+            if (item == null) return null;
 
  // Recalculate stats
          RecalculateEquipmentBonuses();
@@ -757,32 +1012,582 @@ EnsureInitialized();
         /// </summary>
    public ItemDrop.ItemData UnequipSlotSilent(EquipmentSlot slot)
  {
-         if (!_equippedItems.TryGetValue(slot, out var item))
-        return null;
-
- _equippedItems.Remove(slot);
- 
-            // Clear prefab name
-    SetEquipmentPrefabName(slot, "", 1);
-
-            return item;
+            return TakeOutOfSlot(slot, "UnequipSlotSilent");
    }
-    /// <summary>
-        /// Gets the equipped item for a slot.
-        /// </summary>
- public ItemDrop.ItemData GetEquippedItem(EquipmentSlot slot)
-      {
-        _equippedItems.TryGetValue(slot, out var item);
+
+        // ================= 0.2.361: the VA-style grid (CompanionGridLayout) =================
+
+        private Humanoid _body;
+        private Humanoid Body => _body != null ? _body : (_body = GetComponent<Humanoid>());
+
+        /// <summary>The vanilla Humanoid field for a slot (null for the back slots, which vanilla has no field for).</summary>
+        internal static ItemDrop.ItemData HumanoidField(Humanoid h, EquipmentSlot slot)
+        {
+            if (h == null) return null;
+            switch (slot)
+            {
+                case EquipmentSlot.Helmet: return h.m_helmetItem;
+                case EquipmentSlot.Chest: return h.m_chestItem;
+                case EquipmentSlot.Legs: return h.m_legItem;
+                case EquipmentSlot.Shoulder: return h.m_shoulderItem;
+                case EquipmentSlot.Utility: return h.m_utilityItem;
+                case EquipmentSlot.RightHand: return h.m_rightItem;
+                case EquipmentSlot.LeftHand: return h.m_leftItem;
+                default: return null;
+            }
+        }
+
+        /// <summary>Which vanilla field holds the item, or null.</summary>
+        internal static EquipmentSlot? FieldSlotOf(Humanoid h, ItemDrop.ItemData item)
+        {
+            if (h == null || item == null) return null;
+            if (h.m_helmetItem == item) return EquipmentSlot.Helmet;
+            if (h.m_chestItem == item) return EquipmentSlot.Chest;
+            if (h.m_legItem == item) return EquipmentSlot.Legs;
+            if (h.m_shoulderItem == item) return EquipmentSlot.Shoulder;
+            if (h.m_utilityItem == item) return EquipmentSlot.Utility;
+            if (h.m_rightItem == item) return EquipmentSlot.RightHand;
+            if (h.m_leftItem == item) return EquipmentSlot.LeftHand;
+            return null;
+        }
+
+        // Equipped or hidden by vanilla (HideHandItems keeps the item in m_hidden*Item): either way not to be re-equipped.
+        private static bool HeldByHumanoid(Humanoid h, ItemDrop.ItemData item) =>
+            h != null && item != null && (h.IsItemEquiped(item) || h.m_hiddenRightItem == item || h.m_hiddenLeftItem == item);
+
+        internal bool InReconcile => _reconcileDepth > 0;
+
+        /// <summary>Moves an item of this bag to <paramref name="pos"/> without a Changed (the caller raises one).</summary>
+        private void SetCellRaw(ItemDrop.ItemData item, Vector2i pos)
+        {
+            if (!_inventory.ContainsItem(item)) _inventory.m_inventory.Add(item);
+            item.m_gridPos = pos;
+        }
+
+        /// <summary>Moves a bag item to the first free storage cell (the spare row when storage is full). False when the bag
+        /// has no free cell at all; the item then stays where it is.</summary>
+        private bool MoveToStorageRaw(ItemDrop.ItemData item, string reason)
+        {
+            var pos = CompanionGridLayout.FirstFreeStorageCell(_inventory);
+            if (pos.x < 0)
+            {
+                int spareRow = CompanionGridLayout.Height - 1;
+                for (int x = 0; x < CompanionGridLayout.Width && pos.x < 0; x++)
+                    if (_inventory.GetItemAt(x, spareRow) == null) pos = new Vector2i(x, spareRow);
+            }
+            if (pos.x < 0)
+            {
+                FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: no free cell for {GetItemPrefabName(item)} ({reason}); left at ({item.m_gridPos.x},{item.m_gridPos.y})");
+                return false;
+            }
+            bool wasInBag = _inventory.ContainsItem(item);
+            Vector2i from = item.m_gridPos;
+            if (!CompanionGridLayout.TryGetEquipSlot(pos, out _)) item.m_equipped = false;
+            SetCellRaw(item, pos);
+            FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: {GetItemPrefabName(item)} -> storage ({pos.x},{pos.y}){(wasInBag ? $" from ({from.x},{from.y})" : "")}, {reason}");
+            return true;
+        }
+
+        /// <summary>Equipping on the grid: the item goes into the slot's cell (from storage, a pouch, another cell, or from
+        /// outside the bag), the old occupant goes to storage, then Reconcile equips it through vanilla.</summary>
+        private bool PlaceInSlot(EquipmentSlot slot, ItemDrop.ItemData item, string reason)
+        {
+            EnsureInitialized();
+            if (item?.m_shared == null || _inventory == null) return false;
+            var cell = CompanionGridLayout.CellFor(slot);
+            if (!CompanionGridLayout.AcceptsSlot(slot, item))
+            {
+                FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: {GetItemPrefabName(item)} does not fit {slot} ({reason}); kept in storage");
+                if (!_inventory.ContainsItem(item)) _inventory.AddItem(item);
+                return false;
+            }
+            var occupant = _inventory.GetItemAt(cell.x, cell.y);
+            if (occupant == item) { Reconcile(reason); return true; }
+            _reconcileDepth++;
+            try
+            {
+                if (occupant != null)
+                {
+                    if (HeldByHumanoid(Body, occupant)) Body.UnequipItem(occupant, false);
+                    if (!MoveToStorageRaw(occupant, $"replaced in {slot} ({reason})")) return false;
+                }
+                // An item moving into a back cell must not stay in a hand.
+                if (CompanionGridLayout.IsBackSlot(slot) && HeldByHumanoid(Body, item)) Body.UnequipItem(item, false);
+                SetCellRaw(item, cell);
+            }
+            finally { _reconcileDepth--; }
+            FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: {GetItemPrefabName(item)} -> {slot} cell ({cell.x},{cell.y}), {reason}");
+            _inventory.Changed();   // OnStorageInventoryChanged -> Reconcile -> vanilla EquipItem
+            return true;
+        }
+
+        /// <summary>Unequipping on the grid: vanilla UnequipItem, then the item leaves the bag (the old contract: callers put it
+        /// back into storage, into another slot, or hand it on).</summary>
+        private ItemDrop.ItemData TakeOutOfSlot(EquipmentSlot slot, string reason)
+        {
+            EnsureInitialized();
+            var item = GetEquippedItem(slot);
+            if (item == null) return null;
+            LogUnequip(slot, item, reason, 3);
+            _reconcileDepth++;
+            try
+            {
+                if (HeldByHumanoid(Body, item)) Body.UnequipItem(item, false);
+                item.m_equipped = false;
+                _inventory.m_inventory.Remove(item);
+            }
+            finally { _reconcileDepth--; }
+            _inventory.Changed();
             return item;
         }
 
         /// <summary>
- /// Gets all equipped items.
+        /// 0.2.361: keeps the grid and the Humanoid together (VA Inventory's rule). Runs on every bag change, at load and on a
+        /// short retry tick. (1) an item a cell does not accept goes to storage; (2) an item vanilla has equipped that is not in
+        /// its equip cell is unequipped; (3) an item in a hand/armour cell that vanilla has not equipped is equipped with
+        /// Humanoid.EquipItem; a refusal (attacking, dodging, broken) is retried, never bounced; an item vanilla put in the
+        /// other hand moves to that hand's cell; anything vanilla unequipped as a side effect goes to storage. Re-entrant
+        /// calls are folded into one more pass.
         /// </summary>
-    public Dictionary<EquipmentSlot, ItemDrop.ItemData> GetAllEquipped()
+        public void Reconcile(string why = "reconcile")
         {
-    return new Dictionary<EquipmentSlot, ItemDrop.ItemData>(_equippedItems);
-    }
+            if (_inventory == null || _isLoadingFromZDO) return;
+            if (_reconcileDepth > 0) { _reconcileAgain = true; return; }
+            var h = Body;
+            if (h == null || IsGhostPreview()) return;
+
+            bool moved = false, gearChanged = false;
+            _reconcileRetry = false;
+            for (int pass = 0; pass < 3; pass++)
+            {
+                _reconcileAgain = false;
+                _reconcileDepth++;
+                try
+                {
+                    var items = new List<ItemDrop.ItemData>(_inventory.GetAllItems());
+
+                    // (1) invalid items in equip/pouch/spare cells, or outside the grid, go to storage
+                    foreach (var it in items)
+                    {
+                        if (it?.m_shared == null) continue;
+                        var p = it.m_gridPos;
+                        bool spare = p.y == CompanionGridLayout.Height - 1 && p.x >= 0 && p.x < CompanionGridLayout.Width;
+                        if (CompanionGridLayout.IsStorage(p) || spare || CompanionGridLayout.Accepts(p, it)) continue;
+                        if (HeldByHumanoid(h, it)) { h.UnequipItem(it, false); gearChanged = true; }
+                        if (MoveToStorageRaw(it, $"invalid for cell ({p.x},{p.y}), reconcile")) moved = true;
+                    }
+
+                    // (2) equipped by vanilla but not in its equip cell (or not in the bag at all): unequip
+                    foreach (EquipmentSlot s in CompanionGridLayout.Slots)
+                    {
+                        if (CompanionGridLayout.IsBackSlot(s)) continue;
+                        var f = HumanoidField(h, s);
+                        if (f == null) continue;
+                        bool inCell = _inventory.ContainsItem(f) && CompanionGridLayout.TryGetEquipSlot(f.m_gridPos, out var cs) && cs == s;
+                        if (inCell) continue;
+                        h.UnequipItem(f, false);
+                        gearChanged = true;
+                        FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: unequip {s} {GetItemPrefabName(f)}, reconcile (not in an equip cell)");
+                    }
+
+                    // stale flags (vanilla saves m_equipped; a moved/cloned stack keeps it)
+                    foreach (var it in items)
+                        if (it != null && it.m_equipped && !HeldByHumanoid(h, it)) it.m_equipped = false;
+
+                    // (3) items in hand/armour cells that vanilla has not equipped
+                    foreach (EquipmentSlot s in CompanionGridLayout.Slots)
+                    {
+                        if (CompanionGridLayout.IsBackSlot(s)) continue;
+                        var c = CompanionGridLayout.CellFor(s);
+                        var it = _inventory.GetItemAt(c.x, c.y);
+                        if (it == null || HeldByHumanoid(h, it)) continue;
+
+                        var before = new List<ItemDrop.ItemData>();
+                        foreach (EquipmentSlot o in CompanionGridLayout.Slots)
+                        {
+                            if (CompanionGridLayout.IsBackSlot(o) || o == s) continue;
+                            var oc = CompanionGridLayout.CellFor(o);
+                            var other = _inventory.GetItemAt(oc.x, oc.y);
+                            if (other != null && HeldByHumanoid(h, other)) before.Add(other);
+                        }
+
+                        bool ok = false;
+                        try { ok = h.EquipItem(it, false); } catch (Exception e) { FiresLogger.LogDebug($"[CompanionInventory] EquipItem threw: {e.Message}"); }
+                        if (!ok)
+                        {
+                            _reconcileRetry = true;
+                            LogRefusal(s, it);
+                            continue;
+                        }
+                        gearChanged = true;
+                        FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: equip {s} {GetItemPrefabName(it)}, reconcile ({why})");
+
+                        // vanilla chose the other hand (torch, one-hander): follow it
+                        var landed = FieldSlotOf(h, it);
+                        if (landed.HasValue && landed.Value != s)
+                        {
+                            var lc = CompanionGridLayout.CellFor(landed.Value);
+                            var occ = _inventory.GetItemAt(lc.x, lc.y);
+                            if (occ != null && occ != it) MoveToStorageRaw(occ, $"replaced by {GetItemPrefabName(it)} in {landed.Value}, reconcile");
+                            SetCellRaw(it, lc);
+                            moved = true;
+                            FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: {GetItemPrefabName(it)} moved {s} -> {landed.Value} (vanilla's hand), reconcile");
+                        }
+
+                        // vanilla unequipped something else to make room (two-hander vs shield): it goes to storage
+                        foreach (var other in before)
+                        {
+                            if (HeldByHumanoid(h, other)) continue;
+                            if (MoveToStorageRaw(other, $"displaced by {GetItemPrefabName(it)}, reconcile")) moved = true;
+                        }
+                    }
+                }
+                finally { _reconcileDepth--; }
+                if (!_reconcileAgain) break;
+            }
+
+            if (moved) _inventory.Changed();   // runs Reconcile once more (converges: nothing left to move)
+            if (gearChanged)
+            {
+                RecalculateEquipmentBonuses();
+                _equipmentData?.RefreshAllEquipmentData();
+                OnEquipmentChanged?.Invoke(EquipmentSlot.RightHand, GetEquippedItem(EquipmentSlot.RightHand));
+                ApplyVisualEquipment();
+            }
+            // 0.2.367: back cells have no vanilla field, so a back-cell change never set gearChanged; redraw them here
+            if (BackCellsHash() != _lastBackCellsHash) RedrawBackVisuals($"back cells changed, {why}");
+            SyncPet(why);
+        }
+
+        // 0.2.382: the Pet cell (CompanionGridLayout.PetCell) is never vanilla-equipped; its item drives PetBridge.SetPet instead.
+        private string _lastPetRefused;
+
+        /// <summary>The item in the Pet cell, or null.</summary>
+        public ItemDrop.ItemData GetPetItem()
+        {
+            EnsureInitialized();
+            if (_inventory == null) return null;
+            var c = CompanionGridLayout.PetCell;
+            return _inventory.GetItemAt(c.x, c.y);
+        }
+
+        private void SyncPet(string why)
+        {
+            if (!FiresCore.Bridge.PetBridge.IsAvailable || _inventory == null) return;
+            if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
+            var h = Body;
+            if (h == null) return;
+            var item = GetPetItem();
+            string want = item?.m_dropPrefab?.name ?? "";
+            string have;
+            try { have = FiresCore.Bridge.PetBridge.GetPet(h) ?? ""; }
+            catch (Exception e) { FiresLogger.LogDebug($"[Companion] {CompanionNameForLog()} pet: GetPet threw {e.Message}"); return; }
+            bool wantNone = want.Length == 0;
+            SyncPetLevel(h, item, why);
+            if (wantNone ? have.Length == 0 : have.Length != 0 && _lastPetApplied == want) return;
+            if (_lastPetRefused == want) return;
+            string result;
+            try { result = FiresCore.Bridge.PetBridge.SetPet(h, want); }
+            catch (Exception e) { result = $"threw {e.Message}"; }
+            if (result == null) { _lastPetApplied = want; _lastPetRefused = null; }
+            else _lastPetRefused = want;
+            FiresLogger.LogDebug($"[Companion] {CompanionNameForLog()} pet: {(wantNone ? "none" : want)} ({result ?? "ok"}, {why})");
+        }
+
+        private string _lastPetApplied;
+
+        // 0.2.383: the pet buff for companions. RPGmaker's PetProgressApi (looked up by name; Core never references RPGmaker)
+        // takes the owner's pet level; level 0 = no buff. Sent whenever the Pet cell item's level differs from the last one sent,
+        // so a load, a swap or a removal (level 0) all reach it.
+        private int _lastPetLevel = -1;
+        private static bool s_progressLooked;
+        private static System.Reflection.MethodInfo s_setOwnerLevel, s_levelOf;
+
+        private void SyncPetLevel(Character owner, ItemDrop.ItemData item, string why)
+        {
+            if (!s_progressLooked)
+            {
+                s_progressLooked = true;
+                var api = HarmonyLib.AccessTools.TypeByName("FiresRPGmaker.Modules.Pets.Progress.PetProgressApi");
+                s_setOwnerLevel = api != null ? HarmonyLib.AccessTools.Method(api, "SetOwnerLevel", new[] { typeof(Character), typeof(int) }) : null;
+                s_levelOf = api != null ? HarmonyLib.AccessTools.Method(api, "LevelOf", new[] { typeof(ItemDrop.ItemData) }) : null;
+                FiresLogger.LogDebug($"[Companion] pet progress API: {(s_setOwnerLevel != null && s_levelOf != null ? "found" : "not found (pet buffs off for companions)")}");
+            }
+            if (s_setOwnerLevel == null || s_levelOf == null) return;
+            int level = 0;
+            try { if (item != null) level = (int)s_levelOf.Invoke(null, new object[] { item }); }
+            catch (Exception e) { FiresLogger.LogDebug($"[Companion] {CompanionNameForLog()} pet level: LevelOf threw {e.InnerException?.Message ?? e.Message}"); return; }
+            if (level == _lastPetLevel) return;
+            try { s_setOwnerLevel.Invoke(null, new object[] { owner, level }); _lastPetLevel = level; }
+            catch (Exception e) { FiresLogger.LogDebug($"[Companion] {CompanionNameForLog()} pet level: SetOwnerLevel threw {e.InnerException?.Message ?? e.Message}"); return; }
+            FiresLogger.LogDebug($"[Companion] {CompanionNameForLog()} pet level {level} ({why})");
+        }
+
+        /// <summary>0.2.382: clears the pet (death path). No-op without a pet mod or off the ZDO owner.</summary>
+        public void ClearPet(string why)
+        {
+            if (!FiresCore.Bridge.PetBridge.IsAvailable || _nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
+            var h = Body;
+            if (h == null) return;
+            string result;
+            try { result = FiresCore.Bridge.PetBridge.SetPet(h, ""); }
+            catch (Exception e) { result = $"threw {e.Message}"; }
+            _lastPetApplied = null;
+            _lastPetRefused = null;
+            SyncPetLevel(h, null, why);
+            FiresLogger.LogDebug($"[Companion] {CompanionNameForLog()} pet: none ({result ?? "ok"}, {why})");
+        }
+
+        private float _lastRefusalLog;
+        private void LogRefusal(EquipmentSlot s, ItemDrop.ItemData it)
+        {
+            if (Time.time - _lastRefusalLog < 2f) return;
+            _lastRefusalLog = Time.time;
+            var h = Body;
+            string why = h == null ? "no body" : h.InAttack() ? "attacking" : h.InDodge() ? "dodging"
+                : (it.m_shared.m_useDurability && it.m_durability <= 0f) ? "broken" : !_inventory.ContainsItem(it) ? "not in bag" : "vanilla refused";
+            FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: equip {s} {GetItemPrefabName(it)} refused ({why}), reconcile retries");
+        }
+
+        /// <summary>0.2.361: a vanilla Humanoid.EquipItem from elsewhere (AI swap, FireScare torch): the item moves into the cell of
+        /// the field vanilla put it in, the old occupant to storage (VA's Humanoid_EquipItem_AutoMoveToSlot).</summary>
+        internal void OnVanillaEquipped(ItemDrop.ItemData item)
+        {
+            if (_reconcileDepth > 0 || _isLoadingFromZDO || item == null || _inventory == null) return;
+            var slot = FieldSlotOf(Body, item);
+            if (slot == null) return;
+            var cell = CompanionGridLayout.CellFor(slot.Value);
+            if (_inventory.ContainsItem(item) && item.m_gridPos.x == cell.x && item.m_gridPos.y == cell.y) return;
+            _reconcileDepth++;
+            try
+            {
+                var occ = _inventory.GetItemAt(cell.x, cell.y);
+                if (occ != null && occ != item)
+                {
+                    if (HeldByHumanoid(Body, occ)) Body.UnequipItem(occ, false);
+                    MoveToStorageRaw(occ, $"replaced by vanilla equip of {GetItemPrefabName(item)}");
+                }
+                SetCellRaw(item, cell);
+            }
+            finally { _reconcileDepth--; }
+            FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: vanilla equip {slot.Value} {GetItemPrefabName(item)} -> its cell ({cell.x},{cell.y})");
+            _inventory.Changed();
+        }
+
+        /// <summary>0.2.361: a vanilla Humanoid.UnequipItem from elsewhere: an item in a hand/armour cell goes back to storage
+        /// (VA's UnequipItem_ReturnToInventory).</summary>
+        internal void OnVanillaUnequipped(ItemDrop.ItemData item)
+        {
+            if (_reconcileDepth > 0 || _isLoadingFromZDO || item == null || _inventory == null) return;
+            if (HeldByHumanoid(Body, item) || !_inventory.ContainsItem(item)) return;
+            if (!CompanionGridLayout.TryGetEquipSlot(item.m_gridPos, out var slot) || CompanionGridLayout.IsBackSlot(slot)) return;
+            _reconcileDepth++;
+            bool moved;
+            try { moved = MoveToStorageRaw(item, $"vanilla unequip from {slot}"); }
+            finally { _reconcileDepth--; }
+            if (moved) _inventory.Changed();
+        }
+
+        /// <summary>
+        /// 0.2.361: per equip slot, the cell item vs the Humanoid's equipped item vs what VisEquipment draws. Logs
+        /// "[EquipAudit] name: 0 mismatches" or one line per mismatching slot. Returns the mismatch count.
+        /// </summary>
+        public int AuditEquipment(string context = "")
+        {
+            EnsureInitialized();
+            var h = Body;
+            var vis = h != null ? h.m_visEquipment : GetComponent<VisEquipment>();
+            string name = CompanionNameForLog();
+            int bad = 0;
+            foreach (EquipmentSlot s in CompanionGridLayout.Slots)
+            {
+                var c = CompanionGridLayout.CellFor(s);
+                var cellItem = _inventory?.GetItemAt(c.x, c.y);
+                string cellName = cellItem != null ? GetItemPrefabName(cellItem) : "";
+                bool back = CompanionGridLayout.IsBackSlot(s);
+                var field = back ? null : HumanoidField(h, s);
+                string fieldName = back ? cellName : (field != null ? GetItemPrefabName(field) : "");
+                int drawn = DrawnHash(vis, s);
+                int want = string.IsNullOrEmpty(cellName) ? 0 : cellName.GetStableHashCode();
+                bool fieldOk = back || field == cellItem;
+                bool drawOk = vis == null || drawn == want || (drawn == -1);
+                if (fieldOk && drawOk) continue;
+                bad++;
+                string drawnName = drawn == 0 ? "-" : drawn == want ? cellName : $"#{drawn}";
+                FiresLogger.LogDebug($"[EquipAudit] {name} {s}: cell {(cellName == "" ? "-" : cellName)} / humanoid {(back ? "n/a" : fieldName == "" ? "-" : fieldName)} / drawn {drawnName}{(string.IsNullOrEmpty(context) ? "" : $" ({context})")}");
+            }
+            if (bad == 0) FiresLogger.LogDebug($"[EquipAudit] {name}: 0 mismatches{(string.IsNullOrEmpty(context) ? "" : $" ({context})")}");
+            return bad;
+        }
+
+        private static int DrawnHash(VisEquipment v, EquipmentSlot s)
+        {
+            if (v == null) return 0;
+            switch (s)
+            {
+                case EquipmentSlot.Helmet: return v.m_currentHelmetItemHash;
+                case EquipmentSlot.Chest: return v.m_currentChestItemHash;
+                case EquipmentSlot.Legs: return v.m_currentLegItemHash;
+                case EquipmentSlot.Shoulder: return v.m_currentShoulderItemHash;
+                case EquipmentSlot.Utility: return v.m_currentUtilityItemHash;
+                case EquipmentSlot.RightHand: return v.m_currentRightItemHash;
+                case EquipmentSlot.LeftHand: return v.m_currentLeftItemHash;
+                case EquipmentSlot.RightBack: return v.m_currentRightBackItemHash;
+                case EquipmentSlot.LeftBack: return v.m_currentLeftBackItemHash;
+                default: return 0;
+            }
+        }
+
+        /// <summary>0.2.361: after vanilla's SetupVisEquipment (which writes the back items from its hidden-hand fields), the
+        /// companion's back cells are drawn again, so the back weapons do not vanish on every equip.</summary>
+        internal void RedrawBackItems(VisEquipment vis)
+        {
+            if (vis == null || _inventory == null) return;
+            var h = Body;
+            var rc = CompanionGridLayout.CellFor(EquipmentSlot.RightBack);
+            var lc = CompanionGridLayout.CellFor(EquipmentSlot.LeftBack);
+            var r = _inventory.GetItemAt(rc.x, rc.y);
+            var l = _inventory.GetItemAt(lc.x, lc.y);
+            // 0.2.368: vanilla's hidden (sheathed) hand items are drawn on the back by SetupVisEquipment, and they skipped the clear
+            // below. One that no longer sits in an equip cell is stale (Unequip all left the bow drawn on the back): drop it.
+            if (h != null)
+            {
+                if (IsStaleHidden(h.m_hiddenRightItem)) { FiresLogger.LogDebug($"[CompanionInventory] stale hidden right item {GetItemPrefabName(h.m_hiddenRightItem)} cleared on '{CompanionNameForLog()}'"); h.m_hiddenRightItem.m_equipped = false; h.m_hiddenRightItem = null; }
+                if (IsStaleHidden(h.m_hiddenLeftItem)) { FiresLogger.LogDebug($"[CompanionInventory] stale hidden left item {GetItemPrefabName(h.m_hiddenLeftItem)} cleared on '{CompanionNameForLog()}'"); h.m_hiddenLeftItem.m_equipped = false; h.m_hiddenLeftItem = null; }
+            }
+            // 0.2.367: an EMPTY back cell clears its attachment too (Unequip all left a ghost bow drawn on the back)
+            if (h != null && h.m_hiddenRightItem == null) VisEquipmentCompat.SetRightBackItem(vis, r != null ? GetItemPrefabName(r) : "");
+            if (h != null && h.m_hiddenLeftItem == null) VisEquipmentCompat.SetLeftBackItem(vis, l != null ? GetItemPrefabName(l) : "", l != null ? l.m_variant : 0);
+            _lastBackCellsHash = BackCellsHash();
+        }
+
+        private int _lastBackCellsHash;
+
+        private bool IsStaleHidden(ItemDrop.ItemData it)
+        {
+            if (it == null || _inventory == null) return false;
+            if (!_inventory.ContainsItem(it)) return true;
+            return !CompanionGridLayout.TryGetEquipSlot(it.m_gridPos, out _);
+        }
+
+        private int BackCellsHash()
+        {
+            if (_inventory == null) return 0;
+            var rc = CompanionGridLayout.CellFor(EquipmentSlot.RightBack);
+            var lc = CompanionGridLayout.CellFor(EquipmentSlot.LeftBack);
+            var r = _inventory.GetItemAt(rc.x, rc.y);
+            var l = _inventory.GetItemAt(lc.x, lc.y);
+            return ((r != null ? GetItemPrefabName(r).GetStableHashCode() : 0) * 31) ^ (l != null ? GetItemPrefabName(l).GetStableHashCode() + l.m_variant : 0);
+        }
+
+        /// <summary>0.2.367: clears and redraws the back attachments from the back cells (no vanilla field drives them).</summary>
+        public void RedrawBackVisuals(string why)
+        {
+            var h = Body;
+            var vis = h != null ? h.m_visEquipment : GetComponent<VisEquipment>();
+            if (vis == null) return;
+            RedrawBackItems(vis);
+            FiresLogger.LogDebug($"[CompanionInventory] back visuals cleared/redrawn ({why}) on '{CompanionNameForLog()}'");
+        }
+
+        /// <summary>0.2.367: moves EVERY item in the 9 equip cells (back cells included) into storage rows. Refuses (returns -1,
+        /// nothing moved) when storage has too few free cells; never drops or deletes. Returns the moved count.</summary>
+        public int UnequipAllToStorage()
+        {
+            EnsureInitialized();
+            if (_inventory == null) return -1;
+            var h = Body;
+            var items = new List<ItemDrop.ItemData>();
+            foreach (EquipmentSlot s in CompanionGridLayout.Slots)
+            {
+                var c = CompanionGridLayout.CellFor(s);
+                var it = _inventory.GetItemAt(c.x, c.y);
+                if (it != null && !items.Contains(it)) items.Add(it);
+            }
+            // 0.2.382: the Pet cell empties too; the Reconcile below then clears the pet through PetBridge
+            var petItem = GetPetItem();
+            if (petItem != null && !items.Contains(petItem)) items.Add(petItem);
+            if (items.Count > CompanionGridLayout.FreeStorageCells(_inventory))
+            {
+                FiresLogger.LogDebug($"[CompanionInventory] unequip all refused on '{CompanionNameForLog()}': {items.Count} item(s), {CompanionGridLayout.FreeStorageCells(_inventory)} free storage cell(s)");
+                return -1;
+            }
+            int moved = 0;
+            _reconcileDepth++;
+            try
+            {
+                foreach (var it in items)
+                {
+                    if (h != null && HeldByHumanoid(h, it)) h.UnequipItem(it, false);
+                    if (CompanionGridLayout.FirstFreeStorageCell(_inventory).x < 0) break;
+                    if (MoveToStorageRaw(it, "unequip all")) moved++;
+                }
+            }
+            finally { _reconcileDepth--; }
+            _inventory.Changed();
+            Reconcile("unequip all");
+            ApplyVisualEquipment();
+            RedrawBackVisuals("unequip all");
+            return moved;
+        }
+
+        private static readonly Dictionary<string, float> _unequipLogTimes = new Dictionary<string, float>();
+
+        internal string CompanionNameForLog()
+        {
+            var ch = GetComponent<Character>();
+            string n = ch != null ? ch.GetHoverName() : null;
+            return string.IsNullOrEmpty(n) ? gameObject.name : n;
+        }
+
+        /// <summary>0.2.360: Debug line for every companion unequip: slot, item, caller, companion. Rate-limited per
+        /// (companion, slot, item, caller) to one line a second, since holstering/combat paths run in update loops.</summary>
+        internal void LogUnequip(EquipmentSlot slot, ItemDrop.ItemData item, string path, int frame = 2)
+        {
+            if (!FiresLogger.DebugEnabled) return;
+            string caller = "?";
+            try
+            {
+                var m = new System.Diagnostics.StackFrame(frame, false).GetMethod();
+                if (m != null) caller = (m.DeclaringType != null ? m.DeclaringType.Name + "." : "") + m.Name;
+            }
+            catch { }
+            string itemName = item == null ? "<none>" : (item.m_dropPrefab != null ? item.m_dropPrefab.name : item.m_shared?.m_name);
+            string key = GetInstanceID() + "|" + slot + "|" + itemName + "|" + caller;
+            float now = Time.unscaledTime;
+            if (_unequipLogTimes.TryGetValue(key, out float last) && now - last < 1f) return;
+            if (_unequipLogTimes.Count > 512) _unequipLogTimes.Clear();
+            _unequipLogTimes[key] = now;
+            FiresLogger.LogDebug($"[CompanionInventory] unequip {slot}: {itemName} on '{CompanionNameForLog()}' via {path}, caller {caller}");
+        }
+
+        /// <summary>
+        /// Gets the equipped item for a slot: 0.2.361, the item in the slot's grid cell.
+        /// </summary>
+        public ItemDrop.ItemData GetEquippedItem(EquipmentSlot slot)
+        {
+            EnsureInitialized();
+            if (_inventory == null) return null;
+            var c = CompanionGridLayout.CellFor(slot);
+            return _inventory.GetItemAt(c.x, c.y);
+        }
+
+        /// <summary>
+        /// Gets all equipped items (the occupied equipment cells).
+        /// </summary>
+        public Dictionary<EquipmentSlot, ItemDrop.ItemData> GetAllEquipped()
+        {
+            var d = new Dictionary<EquipmentSlot, ItemDrop.ItemData>();
+            foreach (EquipmentSlot s in CompanionGridLayout.Slots)
+            {
+                var it = GetEquippedItem(s);
+                if (it != null) d[s] = it;
+            }
+            return d;
+        }
+
+        // Read-only view kept for the older readers in this file.
+        private Dictionary<EquipmentSlot, ItemDrop.ItemData> _equippedItems => GetAllEquipped();
 
         /// <summary>
         /// Checks if an item type can be equipped to a slot.
@@ -866,50 +1671,22 @@ case ItemDrop.ItemData.ItemType.Utility:
   /// <summary>
         /// Sets the equipment prefab name for a slot (used for persistence).
   /// </summary>
-     private void SetEquipmentPrefabName(EquipmentSlot slot, string prefabName, int quality, int stack = 1)
-        {
-            if (string.IsNullOrEmpty(prefabName)) _equipStacks.Remove(slot);
-            else _equipStacks[slot] = Mathf.Max(1, stack);
-  switch (slot)
-   {
-  case EquipmentSlot.Helmet: _equipHelmet = prefabName; _equipHelmetQuality = quality; break;
-         case EquipmentSlot.Chest: _equipChest = prefabName; _equipChestQuality = quality; break;
-       case EquipmentSlot.Legs: _equipLegs = prefabName; _equipLegsQuality = quality; break;
-            case EquipmentSlot.Shoulder: _equipShoulder = prefabName; _equipShoulderQuality = quality; break;
-                case EquipmentSlot.Utility: _equipUtility = prefabName; _equipUtilityQuality = quality; break;
-           case EquipmentSlot.RightHand: _equipRightHand = prefabName; _equipRightHandQuality = quality; break;
-    case EquipmentSlot.LeftHand: _equipLeftHand = prefabName; _equipLeftHandQuality = quality; break;
-   case EquipmentSlot.RightBack: _equipRightBack = prefabName; _equipRightBackQuality = quality; break;
-          case EquipmentSlot.LeftBack: _equipLeftBack = prefabName; _equipLeftBackQuality = quality; break;
-            }
-        }
-
- /// <summary>
-        /// Gets the equipment prefab name for a slot.
+        /// <summary>
+        /// Gets the equipment prefab name for a slot (0.2.361: of the item in the slot's cell; "" when empty).
         /// </summary>
         private string GetEquipmentPrefabName(EquipmentSlot slot)
         {
-            return slot switch
-   {
-      EquipmentSlot.Helmet => _equipHelmet,
-      EquipmentSlot.Chest => _equipChest,
-      EquipmentSlot.Legs => _equipLegs,
-      EquipmentSlot.Shoulder => _equipShoulder,
-      EquipmentSlot.Utility => _equipUtility,
-      EquipmentSlot.RightHand => _equipRightHand,
-      EquipmentSlot.LeftHand => _equipLeftHand,
-      EquipmentSlot.RightBack => _equipRightBack,
-      EquipmentSlot.LeftBack => _equipLeftBack,
-            _ => ""
-   };
+            var item = GetEquippedItem(slot);
+            return item != null ? GetItemPrefabName(item) : "";
         }
-        
+
         /// <summary>
-        /// Gets the equipment quality for a slot.
+        /// The stack of the item in the slot's cell (1 when empty).
         /// </summary>
         private int GetEquipmentStack(EquipmentSlot slot)
         {
-            return _equipStacks.TryGetValue(slot, out var stack) ? Mathf.Max(1, stack) : 1;
+            var item = GetEquippedItem(slot);
+            return item != null ? Mathf.Max(1, item.m_stack) : 1;
         }
 
         /// <summary>The equipped item's durability, or <see cref="DurabilityUnset"/> when the slot is empty or the
@@ -927,8 +1704,9 @@ case ItemDrop.ItemData.ItemType.Utility:
         /// </summary>
         public void SetEquippedStack(EquipmentSlot slot, int stack)
         {
-            if (!_equippedItems.ContainsKey(slot)) return;
-            _equipStacks[slot] = Mathf.Max(1, stack);
+            var item = GetEquippedItem(slot);
+            if (item == null) return;
+            item.m_stack = Mathf.Max(1, stack);
         }
 
         public int GetEquipmentStackPublic(EquipmentSlot slot)
@@ -938,19 +1716,8 @@ case ItemDrop.ItemData.ItemType.Utility:
 
         private int GetEquipmentQuality(EquipmentSlot slot)
         {
-  return slot switch
-     {
-     EquipmentSlot.Helmet => _equipHelmetQuality,
-     EquipmentSlot.Chest => _equipChestQuality,
-     EquipmentSlot.Legs => _equipLegsQuality,
-     EquipmentSlot.Shoulder => _equipShoulderQuality,
-     EquipmentSlot.Utility => _equipUtilityQuality,
-     EquipmentSlot.RightHand => _equipRightHandQuality,
-     EquipmentSlot.LeftHand => _equipLeftHandQuality,
-     EquipmentSlot.RightBack => _equipRightBackQuality,
-     EquipmentSlot.LeftBack => _equipLeftBackQuality,
-     _ => 1
-   };
+            var item = GetEquippedItem(slot);
+            return item != null ? Mathf.Max(1, item.m_quality) : 1;
         }
 
    /// <summary>
@@ -1003,9 +1770,6 @@ case ItemDrop.ItemData.ItemType.Utility:
             // Update the ItemData quality
             item.m_quality = newQuality;
             
-            // Update the stored quality value for persistence
-            SetEquipmentQuality(foundSlot.Value, newQuality);
-            
             // Recalculate bonuses since quality affects armor/damage
             RecalculateEquipmentBonuses();
             
@@ -1027,41 +1791,11 @@ case ItemDrop.ItemData.ItemType.Utility:
             return true;
         }
         
-        /// <summary>
-        /// Sets the quality value for an equipment slot (used internally for persistence).
-        /// </summary>
-        private void SetEquipmentQuality(EquipmentSlot slot, int quality)
-        {
-            switch (slot)
-            {
-                case EquipmentSlot.Helmet: _equipHelmetQuality = quality; break;
-                case EquipmentSlot.Chest: _equipChestQuality = quality; break;
-                case EquipmentSlot.Legs: _equipLegsQuality = quality; break;
-                case EquipmentSlot.Shoulder: _equipShoulderQuality = quality; break;
-                case EquipmentSlot.Utility: _equipUtilityQuality = quality; break;
-                case EquipmentSlot.RightHand: _equipRightHandQuality = quality; break;
-                case EquipmentSlot.LeftHand: _equipLeftHandQuality = quality; break;
-                case EquipmentSlot.RightBack: _equipRightBackQuality = quality; break;
-                case EquipmentSlot.LeftBack: _equipLeftBackQuality = quality; break;
-            }
-        }
-
   /// <summary>
-  /// Checks if any equipment has been loaded (by prefab name).
+  /// Checks if any equipment cell is occupied.
         /// Used to determine if vault restore is needed.
         /// </summary>
-        public bool HasAnyEquipmentLoaded()
- {
-            return !string.IsNullOrEmpty(_equipHelmet) ||
-         !string.IsNullOrEmpty(_equipChest) ||
-         !string.IsNullOrEmpty(_equipLegs) ||
-         !string.IsNullOrEmpty(_equipShoulder) ||
-         !string.IsNullOrEmpty(_equipUtility) ||
-         !string.IsNullOrEmpty(_equipRightHand) ||
-         !string.IsNullOrEmpty(_equipLeftHand) ||
-         !string.IsNullOrEmpty(_equipRightBack) ||
-         !string.IsNullOrEmpty(_equipLeftBack);
-}
+        public bool HasAnyEquipmentLoaded() => GetAllEquipped().Count > 0;
 
         /// <summary>
         /// Alias for HasAnyEquipmentLoaded for compatibility.
@@ -1073,33 +1807,12 @@ case ItemDrop.ItemData.ItemType.Utility:
         /// </summary>
         public void ClearAllEquipment()
         {
+            // 0.2.361: each slot's item leaves the bag (as before, when the record dropped it).
             foreach (EquipmentSlot slot in Enum.GetValues(typeof(EquipmentSlot)))
             {
                 UnequipSlot(slot);
             }
-            
-            // Clear prefab name strings
-            _equipHelmet = "";
-            _equipChest = "";
-            _equipLegs = "";
-            _equipShoulder = "";
-            _equipUtility = "";
-            _equipRightHand = "";
-            _equipLeftHand = "";
-            _equipRightBack = "";
-            _equipLeftBack = "";
-            
-            // Reset qualities
-            _equipHelmetQuality = 1;
-            _equipChestQuality = 1;
-            _equipLegsQuality = 1;
-            _equipShoulderQuality = 1;
-            _equipUtilityQuality = 1;
-            _equipRightHandQuality = 1;
-            _equipLeftHandQuality = 1;
-            _equipRightBackQuality = 1;
-            _equipLeftBackQuality = 1;
-            
+
             // Update visuals
             ApplyVisualEquipment();
         }
@@ -1248,14 +1961,85 @@ case ItemDrop.ItemData.ItemType.Utility:
             // CRITICAL: Skip equipment on ghost/preview objects (hammer placement preview)
             if (IsGhostPreview()) return;
 
-          // Set the prefab name for persistence
-            SetEquipmentPrefabName(slot, prefabName, quality, stack);
+            // 0.2.362: new vault saves carry no equipment list (worn gear is in the saved bag), so this only runs for an
+            // older vault entry. Nothing is placed here: the entry is collected and the vault restore calls
+            // CommitLegacyVaultEquipment in the same call, right after its bag Load.
+            _pendingLegacyEquip.RemoveAll(p => p.slot == slot);
+            _pendingLegacyEquip.Add((slot, prefabName, quality, stack));
+            FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: collected legacy vault equipment {slot} = {prefabName} (quality {quality}, stack {stack})");
+        }
 
-    // Recreate the ItemData
-            LoadEquipmentSlotFromPrefab(slot, prefabName, quality, stack);
+        /// <summary>
+        /// 0.2.362: places the legacy vault equipment collected by RestoreEquipmentFromVault. Call it synchronously right
+        /// after the vault's bag Load (or with no Load when the vault had no bag). Atomic and idempotent: the companion ZDO is
+        /// marked migrated BEFORE anything is placed, so a second run is a no-op; a piece whose prefab+quality is already
+        /// anywhere in the bag (storage, pouch or equip cells) is never re-created.
+        /// </summary>
+        public void CommitLegacyVaultEquipment(string source)
+        {
+            if (_pendingLegacyEquip.Count == 0) return;
+            var pending = new List<(EquipmentSlot slot, string prefab, int quality, int stack)>(_pendingLegacyEquip);
+            _pendingLegacyEquip.Clear();
+            EnsureInitialized();
+            if (_inventory == null || IsGhostPreview()) return;
 
-     if (FiresLogger.VerboseEnabled)
-         Debug.Log($"[CompanionInventory] Restored {slot} = {prefabName} (quality {quality}, stack {stack}) from vault");
+            var zdo = _nview != null ? _nview.GetZDO() : null;
+            if (zdo != null)
+            {
+                if (zdo.GetInt(LegacyVaultMigratedKey, 0) != 0)
+                {
+                    FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: legacy vault equipment ({pending.Count} piece(s), {source}) skipped: companion already migrated");
+                    return;
+                }
+                if (_nview.IsOwner()) zdo.Set(LegacyVaultMigratedKey, 1);
+            }
+
+            int placed = 0;
+            _reconcileDepth++;
+            try
+            {
+                foreach (var p in pending)
+                {
+                    var cell = CompanionGridLayout.CellFor(p.slot);
+                    var match = FindBagItem(p.prefab, p.quality);
+                    if (match != null)
+                    {
+                        // already in the bag: use it; only a storage copy is moved into an empty equip cell
+                        if (_inventory.GetItemAt(cell.x, cell.y) == null && CompanionGridLayout.IsStorage(match.m_gridPos))
+                        {
+                            SetCellRaw(match, cell);
+                            placed++;
+                            FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: legacy vault {p.slot} = {p.prefab} q{p.quality} placed (found in bag), {source}");
+                        }
+                        else
+                            FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: legacy vault {p.slot} = {p.prefab} q{p.quality} left at ({match.m_gridPos.x},{match.m_gridPos.y}) (found in bag), {source}");
+                        continue;
+                    }
+                    var occ = _inventory.GetItemAt(cell.x, cell.y);
+                    if (occ != null && !MoveToStorageRaw(occ, "legacy vault equipment owns this cell")) continue;
+                    var made = CreateItemFromPrefab(p.prefab, p.quality, p.stack, DurabilityUnset);
+                    if (made == null) continue;
+                    SetCellRaw(made, cell);
+                    placed++;
+                    FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: legacy vault {p.slot} = {p.prefab} q{p.quality} placed (re-created), {source}");
+                }
+            }
+            finally { _reconcileDepth--; }
+            if (placed > 0)
+            {
+                Reconcile("legacy vault equipment");
+                RecalculateEquipmentBonuses();
+                SaveToZDO();
+            }
+        }
+
+        /// <summary>Any item of this prefab + quality anywhere in the bag (storage, pouch, equip, spare), or null.</summary>
+        private ItemDrop.ItemData FindBagItem(string prefab, int quality)
+        {
+            if (_inventory == null || string.IsNullOrEmpty(prefab)) return null;
+            foreach (var it in _inventory.GetAllItems())
+                if (it != null && it.m_quality == quality && GetItemPrefabName(it) == prefab) return it;
+            return null;
         }
 
         /// <summary>
@@ -1323,6 +2107,24 @@ case ItemDrop.ItemData.ItemType.Utility:
 
             try
         {
+                // 0.2.361: the bag is about to be replaced by new ItemData objects; vanilla must let go of the old ones first
+                // (local only; nothing is saved while _isLoadingFromZDO).
+                var body = Body;
+                if (body != null)
+                {
+                    _reconcileDepth++;
+                    try { body.UnequipAllItems(); } catch (Exception e) { FiresLogger.LogDebug($"[CompanionInventory] UnequipAllItems before load: {e.Message}"); }
+                    finally { _reconcileDepth--; }
+                }
+                // Grow to 8 x 11 before Load so saved pouch/equip positions are valid (old 6x4 / 8x4 positions all fit).
+                if (_inventory.m_width < CompanionGridLayout.Width) _inventory.m_width = CompanionGridLayout.Width;
+                if (_inventory.m_height < CompanionGridLayout.Height) _inventory.m_height = CompanionGridLayout.Height;
+                if (!_loggedDimensions)
+                {
+                    _loggedDimensions = true;
+                    FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()} storage {_inventory.GetWidth()}x{_inventory.GetHeight()} = {_inventory.GetWidth() * _inventory.GetHeight()} (rows 0-3 storage 32, rows 4-6 pouches Tool 4 / Ammo 3 / Food 3, rows 7-9 equipment, row 10 spare)");
+                }
+
      // Load storage inventory data
 string inventoryData = zdo.GetString("companion_inventory", "");
    if (!string.IsNullOrEmpty(inventoryData))
@@ -1333,88 +2135,15 @@ string inventoryData = zdo.GetString("companion_inventory", "");
           Debug.Log($"[CompanionInventory] Loaded storage inventory with {_inventory.GetAllItems().Count} items");
      }
 
-                // Try the new packed equipment field first (single base64 ZPackage with
-                // all 9 slots). Falls back to the legacy per-slot fields below if the
-                // packed field is missing - that path will auto-migrate on next save.
-                bool loadedFromPacked = false;
-                string packedEquip = zdo.GetString("companion_equipment", "");
-                if (!string.IsNullOrEmpty(packedEquip))
-                {
-                    try
-                    {
-                        var equipmentPackage = new ZPackage(packedEquip);
-                        int version = equipmentPackage.ReadInt(); // 1 = name+quality, 2 = +stack, 3 = +durability
-                        _equipStacks.Clear();
-                        _loadedDurability.Clear();
-                        void ReadSlot(EquipmentSlot slot)
-                        {
-                            int stack = version >= 2 ? equipmentPackage.ReadInt() : 1;
-                            if (stack > 1) _equipStacks[slot] = stack;
-                            float durability = version >= 3 ? equipmentPackage.ReadSingle() : DurabilityUnset;
-                            if (durability >= 0f) _loadedDurability[slot] = durability;
-                        }
-                        _equipHelmet     = equipmentPackage.ReadString(); _equipHelmetQuality     = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.Helmet);
-                        _equipChest      = equipmentPackage.ReadString(); _equipChestQuality      = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.Chest);
-                        _equipLegs       = equipmentPackage.ReadString(); _equipLegsQuality       = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.Legs);
-                        _equipShoulder   = equipmentPackage.ReadString(); _equipShoulderQuality   = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.Shoulder);
-                        _equipUtility    = equipmentPackage.ReadString(); _equipUtilityQuality    = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.Utility);
-                        _equipRightHand  = equipmentPackage.ReadString(); _equipRightHandQuality  = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.RightHand);
-                        _equipLeftHand   = equipmentPackage.ReadString(); _equipLeftHandQuality   = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.LeftHand);
-                        _equipRightBack  = equipmentPackage.ReadString(); _equipRightBackQuality  = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.RightBack);
-                        _equipLeftBack   = equipmentPackage.ReadString(); _equipLeftBackQuality   = equipmentPackage.ReadInt(); ReadSlot(EquipmentSlot.LeftBack);
-                        loadedFromPacked = true;
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogWarning($"[CompanionInventory] Packed equipment field corrupt, falling back to legacy fields: {ex.Message}");
-                    }
-                }
+                // 0.2.361 MIGRATION: a save from before the grid kept worn gear in a separate record (the packed
+                // "companion_equipment" field or the older per-slot keys), outside the bag. Place those pieces into their
+                // slot cells (a 0.2.360-adopted copy left in storage with m_equipped is used when found, else re-created
+                // from prefab + quality as the old load did), then blank the old keys. Runs once per companion ZDO.
+                if (!_hasCompletedInitialLoad && zdo.GetInt(GridVersionKey, 0) < 1 && ObjectDB.instance != null)
+                    MigrateLegacyEquipment(zdo);
 
-                if (!loadedFromPacked)
-                {
-                    _equipStacks.Clear();
-                    // Legacy path - read 18 per-slot fields. Next SaveToZDO will migrate
-                    // them into the packed field and remove the legacy keys automatically.
-       _equipHelmet = zdo.GetString("companion_equip_helmet", "");
-       _equipChest = zdo.GetString("companion_equip_chest", "");
-       _equipLegs = zdo.GetString("companion_equip_legs", "");
-       _equipShoulder = zdo.GetString("companion_equip_shoulder", "");
-       _equipUtility = zdo.GetString("companion_equip_utility", "");
-       _equipRightHand = zdo.GetString("companion_equip_righthand", "");
-       _equipLeftHand = zdo.GetString("companion_equip_lefthand", "");
-       _equipRightBack = zdo.GetString("companion_equip_rightback", "");
-       _equipLeftBack = zdo.GetString("companion_equip_leftback", "");
-
-       // Load quality values
-          _equipHelmetQuality = zdo.GetInt("companion_equip_helmet_quality", 1);
-          _equipChestQuality = zdo.GetInt("companion_equip_chest_quality", 1);
-          _equipLegsQuality = zdo.GetInt("companion_equip_legs_quality", 1);
-          _equipShoulderQuality = zdo.GetInt("companion_equip_shoulder_quality", 1);
-          _equipUtilityQuality = zdo.GetInt("companion_equip_utility_quality", 1);
-          _equipRightHandQuality = zdo.GetInt("companion_equip_righthand_quality", 1);
-          _equipLeftHandQuality = zdo.GetInt("companion_equip_lefthand_quality", 1);
-          _equipRightBackQuality = zdo.GetInt("companion_equip_rightback_quality", 1);
-          _equipLeftBackQuality = zdo.GetInt("companion_equip_leftback_quality", 1);
-                }
-
-       // Log what we loaded - only for tamed companions when verbose is enabled
-         if (_companion?.isTamed == true && FiresLogger.VerboseEnabled)
-             Debug.Log($"[CompanionInventory] Loaded equipment prefabs - Helmet:{_equipHelmet}, Chest:{_equipChest}, Legs:{_equipLegs}, RightHand:{_equipRightHand}");
-
-            // Recreate ItemData from prefab names (only if ObjectDB is ready)
-       _equippedItems.Clear();
-                if (ObjectDB.instance != null)
-                {
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.Helmet, _equipHelmet, _equipHelmetQuality, GetEquipmentStack(EquipmentSlot.Helmet));
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.Chest, _equipChest, _equipChestQuality, GetEquipmentStack(EquipmentSlot.Chest));
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.Legs, _equipLegs, _equipLegsQuality, GetEquipmentStack(EquipmentSlot.Legs));
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.Shoulder, _equipShoulder, _equipShoulderQuality, GetEquipmentStack(EquipmentSlot.Shoulder));
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.Utility, _equipUtility, _equipUtilityQuality, GetEquipmentStack(EquipmentSlot.Utility));
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.RightHand, _equipRightHand, _equipRightHandQuality, GetEquipmentStack(EquipmentSlot.RightHand));
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.LeftHand, _equipLeftHand, _equipLeftHandQuality, GetEquipmentStack(EquipmentSlot.LeftHand));
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.RightBack, _equipRightBack, _equipRightBackQuality, GetEquipmentStack(EquipmentSlot.RightBack));
-    LoadEquipmentSlotFromPrefab(EquipmentSlot.LeftBack, _equipLeftBack, _equipLeftBackQuality, GetEquipmentStack(EquipmentSlot.LeftBack));
-         }
+                // Items whose saved cell is not valid for them (old saves used rows past the storage for other things)
+                // go to storage in the Reconcile after this load.
 
  // Recalculate bonuses after loading
       RecalculateEquipmentBonuses();
@@ -1434,6 +2163,8 @@ string inventoryData = zdo.GetString("companion_inventory", "");
      
      // Mark initial load as complete
            _hasCompletedInitialLoad = true;
+           // 0.2.347 (companion_storage persist read [] right after a reload): the storage is filled here, after Awake; at Debug.
+           FiresLogger.LogDebug($"[CompanionInventory] {_companion?.companionName}: storage loaded from its ZDO, {_inventory.GetAllItems().Count} item(s), owner {(_nview != null && _nview.IsValid() && _nview.IsOwner())}");
            
            // Update the equipment hash for change detection
            _lastEquipmentHash = CalculateEquipmentHash(zdo);
@@ -1452,8 +2183,123 @@ string inventoryData = zdo.GetString("companion_inventory", "");
     // Clear the loading flag
   _isLoadingFromZDO = false;
             }
+
+            // 0.2.361: equip what sits in the equip cells, send invalid cell items to storage, clear stale flags.
+            Reconcile("load");
         }
-        
+
+        /// <summary>0.2.361: the old per-slot equipment record (packed field or legacy keys) as a list.</summary>
+        private static List<(EquipmentSlot slot, string prefab, int quality, int stack, float durability)> ReadLegacyEquipment(ZDO zdo)
+        {
+            var list = new List<(EquipmentSlot, string, int, int, float)>();
+            var order = new[] { EquipmentSlot.Helmet, EquipmentSlot.Chest, EquipmentSlot.Legs, EquipmentSlot.Shoulder, EquipmentSlot.Utility,
+                                EquipmentSlot.RightHand, EquipmentSlot.LeftHand, EquipmentSlot.RightBack, EquipmentSlot.LeftBack };
+            string packed = zdo.GetString("companion_equipment", "");
+            if (!string.IsNullOrEmpty(packed))
+            {
+                try
+                {
+                    var pkg = new ZPackage(packed);
+                    int version = pkg.ReadInt(); // 1 = name+quality, 2 = +stack, 3 = +durability
+                    foreach (var s in order)
+                    {
+                        string name = pkg.ReadString();
+                        int quality = pkg.ReadInt();
+                        int stack = version >= 2 ? pkg.ReadInt() : 1;
+                        float durability = version >= 3 ? pkg.ReadSingle() : DurabilityUnset;
+                        if (!string.IsNullOrEmpty(name)) list.Add((s, name, quality, stack, durability));
+                    }
+                    return list;
+                }
+                catch (Exception ex)
+                {
+                    FiresLogger.LogDebug($"[CompanionInventory] old packed equipment field unreadable, trying the per-slot keys: {ex.Message}");
+                    list.Clear();
+                }
+            }
+            string[] keys = { "helmet", "chest", "legs", "shoulder", "utility", "righthand", "lefthand", "rightback", "leftback" };
+            for (int i = 0; i < order.Length; i++)
+            {
+                string name = zdo.GetString("companion_equip_" + keys[i], "");
+                if (!string.IsNullOrEmpty(name))
+                    list.Add((order[i], name, zdo.GetInt("companion_equip_" + keys[i] + "_quality", 1), 1, DurabilityUnset));
+            }
+            return list;
+        }
+
+        private void MigrateLegacyEquipment(ZDO zdo)
+        {
+            var old = ReadLegacyEquipment(zdo);
+            // 0.2.362: mark migrated BEFORE placing anything, so a second run (re-entry, a second load) is a no-op.
+            bool owner = _nview != null && _nview.IsOwner();
+            if (owner) zdo.Set(GridVersionKey, 1);
+            int placed = 0, fromStorage = 0;
+            foreach (var e in old)
+            {
+                var cell = CompanionGridLayout.CellFor(e.slot);
+                var occ = _inventory.GetItemAt(cell.x, cell.y);
+                if (occ != null && GetItemPrefabName(occ) == e.prefab) continue;   // already there
+
+                // 0.2.362: any item of this prefab+quality anywhere in the bag (storage, pouch, equip) is used, never re-created
+                ItemDrop.ItemData found = FindBagItem(e.prefab, e.quality);
+                if (found != null)
+                {
+                    if (!CompanionGridLayout.IsStorage(found.m_gridPos))
+                    {
+                        FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: migration {e.slot} = {e.prefab} q{e.quality} left at ({found.m_gridPos.x},{found.m_gridPos.y}) (found in bag)");
+                        continue;
+                    }
+                    if (occ != null && !MoveToStorageRaw(occ, "migration: old record owns this cell")) continue;
+                    SetCellRaw(found, cell);
+                    fromStorage++;
+                    FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: migration {e.slot} = {e.prefab} q{e.quality} placed (found in bag)");
+                }
+                else
+                {
+                    if (occ != null && !MoveToStorageRaw(occ, "migration: old record owns this cell")) continue;
+                    var made = CreateItemFromPrefab(e.prefab, e.quality, e.stack, e.durability);
+                    if (made == null) continue;
+                    SetCellRaw(made, cell);
+                    FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: migration {e.slot} = {e.prefab} q{e.quality} placed (re-created)");
+                }
+                placed++;
+            }
+            if (owner)
+            {
+                zdo.Set("companion_equipment", "");
+                foreach (var k in new[] { "helmet", "chest", "legs", "shoulder", "utility", "righthand", "lefthand", "rightback", "leftback" })
+                {
+                    zdo.Set("companion_equip_" + k, "");
+                    zdo.RemoveInt("companion_equip_" + k + "_quality");
+                }
+                zdo.Set(GridVersionKey, 1);
+            }
+            if (old.Count > 0 || placed > 0)
+                FiresLogger.LogDebug($"[CompanionInventory] {CompanionNameForLog()}: migrated the old equipment record into the grid: {placed} of {old.Count} piece(s) placed ({fromStorage} from storage), old keys blanked");
+        }
+
+        /// <summary>A fresh ItemData from an item prefab (quality, stack, durability), or null.</summary>
+        private ItemDrop.ItemData CreateItemFromPrefab(string prefabName, int quality, int stack, float durability)
+        {
+            if (string.IsNullOrEmpty(prefabName) || ObjectDB.instance == null) return null;
+            var itemPrefab = ObjectDB.instance.GetItemPrefab(prefabName);
+            var itemDrop = itemPrefab != null ? itemPrefab.GetComponent<ItemDrop>() : null;
+            if (itemDrop?.m_itemData?.m_shared == null)
+            {
+                Debug.LogWarning($"[CompanionInventory] Could not find prefab {prefabName}");
+                return null;
+            }
+            var itemData = itemDrop.m_itemData.Clone();
+            itemData.m_quality = Mathf.Max(1, quality);
+            itemData.m_stack = Mathf.Max(1, stack);
+            itemData.m_dropPrefab = itemPrefab;
+            itemData.m_durability = durability >= 0f ? durability : itemData.GetMaxDurability();
+            itemData.m_equipped = false;
+            var icons = itemData.m_shared.m_icons;
+            itemData.m_variant = icons != null && icons.Length > 0 ? Mathf.Clamp(itemData.m_variant, 0, icons.Length - 1) : 0;
+            return itemData;
+        }
+
         /// <summary>
         /// Third attempt at applying visual equipment - called even later to catch edge cases.
         /// </summary>
@@ -1490,8 +2336,6 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
            itemData.m_quality = quality;
            itemData.m_stack = Mathf.Max(1, stack);
           itemData.m_dropPrefab = itemPrefab; // Important for visual equipment
-          if (_loadedDurability.TryGetValue(slot, out float savedDurability)) itemData.m_durability = savedDurability;
-          
      // CRITICAL: Clamp m_variant to prevent IndexOutOfRangeException in GetIcon()
      if (itemData.m_shared?.m_icons != null && itemData.m_shared.m_icons.Length > 0)
      {
@@ -1502,7 +2346,9 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
          itemData.m_variant = 0;
      }
      
-      _equippedItems[slot] = itemData;
+      // 0.2.361: into the slot's grid cell (old occupant to storage); Reconcile equips it.
+      itemData.m_equipped = false;
+      PlaceInSlot(slot, itemData, "LoadEquipmentSlotFromPrefab");
 
   if (FiresLogger.VerboseEnabled)
       Debug.Log($"[CompanionInventory] Loaded equipment: {slot} = {prefabName} (quality {quality})");
@@ -1686,157 +2532,37 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
         {
             var equipment = new Dictionary<CompanionInventory.EquipmentSlot, string>();
 
-            // Armor slots - always show
-            equipment[CompanionInventory.EquipmentSlot.Helmet] = _equipHelmet ?? "";
-            equipment[CompanionInventory.EquipmentSlot.Chest] = _equipChest ?? "";
-            equipment[CompanionInventory.EquipmentSlot.Legs] = _equipLegs ?? "";
-            equipment[CompanionInventory.EquipmentSlot.Shoulder] = _equipShoulder ?? "";
-            equipment[CompanionInventory.EquipmentSlot.Utility] = _equipUtility ?? "";
-            
-            // Weapon slots - hand takes priority over back for the same weapon
-            string rightHand = _equipRightHand ?? "";
-            string leftHand = _equipLeftHand ?? "";
-            string rightBack = _equipRightBack ?? "";
-            string leftBack = _equipLeftBack ?? "";
-            
-            // Helper to normalize prefab names for comparison (strip (Clone) suffix)
-            string NormalizeName(string name)
-            {
-                if (string.IsNullOrEmpty(name)) return "";
-                if (name.EndsWith("(Clone)"))
-                    return name.Substring(0, name.Length - 7);
-                return name;
-            }
-            
-            string rightHandNorm = NormalizeName(rightHand);
-            string leftHandNorm = NormalizeName(leftHand);
-            string rightBackNorm = NormalizeName(rightBack);
-            string leftBackNorm = NormalizeName(leftBack);
-            
-            // Track if we need to clear any back slot prefab names
-            bool needsSave = false;
-            
-            // If a weapon is in either hand, clear it from BOTH back slots to prevent double-showing
-            // This handles cases like bow in LeftHand matching an old entry in RightBack
-            if (!string.IsNullOrEmpty(rightHandNorm))
-            {
-                if (rightBackNorm == rightHandNorm)
-                {
-                    rightBack = "";
-                    // CRITICAL: Also clear the internal field to prevent persistence issues
-                    if (!string.IsNullOrEmpty(_equipRightBack) && NormalizeName(_equipRightBack) == rightHandNorm)
-                    {
-                        _equipRightBack = "";
-                        needsSave = true;
-                    }
-                }
-                if (leftBackNorm == rightHandNorm)
-                {
-                    leftBack = "";
-                    if (!string.IsNullOrEmpty(_equipLeftBack) && NormalizeName(_equipLeftBack) == rightHandNorm)
-                    {
-                        _equipLeftBack = "";
-                        needsSave = true;
-                    }
-                }
-            }
-            if (!string.IsNullOrEmpty(leftHandNorm))
-            {
-                if (rightBackNorm == leftHandNorm)
-                {
-                    rightBack = "";
-                    if (!string.IsNullOrEmpty(_equipRightBack) && NormalizeName(_equipRightBack) == leftHandNorm)
-                    {
-                        _equipRightBack = "";
-                        needsSave = true;
-                    }
-                }
-                if (leftBackNorm == leftHandNorm)
-                {
-                    leftBack = "";
-                    if (!string.IsNullOrEmpty(_equipLeftBack) && NormalizeName(_equipLeftBack) == leftHandNorm)
-                    {
-                        _equipLeftBack = "";
-                        needsSave = true;
-                    }
-                }
-            }
-            
-            // ALSO check for duplicates between back slots themselves
-            // Sometimes the same weapon ends up in both RightBack and LeftBack
-            if (!string.IsNullOrEmpty(rightBackNorm) && rightBackNorm == leftBackNorm)
-            {
-                // Keep only one - prefer the correct slot based on weapon type
-                // We'll check _equippedItems to see which one has the actual item
-                var rightBackItem = GetEquippedItem(EquipmentSlot.RightBack);
-                var leftBackItem = GetEquippedItem(EquipmentSlot.LeftBack);
-                
-                // If both have items, clear one based on weapon type (ranged goes left, melee goes right)
-                if (rightBackItem != null && leftBackItem == null)
-                {
-                    leftBack = "";
-                    _equipLeftBack = "";
-                    needsSave = true;
-                }
-                else if (leftBackItem != null && rightBackItem == null)
-                {
-                    rightBack = "";
-                    _equipRightBack = "";
-                    needsSave = true;
-                }
-                else if (rightBackItem != null && leftBackItem != null)
-                {
-                    // Both have items with same name - this is a bug, clear rightBack
-                    rightBack = "";
-                    _equipRightBack = "";
-                    _equippedItems.Remove(EquipmentSlot.RightBack);
-                    needsSave = true;
-                }
-            }
-            
-            // Save if we made corrections to prevent future issues
-            if (needsSave && !_isLoadingFromZDO)
-            {
-                SaveToZDO();
-            }
-            
+            // 0.2.361: ONE source for the drawing. Armour and hands come from the Humanoid's own equipped fields (what vanilla's
+            // SetupVisEquipment draws too, so the two writers always agree); the back slots, which vanilla has no field for,
+            // come from the back cells.
+            var h = Body;
+            string F(EquipmentSlot s) { var it = h != null ? HumanoidField(h, s) : GetEquippedItem(s); return it != null ? GetItemPrefabName(it) : ""; }
+            equipment[CompanionInventory.EquipmentSlot.Helmet] = F(EquipmentSlot.Helmet);
+            equipment[CompanionInventory.EquipmentSlot.Chest] = F(EquipmentSlot.Chest);
+            equipment[CompanionInventory.EquipmentSlot.Legs] = F(EquipmentSlot.Legs);
+            equipment[CompanionInventory.EquipmentSlot.Shoulder] = F(EquipmentSlot.Shoulder);
+            equipment[CompanionInventory.EquipmentSlot.Utility] = F(EquipmentSlot.Utility);
+
+            string rightHand = F(EquipmentSlot.RightHand);
+            string leftHand = F(EquipmentSlot.LeftHand);
+            string rightBack = GetEquipmentPrefabName(EquipmentSlot.RightBack);
+            string leftBack = GetEquipmentPrefabName(EquipmentSlot.LeftBack);
             equipment[CompanionInventory.EquipmentSlot.RightHand] = rightHand;
             equipment[CompanionInventory.EquipmentSlot.LeftHand] = leftHand;
             equipment[CompanionInventory.EquipmentSlot.RightBack] = rightBack;
             equipment[CompanionInventory.EquipmentSlot.LeftBack] = leftBack;
-
             return equipment;
         }
-        
+
         /// <summary>
-        /// Gets all equipment prefab names and qualities for vault persistence.
-        /// This returns data from the prefab name fields, not from _equippedItems.
+        /// Equipment list for the vault. 0.2.361: empty. Worn gear sits in the bag's equip cells and is saved with the bag
+        /// (StorageInventoryData); writing it here too would restore every piece twice.
         /// </summary>
-   public Dictionary<EquipmentSlot, (string prefab, int quality, int stack)> GetAllEquipmentForVault()
+        public Dictionary<EquipmentSlot, (string prefab, int quality, int stack)> GetAllEquipmentForVault()
         {
-    var result = new Dictionary<EquipmentSlot, (string prefab, int quality, int stack)>();
+            return new Dictionary<EquipmentSlot, (string prefab, int quality, int stack)>();
+        }
 
-            if (!string.IsNullOrEmpty(_equipHelmet))
-            result[EquipmentSlot.Helmet] = (_equipHelmet, _equipHelmetQuality, GetEquipmentStack(EquipmentSlot.Helmet));
-            if (!string.IsNullOrEmpty(_equipChest))
-            result[EquipmentSlot.Chest] = (_equipChest, _equipChestQuality, GetEquipmentStack(EquipmentSlot.Chest));
-            if (!string.IsNullOrEmpty(_equipLegs))
-            result[EquipmentSlot.Legs] = (_equipLegs, _equipLegsQuality, GetEquipmentStack(EquipmentSlot.Legs));
-            if (!string.IsNullOrEmpty(_equipShoulder))
-            result[EquipmentSlot.Shoulder] = (_equipShoulder, _equipShoulderQuality, GetEquipmentStack(EquipmentSlot.Shoulder));
-            if (!string.IsNullOrEmpty(_equipUtility))
-            result[EquipmentSlot.Utility] = (_equipUtility, _equipUtilityQuality, GetEquipmentStack(EquipmentSlot.Utility));
-            if (!string.IsNullOrEmpty(_equipRightHand))
-            result[EquipmentSlot.RightHand] = (_equipRightHand, _equipRightHandQuality, GetEquipmentStack(EquipmentSlot.RightHand));
-            if (!string.IsNullOrEmpty(_equipLeftHand))
-            result[EquipmentSlot.LeftHand] = (_equipLeftHand, _equipLeftHandQuality, GetEquipmentStack(EquipmentSlot.LeftHand));
-            if (!string.IsNullOrEmpty(_equipRightBack))
-            result[EquipmentSlot.RightBack] = (_equipRightBack, _equipRightBackQuality, GetEquipmentStack(EquipmentSlot.RightBack));
-            if (!string.IsNullOrEmpty(_equipLeftBack))
-            result[EquipmentSlot.LeftBack] = (_equipLeftBack, _equipLeftBackQuality, GetEquipmentStack(EquipmentSlot.LeftBack));
-
-     return result;
-     }
 
         #endregion
 
@@ -1866,24 +2592,10 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
              zdo.Set("companion_inventory", pkg.GetBase64());
            }
 
-                // Save all equipment slots packed into ONE base64-encoded ZPackage field
-                // (replaces 18 individual ZDO fields - 9 prefab strings + 9 quality ints -
-                // which were pushing companion ZDOs over Valheim's "Writing a lot of data;
-                // N items" warning threshold during world saves).
-                {
-                    var equipmentPackage = new ZPackage();
-                    equipmentPackage.Write(3); // version (2 = +stack per slot, 3 = +durability per slot)
-                    equipmentPackage.Write(_equipHelmet ?? "");      equipmentPackage.Write(_equipHelmetQuality);    equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Helmet));    equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.Helmet));
-                    equipmentPackage.Write(_equipChest ?? "");       equipmentPackage.Write(_equipChestQuality);     equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Chest));     equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.Chest));
-                    equipmentPackage.Write(_equipLegs ?? "");        equipmentPackage.Write(_equipLegsQuality);      equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Legs));      equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.Legs));
-                    equipmentPackage.Write(_equipShoulder ?? "");    equipmentPackage.Write(_equipShoulderQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Shoulder));  equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.Shoulder));
-                    equipmentPackage.Write(_equipUtility ?? "");     equipmentPackage.Write(_equipUtilityQuality);   equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.Utility));   equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.Utility));
-                    equipmentPackage.Write(_equipRightHand ?? "");   equipmentPackage.Write(_equipRightHandQuality); equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.RightHand)); equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.RightHand));
-                    equipmentPackage.Write(_equipLeftHand ?? "");    equipmentPackage.Write(_equipLeftHandQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.LeftHand));  equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.LeftHand));
-                    equipmentPackage.Write(_equipRightBack ?? "");   equipmentPackage.Write(_equipRightBackQuality); equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.RightBack)); equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.RightBack));
-                    equipmentPackage.Write(_equipLeftBack ?? "");    equipmentPackage.Write(_equipLeftBackQuality);  equipmentPackage.Write(GetEquipmentStack(EquipmentSlot.LeftBack));  equipmentPackage.Write(GetEquipmentDurability(EquipmentSlot.LeftBack));
-                    zdo.Set("companion_equipment", equipmentPackage.GetBase64());
-                }
+                // 0.2.361: the bag (with grid positions) IS the equipment save; no separate record is written. The grid
+                // version marks this ZDO as migrated so an old record is never applied again.
+                // Only after the first load, so an early save can never skip the migration of an old record.
+                if (_hasCompletedInitialLoad && zdo.GetInt(GridVersionKey, 0) < 1) zdo.Set(GridVersionKey, 1);
 
                 // Strip the legacy per-slot QUALITY ints so previously-saved companion
                 // ZDOs shed their bloat on the next save. RemoveInt is a no-op if the key
@@ -1995,8 +2707,9 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
             status.IsOverweight = status.CurrentWeight > status.MaxWeight;
             
             // Slot calculations
-            status.TotalSlots = _inventory.GetWidth() * _inventory.GetHeight();
-            status.FreeSlots = _inventory.GetEmptySlots();
+            // 0.2.361: STORAGE rows only (pouch, equipment and spare cells are never free space for hauling).
+            status.TotalSlots = CompanionGridLayout.StorageCells;
+            status.FreeSlots = CompanionGridLayout.FreeStorageCells(_inventory);
             
             // Determine status based on thresholds
             if (status.IsOverweight)
@@ -2056,7 +2769,7 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
             if (newWeight > GetMaxCarryWeight()) return false;
             
             // Check slot availability
-            if (_inventory.GetEmptySlots() == 0) return false;
+            if (CompanionGridLayout.FreeStorageCells(_inventory) == 0) return false;
             
             return true;
         }
@@ -2087,10 +2800,11 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
             
             if (_inventory == null) return depositable;
             
-            foreach (var item in _inventory.GetAllItems())
+            // 0.2.361: storage rows only; worn and pouch items are never deposited.
+            foreach (var item in GetStorageItems())
             {
                 if (item == null) continue;
-                
+
                 // Skip food (companions need this)
                 if (item.m_shared.m_food > 0) continue;
                 
@@ -2142,5 +2856,78 @@ private void LoadEquipmentSlotFromPrefab(EquipmentSlot slot, string prefabName, 
             return false;
         }
         #endregion
+    }
+
+    /// <summary>
+    /// Audit slice 5 (0.2.331): vanilla Humanoid.Start gives every non-player its prefab's default items (GiveDefaultItems,
+    /// on every peer, every spawn). A companion's Humanoid bag is its persisted storage now, so those items would pile up on
+    /// each load (a lootable dupe) or, landing before LoadFromZDO, fire the save and overwrite the stored items. A
+    /// companion's kit comes from CompanionInventory, so it gets none.
+    /// </summary>
+    [HarmonyLib.HarmonyPatch(typeof(Humanoid), nameof(Humanoid.GiveDefaultItems))]
+    internal static class CompanionNoDefaultItems
+    {
+        private static bool Prefix(Humanoid __instance) => __instance == null || __instance.GetComponent<CompanionInventory>() == null;
+    }
+
+    /// <summary>0.2.361 (replaces the 0.2.360 adopt): a vanilla Humanoid.EquipItem on a companion from elsewhere (AI swap,
+    /// FireScare torch) moves the item into the cell of the field vanilla put it in, the old occupant to storage (VA's
+    /// Humanoid_EquipItem_AutoMoveToSlot). Companions only; Reconcile's own equips are skipped.</summary>
+    [HarmonyLib.HarmonyPatch(typeof(Humanoid), nameof(Humanoid.EquipItem))]
+    internal static class CompanionEquipMovesToSlot
+    {
+        private static void Postfix(Humanoid __instance, ItemDrop.ItemData item, bool __result)
+        {
+            if (!__result || __instance == null || item == null || __instance is Player) return;
+            var ci = __instance.GetComponent<CompanionInventory>();
+            if (ci == null || ci.InReconcile) return;
+            try { ci.OnVanillaEquipped(item); }
+            catch (System.Exception e) { FiresLogger.LogDebug($"[CompanionInventory] vanilla equip -> slot failed: {e.Message}"); }
+        }
+    }
+
+    /// <summary>0.2.361: a vanilla Humanoid.UnequipItem on a companion from elsewhere sends an item in a hand/armour cell back
+    /// to storage (VA's UnequipItem_ReturnToInventory). Companions only.</summary>
+    [HarmonyLib.HarmonyPatch(typeof(Humanoid), nameof(Humanoid.UnequipItem))]
+    internal static class CompanionUnequipReturnsToStorage
+    {
+        private static void Postfix(Humanoid __instance, ItemDrop.ItemData item)
+        {
+            if (__instance == null || item == null || __instance is Player) return;
+            var ci = __instance.GetComponent<CompanionInventory>();
+            if (ci == null || ci.InReconcile) return;
+            try { ci.OnVanillaUnequipped(item); }
+            catch (System.Exception e) { FiresLogger.LogDebug($"[CompanionInventory] vanilla unequip -> storage failed: {e.Message}"); }
+        }
+    }
+
+    /// <summary>0.2.361: vanilla SetupVisEquipment writes the back items from its hidden-hand fields (empty for companions);
+    /// the companion's back cells are drawn again right after, so only the grid decides what hangs on the back.</summary>
+    [HarmonyLib.HarmonyPatch(typeof(Humanoid), nameof(Humanoid.SetupVisEquipment))]
+    internal static class CompanionRedrawBackItems
+    {
+        private static void Postfix(Humanoid __instance, VisEquipment visEq, bool isRagdoll)
+        {
+            if (isRagdoll || __instance == null || visEq == null || __instance is Player) return;
+            var ci = __instance.GetComponent<CompanionInventory>();
+            if (ci == null) return;
+            try { ci.RedrawBackItems(visEq); }
+            catch (System.Exception e) { FiresLogger.LogDebug($"[CompanionInventory] back redraw failed: {e.Message}"); }
+        }
+    }
+
+    /// <summary>0.2.360: Debug line for a vanilla Humanoid.UnequipItem on a companion (slot, item, caller, companion).</summary>
+    [HarmonyLib.HarmonyPatch(typeof(Humanoid), nameof(Humanoid.UnequipItem))]
+    internal static class CompanionLogVanillaUnequip
+    {
+        private static void Prefix(Humanoid __instance, ItemDrop.ItemData item)
+        {
+            if (__instance == null || item == null || __instance is Player || !FiresLogger.DebugEnabled) return;
+            var ci = __instance.GetComponent<CompanionInventory>();
+            if (ci == null || !__instance.IsItemEquiped(item)) return;
+            var slot = CompanionInventory.GetSlotForItem(item);
+            if (slot == null) return;
+            ci.LogUnequip(slot.Value, item, "Humanoid.UnequipItem", 3);
+        }
     }
 }

@@ -53,12 +53,18 @@ namespace FiresCore.Npc.Core
         public bool TryAcquireFacing(UnifiedMovementAuthority.MovementSource source, string owner, float duration = 5f)
         {
             if ((int)source < (int)CurrentSource)
+            {
+                NoteRefused(source, owner);
                 return false;
+            }
 
             if ((int)source == (int)CurrentSource &&
                 CurrentSource != UnifiedMovementAuthority.MovementSource.None &&
                 !string.IsNullOrEmpty(CurrentOwner) && owner != CurrentOwner)
+            {
+                NoteRefused(source, owner);
                 return false;
+            }
 
             if (source == CurrentSource && owner == CurrentOwner)
             {
@@ -72,6 +78,15 @@ namespace FiresCore.Npc.Core
             _timeoutTime = duration > 0 ? Time.time + duration : float.MaxValue;
             OnFacingChanged?.Invoke();
             return true;
+        }
+
+        // 0.2.333 evidence (round 13: chores not facing at +2 s): who was refused facing, and who held it. Once per pair at Debug.
+        private readonly System.Collections.Generic.HashSet<string> _refusedSeen = new System.Collections.Generic.HashSet<string>();
+        private void NoteRefused(UnifiedMovementAuthority.MovementSource source, string owner)
+        {
+            string key = owner + "|" + CurrentOwner + "|" + CurrentSource;
+            if (!_refusedSeen.Add(key)) return;
+            FiresCore.Logging.FiresLogger.LogDebug($"[Facing] {name}: '{owner}' ({source}) refused facing; '{CurrentOwner}' ({CurrentSource}) holds it for {Mathf.Max(0f, _timeoutTime - Time.time):0.0} s more");
         }
 
         /// <summary>Face a world-space direction (horizontal). No-op for a non-owner.</summary>
@@ -123,6 +138,7 @@ namespace FiresCore.Npc.Core
         private void LateUpdate()
         {
             if (CurrentSource == UnifiedMovementAuthority.MovementSource.None) return;
+            if (CompanionPossession.IsPossessed(_nview)) return;   // 0.2.292: its driver's look direction, not ours
 
             // Only the owning client drives facing — remote clients receive it via ZDO sync (mirrors how
             // movement is owner-driven). Without this, setting transform.rotation here would fight sync.

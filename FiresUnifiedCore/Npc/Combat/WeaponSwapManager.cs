@@ -491,6 +491,8 @@ public bool IsRanged;
             
             foreach (var item in storageInv.GetAllItems())
             {
+                // 0.2.361: worn gear sits in the bag's equip cells; those are scanned as equipment slots, not storage.
+                if (_inventory.IsWorn(item)) continue;
                 if (!CompanionCombat.IsCombatWeapon(item)) continue;
 
                 // Skip tools (pickaxes, axes) - they're for gathering, not combat
@@ -537,7 +539,8 @@ public bool IsRanged;
                 bool isRanged = IsRangedItem(item);
                 
                 // Only record if we don't already have this type from equipped slots
-                if (isRanged && _rangedWeapon == null)
+                // 0.2.365: a bow or crossbow with no matching ammo in the pouch/storage is not a ranged option.
+                if (isRanged && _rangedWeapon == null && CompanionAmmo.HasAmmoFor(_inventory, item))
                 {
                     _rangedWeapon = new CachedWeaponInfo
                     {
@@ -674,7 +677,7 @@ public bool IsRanged;
                 StorageItem = null
             };
 
-            if (isRanged && _rangedWeapon == null)
+            if (isRanged && _rangedWeapon == null && CompanionAmmo.HasAmmoFor(_inventory, item))
             {
                 _rangedWeapon = info;
             }

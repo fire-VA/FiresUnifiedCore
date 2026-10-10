@@ -23,7 +23,7 @@ namespace FiresCore
     {
         public const string PluginGUID = "com.Fire.FiresUnifiedCore";
         public const string PluginName = "FiresUnifiedCore";
-        public const string PluginVersion = "0.2.277";
+        public const string PluginVersion = "0.2.387";
 
         // Core's BepInEx log source. The shared LoadSummary banner emitter routes
         // through this (not Debug.Log) so banner lines don't also stdout-echo a raw
@@ -141,11 +141,14 @@ namespace FiresCore
         {
             // Every mod is loaded by the title scene: say once which water Core reads ("[Water] FAT water query hooked: …" or "vanilla only").
             FiresCore.World.Water.Resolve();
+            // Every plugin has run Awake: drop / hide the settings whose owner mod is absent (0.2.359).
+            FiresCore.Config.OwnerGatedConfig.Apply();
         }
 
         protected override void WorldStart()
         {
             FiresCore.World.Water.Resolve();   // the dedicated server has no title scene
+            FiresCore.Config.OwnerGatedConfig.Apply();   // ditto; a no-op once the title scene ran it
             FiresCoreBanner.Print();
             FiresCore.Npc.CompanionGroupHudProvider.RegisterIfCompanionHostLoaded();
 
@@ -210,6 +213,21 @@ namespace FiresCore
             FiresCore.Npc.NpcAttachmentScaleFix.Bind(Config, configSync);
             // Climbing (0.2.252, Tools\CLIMBING.md): building pieces climbable (server-set) and the players' input switch.
             FiresCore.Movement.Climbing.Bind(Config, configSync);
+            FiresCore.Movement.Headroom.Bind(Config);
+            FiresCore.Movement.MonsterFallDamage.Bind(Config, configSync);
+            FiresCore.Loot.LocationLootRefresh.Bind(Config, configSync);
+            // 0.2.357: the companion barber's fee and size range (server-locked).
+            FiresCore.Npc.CompanionAppearanceService.Bind(Config, configSync);
+            FiresCore.Npc.CompanionPillionDriver.Bind(Config, configSync);
+            FiresCore.Building.NewPieceFacesAway.Bind(Config);
+            // 0.2.320 (Fire 10-07): creature possession (admin + class grants), flight keys.
+            FiresCore.Possession.PossessionRules.Bind(Config, configSync);
+            FiresCore.Flight.FlightKeys.Bind(Config);
+            FiresCore.Movement.Crawl.Bind(Config);
+            FiresCore.Movement.CrawlCamera.Bind(Config);
+            FiresCore.Movement.PlayerSwim.Bind(Config);
+            FiresCore.Tutorials.TutorialBridge.Bind(Config);
+            FiresCore.Undo.UndoHistory.Bind(Config);
 
             // BalrondCompat: server-locked toggles for our neutralization patches against specific
             // BalrondAmazingNature behaviors. Patches auto-activate through Harmony.PatchAll and
@@ -227,6 +245,13 @@ namespace FiresCore
             // that companions ignore unless Hunt is toggled on or the creature attacks first.
             FiresCore.Npc.HuntListConfig.Initialize(Config);
             FiresCore.Npc.HuntListConfig.BindToSync(configSync);
+
+            // Pause-menu "Need help? Join our Discord" (Fire 10-08): [Help] config, server-synced; Core claims the one button.
+            FiresShared.DiscordHelp.DiscordHelpButton.Initialize(Config);
+            FiresShared.DiscordHelp.DiscordHelpButton.BindToSync(configSync);
+
+            // [Audio] kill switch for routing mod / NPC sounds to the game mixer (stream-silence A/B, 10-08).
+            FiresCore.Services.LiveAudioRouting.Initialize(Config);
 
             // MovementGate: opt-in HARD enforcement of the movement single-writer rule (default OFF).
             // The SetMoveDir prefix only enforces when this is true; flip it on in-game after verifying

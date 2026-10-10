@@ -271,11 +271,6 @@ namespace FiresCore.Npc.IdleBehaviors
             
             StopMovement();
             
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
             
             FaceTarget(_lastTreePosition);
             

@@ -175,61 +175,27 @@ _stuckCheckStartPos = transform.position;
             return _isGrounded && Time.time - _lastJumpTime >= JumpCooldown;
         }
 
-     /// <summary>
-        /// Executes a jump.
-    /// </summary>
-    public void ExecuteJump(bool movingForward)
+        /// <summary>
+        /// Executes a jump through vanilla Character.Jump (0.2.322, Fire's vanilla-method rule): it plays the jump and applies
+        /// the creature's own m_jumpForce / m_jumpForceForward, as for any vanilla jumper. JumpForce and JumpForwardBoost are
+        /// no longer used (vanilla's values apply). 1.0 Character.Jump pulls the local player's grappling hook when the
+        /// jumper is airborne or attacking, so it only runs grounded and not attacking.
+        /// </summary>
+        public void ExecuteJump(bool movingForward)
         {
             _lastJumpTime = Time.time;
-  _consecutiveStuckChecks = 0;
-      _stuckCheckStartPos = _transform.position;
-         _stuckCheckStartTime = Time.time;
+            _consecutiveStuckChecks = 0;
+            _stuckCheckStartPos = _transform.position;
+            _stuckCheckStartTime = Time.time;
 
-            // Play animation
-  if (_zanim != null)
-       {
-   _zanim.SetTrigger("jump");
-        }
-    else if (_animator != null && HasAnimatorParameter("jump"))
-       {
-     _animator.SetTrigger("jump");
-   }
+            if (_character == null || !_character.IsOnGround() || _character.InAttack()) return;
+            _character.Jump();
 
-    // Apply force
-       ApplyJumpForce(movingForward);
-
-  if (VerboseLogging)
-      {
-                Debug.Log("[CompanionTraversal] Executed jump!");
-       }
-      }
-
-private void ApplyJumpForce(bool movingForward)
-        {
-  // Only apply jump force if rigidbody is NOT kinematic
-            // Unity 6 doesn't allow AddForce on kinematic bodies
-            if (_rigidbody != null && !_rigidbody.isKinematic)
+            if (VerboseLogging)
             {
-         Vector3 jumpVelocity = Vector3.up * JumpForce;
-
-  if (movingForward)
-        {
-           jumpVelocity += _transform.forward * JumpForwardBoost;
+                Debug.Log("[CompanionTraversal] Executed jump!");
+            }
         }
-
-      _rigidbody.AddForce(jumpVelocity, ForceMode.VelocityChange);
-  }
-    }
-
-   private bool HasAnimatorParameter(string paramName)
-      {
-     if (_animator == null) return false;
- foreach (var param in _animator.parameters)
-    {
-     if (param.name == paramName) return true;
-   }
-    return false;
-    }
 
 /// <summary>
         /// Sets whether stuck checking should be active.

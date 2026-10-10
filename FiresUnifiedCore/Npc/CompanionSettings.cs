@@ -81,7 +81,7 @@ namespace FiresCore.Npc
         
         /// <summary>
         /// Radius (in meters) to search for chests when operating smelters, kilns, or depositing items.
-        /// Used by SmelterOperatorBehavior, FireTendingBehavior, ChestDepositBehavior, ResourceGatheringBehavior.
+        /// Used by SmelterOperatorBehavior, FireTendingBehaviorV2, ChestDepositBehaviorV2, ResourceGatheringBehavior.
         /// </summary>
         public static float ChestSearchRadius
         {
@@ -95,7 +95,7 @@ namespace FiresCore.Npc
         /// <summary>
         /// Radius (in meters) for auto-sorting items across multiple chests.
         /// When interacting with one chest, all chests within this radius are included in the sort.
-        /// Used by ChestDepositBehavior for organizing items.
+        /// Used by ChestDepositBehaviorV2 for organizing items.
         /// </summary>
         public static float ChestAutoSortRadius
         {

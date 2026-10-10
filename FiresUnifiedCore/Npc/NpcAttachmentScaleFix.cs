@@ -29,6 +29,7 @@ namespace FiresCore.Npc
                 + "the attach child's authored scale times the body's, skinned ones (hair, beards, capes) the body's transform scale "
                 + "(Core 0.2.157). Off = vanilla's sizes, for an A/B only.");
             configSync?.AddConfigEntry(s_rescale);
+            FiresCore.Config.OwnerGatedConfig.Gate(s_rescale, FiresCore.Config.OwnerGatedConfig.Owners.COMP, synced: true);   // 0.2.359
         }
 
         private static void Postfix(VisEquipment __instance, int itemHash, Transform joint, bool backAttach, GameObject __result)

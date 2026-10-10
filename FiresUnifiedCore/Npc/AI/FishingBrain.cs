@@ -226,7 +226,7 @@ namespace FiresCore.Npc.AI
         {
             rod = rod ?? RodIn(bag);
             if (bag == null || rod == null) return null;
-            List<ItemDrop.ItemData> baits = bag.GetAllItems().Where(i => IsBaitFor(i, rod)).ToList();
+            List<ItemDrop.ItemData> baits = CompanionInventory.StorageItemsOf(bag).Where(i => IsBaitFor(i, rod)).ToList();
             if (baits.Count == 0) return null;
             IEnumerable<Fish> judges = target != null ? new[] { target } : near.HasValue ? FishNear(near.Value, MaxRadius) : Enumerable.Empty<Fish>();
             ItemDrop.ItemData best = null;
@@ -337,7 +337,7 @@ namespace FiresCore.Npc.AI
                 string want = string.Join(", ", fish.SelectMany(f => f.m_baits).Where(b => b.m_bait != null).Select(b => b.m_bait.name).Distinct());
                 return $"nobait: no bait for the rod in the bag{(want.Length > 0 ? $" (fish here take {want})" : "")}";
             }
-            List<ItemDrop.ItemData> baits = bag.GetAllItems().Where(i => IsBaitFor(i, rod)).ToList();
+            List<ItemDrop.ItemData> baits = CompanionInventory.StorageItemsOf(bag).Where(i => IsBaitFor(i, rod)).ToList();
 
             // 0.2.264 (R45: 13 casts at empty water, "nothing bit in 30 s" each; Fire: "the bot needs to be casting towards the fish"):
             // cast only toward a fish that is there and takes a carried bait. None near the asked spot: the nearest such fish within
@@ -358,7 +358,13 @@ namespace FiresCore.Npc.AI
                 }
                 Vector3 from0 = near;
                 Fish nearest = farther.OrderBy(f => (f.transform.position - from0).sqrMagnitude).First();
-                near = new Vector3(nearest.transform.position.x, near.y, nearest.transform.position.z);
+                Vector3 fishFlat = new Vector3(nearest.transform.position.x, near.y, nearest.transform.position.z);
+                // 0.2.353 (companion_storage fish: ordered on the dry side at (-947,111), the scan ran "near (-986,124)" out in the water
+                // and found no shore): fish just offshore keep the scan centred on the asked spot with the radius widened to reach
+                // them, so the shore by the asked spot stays in range. Only a different pond, farther away, moves the centre.
+                float toFish = Vector3.Distance(from0, fishFlat);
+                if (toFish <= 60f) radius = Mathf.Max(radius, toFish - MaxCast + 4f);
+                else near = fishFlat;
                 fish = FishNear(near, radius + MaxCast);
                 takers = fish.Where(Takes).ToList();
                 seen = $"no fish in this pond (scanned {radius + MaxCast:0} m of ({from0.x:0}, {from0.z:0})); moving to ({near.x:0}, {near.z:0}) where {FishSummary(takers)}";
@@ -895,7 +901,7 @@ namespace FiresCore.Npc.AI
         [HarmonyPatch(typeof(FishingFloat), "ReturnBait")]
         private static class FishingFloat_ReturnBait_Companion
         {
-            // Vanilla gives an unused bait back to players only; a companion gets it in its Humanoid bag (its behaviour moves it on).
+            // Vanilla gives an unused bait back to players only; a companion gets it in its Humanoid bag (= its storage, slice 5).
             private static bool Prefix(FishingFloat __instance)
             {
                 if (__instance.m_baitConsumed) return true;
@@ -916,7 +922,15 @@ namespace FiresCore.Npc.AI
                 NoteCatch(owner, fish);
                 if (fish == null || !(owner is Humanoid body) || owner is Player) return true;
                 ItemDrop drop = fish.GetComponent<ItemDrop>();
+                // Audit slice 5: the Humanoid bag IS the companion's storage now, so the catch lands there directly (FishingBehavior's
+                // sweep from bag to storage is gone, and with it the catch line it printed: it is printed here instead).
+                string caught = Utils.GetPrefabName(fish.gameObject);
+                int quality = drop != null && drop.m_itemData != null ? drop.m_itemData.m_quality : 1;
                 if (drop != null) drop.Pickup(body); else fish.Pickup(body);
+                string who = body.GetComponent<CompanionController>()?.companionName;
+                string what = caught + (quality > 1 ? $" (q{quality})" : "");
+                Debug.Log($"[Fishing] {who} stored {what}");
+                ChoreBrain.ChoreDone(who, "fishing", $"caught {what}");
                 string text = "$msg_fishing_catched " + fish.GetHoverName();
                 if (!fish.m_extraDrops.IsEmpty())
                     foreach (ItemDrop.ItemData extra in fish.m_extraDrops.GetDropListItems())

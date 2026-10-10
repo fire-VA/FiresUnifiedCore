@@ -17,12 +17,28 @@ namespace FiresCore.Help
             _registered = true;
 
             HelpRegistry.RegisterSection(ModId, "", "What Fires Core Provides", 0, BuildOverview);
-            HelpRegistry.RegisterSection(ModId, "Interface", "F8 Config Window", 10, BuildConfigWindow);
+            HelpRegistry.RegisterSection(ModId, "Interface", "F1 Config Window", 10, BuildConfigWindow);
             HelpRegistry.RegisterSection(ModId, "Interface", "Context Menu & Group HUD", 11, BuildContextAndHud);
+            HelpRegistry.RegisterSection(ModId, "Movement", "Flying", 15, BuildFlying);
             HelpRegistry.RegisterSection(ModId, "Building", "Environment Box", 20, BuildEnvironmentBox);
             HelpRegistry.RegisterSection(ModId, "Server (Admin)", "Config Push / Pull / Delete", 30, BuildConfigCommands, adminOnly: true);
             HelpRegistry.RegisterSection(ModId, "Server (Admin)", "Core Config Reference", 31, BuildConfigReference, adminOnly: true);
             HelpRegistry.RegisterSection(ModId, "Commands (Admin)", "FX & Asset Dump Commands", 40, BuildDumpCommands, adminOnly: true);
+        }
+
+        // 0.2.326: Fire's flight presets. The lines come from the shared FlightPresets, so FiresMounts' panel and Valcast say the same.
+        private static void BuildFlying(HelpContentWriter writer)
+        {
+            writer.Header("Flying");
+            writer.Paragraph("Flying mounts (FiresMounts) and possessed flyers share one flight controller. [Flight] Preset in the F1 config window picks " +
+                "how it steers; Auto lets each flyer fly its own natural way.");
+            Character flyer = FiresCore.Possession.PossessionApi.Current?.Creature;
+            var preset = FiresPossession.FlightPresets.Resolve(FiresCore.Flight.FlightKeys.Preset, flyer);
+            writer.SubHeader(FiresPossession.FlightPresets.Name(FiresCore.Flight.FlightKeys.Preset)
+                + (preset != FiresCore.Flight.FlightKeys.Preset ? " (" + FiresPossession.FlightPresets.Name(preset) + ")" : ""));
+            foreach (string line in FiresPossession.FlightPresets.Hints(preset)) writer.Bullet(line);
+            writer.Bullet(FiresCore.Flight.FlightKeys.KeysLine());
+            writer.Bullet("No preset binds LMB / MMB / RMB (the attacks), Alt + wheel (attack pick) or E.");
         }
 
         private static void BuildOverview(HelpContentWriter writer)
@@ -31,7 +47,7 @@ namespace FiresCore.Help
             writer.Paragraph("FiresUnifiedCore is the shared foundation every Fires mod builds on. Most of it " +
                 "is invisible plumbing — networking, storage, the companion engine, admin sync — but a few " +
                 "pieces are things you use directly:");
-            writer.Bullet("F8 — the Fires config window, covering EVERY Fires mod's settings in one place.");
+            writer.Bullet("F1 (F8 when another config manager is installed) — the Fires config window, covering EVERY Fires mod's settings in one place.");
             writer.Bullet("This help panel — the '? Help' button on the pause (Esc) menu. Every [-] " +
                 "subheading in it is collapsible: click the heading to fold or unfold it, and your " +
                 "layout is remembered per section for the session.");
@@ -46,12 +62,12 @@ namespace FiresCore.Help
 
         private static void BuildConfigWindow(HelpContentWriter writer)
         {
-            writer.Header("F8 Config Window");
+            writer.Header("F1 Config Window");
             writer.Paragraph("One window for every Fires mod's settings — no per-mod config editing needed.");
             writer.Divider();
 
             writer.SubHeader("Basics");
-            writer.Bullet("Press F8 to open (rebindable: 00 - Config UI / 00 Hotkey). Esc closes.");
+            writer.Bullet("Press F1 to open (F8 when another config manager is installed; rebindable: 00 - Config UI / 00 Open Key). Esc closes.");
             writer.Bullet("va_config — console fallback that toggles the same window.");
             writer.Bullet("Left side lists every Fires mod; click one to expand its section index.");
             writer.Bullet("Search filters across ALL mods — key, section, and description text.");
@@ -68,7 +84,7 @@ namespace FiresCore.Help
 
             writer.SubHeader("Notes");
             writer.Bullet("00 - Config UI section styles the window itself (font, size, opacity, accent color).");
-            writer.Bullet("05 ShowAllPlugins widens the list to every installed plugin, not just Fires mods.");
+            writer.Bullet("05 FiresModsOnly narrows the list to Fires mods only (off: every installed plugin).");
             writer.Bullet("Server-synced settings show the server's value; on locked servers only admins can " +
                 "change them.");
             writer.Bullet("va_config_dump — log every discovered config entry (for debugging).");

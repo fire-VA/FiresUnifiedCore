@@ -26,6 +26,8 @@ engine, a LiteDB storage vault, and the UI and input framework. A few pieces you
   obstacles and hills, use doors, jump steps, and do chores: gathering, filling chests, repairing and eating.
 - **World memory.** Core remembers where resources were found and which enemies were met in each world, under
   `BepInEx/config/FiresCore/WorldMemory`.
+- **Quieter logs.** Fires mods write only warnings and errors by default. Set `[Logging] Log Level = Info` in Core's config
+  to see what they are doing, or `Verbose` for everything.
 - **HD textures.** With HDValheimTextures installed, textures load behind a loading screen instead of freezing the
   menu, at half size by default to save memory. Set `[HD Textures] Size = Full` for full size.
 

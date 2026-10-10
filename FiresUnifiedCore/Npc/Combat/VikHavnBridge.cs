@@ -283,6 +283,7 @@ namespace FiresCore.Npc.Combat
                 new ConfigDescription("SERVER. Multiplies every hit a companion lands on another player's companion (companions of the same owner are never scaled). 1 = unscaled.",
                     new AcceptableValueRange<float>(0f, 2f)));
             configSync?.AddConfigEntry(s_companionScale);
+            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.COMP, true, s_scale, s_companionScale);   // 0.2.359
         }
 
         internal static void OnDamage(Character victim, HitData hit)

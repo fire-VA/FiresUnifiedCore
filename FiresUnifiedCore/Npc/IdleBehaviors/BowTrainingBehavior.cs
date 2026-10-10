@@ -234,10 +234,18 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (CompanionIdleBehavior.VerboseLogging)
                 Debug.Log($"[BowTraining] {Companion?.companionName} cancelled (phase: {_currentPhase})");
-            
+
             ResetBowAnimation();
             _combatMovement?.UnlockMovement();
             base.Cancel();
+        }
+
+        // 0.2.278: a finished session lets go of the bow pose and the movement lock as a cancelled one does.
+        protected override void Complete()
+        {
+            ResetBowAnimation();
+            _combatMovement?.UnlockMovement();
+            base.Complete();
         }
         
         public override string GetStatusDescription()
@@ -457,7 +465,10 @@ namespace FiresCore.Npc.IdleBehaviors
                     if (CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[BowTraining] {Companion.companionName} finished training - {_shotsFired} shots fired, arrows retrieved");
                     
+                    // 0.2.278 (HR4: "BowTraining returned done while still active (its Complete() did not run)"): the idle loop
+                    // ends a behaviour as soon as it returns true, so the Complete phase's own Complete() never ran.
                     SetPhase(TrainingPhase.Complete);
+                    Complete();
                     return true;
                 }
             }
@@ -466,11 +477,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 // CRITICAL FIX: Call MoveToPosition EVERY FRAME!
                 MoveToPosition(targetPos);
             }
-            
+
             // Timeout on retrieval
             if (Time.time - _phaseStartTime > 15f)
             {
                 SetPhase(TrainingPhase.Complete);
+                Complete();
                 return true;
             }
             
@@ -893,9 +905,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            Quaternion rot = Quaternion.LookRotation(dir);
-            if (float.IsNaN(rot.x) || float.IsNaN(rot.y) || float.IsNaN(rot.z) || float.IsNaN(rot.w)) return;
-            Transform.rotation = rot;
+            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            _character?.SetLookDir(dir.normalized);
         }
         
         /// <summary>
@@ -918,13 +929,6 @@ namespace FiresCore.Npc.IdleBehaviors
                 _character.SetRun(false);
             }
             
-            // Only set velocity if NOT kinematic (Unity 6 doesn't allow setting velocity on kinematic bodies)
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                // Zero horizontal velocity, keep vertical for gravity
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
         }
         
         private bool HasAnimatorParameter(string paramName)

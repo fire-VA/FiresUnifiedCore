@@ -2411,7 +2411,7 @@ namespace FiresCore.UI
         /// that are toggled via GameObject.SetActive() by UpdateGui() and should default
         /// to inactive. Only includes elements where Valheim calls .gameObject.SetActive().
         ///
-        /// From decompiled InventoryGrid.UpdateGui():
+        /// Matches the layout vanilla InventoryGrid.UpdateGui() produces:
         ///   - selected: element.m_selected.SetActive(flag1 && ...) - uses SetActive
         ///   - durability: element.m_durability.gameObject.SetActive(flag2) - uses SetActive
         /// </summary>
@@ -2464,7 +2464,7 @@ namespace FiresCore.UI
         /// <summary>
         /// Additional element names that are dynamically toggled via SetActive() throughout
         /// the inventory UI and should default to inactive for a clean capture.
-        /// Derived from decompiled InventoryGui: UpdateRecipe(), UpdateRepair(),
+        /// Matches what vanilla InventoryGui shows in UpdateRecipe(), UpdateRepair(),
         /// AddRecipeToList(), and related methods.
         /// </summary>
         private static readonly HashSet<string> _defaultInactiveElements =

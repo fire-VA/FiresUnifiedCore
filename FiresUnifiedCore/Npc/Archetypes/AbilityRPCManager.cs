@@ -784,8 +784,12 @@ namespace FiresCore.Npc.Archetypes
                 case StatusEffectManager.EFFECT_CLASS_KNOCKDOWN:
                 case StatusEffectManager.EFFECT_CLASS_FLEE:
                 case StatusEffectManager.EFFECT_CLASS_LOSE_TARGET:
+                case StatusEffectManager.EFFECT_CLASS_SILENCE:
+                case StatusEffectManager.EFFECT_CLASS_INTERRUPT:
                 case StatusEffectManager.EFFECT_CLASS_SLOW30:
                 case StatusEffectManager.EFFECT_CLASS_SLOW20:
+                case StatusEffectManager.EFFECT_CLASS_WITHERED:
+                case StatusEffectManager.EFFECT_CLASS_WOUNDED:
                     return false;
             }
 

@@ -16,6 +16,46 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
         }
     }
 
+    /// <summary>
+    /// RPGClasses' Wither / Grave Pestilence / Plague Bearer ([wishbone] 10-08): Withered takes 15% more damage from every source
+    /// and moves 20% slower (Death Mark's OnDamaged path, the slow's speed path).
+    /// </summary>
+    public class ClassWitheredEffect : SlowdownEffect
+    {
+        public const float DamageTaken = 1.15f;
+
+        public ClassWitheredEffect()
+        {
+            m_name = "Withered";
+            SpeedMultiplier = 0.8f;
+        }
+
+        public override string Description => $"Withered: takes +{(DamageTaken - 1f) * 100f:0}% damage and moves 20% slower";
+
+        public override void OnDamaged(HitData hit, Character attacker)
+        {
+            base.OnDamaged(hit, attacker);
+            hit.m_damage.Modify(DamageTaken);
+        }
+    }
+
+    /// <summary>
+    /// The yaml's Wounded (classes-trees.yaml "Wounded", [wishbone] 10-08): 50% less healing received from every source, its own
+    /// Mending Aura and Vampiric affixes included. No slow (a 1.0 speed); RPC_Heal's one Core hook (DeathWishBlocksHealing) reads it.
+    /// </summary>
+    public class ClassWoundedEffect : SlowdownEffect
+    {
+        public const float HealingReceived = 0.5f;
+
+        public ClassWoundedEffect()
+        {
+            m_name = "Wounded";
+            SpeedMultiplier = 1f;
+        }
+
+        public override string Description => $"Wounded: receives {(1f - HealingReceived) * 100f:0}% less healing";
+    }
+
     /// <summary>monk_tailwind rank 1: "move 15% faster".</summary>
     public class ClassHaste15Effect : BuffEffect
     {

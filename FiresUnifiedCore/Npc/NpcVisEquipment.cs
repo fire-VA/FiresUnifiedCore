@@ -188,6 +188,10 @@ namespace FiresCore.Npc
             "m_currentUtilityItemHash", "m_currentLeftBackItemHash",
             "m_currentRightBackItemHash", "m_currentBeardItemHash",
             "m_currentHairItemHash",
+            // 0.2.332: Valheim 1.0 names the target fields without "Hash" (int m_leftItem, m_rightItem, ...); only the
+            // m_current* half was being cleared on 1.0, so the targets a cloned prefab carried could still attach early.
+            "m_leftItem", "m_rightItem", "m_chestItem", "m_legItem", "m_helmetItem", "m_shoulderItem",
+            "m_utilityItem", "m_leftBackItem", "m_rightBackItem", "m_beardItem", "m_hairItem",
         };
         private static readonly string[] _variantFieldNames =
         {
@@ -1629,6 +1633,19 @@ namespace FiresCore.Npc
         {
             SetHairColor(new Vector3(color.r, color.g, color.b));
         }
+
+        private Color _beardColor;
+        private bool _beardColorSet;
+
+        /// <summary>0.2.368: an independent beard colour (null = follow the hair colour, vanilla).</summary>
+        public void SetBeardColor(Color? color)
+        {
+            if (!_initialized) Initialize();
+            _beardColorSet = color.HasValue;
+            if (color.HasValue) _beardColor = color.Value;
+            ApplyHairColorToMaterials();
+            if (_beardColorSet) Invoke(nameof(ApplyHairColorToMaterials), 0.1f);   // a beard mesh spawned this frame
+        }
         
         /// <summary>
         /// Applies the stored skin color directly to the body material.
@@ -1679,11 +1696,14 @@ namespace FiresCore.Npc
 
                     // _HairColor is not in the shader's Properties block so HasProperty returns false -
                     // call SetColor unconditionally, exactly as VisEquipment.UpdateColors() does.
+                    // 0.2.368: a beard takes its own colour when one is set (else the hair colour, as vanilla).
+                    bool isBeard = rendererName.StartsWith("beard") || rendererName.StartsWith("npc_beard_");
+                    Color c = isBeard && _beardColorSet ? _beardColor : _hairColor;
                     var mats = renderer.materials;
                     for (int i = 0; i < mats.Length; i++)
                     {
                         if (mats[i] == null) continue;
-                        mats[i].SetColor("_HairColor", _hairColor);
+                        mats[i].SetColor("_HairColor", c);
                     }
                     renderer.materials = mats;
                 }
@@ -1713,7 +1733,7 @@ namespace FiresCore.Npc
                 ApplySkinColorToMaterial();
             }
             
-            if (_hairColorSet)
+            if (_hairColorSet || _beardColorSet)
             {
                 // Delay slightly to allow hair/beard meshes to be created
                 Invoke(nameof(ApplyHairColorToMaterials), 0.1f);
@@ -2651,6 +2671,9 @@ namespace FiresCore.Npc
     internal static class VisEquipmentBackWeaponRefreshPatch
     {
         private static Func<VisEquipment, int, int, int, bool> _setBackEquipped;
+        // 0.2.332: Valheim 1.0 is SetBackEquipped(leftItem, rightItem, leftVariant, leftQuality, rightQuality); only the old
+        // 3-int form was looked up, so on 1.0 this patch never bound and drawn weapons stayed on an NPC's back.
+        private static Func<VisEquipment, int, int, int, int, int, bool> _setBackEquipped5;
         private static Action<VisEquipment> _updateLodgroup;
         private static bool _resolved;
         private static bool _usable;
@@ -2661,11 +2684,21 @@ namespace FiresCore.Npc
             try
             {
                 const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance;
-                var setBack = typeof(VisEquipment).GetMethod("SetBackEquipped", flags,
-                    null, new[] { typeof(int), typeof(int), typeof(int) }, null);
-                if (setBack == null) return;
-                _setBackEquipped = (Func<VisEquipment, int, int, int, bool>)Delegate.CreateDelegate(
-                    typeof(Func<VisEquipment, int, int, int, bool>), setBack);
+                var setBack5 = typeof(VisEquipment).GetMethod("SetBackEquipped", flags,
+                    null, new[] { typeof(int), typeof(int), typeof(int), typeof(int), typeof(int) }, null);
+                var setBack = setBack5 == null ? typeof(VisEquipment).GetMethod("SetBackEquipped", flags,
+                    null, new[] { typeof(int), typeof(int), typeof(int) }, null) : null;
+                if (setBack5 == null && setBack == null)
+                {
+                    Debug.LogWarning("[NpcVisEquipment] Back-weapon refresh patch: VisEquipment.SetBackEquipped has no known overload on this build; NPC back weapons won't refresh.");
+                    return;
+                }
+                if (setBack5 != null)
+                    _setBackEquipped5 = (Func<VisEquipment, int, int, int, int, int, bool>)Delegate.CreateDelegate(
+                        typeof(Func<VisEquipment, int, int, int, int, int, bool>), setBack5);
+                else
+                    _setBackEquipped = (Func<VisEquipment, int, int, int, bool>)Delegate.CreateDelegate(
+                        typeof(Func<VisEquipment, int, int, int, bool>), setBack);
 
                 var lod = typeof(VisEquipment).GetMethod("UpdateLodgroup", flags,
                     null, Type.EmptyTypes, null);
@@ -2691,7 +2724,9 @@ namespace FiresCore.Npc
             if (!_resolved) Resolve();
             if (!_usable) return;
 
-            bool changed = _setBackEquipped(__instance, leftBack, rightBack, leftBackVariant);
+            bool changed = _setBackEquipped5 != null
+                ? _setBackEquipped5(__instance, leftBack, rightBack, leftBackVariant, 0, 0)
+                : _setBackEquipped(__instance, leftBack, rightBack, leftBackVariant);
             if (changed)
                 _updateLodgroup?.Invoke(__instance);
         }

@@ -28,6 +28,7 @@ namespace FiresCore.Npc.Core
         {
             if (configSync != null && EnforceSingleWriterMovement != null)
                 configSync.AddConfigEntry(EnforceSingleWriterMovement);
+            FiresCore.Config.OwnerGatedConfig.Gate(EnforceSingleWriterMovement, FiresCore.Config.OwnerGatedConfig.Owners.COMP, synced: true);   // 0.2.359
         }
 
         /// <summary>Cheap hot-path read (ConfigEntry.Value is a backing field). False until bound.</summary>

@@ -15,8 +15,8 @@ namespace FiresCore.UI
     //    never removes it. Buttons are pooled and re-Setup on every open, tab switch and search keystroke, so the list
     //    grows all session and every append copies it. The append is removed; one handler refreshes live buttons instead.
     // 2. BuildUi.ConfigureButtonNavigation (GridNavigationUtility over every button) runs 2-3 times per open and on every
-    //    search keystroke, and only a gamepad uses it. It is skipped while no gamepad is active and run once, the first
-    //    frame one is, while the menu is open.
+    //    search keystroke. Every call is deferred and the rebuild runs ONCE, on the next BuildUi.Update while the menu is open,
+    //    for keyboard as well as gamepad (0.2.312: the arrow keys use it too; gamepad-only left pooled buttons with stale links).
     // 3. Each button's Setup checks CanBuild, which scans for a crafting station in range per piece. Within one
     //    UpdatePieceButtons the player has not moved, so the answer is cached per station name for that call.
     internal static class BuildUiSpeedups
@@ -25,7 +25,7 @@ namespace FiresCore.UI
         private static readonly MethodInfo ConfigureNavigation = AccessTools.Method(typeof(BuildUi), "ConfigureButtonNavigation");
 
         private static bool s_languageHandlerAdded;
-        private static bool s_navigationPending;
+        private static bool s_navigationPending, s_runningDeferred;
         private static bool s_stationCacheActive;
         private static readonly Dictionary<string, CraftingStation> s_stationCache = new Dictionary<string, CraftingStation>();
 
@@ -80,6 +80,7 @@ namespace FiresCore.UI
         {
             private static bool Prefix()
             {
+                if (s_runningDeferred) return true;   // the deferred rebuild below
                 if (GamepadInUse())
                 {
                     s_navigationPending = false;
@@ -95,9 +96,12 @@ namespace FiresCore.UI
         {
             private static void Postfix(BuildUi __instance)
             {
-                if (!s_navigationPending || ConfigureNavigation == null || !GamepadInUse()) return;
+                if (!s_navigationPending || ConfigureNavigation == null) return;
                 if (!__instance.gameObject.activeInHierarchy) return;
-                ConfigureNavigation.Invoke(__instance, null);
+                s_navigationPending = false;
+                s_runningDeferred = true;
+                try { ConfigureNavigation.Invoke(__instance, null); }
+                finally { s_runningDeferred = false; }
             }
         }
 

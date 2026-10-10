@@ -986,6 +986,7 @@ namespace FiresCore.Sync
     public class ConfigurationManagerAttributes
     {
         public bool? ReadOnly;
+        public bool? IsAdvanced;   // 0.2.359: OwnerGatedConfig hides absent mods' synced keys behind Show advanced
         public Action<ConfigEntryBase> CustomDrawer;
     }
 

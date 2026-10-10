@@ -525,9 +525,15 @@ namespace FiresCore.Npc.IdleBehaviors
                 LogVerbose($"Repaired piece ({_totalRepaired} total)");
                 AI.ChoreBrain.ChoreDone(Companion?.companionName, "repair", $"repaired {Utils.GetPrefabName(_currentPiece.gameObject)} (hp was {hpBefore:P0})");
             }
+            else if (_currentPiece.GetHealthPercentage() < 1f)
+            {
+                // 0.2.322: vanilla Repair refuses within 1 s of the last repair; still damaged, so it's picked again next pass.
+                _repairedPieces.Remove(_currentPiece);
+                LogVerbose($"RepairPiece returned false — still damaged, retried next pass");
+            }
             else
             {
-                LogVerbose($"RepairPiece returned false — skipping (won't retry)");
+                LogVerbose($"RepairPiece returned false — already full");
             }
 
             SetPhase(RepairPhase.FindingNextPiece);
@@ -861,7 +867,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private static int CountItems(Inventory inv, string prefabName)
         {
             int count = 0;
-            foreach (var item in inv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // 0.2.362: storage rows only
             {
                 if (item?.m_dropPrefab?.name == prefabName)
                     count += item.m_stack;
@@ -873,29 +879,17 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (CountItems(inv, prefabName) < needed) return false;
 
-            int remaining   = needed;
-            var items       = new List<ItemDrop.ItemData>(inv.GetAllItems());
-            var toRemove    = new List<ItemDrop.ItemData>();
-
-            foreach (var item in items)
+            // 0.2.322: vanilla Inventory.RemoveItem(item, amount), so the inventory's Changed (save, UI) fires. The raw
+            // m_stack write skipped it.
+            int remaining = needed;
+            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(inv))) // 0.2.362: storage rows only
             {
                 if (remaining <= 0) break;
                 if (item?.m_dropPrefab?.name != prefabName) continue;
-
-                if (item.m_stack <= remaining)
-                {
-                    remaining -= item.m_stack;
-                    toRemove.Add(item);
-                }
-                else
-                {
-                    item.m_stack -= remaining;
-                    remaining = 0;
-                }
+                int take = Mathf.Min(item.m_stack, remaining);
+                inv.RemoveItem(item, take);
+                remaining -= take;
             }
-
-            foreach (var item in toRemove)
-                inv.RemoveItem(item);
 
             return true;
         }

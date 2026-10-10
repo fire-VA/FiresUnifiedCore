@@ -35,6 +35,8 @@ namespace FiresCore.Npc.AI
         public const float SwimCost = 3f, WadeDepth = 1.2f;
         private const float IndoorsHeight = 3000f;
         private const int MaxExpanded = 12000;
+        /// <summary>0.2.285 (HR5c hall: "searched 6668 cells in 265 ms", re-planned every 6 s on the main thread): a search stops here (ms).</summary>
+        private const long MaxSearchMs = 40;
         private const float StartFreeRadius = 1.5f;
 
         private static int s_obstacleMask;
@@ -85,12 +87,23 @@ namespace FiresCore.Npc.AI
         /// times more (where earlier routes stalled), and nearness to walls weighs <paramref name="clearanceWeight"/>.
         /// </summary>
         public static bool Plan(Character body, Vector3 from, Vector3 goal, List<Vector3> route, out string why,
-            IReadOnlyList<Vector3> avoid, float avoidRadius, float clearanceWeight)
+            IReadOnlyList<Vector3> avoid, float avoidRadius, float clearanceWeight) =>
+            Plan(body, from, goal, route, out why, avoid, avoidRadius, clearanceWeight, null);
+
+        /// <summary>
+        /// 0.2.287 (the lead: the bot ran into the hall wall twice, "its way crosses StandInCollider ..., a wall the grid didn't see"):
+        /// <paramref name="hardWalls"/> are colliders a walker's leg check found across an earlier route for this goal; a cell against one
+        /// (within <see cref="HardWallGap"/> at chest height) or a step through one is blocked, whatever the cell test made of it.
+        /// </summary>
+        public static bool Plan(Character body, Vector3 from, Vector3 goal, List<Vector3> route, out string why,
+            IReadOnlyList<Vector3> avoid, float avoidRadius, float clearanceWeight, IReadOnlyList<Collider> hardWalls)
         {
+            s_hardWalls = hardWalls;
             s_avoid = avoid;
             s_avoidRadius = avoidRadius;
             s_clearanceWeight = clearanceWeight > 0f ? clearanceWeight : DefaultClearanceWeight;
             s_start = from;
+            s_hardGoal = goal;
             s_terrainOnly = false;
             // A goal in a fire's damage goes to its edge (0.2.220, R90: the route's first waypoint was the base campfire).
             Vector3 asked = goal;
@@ -133,7 +146,7 @@ namespace FiresCore.Npc.AI
             s_nodeY[start] = Surface(from).y;
             Push(Heuristic(start, end), start);
             int expanded = 0;
-            bool found = false;
+            bool found = false, overBudget = false;
             while (s_open.Count > 0)
             {
                 int node = Pop();
@@ -142,6 +155,7 @@ namespace FiresCore.Npc.AI
                 float hDist = Heuristic(node, end);
                 if (hDist < closest) { closest = hDist; closestNode = node; }
                 if (++expanded > MaxExpanded) break;
+                if ((expanded & 63) == 0 && clock.ElapsedMilliseconds > MaxSearchMs) { overBudget = true; break; }
                 int nx = node % s_w, nz = node / s_w;
                 float g = s_g[node];
                 Vector3 here = NodePos(node);
@@ -192,7 +206,9 @@ namespace FiresCore.Npc.AI
             }
             if (!found)
             {
-                why = expanded > MaxExpanded
+                why = overBudget
+                    ? $"no walkable way found within the {MaxSearchMs} ms search budget ({expanded} cells; nearest reached {closest:0.0} m from the goal; refused: {s_rejWall} wall, {s_rejRise} rise, {s_rejBlocked} blocked cell{nearWhy})"
+                    : expanded > MaxExpanded
                     ? $"no walkable way found within {MaxExpanded} cells ({clock.ElapsedMilliseconds} ms)"
                     : $"no walkable way on the terrain (searched {expanded} cells of {s_cell:0} m; slope limit {s_limit:0}°; {clock.ElapsedMilliseconds} ms; " +
                       $"nearest reached {closest:0.0} m from the goal; refused: {s_rejWall} wall, {s_rejRise} rise over {Jumping.MaxLip:0.0} m, {s_rejDrop} drop-off, {s_rejBlocked} blocked cell, {s_rejHazard} in fire or damage{nearWhy})";
@@ -493,6 +509,29 @@ namespace FiresCore.Npc.AI
         // 0.3 m (was 0.4, 0.2.212): on a 1 m grid a 1.8 m corridor off the grid's alignment had no free cell (R83 corridor: "no walkable way", 7878 cells).
         private const float CellCheckRadius = 0.3f, CellCheckLow = Jumping.MaxLip + 0.05f + CellCheckRadius, CellCheckHigh = 1.85f;
 
+        /// <summary>0.2.285 (the lead: the hall's StandInCollider "a wall the grid didn't see", twice): what kind of collider it is (a thick
+        /// non-convex mesh reads as open floor from inside, R80 Crypt4) and its layer.</summary>
+        public static string Describe(Collider c)
+        {
+            if (c == null) return "no collider";
+            string kind = c is MeshCollider mc ? (mc.convex ? "convex mesh" : "non-convex mesh") : c.GetType().Name;
+            return $"{kind} on layer {LayerMask.LayerToName(c.gameObject.layer)}, bounds {c.bounds.size.x:0.0} x {c.bounds.size.y:0.0} x {c.bounds.size.z:0.0} m";
+        }
+
+        /// <summary>0.2.285: what the grid makes of the point <paramref name="p"/> (looked up from its level): the floor it reads, whether the
+        /// cell test calls it blocked, and what the cell capsule overlaps.</summary>
+        public static string CellReport(Vector3 p)
+        {
+            float h = Height(p.x, p.z, p.y);
+            Vector3 cell = new Vector3(p.x, h, p.z);
+            bool blocked = Blocked(cell);
+            int n = Physics.OverlapCapsuleNonAlloc(cell + Vector3.up * CellCheckLow, cell + Vector3.up * CellCheckHigh, CellCheckRadius, s_overlap, ObstacleMask, QueryTriggerInteraction.Ignore);
+            var names = new System.Text.StringBuilder();
+            for (int i = 0; i < n && i < 3; i++) names.Append(i == 0 ? "" : ", ").Append(s_overlap[i] != null ? s_overlap[i].name : "?");
+            return $"grid there: floor {h:0.0} (looked up from {p.y:0.0}), cell {(blocked ? "blocked" : "open")}, its capsule {CellCheckLow:0.00}-{CellCheckHigh:0.00} m up hits " +
+                   (n > 0 ? names.ToString() : "nothing");
+        }
+
         private static bool Blocked(Vector3 p)
         {
             long key = Key(p.x, p.z, p.y);
@@ -507,8 +546,39 @@ namespace FiresCore.Npc.AI
                 for (int i = 0; i < n && !blocked; i++)
                     if (s_overlap[i] != null && !PassableDoor(s_overlap[i])) blocked = true;   // a doorway cell stays open (0.2.205)
             }
+            if (!blocked && AgainstHardWall(p)) blocked = true;   // 0.2.287
             s_blocked[key] = blocked;
             return blocked;
+        }
+
+        // ---- 0.2.287: hard walls (what a walker's leg check found that the cell test missed) ----
+
+        /// <summary>A cell this close (m, at chest height) to a hard wall is blocked.</summary>
+        public const float HardWallGap = 0.5f;
+        private static IReadOnlyList<Collider> s_hardWalls;
+        private static Vector3 s_hardGoal;
+
+        // Against a hard wall at chest height over the floor point: the exact closest point for a box, sphere, capsule or convex mesh
+        // (inside counts as 0); a non-convex mesh's bounds widened by HardWallGap (ClosestPoint doesn't answer for one).
+        private static bool AgainstHardWall(Vector3 floor)
+        {
+            if (s_hardWalls == null || s_hardWalls.Count == 0) return false;
+            // Round the start and the goal a body stands against the wall it came along or goes to.
+            if (Flat(floor, s_start) <= StartFreeRadius || Flat(floor, s_hardGoal) <= 1f) return false;
+            Vector3 chest = floor + Vector3.up * 1.0f;
+            for (int i = 0; i < s_hardWalls.Count; i++)
+            {
+                Collider c = s_hardWalls[i];
+                if (c == null || !c.enabled) continue;
+                if (c is MeshCollider mc && !mc.convex)
+                {
+                    Bounds b = c.bounds;
+                    b.Expand(new Vector3(HardWallGap * 2f, 0f, HardWallGap * 2f));
+                    if (b.Contains(chest)) return true;
+                }
+                else if ((c.ClosestPoint(chest) - chest).sqrMagnitude < HardWallGap * HardWallGap) return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -525,24 +595,43 @@ namespace FiresCore.Npc.AI
             float cost = IsLoaded(a) && IsLoaded(b) ? Crossing(a, b) : 0f;
             if (float.IsInfinity(cost)) { s_rejWall++; return cost; }
             Vector3 prev = a;
+            // 0.2.283 (HR5c pit, Fire: "It's not trying to jump or climb out of the pit at all"): a jumpable lip is ONE rise up to MaxLip.
+            // Steep rises sample after sample add up: the 2.5 m voxel pit wall over two or three 0.5 m samples was 1.2 m "lips" each,
+            // so the grid planned "open ground" out of it and the bot walked the bottom.
+            // A cell centre half way up the wall splits it in two edges: the steep rise just behind a carries in.
+            float steepRise = 0f;
+            Vector3 along = new Vector3(b.x - a.x, 0f, b.z - a.z);
+            if (along.sqrMagnitude > 0.0001f)
+            {
+                Vector3 behind = Surface(a - along.normalized * s_sample);
+                float backRise = a.y - behind.y;
+                if (backRise > 0f && Mathf.Atan2(backRise, s_sample) * Mathf.Rad2Deg > s_limit) steepRise = backRise;
+            }
             for (int i = 1; i <= steps; i++)
             {
                 Vector3 q = Vector3.Lerp(a, b, i / (float)steps);
                 Vector3 p = Surface(q);
                 // Through a fire's damage never (0.2.220), a smoothed shortcut included; round the start the body may be walking out of one.
                 if (Flat(p, s_start) > StartFreeRadius && Hazards.Inside(p, out _)) { s_rejHazard++; return float.PositiveInfinity; }
+                // 0.2.287: never a step through a hard wall (the leg check found it across an earlier route).
+                if (s_hardWalls != null && AgainstHardWall(p)) { s_rejWall++; return float.PositiveInfinity; }
                 float run = Flat(prev, p);
                 float rise = p.y - prev.y;
                 float step = run;
                 if (rise > 0f)
                 {
                     float tilt = Mathf.Atan2(rise, Mathf.Max(0.01f, run)) * Mathf.Rad2Deg;
+                    steepRise = tilt > s_limit ? steepRise + rise : 0f;
                     // A lip a body can jump is not a slope (SlopeGuide asks Jumping the same way).
-                    if (tilt > s_limit && rise > Jumping.MaxLip) { s_rejRise++; return float.PositiveInfinity; }
+                    if (tilt > s_limit && steepRise > Jumping.MaxLip) { s_rejRise++; return float.PositiveInfinity; }
                     float share = tilt / s_limit;
                     step *= 1f + 2f * share * share;
                 }
-                else if (-rise > SlopeGuide.FallSafe) { s_rejDrop++; return float.PositiveInfinity; }
+                else
+                {
+                    steepRise = 0f;
+                    if (-rise > SlopeGuide.FallSafe) { s_rejDrop++; return float.PositiveInfinity; }
+                }
                 if (s_water - p.y > WadeDepth) step *= 1f + SwimCost;
                 if (!IsLoaded(p)) step *= 1f + UnloadedCost;
                 // Near a wall, a rock or a building costs more: routes run wide where there's room, tight only where it's the only way.

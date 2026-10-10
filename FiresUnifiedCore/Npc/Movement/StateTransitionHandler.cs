@@ -152,8 +152,7 @@ namespace FiresCore.Npc.Movement
                 _character.SetRun(false);
             }
             
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-                _rigidbody.linearVelocity = new Vector3(0, _rigidbody.linearVelocity.y, 0);
+            // 0.2.327 (audit slice 3): no velocity write; SetMoveDir(0) above lets vanilla UpdateWalking brake.
 
             // Wait for physics
             yield return new WaitForFixedUpdate();
@@ -167,8 +166,7 @@ namespace FiresCore.Npc.Movement
                 _character.SetRun(false);
             }
 
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-                _rigidbody.linearVelocity = new Vector3(0, _rigidbody.linearVelocity.y, 0);
+            // 0.2.327 (audit slice 3): no velocity write; SetMoveDir(0) above lets vanilla UpdateWalking brake.
             
             yield return null;
             

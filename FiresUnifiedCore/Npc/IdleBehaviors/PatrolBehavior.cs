@@ -203,7 +203,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // No deviation on a piece: keep the NPC centered on the authored route so it can't be nudged off a
             // narrow bridge. On terrain, apply it (anti-stacking) and drop it if it lands off-mesh.
             Vector3 target = onPiece ? carrot : carrot + _deviation;
-            if (!onPiece && !IsReachable(target)) target = carrot;
+            if (!onPiece && !IsNavmeshReachable(target)) target = carrot;
 
             // Couldn't reach this waypoint within the timeout (unreachable, or just assigned the route from far
             // away) → snap onto it. This is how an NPC that isn't on its route gets there. Vanilla MoveTo
@@ -252,19 +252,13 @@ namespace FiresCore.Npc.IdleBehaviors
             if (body != null) { body.position = point; body.linearVelocity = Vector3.zero; }
         }
 
-        // Stop AND clamp residual horizontal velocity. A bare StopMovement (SetMoveDir(0)) leaves a non-kinematic
-        // NPC coasting under gravity, so it slides down slopes "like ice" while it waits/chats — the combat
-        // mover's velocity-clamp is parked while patrol owns the body (IsInSubBehavior). Keep vel.y so gravity
-        // still settles it onto the surface. Only runs on the idle frames patrol holds, never while walking.
+        // Hold still on the idle frames patrol holds, never while walking. 0.2.327 (audit slice 3, Fire's vanilla-method rule):
+        // only StopMovement (SetMoveDir(0)), which vanilla UpdateWalking brakes. The old horizontal-velocity clamp was a patch
+        // for "slides down slopes like ice"; if that comes back, find out why UpdateWalking isn't braking (a frozen state that
+        // skips UpdateMotion?) instead of writing the rigidbody. The companion_test's slope idle check covers it.
         private void HoldStill()
         {
             StopMovement();
-            var body = HostGameObject != null ? HostGameObject.GetComponent<Rigidbody>() : null;
-            if (body != null && !body.isKinematic)
-            {
-                var velocity = body.linearVelocity;
-                body.linearVelocity = new Vector3(0f, velocity.y, 0f);
-            }
         }
 
         // A point LookAheadDistance ahead of the current cursor ALONG the route path (in _direction). A loop
@@ -328,6 +322,8 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private void OnArrived(bool writeCheckpoint = true)
         {
+            // 0.2.350 (round 23 slope_patrol: never within 1.5 m of the stop point in 30 s): each node reached, at Debug.
+            FiresCore.Logging.FiresLogger.LogDebug($"[Patrol] {Companion?.companionName} reached node {_index} of {_route.Points.Count} at {Transform.position:F1} (node {_route.Points[_index]:F1}, {Vector3.Distance(Transform.position, _route.Points[_index]):0.0} m 3D), stop here {(_preset?.StopAt(_index) != null)}");
             if (writeCheckpoint) WriteCheckpoint();
             int last = _route.Points.Count - 1;
 
@@ -415,7 +411,9 @@ namespace FiresCore.Npc.IdleBehaviors
             // 60s TeleportTimeout. A must-hit node is likewise snapped onto rather than skipped: it's flagged
             // mandatory (doorway/bridge) precisely because the drawn path is the only correct one there. A plain
             // reachable-but-stuck marker is just skipped, as before.
-            if (!IsReachable(target) || _route.MustHit.Contains(_index))
+            // 0.2.350: the strict navmesh check (no close-and-clear fallback), or a close off-navmesh node read as reachable and
+            // was skipped instead of snapped (round 23 slope_patrol never reached its stop point).
+            if (!IsNavmeshReachable(target) || _route.MustHit.Contains(_index))
             {
                 TeleportTo(target);
                 OnArrived();

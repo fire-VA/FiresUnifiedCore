@@ -141,7 +141,20 @@ namespace FiresCore.Npc.IdleBehaviors
             // 0.2.268 ([lead], HR3): a build piece (anything with a Piece: walls, decorations, a player's stone or wood work) is never a
             // tree, log or deposit to chop or mine, in players' bases too. Real nodes (MineRock, MineRock5, Destructible, TreeBase, TreeLog)
             // carry no Piece, even when a builder placed them (the homestead's iron mudpile stays a target).
-            if (obj.GetComponentInParent<Piece>() != null) return null;
+            // 0.2.367 ([lead]): FAP's Nature tab makes vanilla trees placeable, so a Piece alone doesn't mean "player-built". A
+            // real TreeBase/TreeLog is gatherable unless a PLAYER placed it (the piece has a creator: decor someone built).
+            var asPiece = obj.GetComponentInParent<Piece>();
+            if (asPiece != null)
+            {
+                bool treeOrLog = obj.GetComponentInParent<TreeBase>() != null || obj.GetComponentInParent<TreeLog>() != null;
+                if (!treeOrLog) return null;
+                long creator = asPiece.GetCreator();
+                if (creator != 0L)
+                {
+                    LogPlacedDecor(obj, creator);
+                    return null;
+                }
+            }
 
             // Check for TreeBase
             var treeBase = obj.GetComponent<TreeBase>() ?? obj.GetComponentInParent<TreeBase>();
@@ -198,6 +211,30 @@ namespace FiresCore.Npc.IdleBehaviors
             return null;
         }
         
+        private static float s_nextDecorLog;
+
+        /// <summary>0.2.367: "[Tools] &lt;tree&gt;: refused: player-placed decor by &lt;creator&gt;" (Debug, at most every 5 s).</summary>
+        private static void LogPlacedDecor(GameObject obj, long creator)
+        {
+            if (Time.time < s_nextDecorLog) return;
+            s_nextDecorLog = Time.time + 5f;
+            FiresCore.Logging.FiresLogger.LogDebug($"[Tools] {Utils.GetPrefabName(obj)}: refused: player-placed decor by {creator}");
+        }
+
+        /// <summary>0.2.367: why <see cref="GetResourceData"/> refused an object (for logs): "no object", "a build piece",
+        /// "a berry bush", "no TreeBase/TreeLog/MineRock/Destructible", or "ok".</summary>
+        public static string WhyNotGatherable(GameObject obj)
+        {
+            if (obj == null) return "no object (destroyed or unloaded)";
+            var data = GetResourceData(obj);
+            if (data != null && data.IsValid) return "ok";
+            var piece = obj.GetComponentInParent<Piece>();
+            if (piece != null && piece.GetCreator() != 0L) return $"'{obj.name}' is player-placed decor (creator {piece.GetCreator()})";
+            if (piece != null) return $"'{obj.name}' is a build piece";
+            if (obj.GetComponentInParent<Pickable>() != null) return $"'{obj.name}' is a pickable/bush";
+            return $"'{obj.name}' has no TreeBase/TreeLog/MineRock/Destructible";
+        }
+
         /// <summary>
         /// Checks if a GameObject is a gatherable resource.
         /// CRITICAL: Returns false for berry bushes that have no berries - those should not be gathered/attacked.
@@ -958,7 +995,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (!inventory.CanAddItem(itemPrefab, recipe.m_amount)) return false;
 
             foreach (var requirement in GetCraftCosts(recipe))
-                inventory.RemoveItem(requirement.m_resItem.m_itemData.m_shared.m_name, requirement.GetAmount(CraftQuality));
+                CompanionInventory.RemoveFromStorage(inventory, requirement.m_resItem.m_itemData.m_shared.m_name, requirement.GetAmount(CraftQuality));
             return inventory.AddItem(itemPrefab, recipe.m_amount);
         }
 
@@ -993,7 +1030,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private static bool HasCraftingResources(Recipe recipe, Inventory inventory)
         {
             foreach (var requirement in GetCraftCosts(recipe))
-                if (inventory.CountItems(requirement.m_resItem.m_itemData.m_shared.m_name) < requirement.GetAmount(CraftQuality))
+                if (CompanionInventory.CountStorage(inventory, requirement.m_resItem.m_itemData.m_shared.m_name) < requirement.GetAmount(CraftQuality))
                     return false;
             return true;
         }

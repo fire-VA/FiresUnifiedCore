@@ -70,7 +70,18 @@ namespace FiresCore.Npc.Archetypes
         /// +Buff duration, +Heal effectiveness, +Eitr pool.
         /// Requires: Support staff (shield staff, heal staff)
         /// </summary>
-        Healer = 8
+        Healer = 8,
+
+        // === POSSESSION (Tools\CLASSES_DRUID_NECROMANCER.md, Fire 10-07). APPEND ONLY: BarLayout saves the int. ===
+        /// <summary>
+        /// Druid - takes on the form of a beaten creature (Wildshape) through Core's possession API.
+        /// </summary>
+        Druid = 9,
+
+        /// <summary>
+        /// Necromancer - possesses undead humanoids while the body channels, untouchable.
+        /// </summary>
+        Necromancer = 10
     }
     
     /// <summary>
@@ -158,7 +169,9 @@ namespace FiresCore.Npc.Archetypes
                 { ArchetypeClass.Monk, CreateMonkDefinition() },
                 { ArchetypeClass.Ranger, CreateRangerDefinition() },
                 { ArchetypeClass.Mage, CreateMageDefinition() },
-                { ArchetypeClass.Healer, CreateHealerDefinition() }
+                { ArchetypeClass.Healer, CreateHealerDefinition() },
+                { ArchetypeClass.Druid, CreateDruidDefinition() },
+                { ArchetypeClass.Necromancer, CreateNecromancerDefinition() }
             };
         }
         
@@ -496,7 +509,52 @@ namespace FiresCore.Npc.Archetypes
                 }
             };
         }
-        
+
+        // Druid / Necromancer: scaffolding with near-neutral stats; the numbers are [wishbone]'s tree data to tune.
+        private static ArchetypeDefinition CreateDruidDefinition()
+        {
+            return new ArchetypeDefinition
+            {
+                Class = ArchetypeClass.Druid,
+                DisplayName = "Druid",
+                Description = "Shapeshifter who beats a creature down and takes on its form and attacks.",
+                IconColor = new Color(0.35f, 0.65f, 0.25f), // Moss green
+
+                MaxStaminaMultiplier = 1.05f,
+                StaminaRegenMultiplier = 1.05f,
+                MaxEitrMultiplier = 1.10f,
+                MaxHealthMultiplier = 1.05f,
+
+                PreferredSkills = new List<Skills.SkillType>
+                {
+                    Skills.SkillType.Clubs,
+                    Skills.SkillType.ElementalMagic
+                }
+            };
+        }
+
+        private static ArchetypeDefinition CreateNecromancerDefinition()
+        {
+            return new ArchetypeDefinition
+            {
+                Class = ArchetypeClass.Necromancer,
+                DisplayName = "Necromancer",
+                Description = "Binds the dead: possesses undead humanoids while the body channels, untouchable.",
+                IconColor = new Color(0.45f, 0.25f, 0.55f), // Grave purple
+
+                MaxEitrMultiplier = 1.20f,
+                EitrRegenMultiplier = 1.15f,
+                MaxHealthMultiplier = 0.90f,
+                ArmorMultiplier = 0.90f,
+
+                PreferredSkills = new List<Skills.SkillType>
+                {
+                    Skills.SkillType.BloodMagic,
+                    Skills.SkillType.Knives
+                }
+            };
+        }
+
         #endregion
     }
 }

@@ -321,6 +321,7 @@ if (characterInParent == null)
             // Wild companions need to defend themselves against hostile creatures
             if (_companion == null) return;
             if (_nview == null || !_nview.IsValid()) return;
+            if (_companion.IsPossessed) return;   // 0.2.292: a player is driving it; its own attacks come from them
             if (_companion.isDefeated) return;
 
             _equipmentData?.UpdateFoodTimers();
@@ -801,7 +802,7 @@ if (characterInParent == null)
             ItemDrop.ItemData chosen = null;
             bool chosenIsRanged = false;
 
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in _inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
             {
                 if (!IsCombatWeapon(item)) continue;
                 if (IsGatheringToolItem(item)) continue;

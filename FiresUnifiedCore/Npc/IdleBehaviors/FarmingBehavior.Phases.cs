@@ -548,7 +548,9 @@ namespace FiresCore.Npc.IdleBehaviors
             else
             {
                 StopMovement();
-                TryPickupItem(_currentPickupTarget);
+                // Ownership requested (another machine owned the drop): back in the queue to try once it lands; the timeout below bounds it.
+                if (!TryPickupItem(_currentPickupTarget) && _currentPickupTarget != null && !_currentPickupTarget.CanPickup())
+                    _pendingPickups.Add(_currentPickupTarget);
                 _currentPickupTarget = null;
                 if (_pendingPickups.Count == 0) SetPhase(FarmPhase.Idle);
             }
@@ -563,22 +565,20 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
 
-        private void TryPickupItem(ItemDrop drop)
+        /// <summary>True when any of the drop landed in storage.</summary>
+        private bool TryPickupItem(ItemDrop drop)
         {
-            if (drop == null || _inventory == null) return;
+            if (drop == null || _inventory == null) return false;
             var storage = _inventory.GetStorageInventory();
-            if (storage == null) return;
+            if (storage == null) return false;
 
-            var data = drop.m_itemData;
-            if (data == null || !storage.CanAddItem(data)) return;
-
-            // A partial merge returns false with the rest left in the clone's stack; that rest stays on the ground.
-            var picked = data.Clone();
-            if (storage.AddItem(picked))
-                drop.GetComponent<ZNetView>()?.Destroy();
-            else
-                drop.SetStack(picked.m_stack);
+            // 0.2.322 (dupe fix): the ownership-checked pickup (ChestHelper.TryTakeLooseItem: CanPickup, else RequestOwn and try
+            // again next tick; fresh data; the world item destroyed only once all of it landed). The old clone + AddItem +
+            // ZNetView.Destroy ran on a machine that didn't own the drop, where Destroy only removes the local copy: the item
+            // came back and was counted twice. Vanilla Humanoid.Pickup comes with the one-inventory slice.
+            if (ChestHelper.TryTakeLooseItem(drop, storage) <= 0) return false;
             _inventory.SaveToZDO();
+            return true;
         }
 
         #endregion
@@ -627,7 +627,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (storage != null && chestInv != null)
             {
-                foreach (var item in new List<ItemDrop.ItemData>(storage.GetAllItems()))
+                foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storage))) // 0.2.362: storage rows only
                 {
                     if (item == null) continue;
                     if (IsEquippedItem(item)) continue;

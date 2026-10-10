@@ -22,6 +22,19 @@ namespace FiresCore.Input
         private const string UnknownGuid = "unknown";
         private const string UnknownModName = "Mod";
 
+        // 0.2.339 (the F1 window opened over "141 conflicts", most of them modes that never run beside normal play): a mod whose
+        // keys only act in one mode gets that mode, so they stop "clashing" with gameplay keys. Matched by the mod's display name.
+        private static BindingContext ContextForMod(string modName)
+        {
+            switch (modName)
+            {
+                case "FiresValcast": return BindingContext.Possessed;        // its keys act while possessing a creature
+                case "FiresMiniGames": return BindingContext.Minigame;       // WASD / mouse / Enter inside a minigame
+                case "Infinity Hammer": return BindingContext.Building;      // with the hammer in hand
+                default: return BindingContexts.Default;
+            }
+        }
+
         private static readonly List<KeyBinding> s_coreBindings = new List<KeyBinding>();
         private static readonly List<KeybindEntry> s_entries = new List<KeybindEntry>();
         private static readonly HashSet<ConfigFile> s_watchedFiles = new HashSet<ConfigFile>();
@@ -154,8 +167,8 @@ namespace FiresCore.Input
                     entry.CoreBinding.Alt.Value = false;
                 }
                 else if (entry.Entry == null) return false;
-                else if (entry.Entry.SettingType == typeof(KeyboardShortcut)) entry.Entry.BoxedValue = KeyboardShortcut.Empty;
-                else entry.Entry.BoxedValue = KeyCode.None;
+                else if (entry.Entry.SettingType == typeof(KeyboardShortcut)) FiresCore.UI.CfgDiscovery.Write(entry.Entry, KeyboardShortcut.Empty, "keybinds unbind");
+                else FiresCore.UI.CfgDiscovery.Write(entry.Entry, KeyCode.None, "keybinds unbind");
             }
             catch (Exception ex)
             {
@@ -181,8 +194,8 @@ namespace FiresCore.Input
                 }
                 else if (entry.Entry == null) return false;
                 else if (entry.Entry.SettingType == typeof(KeyboardShortcut))
-                    entry.Entry.BoxedValue = KeyCombination.ToShortcut(key, modifiers);
-                else entry.Entry.BoxedValue = key;
+                    FiresCore.UI.CfgDiscovery.Write(entry.Entry, KeyCombination.ToShortcut(key, modifiers), "keybinds");
+                else FiresCore.UI.CfgDiscovery.Write(entry.Entry, key, "keybinds");
             }
             catch (Exception ex)
             {
@@ -296,7 +309,7 @@ namespace FiresCore.Input
                     Section = descriptor.Section,
                     Name = descriptor.Key,
                     Label = descriptor.Label,
-                    Context = BindingContexts.Default,
+                    Context = ContextForMod(descriptor.ModName),
                     Match = match,
                     Key = key,
                     Modifiers = modifiers,

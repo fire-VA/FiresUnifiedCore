@@ -212,6 +212,9 @@ namespace FiresCore.Lifecycle
 
                     if (hasDediSkip && IsDedicatedServerSkip(type, dediSkip)) continue;
 
+                    // 0.2.387: a class of an owned feature waits until every plugin has loaded (PatchOwnedNextFrame).
+                    if (OwnedFeaturesOf(type) != null) { if (IsPatchClass(type)) _deferredOwned.Add(type); continue; }
+
                     try
                     {
                         new HarmonyLib.PatchClassProcessor(Harmony, type).Patch();
@@ -236,7 +239,56 @@ namespace FiresCore.Lifecycle
                 Logger.LogError($"Setup() threw: {ex}");
             }
 
+            StartCoroutine(PatchOwnedNextFrame());
             BeginInitPoll();
+        }
+
+        // 0.2.387 (Fire 10-09, Tools\CORE_CONFIG_GATING_PLAN.md): patch classes tagged [FiresOwnedFeature] are patched only when
+        // one of their features is live. Liveness needs every plugin loaded, and BepInEx lists a plugin only just before creating
+        // it, so this runs one frame after Awake (the chainloader creates every plugin within one frame).
+        private readonly List<Type> _deferredOwned = new List<Type>();
+
+        // A class Harmony would patch: [HarmonyPatch] on the class or on one of its methods (the count line counts only these).
+        private static bool IsPatchClass(Type type)
+        {
+            if (type.GetCustomAttributes(typeof(HarmonyLib.HarmonyPatch), false).Length > 0) return true;
+            foreach (var m in type.GetMethods(BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                if (m.GetCustomAttributes(typeof(HarmonyLib.HarmonyPatch), false).Length > 0) return true;
+            return false;
+        }
+
+        private static string[] OwnedFeaturesOf(Type type)
+        {
+            for (var current = type; current != null; current = current.DeclaringType)
+            {
+                var attr = (FiresCore.Config.FiresOwnedFeatureAttribute)Attribute.GetCustomAttribute(current, typeof(FiresCore.Config.FiresOwnedFeatureAttribute), false);
+                if (attr != null) return attr.Features;
+            }
+            return null;
+        }
+
+        private System.Collections.IEnumerator PatchOwnedNextFrame()
+        {
+            yield return null;
+            FiresCore.Config.CoreFeatures.Resolve();
+            int patched = 0, skipped = 0;
+            foreach (var type in _deferredOwned)
+            {
+                if (!FiresCore.Config.CoreFeatures.AnyLive(OwnedFeaturesOf(type))) { skipped++; continue; }
+                try
+                {
+                    new HarmonyLib.PatchClassProcessor(Harmony, type).Patch();
+                    patched++;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError($"Harmony patch class '{type.FullName}' failed to attach: {ex.Message}");
+                }
+            }
+            _deferredOwned.Clear();
+            if (patched + skipped > 0 || Info.Metadata.GUID == FiresCore.FiresUnifiedCore.PluginGUID)
+                Logger.LogDebug($"Core features: {FiresCore.Config.CoreFeatures.LiveCount} live, {FiresCore.Config.CoreFeatures.InertCount} inert, "
+                    + $"{skipped} patch classes skipped ({patched} owned patch classes patched)");
         }
 
         private void OnEnable()

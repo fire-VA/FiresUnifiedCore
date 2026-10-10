@@ -103,16 +103,17 @@ namespace FiresCore.UI
 
         public static void EnsureHost()
         {
-            if (_instance != null) return;
+            // 0.2.378: never on a headless server (its Update polled the hotkey there and crashed the dedi on 0.2.376).
+            if (_instance != null || HeadlessGuard.IsHeadless) return;
             var host = new GameObject("FiresConfigPanelHost");
             UnityEngine.Object.DontDestroyOnLoad(host);
             _instance = host.AddComponent<ConfigPanel>();
             FiresCore.Bridge.ModUiRegistry.Register("FiresConfigPanel", () => IsOpen, () => _instance?.Hide(), null);
         }
 
-        public static void Toggle() { EnsureHost(); _instance.ToggleInternal(); }
+        public static void Toggle() { EnsureHost(); if (_instance != null) _instance.ToggleInternal(); }
 
-        public static void Open() { EnsureHost(); if (!_instance._open) _instance.Show(); }
+        public static void Open() { EnsureHost(); if (_instance != null && !_instance._open) _instance.Show(); }
 
         public static bool IsOpen => _instance != null && _instance._open;
 
@@ -202,7 +203,7 @@ namespace FiresCore.UI
             if (HotkeyPressed()) ToggleInternal();
 
             if (!_open) return;
-            if (UnityEngine.Input.GetKeyDown(KeyCode.Escape))
+            if (Input.FiresKeys.GetKeyDown(KeyCode.Escape))
             {
                 if (KeybindPopupOpen) CloseKeybindPopup();
                 else if (ConfigPopup.IsOpen) ConfigPopup.Close();
@@ -221,7 +222,7 @@ namespace FiresCore.UI
         private static bool HotkeyPressed()
             => FiresConfigUI.CfgHotkey != null
                 ? Input.Chord.IsDown(FiresConfigUI.CfgHotkey.Value)
-                : UnityEngine.Input.GetKeyDown(FiresConfigUI.ToggleKey);
+                : Input.FiresKeys.GetKeyDown(FiresConfigUI.ToggleKey);
 
         private static void RegisterCommands()
         {
@@ -417,6 +418,14 @@ namespace FiresCore.UI
                 ConfigPopup.Draw();
                 DrawKeybindPopup();
                 CommitOnFocusChange();
+                // 0.2.310: a test's queued click / character (FiresGuiTest), replayed against this frame's layout, as the OS's would be.
+                if (FiresGuiTest.TryNext(out Event injected))
+                {
+                    Event real = Event.current;
+                    Event.current = injected;
+                    try { DrawMainWindow(); }
+                    finally { Event.current = real; }
+                }
             }
             finally
             {
@@ -572,6 +581,7 @@ namespace FiresCore.UI
             GUILayout.BeginHorizontal();
             GUI.SetNextControlName("searchBox");
             _search = GUILayout.TextField(_search ?? "", ConfigSkin.TextInput, ScaledLayout.ExpandedWidth);
+            FiresGuiTest.Record("searchBox");
             if (GUILayout.Button("Clear", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(52f))))
             {
                 _search = "";
@@ -830,7 +840,7 @@ namespace FiresCore.UI
 
         private void ResetToDefault(CfgDescriptor descriptor)
         {
-            try { descriptor.Entry.BoxedValue = descriptor.Default; } catch { }
+            try { CfgDiscovery.Write(descriptor.Entry, descriptor.Default, "reset"); } catch { }
             ClearBuffers(descriptor);
         }
 
@@ -1165,7 +1175,10 @@ namespace FiresCore.UI
             bool capturingThis = _capturing && _captureTarget == descriptor.Entry;
             string boxLabel = capturingThis ? CaptureLabel() : BindLabel(value);
 
-            if (GUILayout.Button(boxLabel, ConfigSkin.Button, ScaledLayout.Width(KeyBindWidth)))
+            string testId = descriptor.Entry != null ? $"{descriptor.Entry.Definition.Section}/{descriptor.Entry.Definition.Key}" : "?";
+            bool boxClicked = GUILayout.Button(boxLabel, ConfigSkin.Button, ScaledLayout.Width(KeyBindWidth));
+            FiresGuiTest.Record("bind:" + testId);
+            if (boxClicked)
             {
                 if (capturingThis) CommitCapture(descriptor);
                 else BeginCapture(descriptor.Entry);
@@ -1174,7 +1187,9 @@ namespace FiresCore.UI
 
             var previousBackground = GUI.backgroundColor;
             if (capturingThis) GUI.backgroundColor = CaptureButtonGreen;
-            if (GUILayout.Button(capturingThis ? "Apply" : "Set", ConfigSkin.ButtonSmall, ScaledLayout.Width(ResetButtonWidth)))
+            bool applyClicked = GUILayout.Button(capturingThis ? "Apply" : "Set", ConfigSkin.ButtonSmall, ScaledLayout.Width(ResetButtonWidth));
+            FiresGuiTest.Record("apply:" + testId);
+            if (applyClicked)
             {
                 if (capturingThis) CommitCapture(descriptor);
                 else BeginCapture(descriptor.Entry);
@@ -1264,7 +1279,7 @@ namespace FiresCore.UI
         // ---------------------------------------------------------------- write-back
         private void Set(CfgDescriptor descriptor, object value)
         {
-            try { descriptor.Entry.BoxedValue = value; }
+            try { CfgDiscovery.Write(descriptor.Entry, value, "value"); }
             catch (Exception ex) { FiresConfigUI.Log.LogWarning($"set '{descriptor.Key}' failed: {ex.Message}"); }
         }
 
@@ -1272,7 +1287,7 @@ namespace FiresCore.UI
         {
             var values = descriptor.OptionValues;
             if (values == null || index < 0 || index >= values.Length) return;
-            try { descriptor.Entry.BoxedValue = values[index]; }
+            try { CfgDiscovery.Write(descriptor.Entry, values[index], "option"); }
             catch (Exception ex) { FiresConfigUI.Log.LogWarning($"set option '{descriptor.Key}' failed: {ex.Message}"); }
         }
 
@@ -1301,12 +1316,12 @@ namespace FiresCore.UI
         private void PollKeyCapture()
         {
             if (_captureTarget == null) { _capturing = false; return; }
-            if (UnityEngine.Input.GetKeyDown(KeyCode.Escape)) { CancelCapture(); return; }
-            if (UnityEngine.Input.GetKeyDown(KeyCode.Delete)) { UnbindCaptureTarget(); return; }
+            if (Input.FiresKeys.GetKeyDown(KeyCode.Escape)) { CancelCapture(); return; }
+            if (Input.FiresKeys.GetKeyDown(KeyCode.Delete)) { UnbindCaptureTarget(); return; }
 
             foreach (KeyCode keyCode in Enum.GetValues(typeof(KeyCode)))
             {
-                if (!UnityEngine.Input.GetKeyDown(keyCode)) continue;
+                if (!Input.FiresKeys.GetKeyDown(keyCode)) continue;
                 if (keyCode >= KeyCode.Mouse0 && keyCode <= KeyCode.Mouse6 && IsOverCaptureButtons()) continue;
 
                 if (Array.IndexOf(s_modifiers, keyCode) >= 0)
@@ -1348,8 +1363,8 @@ namespace FiresCore.UI
             if (target == null) return;
             try
             {
-                if (wantsShortcut) target.BoxedValue = new KeyboardShortcut(main, modifiers.ToArray());
-                else target.BoxedValue = main;
+                if (wantsShortcut) CfgDiscovery.Write(target, new KeyboardShortcut(main, modifiers.ToArray()), "key capture");
+                else CfgDiscovery.Write(target, main, "key capture");
             }
             catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind capture failed: " + ex.Message); }
         }
@@ -1361,9 +1376,9 @@ namespace FiresCore.UI
             if (target == null) return;
             try
             {
-                target.BoxedValue = target.SettingType == typeof(KeyboardShortcut)
+                CfgDiscovery.Write(target, target.SettingType == typeof(KeyboardShortcut)
                     ? (object)KeyboardShortcut.Empty
-                    : (object)KeyCode.None;
+                    : (object)KeyCode.None, "unbind");
             }
             catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind unbind failed: " + ex.Message); }
         }
@@ -1401,7 +1416,8 @@ namespace FiresCore.UI
         private void HandleResize()
         {
             var grip = new Rect(_rect.width - GripSize - GripInset, _rect.height - GripSize - GripInset, GripSize, GripSize);
-            GUI.Label(grip, "//", ConfigSkin.Hint);
+            // 0.2.372: sprite grip (the "//" label read as a square)
+            FiresResizeGrip.DrawGrip(grip, ConfigSkin.Hint.normal.textColor);
 
             int controlId = GUIUtility.GetControlID(ResizeControlHint, FocusType.Passive);
             var current = Event.current;

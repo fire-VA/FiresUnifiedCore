@@ -57,7 +57,7 @@ namespace FiresCore.Npc.AI
         public float runDistanceInner = 4f;
         public float runDistanceOuter = 6f;
         public float catchUpDistance = 12f;
-        public float playerIdleThreshold = 3f;
+        public float playerIdleThreshold = 8f;   // 0.2.367: was 3 s (14x idle flapping in one session)
 
         // Run-tier catch-up boosts (multipliers on the archetype run speed, applied by CompanionSpeedRamp).
         // An owner following at RUN pace moves as fast as the companion's own run speed, so a plain run
@@ -1132,8 +1132,12 @@ namespace FiresCore.Npc.AI
             _lastProgressTime = Time.time;
             _lastDistanceToTarget = float.MaxValue;
             _currentMoveTarget = Vector3.zero;
+            // 0.2.367: drop the vanilla waypoints + cached search too, so a teleported body does not steer back
+            // along a path computed from where it used to be.
+            if (m_path != null) m_path.Clear();
+            InvalidatePathCache();
         }
-        
+
         public bool IsStuck => _consecutiveStuckFrames >= StuckFramesBeforeRecalc;
         public int StuckCheckCount => _consecutiveStuckFrames;
         

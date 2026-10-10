@@ -72,8 +72,9 @@ namespace FiresCore.Npc.IdleBehaviors
         private CraftingStation _targetStation;
         private PieceDataHelper.PieceData _pieceData;
         private Vector3 _workPosition;
-        // Within this of the station itself the companion works from where it stands.
-        private const float StationUseRange = 3.5f;
+        // 0.2.328: arrival is vanilla's use range (InUseRange); re-aims at the station's surface when the spot was short of it.
+        private const int MaxApproachRetries = 2;
+        private int _approachRetries;
         private float _workEndTime;
         private float _lastAnimationTime;
         private bool _isCraftingAnimationActive = false;  // Track if crafting animation is playing
@@ -202,6 +203,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 _pieceData = PieceDataHelper.GetPieceData(_targetStation.gameObject);
                 _workPosition = CalculateWorkPosition(_targetStation);
+                _approachRetries = 0; _stallSince = -1f;
 
                 // EARLY RESERVATION: Claim immediately so concurrent companions don't pile in.
                 if (!InteractableOccupancyManager.TryOccupy(_targetStation.gameObject, Character, MaxWorkDuration + 30f))
@@ -327,6 +329,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             _pieceData = PieceDataHelper.GetPieceData(_targetStation.gameObject);
             _workPosition = CalculateWorkPosition(_targetStation);
+            _approachRetries = 0; _stallSince = -1f;
 
             SetPhase(WorkPhase.MovingToWorkstation);
             MoveToPosition(_workPosition);
@@ -341,9 +344,10 @@ namespace FiresCore.Npc.IdleBehaviors
                 return true;
             }
             
-            // Close enough to use the station: work from here rather than walk to the exact spot in front of it (R65: timed
-            // out in MovingToWorkstation beside the bench; R63/R64 passed at 1.8 / 3.2 m from it).
-            if (Character != null && Vector3.Distance(Character.transform.position, _targetStation.transform.position) <= StationUseRange)
+            // 0.2.328 (Fire, round 12 companion_motion_test: "they should try to get a little closer to the workbenches before
+            // interacting"; chore_workstation stopped 2.9 m off the bench): arrived = vanilla CraftingStation.InUseDistance, the
+            // range that keeps a player's crafting window open, instead of the old 3.5 m from the pivot.
+            if (InUseRange())
             {
                 StopMovement();
                 StartWorking();
@@ -352,9 +356,23 @@ namespace FiresCore.Npc.IdleBehaviors
 
             // CRITICAL: Call ContinueMovement() every frame for vanilla pathfinding to work!
             // This keeps calling MoveTo() which follows waypoints around obstacles.
-            if (ContinueMovement())
+            // 0.2.333 (round 13: "never within m_useDistance 2.0 m of its PIVOT (closest 2.5 m)"): ContinueMovement counts as
+            // arrived inside InteractionPointHelper.ARRIVAL_THRESHOLD (2.5 m) of the spot, wider than a workbench's 2 m use range,
+            // so the walk stopped short every time. Keep walking until the spot itself is reached (0.4 m); the use-range check
+            // above ends it as soon as vanilla's range is met.
+            bool atSpot = DistanceTo(_workPosition) < 0.4f;
+            if (!atSpot) TryMoveToPosition(_workPosition, walk: true, run: false);
+            if (atSpot || ContinueMovementStalled())
             {
-                // Arrived at destination
+                // At the spot but still outside the use range: re-aim at the station's nearest surface from here (a couple of
+                // tries), then work from where it stands with a line, so a stuck approach is visible.
+                if (_approachRetries++ < MaxApproachRetries)
+                {
+                    _workPosition = CalculateWorkPosition(_targetStation);
+                    MoveToPosition(_workPosition);
+                    return false;
+                }
+                LogVerbose($"working from {Vector3.Distance(Transform.position, _targetStation.transform.position):0.0} m off {_targetStation.m_name}: never inside its use range ({_targetStation.m_useDistance:0.0} m)");
                 StopMovement();
                 StartWorking();
             }
@@ -392,16 +410,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 Character.SetWalk(false);
                 Character.SetRun(false);
             }
+            // 0.2.327 (audit slice 3): no rigidbody velocity write; the hold's SetMoveDir(0) lets vanilla UpdateWalking brake.
 
-            if (Rigidbody != null && !Rigidbody.isKinematic)
-            {
-                Vector3 vel = Rigidbody.linearVelocity;
-                if (vel.x != 0 || vel.z != 0)
-                {
-                    Rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-                }
-            }
-            
             // Play work animation periodically
             if (Time.time - _lastAnimationTime >= WorkAnimationInterval)
             {
@@ -444,13 +454,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             StopMovement();
             CombatMovement?.LockMovement("WorkstationWork", workDuration + 5f);
-            
-            if (Rigidbody != null && !Rigidbody.isKinematic)
-            {
-                Rigidbody.linearVelocity = Vector3.zero;
-                Rigidbody.angularVelocity = Vector3.zero;
-            }
-            
+
             FaceTarget(_targetStation.transform.position);
             
             SetPhase(WorkPhase.Working);
@@ -880,27 +884,63 @@ namespace FiresCore.Npc.IdleBehaviors
             return bestStation;
         }
         
+        /// <summary>True inside vanilla's use range of the target station (CraftingStation.InUseDistance: m_useDistance from its pivot).</summary>
+        // A walk that stopped making ground: under 0.2 m covered in 2 s (blocked by the station's own collider or a wall).
+        private Vector3 _stallFrom;
+        private float _stallSince = -1f;
+        private bool ContinueMovementStalled()
+        {
+            if (Transform == null) return true;
+            if (_stallSince < 0f || (Transform.position - _stallFrom).sqrMagnitude > 0.04f)
+            {
+                _stallFrom = Transform.position;
+                _stallSince = Time.time;
+                return false;
+            }
+            if (Time.time - _stallSince < 2f) return false;
+            _stallSince = -1f;
+            return true;
+        }
+
+        private bool InUseRange() => Humanoid != null && _targetStation != null && _targetStation.InUseDistance(Humanoid);
+
+        /// <summary>
+        /// 0.2.328: a spot 0.7 m off the station's surface nearest to the companion (its closest collider point; the bounds point
+        /// of a non-convex mesh, as for mine rocks), kept inside vanilla's use range (m_useDistance from the pivot, as InUseDistance
+        /// measures). It replaces "1.5 m along the piece's forward", which ignored the station's shape and could sit outside it.
+        /// </summary>
         private Vector3 CalculateWorkPosition(CraftingStation station)
         {
-            if (_pieceData != null)
-            {
-                return PieceDataHelper.GetSafeInteractionPosition(_pieceData, 1.5f);
-            }
-            
-            Vector3 stationPos = station.transform.position;
-            Vector3 stationForward = station.transform.forward;
-            Vector3 workPos = stationPos + stationForward * 1.5f;
-            
-            if (ZoneSystem.instance != null)
-            {
-                float groundHeight;
-                if (FiresCore.World.Surface.GroundNear(workPos, out groundHeight))
-                {
-                    workPos.y = groundHeight;
-                }
-            }
-            
+            Vector3 pivot = station.transform.position;
+            Vector3 from = Transform != null ? Transform.position : pivot + station.transform.forward * 2f;
+            Vector3 face = NearestSurfacePoint(station, from);
+            Vector3 away = from - face;
+            away.y = 0f;
+            if (away.sqrMagnitude < 0.0001f) { away = station.transform.forward; away.y = 0f; }
+            Vector3 workPos = face + away.normalized * 0.7f;
+
+            float reach = Mathf.Max(1f, station.m_useDistance) * 0.8f;
+            Vector3 flat = workPos - pivot;
+            flat.y = 0f;
+            if (flat.magnitude > reach) workPos = new Vector3(pivot.x, workPos.y, pivot.z) + flat.normalized * reach;
+
+            if (ZoneSystem.instance != null && FiresCore.World.Surface.GroundNear(workPos, out float groundHeight))
+                workPos.y = groundHeight;
             return workPos;
+        }
+
+        private static Vector3 NearestSurfacePoint(CraftingStation station, Vector3 from)
+        {
+            Vector3 best = station.transform.position;
+            float bestSq = float.MaxValue;
+            foreach (var col in station.GetComponentsInChildren<Collider>())
+            {
+                if (col == null || !col.enabled || col.isTrigger) continue;
+                Vector3 p = col is MeshCollider mesh && !mesh.convex ? col.bounds.ClosestPoint(from) : col.ClosestPoint(from);
+                float sq = (p - from).sqrMagnitude;
+                if (sq < bestSq) { bestSq = sq; best = p; }
+            }
+            return best;
         }
         
         private string GetWorkstationDisplayName(CraftingStation station)

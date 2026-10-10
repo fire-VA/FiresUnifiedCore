@@ -353,7 +353,11 @@ namespace FiresCore.Npc
                 string hairColorStr = FiresCore.Bridge.NpcFashionBridge.ColorToString(_hairColor);
                 FiresCore.Bridge.NpcFashionBridge.ApplyHair(gameObject, savedHair, hairColorStr);
                 string savedBeardForGender = _isFemale ? null : savedBeard;
-                FiresCore.Bridge.NpcFashionBridge.ApplyBeard(gameObject, savedBeardForGender, hairColorStr);
+                // 0.2.368: an independent beard colour when one is stored, else the hair colour (vanilla)
+                bool ownBeard = CompanionAppearanceService.TryReadBeardColor(zdo, out Color beardColor);
+                string beardColorStr = ownBeard ? FiresCore.Bridge.NpcFashionBridge.ColorToString(beardColor) : hairColorStr;
+                FiresCore.Bridge.NpcFashionBridge.ApplyBeard(gameObject, savedBeardForGender, beardColorStr);
+                _npcVisEquipment.SetBeardColor(ownBeard ? beardColor : (Color?)null);
                 
                 _hairStyle = savedHair;
                 _beardStyle = savedBeard;
@@ -745,6 +749,20 @@ namespace FiresCore.Npc
             }
         }
         
+        /// <summary>
+        /// 0.2.357: re-applies the stored look (styles, colours, model, scale) after its ZDO changed, e.g. a barber
+        /// change. Same restore path as a load; the scale is applied even when it went back to 1.0.
+        /// </summary>
+        public void RefreshAppearanceFromZDO()
+        {
+            var nview = GetComponent<ZNetView>();
+            if (nview == null || !nview.IsValid() || nview.GetZDO() == null) return;
+            if (string.IsNullOrEmpty(nview.GetZDO().GetString("companion_hair", ""))) return; // nothing stored yet; the load path owns that case
+            RestoreModelStateFromZDO();
+            float savedScale = nview.GetZDO().GetFloat("companion_scale", 1.0f);
+            if (Mathf.Abs(transform.localScale.x - savedScale) > 0.001f) ApplyScale(savedScale, skipHealthAdjustment: true);
+        }
+
         /// <summary>
         /// Gets the current scale of this companion.
         /// </summary>

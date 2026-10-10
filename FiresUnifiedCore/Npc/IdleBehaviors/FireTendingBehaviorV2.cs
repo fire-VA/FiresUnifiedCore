@@ -594,7 +594,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var storage = GetStorageInventory();
             if (storage == null) return false;
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storage))
             {
                 if (item == null) continue;
                 if ((item.m_dropPrefab?.name ?? "").Equals(fuelName, System.StringComparison.OrdinalIgnoreCase))
@@ -628,33 +628,11 @@ namespace FiresCore.Npc.IdleBehaviors
             var chestInv = chest.GetInventory();
             var storage = GetStorageInventory();
             if (chestInv == null || storage == null) return 0;
-            // A chest this machine doesn't own reverts the edit (ChestHelper.cs:128-130); claim it first like every other chest write.
-            if (!ChestHelper.TryClaimForWrite(chest, Companion)) return 0;
+            // 0.2.322: the shared withdraw (InventoryTransferService.PullItem: claims the chest for the companion that owns this
+            // storage, since an unowned chest reverts the edit, then moves stacks with ChestHelper.MoveItem) in place of a
+            // Clone + AddItem + RemoveOneItem per unit.
+            int pulled = AI.ChoreBrain.Withdraw(chest, storage, _fuelItemName, amount, 0L);
 
-            int pulled = 0;
-            var items = new List<ItemDrop.ItemData>(chestInv.GetAllItems());
-            
-            foreach (var item in items)
-            {
-                if (item == null || pulled >= amount) continue;
-                
-                string prefab = item.m_dropPrefab?.name ?? "";
-                if (!prefab.Equals(_fuelItemName, System.StringComparison.OrdinalIgnoreCase)) continue;
-                
-                int toPull = Mathf.Min(item.m_stack, amount - pulled);
-                for (int i = 0; i < toPull; i++)
-                {
-                    var clone = item.Clone();
-                    clone.m_stack = 1;
-                    if (storage.AddItem(clone))
-                    {
-                        chestInv.RemoveOneItem(item);
-                        pulled++;
-                    }
-                    else break;
-                }
-            }
-            
             if (pulled > 0)
                 Inventory?.SaveToZDO();
             
@@ -775,7 +753,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var storage = GetStorageInventory();
             if (storage == null) return false;
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storage))
                 if (CompanionCookingBehavior.IsRawFor(station, item)) return true;
             return false;
         }
@@ -786,15 +764,14 @@ namespace FiresCore.Npc.IdleBehaviors
             var storage = GetStorageInventory();
             if (storage == null) return;
             
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storage))
             {
                 if (CompanionCookingBehavior.IsRawFor(_targetCookingStation, item))
                 {
+                    // Vanilla CookItem takes it from user.GetInventory(), which IS this storage since audit slice 5. Return
+                    // right after: the item list just changed under this foreach.
                     if (_targetCookingStation.UseItem(Humanoid, item))
-                    {
-                        storage.RemoveOneItem(item);
                         LogVerbose($"Added {item.m_shared.m_name} to cooking station");
-                    }
                     return;
                 }
             }

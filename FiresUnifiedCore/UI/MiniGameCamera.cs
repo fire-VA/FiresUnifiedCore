@@ -43,6 +43,10 @@ namespace FiresCore.UI
 
         public static bool Active => _provider != null;
 
+        /// <summary>The current shot has a tune key (0.2.320: the possession chase camera has none, so the tuner neither
+        /// shows its readout nor takes Ctrl+Alt, which possession's attack cycle uses).</summary>
+        internal static bool Tunable => _provider != null && _tuneKey != null;
+
         /// <summary>Take over the camera. <paramref name="ease">ease</paramref> is the exponential follow rate
         /// (higher = snappier); the very first frame always snaps. <paramref name="tuneKey"/> names this shot so its
         /// live fine-tune offset persists across sessions (null = not tunable).</summary>

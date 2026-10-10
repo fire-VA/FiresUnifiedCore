@@ -37,7 +37,7 @@ namespace FiresCore.UI
 
         private void Update()
         {
-            if (!MiniGameCamera.Active) { MiniGameCamera.IsTuning = false; return; }
+            if (!MiniGameCamera.Tunable) { MiniGameCamera.IsTuning = false; return; }
 
             bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
             bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
@@ -59,7 +59,8 @@ namespace FiresCore.UI
 
         private void OnGUI()
         {
-            if (!MiniGameCamera.Active) return;
+            if (!MiniGameCamera.Tunable) return;
+            if (Hud.IsUserHidden() && !MiniGameCamera.IsTuning) return;   // 0.2.293: the readout only while tuning when the HUD is hidden
             EnsureStyle();
 
             var offset = MiniGameCamera.TuneOffset;

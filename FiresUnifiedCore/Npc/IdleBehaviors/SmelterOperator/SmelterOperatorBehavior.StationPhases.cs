@@ -176,9 +176,9 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
-            if (Time.time - _phaseStartTime < 0.2f)
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2.334: 0.2 s ended the turn ~90 deg short (round 15); the FacingAuthority is the single writer now
             {
-                FaceTarget(_targetPosition);
+                FaceTarget(StationFacePoint()); // 0.2.335: the smelter itself, not its interaction point
             }
             
             // CRITICAL: Re-find nearby chests in case they weren't found initially
@@ -773,7 +773,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (conversion.m_from != null)
                 {
                     string orePrefab = conversion.m_from.name;
-                    foreach (var item in storageInv.GetAllItems())
+                    foreach (var item in CompanionInventory.StorageItemsOf(storageInv))
                     {
                         if (item == null) continue;
                         string dropName = item.m_dropPrefab?.name ?? "";
@@ -787,7 +787,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_targetSmelter.m_fuelItem != null)
             {
                 string fuelPrefab = _targetSmelter.m_fuelItem.name;
-                foreach (var item in storageInv.GetAllItems())
+                foreach (var item in CompanionInventory.StorageItemsOf(storageInv))
                 {
                     if (item == null) continue;
                     string dropName = item.m_dropPrefab?.name ?? "";
@@ -803,6 +803,9 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Filling Station
         
+        // The station's own position to face (a player faces the smelter it feeds), else the interaction point.
+        private Vector3 StationFacePoint() => _targetSmelter != null ? _targetSmelter.transform.position : _targetPosition;
+
         private bool UpdateFillingStation()
         {
             if (_targetSmelter == null)
@@ -815,9 +818,9 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
             // Constantly calling FaceTarget() causes glitchy rotation due to competing rotation updates.
-            if (Time.time - _phaseStartTime < 0.2f)
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2.334: 0.2 s ended the turn ~90 deg short (round 15); the FacingAuthority is the single writer now
             {
-                FaceTarget(_targetPosition);
+                FaceTarget(StationFacePoint()); // 0.2.335: the smelter itself, not its interaction point
             }
             
             // CRITICAL: Check if inventory is full - need to deposit before continuing
@@ -1266,9 +1269,9 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
-            if (Time.time - _phaseStartTime < 0.2f)
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2.334: 0.2 s ended the turn ~90 deg short (round 15); the FacingAuthority is the single writer now
             {
-                FaceTarget(_hasFuelSwitch ? _fuelSwitchPosition : _targetPosition);
+                FaceTarget(StationFacePoint()); // 0.2.335: the smelter itself, not its switch (round 17: 86 deg off)
             }
             
             // Wait for animation cooldown before adding next item
@@ -1361,9 +1364,9 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
-            if (Time.time - _phaseStartTime < 0.2f)
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2.334: 0.2 s ended the turn ~90 deg short (round 15); the FacingAuthority is the single writer now
             {
-                FaceTarget(_hasOreSwitch ? _oreSwitchPosition : _targetPosition);
+                FaceTarget(StationFacePoint()); // 0.2.335: the smelter itself, not its switch
             }
             
             // Wait for animation cooldown before adding next item

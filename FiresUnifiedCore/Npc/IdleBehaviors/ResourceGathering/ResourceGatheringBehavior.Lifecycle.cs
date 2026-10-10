@@ -76,7 +76,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         {
                             // No tool available anywhere - can't gather this resource
                             Debug.LogWarning($"[ResourceGathering] {Companion?.companionName} cannot gather {_targetResource.Name} - no {_targetResource.RequiredTool} available");
-                            CompanionChatHelper.QuickMessages.CantDoTask(Companion, $"I need a {_targetResource.RequiredTool.ToString().ToLower()}");
+                            CompanionChatHelper.QuickMessages.CantDoTask(Companion, ToolRefusalFor(_targetResource));
                             SetPhase(GatherPhase.Complete);
                         }
                     }

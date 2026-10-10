@@ -46,6 +46,16 @@ namespace FiresCore.Storage
             s_enabled = config.Bind("Vault", "Roll back with the world", true,
                 "SERVER. The vault (bank, mail, marketplace, guilds) keeps a copy per world save and, after a crash, goes back to the copy " +
                 "of the save the world loaded, so items can't be duplicated or lost around a crash. Off: the vault keeps every change.");
+            // 0.2.387: the key and the save hooks exist only with a vault mod installed (FiresGuilds, RPGmaker or FAP).
+            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Vault, true, s_enabled);
+            FiresCore.Config.CoreFeatures.WhenResolved(() =>
+            {
+                if (FiresCore.Config.CoreFeatures.IsLive(FiresCore.Config.CoreFeatures.Vault)) Hook(harmony);
+            });
+        }
+
+        private static void Hook(Harmony harmony)
+        {
             var self = typeof(VaultWorldSnapshots);
             harmony.Patch(AccessTools.Method(typeof(ZNet), "SaveWorld"), prefix: new HarmonyMethod(self, nameof(SaveWorld_Prefix)));
             harmony.Patch(AccessTools.Method(typeof(SaveSystem), nameof(SaveSystem.EndSave)), postfix: new HarmonyMethod(self, nameof(EndSave_Postfix)));

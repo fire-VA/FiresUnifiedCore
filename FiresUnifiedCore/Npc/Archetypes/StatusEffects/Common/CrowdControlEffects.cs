@@ -228,4 +228,62 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
             return clone;
         }
     }
+
+    /// <summary>
+    /// Silence ([wishbone] 10-07): the carrier can't start magic or skill attacks. Players: staff attacks are refused
+    /// (Classes\SilenceGate.cs, a Humanoid.StartAttack prefix) and RPGClasses checks ClassCrowdControl.IsSilenced before a
+    /// class skill. Monsters: every attack start is refused, a cast interrupt. The one hook is that prefix.
+    /// </summary>
+    /// <summary>
+    /// A boss's cast interrupt ([wishbone] 10-08, for [release]'s FMO): ClassCrowdControl puts it on a boss next to the slow a boss
+    /// gets instead of a stun, knockdown or silence. It does nothing itself; Fires Monster Overhaul reads it (its SEMan.AddStatusEffect
+    /// postfix) and cancels the boss's cast.
+    /// </summary>
+    public class InterruptMarkerEffect : CompanionStatusEffectBase
+    {
+        public override string Description => "Interrupted";
+
+        public InterruptMarkerEffect()
+        {
+            m_name = "Interrupted";
+            m_tooltip = "Its cast was broken";
+            Duration = 0.5f;
+        }
+
+        public new InterruptMarkerEffect Clone()
+        {
+            var clone = (InterruptMarkerEffect)base.Clone();
+            if (clone != null)
+            {
+                clone.Duration = Duration;
+                clone.EffectIcon = EffectIcon;
+                clone.SourceCharacter = SourceCharacter;
+            }
+            return clone;
+        }
+    }
+
+    public class SilenceEffect : CompanionStatusEffectBase
+    {
+        public override string Description => "Silenced: cannot cast";
+
+        public SilenceEffect()
+        {
+            m_name = "Silenced";
+            m_tooltip = "Cannot use magic or skills";
+            Duration = 3f;
+        }
+
+        public new SilenceEffect Clone()
+        {
+            var clone = (SilenceEffect)base.Clone();
+            if (clone != null)
+            {
+                clone.Duration = Duration;
+                clone.EffectIcon = EffectIcon;
+                clone.SourceCharacter = SourceCharacter;
+            }
+            return clone;
+        }
+    }
 }

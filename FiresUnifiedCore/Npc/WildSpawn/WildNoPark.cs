@@ -29,6 +29,7 @@ namespace FiresCore.Npc.WildSpawn
                 new ConfigDescription("SERVER. How far (m) a wild companion's home is kept from each no-park place.", new AcceptableValueRange<float>(0f, 200f)));
             configSync?.AddConfigEntry(s_spots);
             configSync?.AddConfigEntry(s_radius);
+            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.COMP, true, s_spots, s_radius);   // 0.2.359
         }
 
         internal static float Radius => s_radius != null ? s_radius.Value : 30f;

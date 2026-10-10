@@ -601,7 +601,8 @@ namespace FiresCore.Npc.Movement
                 _movementAuthority.FreezeMovement(reason, 999f);
             }
             
-            // Zero velocity if not kinematic
+            // Zero velocity if not kinematic. Audit EXCEPTION (0.2.327, no vanilla path): a frozen state skips Character.UpdateMotion
+            // (CompanionPatches' UpdateMotion prefix), so vanilla UpdateWalking can't brake the body; without this it coasts.
             if (_rigidbody != null && !_rigidbody.isKinematic)
             {
                 _rigidbody.linearVelocity = Vector3.zero;
@@ -667,7 +668,8 @@ namespace FiresCore.Npc.Movement
             _currentAnimationState = AnimationState.None;
             _animationStateEndTime = 0f;
             
-            // Zero physics - only if NOT kinematic (Unity 6 compatibility)
+            // Zero physics - only if NOT kinematic (Unity 6 compatibility). Audit EXCEPTION (0.2.327): as above, the frozen state
+            // skips UpdateMotion, so nothing vanilla brakes the body here.
             if (_rigidbody != null && !_rigidbody.isKinematic)
             {
                 _rigidbody.linearVelocity = Vector3.zero;

@@ -319,11 +319,15 @@ namespace FiresCore.Npc.Core
 
             int totalDeposited = 0;
             var itemsToProcess = new List<ItemDrop.ItemData>(source.GetAllItems());
+            bool companionBag = CompanionGridLayout.IsCompanionBag(source);
 
             foreach (var item in itemsToProcess)
             {
                 if (totalDeposited >= maxAmount) break;
                 if (!IsPrefab(item, prefabName)) continue;
+                // 0.2.361: a companion bag deposits from its STORAGE rows only (worn gear and pouch stacks stay)
+                if (companionBag && !CompanionGridLayout.IsStorage(item.m_gridPos)) continue;
+                if (item.m_equipped) continue;
 
                 int toMove = Mathf.Min(item.m_stack, maxAmount - totalDeposited, GetMaxAddableAmount(destInv, item));
                 totalDeposited += IdleBehaviors.ChestHelper.MoveItem(source, destInv, item, toMove);

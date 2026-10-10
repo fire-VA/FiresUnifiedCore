@@ -215,13 +215,13 @@ namespace FiresCore.Npc.AI
             string fuelName = fire.m_fuelItem.m_itemData.m_shared.m_name;
             int fuel = Mathf.CeilToInt(view.GetZDO().GetFloat(ZDOVars.s_fuel, 0f));
             int added = 0;
-            while (added < units && fuel + added < fire.m_maxFuel && body.Inventory.CountItems(fuelName) > 0)
+            while (added < units && fuel + added < fire.m_maxFuel && CompanionInventory.CountStorage(body.Inventory, fuelName) > 0)
             {
-                body.Inventory.RemoveItem(fuelName, 1);
+                CompanionInventory.RemoveFromStorage(body.Inventory, fuelName, 1);
                 view.InvokeRPC("RPC_AddFuel");
                 added++;
             }
-            if (added == 0) why = body.Inventory.CountItems(fuelName) == 0 ? $"no {fire.m_fuelItem.gameObject.name} in the bag" : "already full";
+            if (added == 0) why = CompanionInventory.CountStorage(body.Inventory, fuelName) == 0 ? $"no {fire.m_fuelItem.gameObject.name} in the bag" : "already full";
             return added;
         }
 
@@ -854,7 +854,7 @@ namespace FiresCore.Npc.AI
                 foreach (var req in requirements)
                 {
                     if (req.m_resItem == null) continue;
-                    int have = materials != null ? materials.CountItems(req.m_resItem.m_itemData.m_shared.m_name) : 0;
+                    int have = materials != null ? CompanionInventory.CountStorage(materials, req.m_resItem.m_itemData.m_shared.m_name) : 0;
                     if (have < req.m_amount) { parts.Add($"{name} needs {req.m_resItem.m_itemData.m_shared.m_name} x{req.m_amount} (have {have})"); break; }
                 }
                 if (parts.Count >= 4) break;
@@ -869,7 +869,7 @@ namespace FiresCore.Npc.AI
             foreach (var req in requirements)
             {
                 if (req.m_resItem == null) continue;
-                materials.RemoveItem(req.m_resItem.m_itemData.m_shared.m_name, req.m_amount);
+                CompanionInventory.RemoveFromStorage(materials, req.m_resItem.m_itemData.m_shared.m_name, req.m_amount);
             }
             return true;
         }
@@ -894,7 +894,7 @@ namespace FiresCore.Npc.AI
             foreach (var req in requirements)
             {
                 if (req.m_resItem == null) continue;
-                if (storage.CountItems(req.m_resItem.m_itemData.m_shared.m_name) < req.m_amount) return false;
+                if (CompanionInventory.CountStorage(storage, req.m_resItem.m_itemData.m_shared.m_name) < req.m_amount) return false;
             }
             return true;
         }
@@ -940,12 +940,12 @@ namespace FiresCore.Npc.AI
             foreach (Piece.Requirement req in piece.m_resources)
             {
                 if (req.m_resItem == null || req.m_upgraderResource || req.m_amount <= 0) continue;
-                int have = pay.CountItems(req.m_resItem.m_itemData.m_shared.m_name);
+                int have = CompanionInventory.CountStorage(pay, req.m_resItem.m_itemData.m_shared.m_name);
                 if (have < req.m_amount) { reason = $"missing {req.m_resItem.name} {have}/{req.m_amount}"; return null; }
             }
             foreach (Piece.Requirement req in piece.m_resources)
                 if (req.m_resItem != null && !req.m_upgraderResource && req.m_amount > 0)
-                    pay.RemoveItem(req.m_resItem.m_itemData.m_shared.m_name, req.m_amount);
+                    CompanionInventory.RemoveFromStorage(pay, req.m_resItem.m_itemData.m_shared.m_name, req.m_amount);
 
             TerrainModifier.SetTriggerOnPlaced(true);
             GameObject placed = UnityEngine.Object.Instantiate(prefab, pos, rot);

@@ -45,6 +45,8 @@ namespace FiresCore.Config
             configCompanionFollowDiag = config.Bind(DebugSection, CompanionFollowDiagKey, false, CompanionFollowDiagDescription);
             configCompanionVerbose = config.Bind(DebugSection, CompanionVerboseKey, false, CompanionVerboseDescription);
             configCompanionJobVerbose = config.Bind(DebugSection, CompanionJobVerboseKey, false, CompanionJobVerboseDescription);
+            // 0.2.359: companion diagnostics leave the config without a companion host.
+            OwnerGatedConfig.Gate(OwnerGatedConfig.Owners.COMP, false, configCompanionFollowDiag, configCompanionVerbose, configCompanionJobVerbose);
 
             // The companion classes keep their verbose flags as statics, so drive them from here and on every change.
             Npc.CompanionDebugLogging.Apply(configCompanionVerbose.Value, configCompanionJobVerbose.Value);

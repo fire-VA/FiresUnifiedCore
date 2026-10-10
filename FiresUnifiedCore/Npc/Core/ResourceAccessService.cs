@@ -183,8 +183,8 @@ namespace FiresCore.Npc.Core
         {
             var storage = StorageInventory;
             if (storage == null) return false;
-            
-            foreach (var item in storage.GetAllItems())
+
+            foreach (var item in CompanionInventory.StorageItemsOf(storage)) // 0.2.362: storage rows only
             {
                 if (item == null) continue;
                 string dropName = item.m_dropPrefab?.name ?? "";
@@ -216,7 +216,7 @@ namespace FiresCore.Npc.Core
             if (storage == null) return 0;
             
             int count = 0;
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storage)) // 0.2.362: storage rows only
             {
                 if (item == null) continue;
                 string dropName = item.m_dropPrefab?.name ?? "";

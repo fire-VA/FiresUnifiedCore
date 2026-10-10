@@ -406,6 +406,24 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // phase handlers
 
+        // 0.2.336 (companion_storage_test cook: "piece_cookingstation(Clone): reachable False"): the pivot of a cooking station on a
+        // fire sits inside solid pieces, so a navmesh path to it fails; test the spot the companion actually walks to (the
+        // interaction point in front of it), as the move does.
+        // 0.2.342 (round 21: still "reachable False" with the interaction point): the navmesh path query can fail on a built floor
+        // even right next to the station. Vanilla MoveTo walks straight when close, so a station within 10 m with a clear line of
+        // walk is reachable too. The point, the distance and both results go to Debug once per station per scan.
+        private bool StationReachable(CookingStation station)
+        {
+            Vector3 point = InteractionPointHelper.GetInteractionPoint(station.gameObject, Transform.position, InteractionDist);
+            bool nav = IsReachable(point);
+            if (nav) return true;
+            float dist = Vector3.Distance(Transform.position, point);
+            Vector3 from = Transform.position + Vector3.up * 0.8f, to = point + Vector3.up * 0.8f;
+            bool clear = dist <= 10f && !Physics.Linecast(from, to, LayerMask.GetMask("Default", "static_solid", "piece"), QueryTriggerInteraction.Ignore);
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCooking] {Companion?.companionName} reach {station.name}: point {point:F1}, {dist:0.0} m, navmesh path {nav}, close+clear {clear}");
+            return clear;
+        }
+
         private bool UpdateScanning()
         {
             // Refresh station list in case of world changes.
@@ -413,7 +431,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (_stations.Count == 0)
             {
-                LogVerbose("Scan: no stations found");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCooking] {Companion?.companionName} scan: no cooking stations found"); // 0.2.334: evidence at Debug
                 SetPhase(CookPhase.Complete);
                 return false;
             }
@@ -422,7 +440,7 @@ namespace FiresCore.Npc.IdleBehaviors
             foreach (var station in _stations)
             {
                 if (_failedStations.Contains(station)) continue;
-                if (!IsReachable(station.transform.position)) { _failedStations.Add(station); continue; }
+                if (!StationReachable(station)) { _failedStations.Add(station); continue; }
                 if (HasFinishedFood(station))
                 {
                     // EARLY RESERVATION so other companions don't pick the same station.
@@ -444,7 +462,7 @@ namespace FiresCore.Npc.IdleBehaviors
             foreach (var station in _stations)
             {
                 if (_failedStations.Contains(station)) continue;
-                if (!IsReachable(station.transform.position)) { _failedStations.Add(station); continue; }
+                if (!StationReachable(station)) { _failedStations.Add(station); continue; }
                 if (!HasFreeSlot(station)) continue;
 
                 if (HasRawFoodForStation(station, GetStorageInventory()))
@@ -485,7 +503,13 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
 
-            LogVerbose("Scan: nothing to do");
+            // 0.2.334 (companion_storage_test cook: "Scanning -> Complete after 0.0 s"): why, at Debug.
+            {
+                var storageForLog = GetStorageInventory();
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCooking] {Companion?.companionName} scan: nothing to do - {_stations.Count} station(s) "
+                    + $"({string.Join(", ", _stations.Select(s => $"{s.name}: reachable {StationReachable(s)}, free slot {HasFreeSlot(s)}, failed {_failedStations.Contains(s)}"))}); "
+                    + $"storage {(storageForLog == null ? "none" : storageForLog.NrOfItems() + " item(s)")}, owner {(Companion != null && Companion.GetComponent<ZNetView>() is ZNetView nv && nv.IsValid() ? nv.IsOwner().ToString() : "?")}");
+            }
             SetPhase(CookPhase.Complete);
             return false;
         }
@@ -606,9 +630,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 ItemDrop.ItemData raw = FindRawFoodForStation(_currentStation, storage);
                 if (raw == null) break;
 
+                // Vanilla CookItem takes the item from user.GetInventory(), which IS this storage since audit slice 5.
                 if (_currentStation.UseItem(Humanoid, raw))
                 {
-                    storage.RemoveOneItem(raw);
                     SaveInventory();
                     addedAny = true;
                     LogVerbose($"Loaded {raw.m_shared.m_name} onto station");
@@ -741,9 +765,8 @@ namespace FiresCore.Npc.IdleBehaviors
                     ItemDrop.ItemData raw = FindRawFoodForStation(_currentStation, storage);
                     if (raw == null) break;
 
-                    if (_currentStation.UseItem(Humanoid, raw))
+                    if (_currentStation.UseItem(Humanoid, raw)) // takes it from storage itself (slice 5: one bag)
                     {
-                        storage.RemoveOneItem(raw);
                         SaveInventory();
                         actedThisTick = true;
                         LogVerbose($"Refilled slot with {raw.m_shared.m_name}");
@@ -893,7 +916,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _toDeposit.Clear();
             if (storage != null)
             {
-                foreach (var item in storage.GetAllItems())
+                foreach (var item in CompanionInventory.StorageItemsOf(storage))
                     if (item != null && IsCookedFood(item))
                         _toDeposit.Add(item);
             }
@@ -1060,7 +1083,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var storage = GetStorageInventory();
             if (storage == null) return false;
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storage))
                 if (item != null && IsRawCookable(item))
                     return true;
             return false;
@@ -1085,7 +1108,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool HasRawFoodForStation(CookingStation station, Inventory inv)
         {
             if (station == null || inv == null) return false;
-            foreach (var item in inv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(inv))
                 if (item != null && IsRawFor(station, item))
                     return true;
             return false;
@@ -1095,7 +1118,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private ItemDrop.ItemData FindRawFoodForStation(CookingStation station, Inventory inv)
         {
             if (station == null || inv == null) return null;
-            foreach (var item in inv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // 0.2.362: storage rows only
                 if (item != null && IsRawFor(station, item))
                     return item;
             return null;

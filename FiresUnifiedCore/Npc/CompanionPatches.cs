@@ -18,6 +18,7 @@ namespace FiresCore.Npc
     /// Handles hover text, interactions, damage modification, and companion restoration on login.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class CompanionPatches
     {
         // Track which players have had their companions restored this session
@@ -1971,29 +1972,11 @@ namespace FiresCore.Npc
         {
             try
             {
-                // Play stagger/hit reaction animation
-                var zanim = character.GetComponent<ZSyncAnimation>();
-                if (zanim != null)
-                {
-                    zanim.SetTrigger("stagger");
-                }
-
-                // Apply knockback force to simulate stumbling
-                var rigidbody = character.GetComponent<Rigidbody>();
-                if (rigidbody != null && !rigidbody.isKinematic)
-                {
-                    Vector3 knockbackDir = (character.transform.position - attacker.transform.position).normalized;
-                    knockbackDir.y = 0.2f; // Slight upward component
-                    rigidbody.AddForce(knockbackDir * 3f, ForceMode.Impulse);
-                }
-
-                // Face the attacker
-                Vector3 toAttacker = (attacker.transform.position - character.transform.position);
-                toAttacker.y = 0;
-                if (toAttacker.sqrMagnitude > 0.01f)
-                {
-                    character.transform.rotation = Quaternion.LookRotation(toAttacker);
-                }
+                // 0.2.322 (Fire's vanilla-method rule): vanilla Character.Stagger, as a hit does. It turns the body to face
+                // the attacker and plays the stagger on the owner (RPC_Stagger), with no hand-made push or rotation.
+                Vector3 push = character.transform.position - attacker.transform.position;
+                push.y = 0f;
+                character.Stagger(push);
 
                 // Schedule a single retaliation attack after a short delay
                 companion.StartCoroutine(DelayedRetaliation(companion, character, attacker));
@@ -2028,12 +2011,12 @@ namespace FiresCore.Npc
             float dist = Vector3.Distance(character.transform.position, attacker.transform.position);
             if (dist > 4f) yield break;
 
-            // Face the attacker again
+            // Face the attacker again (vanilla SetLookDir: the body turns at its own turn speed)
             Vector3 toAttacker = (attacker.transform.position - character.transform.position);
             toAttacker.y = 0;
             if (toAttacker.sqrMagnitude > 0.01f)
             {
-                character.transform.rotation = Quaternion.LookRotation(toAttacker);
+                character.SetLookDir(toAttacker.normalized);
             }
 
             // One swing's animation only, never a hit on the owner: the trigger without an Attack plays the swing, while
@@ -2165,15 +2148,8 @@ namespace FiresCore.Npc
                     stateController.TryEnterState(CompanionStateController.CompanionState.UIInteraction, 999f, "PlayerInteraction");
                 }
 
-                // Zero rigidbody velocity - only if NOT kinematic (Unity 6 doesn't allow setting velocity on kinematic bodies)
-                var rigidbody = companion.GetComponent<Rigidbody>();
-                bool isKinematic = rigidbody != null && rigidbody.isKinematic;
-
-                if (rigidbody != null && !isKinematic)
-                {
-                    rigidbody.linearVelocity = Vector3.zero;
-                    rigidbody.angularVelocity = Vector3.zero;
-                }
+                // 0.2.327 (audit slice 3, M5): no velocity write here. Entering the UIInteraction (frozen) state zeroes it once
+                // (CompanionStateController), and the authority's freeze sends SetMoveDir(0).
 
                 // Cancel any active idle behaviors (this also enters UIInteraction state)
                 var idleBehavior = companion.GetComponent<CompanionIdleBehavior>();
@@ -2199,12 +2175,13 @@ namespace FiresCore.Npc
                     combatMovement.LockMovement("PlayerInteraction", 999f);
                 }
 
-                // Face the player smoothly
+                // Face the player smoothly (vanilla SetLookDir: the body turns at its own turn speed)
                 Vector3 toPlayer = (player.transform.position - companion.transform.position);
                 toPlayer.y = 0;
-                if (toPlayer.sqrMagnitude > 0.01f)
+                var faceCharacter = companion.GetComponent<Character>();
+                if (toPlayer.sqrMagnitude > 0.01f && faceCharacter != null)
                 {
-                    companion.transform.rotation = Quaternion.LookRotation(toPlayer);
+                    faceCharacter.SetLookDir(toPlayer.normalized);
                 }
 
                 Debug.Log($"[CompanionPatches] Stopped {companion.companionName} for interaction via StateController");
@@ -2602,6 +2579,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup - avoids GetComponent on every Character every frame
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true; // Not a companion, allow normal execution
+                if (companion.IsPossessed) return true; // 0.2.292: its driver's move (FiresValcast possession) always lands
 
                 // Check if rigidbody is kinematic (Unity 6 compatibility)
                 var rigidbody = GetCachedRigidbody(__instance);
@@ -2659,6 +2637,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true;
+                if (companion.IsPossessed) return true; // 0.2.292: its driver's motion, unbent (no exit / taming-guard steering)
 
                 var rigidbody = GetCachedRigidbody(__instance);
                 if (rigidbody != null && rigidbody.isKinematic)
@@ -2671,6 +2650,14 @@ namespace FiresCore.Npc
                 {
                     return false;
                 }
+
+                // 0.2.283: out of water and pits the bot's way (Swimming.ExitFor, Climb.Plan), whoever moves the companion: the move it
+                // was given (authority or vanilla pathfinding, both via SetMoveDir) is bent here, on the owner, before the motion runs.
+                Vector3 move = __instance.m_moveDir;
+                CompanionExits.Steer(__instance, companion.companionName, ref move);
+                // 0.2.286 (Fire, RIDEj: companions walked over and aggroed the lox being tamed): keep 10 m off a creature a player is taming.
+                TamingGuard.KeepAway(__instance, companion.GetOwner(), companion.companionName, ref move);
+                __instance.m_moveDir = move;
 
                 return true;
             }
@@ -2694,6 +2681,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true;
+                if (companion.IsPossessed) return true; // 0.2.292: a driven body syncs as vanilla does
 
                 var rigidbody = GetCachedRigidbody(__instance);
                 if (rigidbody != null && rigidbody.isKinematic)
@@ -3224,6 +3212,11 @@ namespace FiresCore.Npc
                     Vector3 src = _teleportSourcePos;
                     float horizontalDistance = Vector2.Distance(new Vector2(src.x, src.z), new Vector2(pos.x, pos.z));
                     float dy  = Mathf.Abs(src.y - pos.y);
+                    // 0.2.367 teleport-with-player: followers this machine owns come along as soon as the player has
+                    // arrived (no leash snap, no OwnerTooFastToSnap wait). Stay companions are skipped inside.
+                    float jump = Vector3.Distance(src, pos);
+                    if (jump > 50f)
+                        CompanionController.StartTeleportFollowersWith(__instance, jump);
                     if (horizontalDistance > LongJumpThreshold || dy > LongJumpVertical)
                     {
                         isLongJump = true;
@@ -3240,7 +3233,7 @@ namespace FiresCore.Npc
                     // those local writes race with the destination zone
                     // load.
                     SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_LONG_JUMP;
-                    Debug.Log($"[CompanionPatches] Long-jump teleport (engineFlag={distantTeleport}) - suppressing local CheckFollowTeleport for {SUPPRESS_DURATION_LONG_JUMP:F1}s; reconcile-on-arrival coroutine started.");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Long-jump teleport (engineFlag={distantTeleport}) - suppressing local CheckFollowTeleport for {SUPPRESS_DURATION_LONG_JUMP:F1}s; reconcile-on-arrival coroutine started.");
 
                     // Player.TeleportTo reuses the existing player object,
                     // so Player.OnSpawned does NOT fire for wayshrine /

@@ -16,6 +16,10 @@ namespace FiresCore.UI.Minigames
     public static class FiresMinigameSprites
     {
         private static readonly Dictionary<string, Sprite> _cache = new Dictionary<string, Sprite>();
+        // 0.2.323: sprites that failed once (not embedded, or failed to load). They return null at once and are logged only the first
+        // time: callers ask every frame, and 5 missing Druid icons wrote ~136k Error lines in one session (and rescanned the
+        // manifest each time).
+        private static readonly HashSet<string> _missing = new HashSet<string>();
         private static MethodInfo _loadImage;
         private static bool _loadImageResolved;
 
@@ -29,25 +33,35 @@ namespace FiresCore.UI.Minigames
             if (asm == null || string.IsNullOrEmpty(endsWith)) return null;
             string key = asm.FullName + "|" + endsWith + "|" + border;
             if (_cache.TryGetValue(key, out var cached) && cached != null) return cached;
+            if (_missing.Contains(key)) return null;
             try
             {
                 string res = null;
                 foreach (var resourceName in asm.GetManifestResourceNames())
                     if (resourceName.EndsWith(endsWith, StringComparison.OrdinalIgnoreCase)) { res = resourceName; break; }
-                if (res == null) { FiresCore.Logging.FiresLogger.LogError($"[FiresMinigame] sprite '{endsWith}' not embedded in {asm.GetName().Name}."); return null; }
+                if (res == null)
+                {
+                    _missing.Add(key);
+                    FiresCore.Logging.FiresLogger.LogError($"[FiresMinigame] sprite '{endsWith}' not embedded in {asm.GetName().Name} (logged once; later asks return no sprite).");
+                    return null;
+                }
 
                 byte[] data;
                 using (var stream = asm.GetManifestResourceStream(res))
                 using (var ms = new System.IO.MemoryStream()) { stream.CopyTo(ms); data = ms.ToArray(); }
 
                 var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                if (!LoadImageReflect(tex, data)) return null;
+                if (!LoadImageReflect(tex, data)) { _missing.Add(key); return null; }
                 tex.wrapMode = TextureWrapMode.Clamp; tex.filterMode = FilterMode.Bilinear;
                 var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), pixelsPerUnit, 0, SpriteMeshType.FullRect, border);
                 _cache[key] = sprite;
                 return sprite;
             }
-            catch (Exception ex) { FiresCore.Logging.FiresLogger.LogError($"[FiresMinigame] sprite load '{endsWith}' failed: {ex.Message}"); return null; }
+            catch (Exception ex)
+            {
+                if (_missing.Add(key)) FiresCore.Logging.FiresLogger.LogError($"[FiresMinigame] sprite load '{endsWith}' failed: {ex.Message} (logged once)");
+                return null;
+            }
         }
 
         private static bool LoadImageReflect(Texture2D tex, byte[] data)

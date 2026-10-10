@@ -133,6 +133,9 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
 
         // Core Valheim components
         private ZNetView _nview;
+
+        /// <summary>0.2.292: a player is driving this body (FiresValcast possession); Core's brain stands down (CompanionPossession).</summary>
+        internal bool IsPossessed => CompanionPossession.IsPossessed(_nview);
         private Humanoid _humanoid;
         private CompanionAI _companionAI;
         private Tameable _tameable;
@@ -258,6 +261,9 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
 
             // Tick shared systems once per frame (uses static frame counter to avoid redundant calls)
             TickSharedSystems();
+
+            // 0.2.372: pillion board/backstop brain (self-throttled to 0.5 s, local player only).
+            CompanionPillionDriver.Tick();
 
    UpdateCompanionBehavior();
 
@@ -730,6 +736,7 @@ if (isTamed && ownerPlayerId == 0 &&
         private void CheckFollowTeleport()
         {
             if (!isTamed || ownerPlayerId == 0) return;
+            if (IsPossessed) return;   // 0.2.292: a possessed body goes where its driver takes it
 
             // Always consume throttle
             if (Time.time - _lastTeleportCheck < teleportCheckInterval) return;
@@ -811,6 +818,13 @@ if (isTamed && ownerPlayerId == 0 &&
             Vector3 ownerPos = owner.transform.position;
             float distance = Vector3.Distance(transform.position, ownerPos);
 
+            // 0.2.367 teleport-with-player: an owner jump of > 50 m between ticks is a teleport (goto, ward travel or
+            // anything that bypasses Player.TeleportTo). Bring the followers along once the owner has arrived.
+            if (_ownerFramePosValid && Vector3.Distance(_ownerFramePos, ownerPos) > OwnerJumpDistance)
+                StartTeleportFollowersWith(owner, Vector3.Distance(_ownerFramePos, ownerPos));
+            _ownerFramePos = ownerPos;
+            _ownerFramePosValid = true;
+
             // Within the leash radius: normal following. The AI keeps the companion close at its own gait and may
             // fight along the way; the tether does not intervene.
             if (distance <= Core.CompanionLeash.LeashDistance)
@@ -868,6 +882,9 @@ if (isTamed && ownerPlayerId == 0 &&
             // Throttle: one snap, then a settle cooldown before another.
             if (Time.time - _lastTeleportTime < Core.CompanionLeash.SnapThrottle)
                 return;
+            // 0.2.367: a reel-in that did not stick backs off exponentially (VerifyOwnerTeleport).
+            if (ReelBackoffActive)
+                return;
 
             // SNAP = server-authoritative reconcile (the single teleport path). The server scans ZDOMan for every
             // follower of this owner and reels in any that are far, claiming ZDO ownership first so the write
@@ -880,7 +897,10 @@ if (isTamed && ownerPlayerId == 0 &&
             ResetCatchupState();
             ReleaseAllMovementLocks();
 
-            Core.CompanionTeleportService.RequestReconcileFollowers(owner);
+            // 0.2.367: this machine owns the companion -> apply here (no server round trip); otherwise the server asks
+            // the owning peer.
+            if (!ApplyOwnerTeleport(GetSafeTeleportPosition(owner), owner, "reel-in"))
+                Core.CompanionTeleportService.RequestReconcileFollowers(owner);
             CompanionPatches.SuppressCompanionTeleportsUntil =
                 Time.unscaledTime + CompanionPatches.SUPPRESS_DURATION_STRANDED_SETTLE;
             _companionAI?.ResetPathfindingState();
@@ -1781,7 +1801,7 @@ _isRespawning = false;
 
       if (_companionAI != null)
    {
-      _companionAI.enabled = !defeated;
+      _companionAI.enabled = !defeated && !IsPossessed;   // 0.2.292: a revive mid-possession leaves the AI to the possessor's release
             }
    
     if (_character != null && defeated)
@@ -1892,8 +1912,17 @@ _isRespawning = false;
                 _character.SetRun(false);
             }
 
-            // 4. Move the transform.
+            // 4. Move the transform AND the Rigidbody. 0.2.367: transform alone did not stick - an interpolated,
+            //    non-kinematic body writes its own (old) pose back over the transform on the next physics step, and
+            //    the owner's ZSyncTransform then synced that old spot into the ZDO (reel-in logged, next FollowState
+            //    still 68 m away). Vanilla teleports set both.
             transform.position = spawnPos;
+            if (body != null)
+            {
+                body.position = spawnPos;
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+            }
 
             // Write the position, bump the data revision (SetPosition alone does not) and force-send, so on a
             // long jump the server's stale cached copy is provably older and cannot revert the teleport on its
@@ -2146,9 +2175,111 @@ private void RPC_TameCompanion(long sender)
         private void RPC_ReelIn(long sender, Vector3 landing)
         {
             if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
+            if (IsPossessed) return;   // 0.2.292: never yank a body its driver holds (an older server may still ask)
             Vector3 spawnPos = GetSafeTeleportPositionNearPoint(landing);
-            TeleportToPositionInternal(spawnPos, GetOwner(), isPortal: false);
-            Debug.Log($"[CompanionController] {companionName} reeled in to its owner at {spawnPos}");
+            ApplyOwnerTeleport(spawnPos, GetOwner(), "reel-in");
+        }
+
+        // ── 0.2.367 owner-applied teleport + verify + exponential back-off ──
+        private const float ReelVerifyDelay = 0.5f;
+        private const float ReelVerifyRadius = 4f;
+        private const float ReelBackoffMax = 80f;
+        private float _reelBackoff = Core.CompanionLeash.SnapThrottle;
+        private float _nextSnapAllowedTime;
+        private Coroutine _reelVerify;
+
+        /// <summary>True while a failed reel-in is backing off; the leash snap waits for it.</summary>
+        internal bool ReelBackoffActive => Time.time < _nextSnapAllowedTime;
+
+        /// <summary>
+        /// Teleports this companion on the machine that owns its ZDO (transform + Rigidbody + ZDO, AI path cleared) and
+        /// checks 0.5 s later that it stayed there. A teleport that did not stick backs off exponentially instead of the
+        /// leash retrying every 5 s. Does not touch inventory or equipment.
+        /// </summary>
+        internal bool ApplyOwnerTeleport(Vector3 spawnPos, Player owner, string what)
+        {
+            if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) return false;
+            if (IsPossessed) return false;
+            TeleportToPositionInternal(spawnPos, owner, isPortal: false);
+            FiresLogger.LogDebug($"[Leash] {companionName} {what} to ({spawnPos.x:0.0},{spawnPos.y:0.0},{spawnPos.z:0.0}) applied by owner");
+            if (_reelVerify != null) StopCoroutine(_reelVerify);
+            _reelVerify = StartCoroutine(VerifyOwnerTeleport(spawnPos, what));
+            return true;
+        }
+
+        /// <summary>
+        /// 0.2.367 teleport-with-player: once <paramref name="player"/> has arrived (not teleporting, can move, ground
+        /// loaded under them) every companion FOLLOWING them that this machine owns is moved beside them at once.
+        /// Companions on Stay are skipped; companions another machine owns are left to the server's arrival reconcile.
+        /// </summary>
+        public static System.Collections.IEnumerator TeleportFollowersWith(Player player, float jump)
+        {
+            const float Timeout = 30f;
+            float start = Time.realtimeSinceStartup;
+            while (player != null && (player.IsTeleporting() || !player.CanMove()
+                       || (ZoneSystem.instance != null && !ZoneSystem.instance.IsZoneLoaded(player.transform.position)))
+                   && Time.realtimeSinceStartup - start < Timeout)
+                yield return null;
+            if (player == null) yield break;
+            yield return null;   // one settled frame
+            if (player == null) yield break;
+            long pid = player.GetPlayerID();
+            Vector3 at = player.transform.position;
+            foreach (var c in _allCompanions.ToArray())
+            {
+                if (c == null || c.ownerPlayerId != pid || !c.ShouldBeFollowing) continue;
+                if (c._nview == null || !c._nview.IsValid() || !c._nview.IsOwner()) continue;
+                float d = Vector3.Distance(c.transform.position, at);
+                if (d < Core.CompanionLeash.LeashDistance) continue;
+                FiresLogger.LogDebug($"[Follow] {c.companionName} teleporting with {player.GetPlayerName()} ({d:0} m)");
+                c._lastTeleportTime = Time.time;
+                c.ApplyOwnerTeleport(c.GetSafeTeleportPosition(player), player, "teleport-with-owner");
+            }
+        }
+
+        private static float _lastFollowersTeleportStart = -999f;
+
+        /// <summary>Starts <see cref="TeleportFollowersWith"/> on the player, at most once per 2 s.</summary>
+        public static void StartTeleportFollowersWith(Player player, float jump)
+        {
+            if (player == null || player != Player.m_localPlayer) return;
+            if (Time.unscaledTime - _lastFollowersTeleportStart < 2f) return;
+            _lastFollowersTeleportStart = Time.unscaledTime;
+            player.StartCoroutine(TeleportFollowersWith(player, jump));
+        }
+
+        // Owner position last frame, for the > 50 m jump detector (teleports that bypass Player.TeleportTo).
+        private Vector3 _ownerFramePos;
+        private bool _ownerFramePosValid;
+        private const float OwnerJumpDistance = 50f;
+
+        private System.Collections.IEnumerator VerifyOwnerTeleport(Vector3 target, string what)
+        {
+            yield return new WaitForSeconds(ReelVerifyDelay);
+            _reelVerify = null;
+            if (this == null || _nview == null || !_nview.IsValid()) yield break;
+            float d = Vector3.Distance(transform.position, target);
+            if (d <= ReelVerifyRadius)
+            {
+                FiresLogger.LogDebug($"[Leash] {companionName} {what} verified at {d:0.0} m");
+                _reelBackoff = Core.CompanionLeash.SnapThrottle;
+                _nextSnapAllowedTime = 0f;
+                yield break;
+            }
+            string reason;
+            var body = GetComponent<Rigidbody>();
+            var zdo = _nview.GetZDO();
+            if (!_nview.IsOwner()) reason = "ZDO ownership moved to peer " + (zdo != null ? zdo.GetOwner().ToString() : "?");
+            else if (transform.parent != null) reason = "parented to " + transform.parent.name;
+            else if (body != null && body.isKinematic) reason = "rigidbody kinematic";
+            else if (body != null && Vector3.Distance(body.position, transform.position) > 1f) reason = "rigidbody pose differs from transform";
+            else if (zdo != null && Vector3.Distance(zdo.GetPosition(), target) > ReelVerifyRadius && Vector3.Distance(zdo.GetPosition(), transform.position) < 1f)
+                reason = "position written back (ZDO follows the old spot)";
+            else reason = "moved away after landing";
+            reason += $", now {d:0.0} m from the target";
+            _nextSnapAllowedTime = Time.time + _reelBackoff;
+            FiresLogger.LogDebug($"[Leash] {companionName} {what} did not stick ({reason}), next try in {_reelBackoff:0} s");
+            _reelBackoff = Mathf.Min(_reelBackoff * 2f, ReelBackoffMax);
         }
 
         private void RPC_TeleportToOwner(long sender)
@@ -2196,6 +2327,7 @@ private void RPC_TameCompanion(long sender)
 
             // Stop physics to prevent jittering after teleport.
             var body = GetComponent<Rigidbody>();
+            if (body != null) body.position = position;
             if (body != null && !body.isKinematic)
             {
                 body.linearVelocity = Vector3.zero;
@@ -2700,7 +2832,10 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
       Debug.LogWarning($"[CompanionController] Failed to restore storage inventory: {ex.Message}");
        }
      }
-         
+
+            // 0.2.362: legacy vault equipment placed synchronously right after the bag load (idempotent)
+            _inventory?.CommitLegacyVaultEquipment("controller vault restore");
+
   // Restore skills from vault
           if (!string.IsNullOrEmpty(savedData.SkillsData) && _skills != null)
     {
@@ -2808,6 +2943,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
                 HairColorR = saveData.HairColorR, HairColorG = saveData.HairColorG, HairColorB = saveData.HairColorB,
                 SkinColorR = saveData.SkinColorR, SkinColorG = saveData.SkinColorG, SkinColorB = saveData.SkinColorB,
                 EyeColorR = saveData.EyeColorR, EyeColorG = saveData.EyeColorG, EyeColorB = saveData.EyeColorB,
+                HasBeardColor = saveData.HasBeardColor, BeardColorR = saveData.BeardColorR, BeardColorG = saveData.BeardColorG, BeardColorB = saveData.BeardColorB,
                 HasAppearanceData = saveData.HasAppearanceData,
                 Scale = saveData.Scale, IsGiant = saveData.IsGiant, IsDwarf = saveData.IsDwarf,
 
@@ -2856,6 +2992,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
                 HairColorR = saveState.HairColorR, HairColorG = saveState.HairColorG, HairColorB = saveState.HairColorB,
                 SkinColorR = saveState.SkinColorR, SkinColorG = saveState.SkinColorG, SkinColorB = saveState.SkinColorB,
                 EyeColorR = saveState.EyeColorR, EyeColorG = saveState.EyeColorG, EyeColorB = saveState.EyeColorB,
+                HasBeardColor = saveState.HasBeardColor, BeardColorR = saveState.BeardColorR, BeardColorG = saveState.BeardColorG, BeardColorB = saveState.BeardColorB,
                 HasAppearanceData = saveState.HasAppearanceData,
                 Scale = saveState.Scale, IsGiant = saveState.IsGiant, IsDwarf = saveState.IsDwarf,
 
@@ -3445,6 +3582,10 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         public float EyeColorR;
         public float EyeColorG;
         public float EyeColorB;
+        public bool HasBeardColor;      // 0.2.368: independent beard colour (else the hair colour)
+        public float BeardColorR;
+        public float BeardColorG;
+        public float BeardColorB;
         public bool HasAppearanceData;  // True if appearance data is present
         
         // Scale data for giant/dwarf companions

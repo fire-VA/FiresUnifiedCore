@@ -20,7 +20,10 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (resource == null || !resource.RequiresCombat) return true;
             if (resource.RequiredTool == ResourceDataHelper.ToolType.None) return true;
-            
+
+            // 0.2.367: the shared lookup (hands, then the Tools pouch, then storage) decides
+            if (_inventory != null) return _inventory.FindTool(resource.RequiredTool, resource.MinToolTier, TaskFor(resource)) != null;
+
             // Only log verbosely to reduce spam
             bool shouldLog = VerboseLogging || CompanionIdleBehavior.VerboseLogging;
             
@@ -322,29 +325,26 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
             
-            // Clone and transfer
-            var toolClone = _toolToPull.Clone();
-            chestInv.RemoveOneItem(_toolToPull);
-            
-            if (storage.AddItem(toolClone))
+            // 0.2.322 (dupe fix): claim the chest first, like every other chest write, then move the tool with the shared move.
+            // Unclaimed, the removal ran on a machine that didn't own the chest: the owner's copy kept the tool and the
+            // companion had one too. The claim can reload the chest's items, so the tool is found again after it.
+            if (!ChestHelper.TryClaimForWrite(_toolChest, Companion)) return false;
+            chestInv = _toolChest.GetInventory();
+            var tool = ChestHelper.FindSameItem(chestInv, _toolToPull);
+            if (tool == null || ChestHelper.MoveItem(chestInv, storage, tool, tool.m_stack) == 0)
             {
-                _inventory.SaveToZDO();
-                
-                if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[ResourceGathering] {Companion?.companionName} pulled {toolClone.m_shared?.m_name} from chest");
-                
-                // Fire event
-                CompanionEvents.FireItemPulled(Companion, toolClone.m_dropPrefab?.name ?? "tool", 1);
-                
-                return true;
-            }
-            else
-            {
-                // Failed to add - return to chest
-                chestInv.AddItem(_toolToPull);
-                Debug.LogWarning($"[ResourceGathering] {Companion?.companionName} couldn't add tool to storage - returned to chest");
+                Debug.LogWarning($"[ResourceGathering] {Companion?.companionName} couldn't add tool to storage");
                 return false;
             }
+            _inventory.SaveToZDO();
+
+            if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
+                Debug.Log($"[ResourceGathering] {Companion?.companionName} pulled {tool.m_shared?.m_name} from chest");
+
+            // Fire event
+            CompanionEvents.FireItemPulled(Companion, tool.m_dropPrefab?.name ?? "tool", 1);
+
+            return true;
         }
         
         /// <summary>
@@ -390,20 +390,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 var leftBack = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack);
                 if (ResourceDataHelper.IsToolAppropriate(leftBack, resource.RequiredTool, resource.MinToolTier))
                     return true;
-                
-                var storage = _inventory.GetStorageInventory();
-                if (storage != null)
-                {
-                    foreach (var item in storage.GetAllItems())
-                    {
-                        if (ResourceDataHelper.IsToolAppropriate(item, resource.RequiredTool, resource.MinToolTier))
-                        {
-                            if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                                Debug.Log($"[ResourceGathering] {Companion?.companionName} has {item.m_shared?.m_name} in storage for {resource.Name}");
-                            return true;
-                        }
-                    }
-                }
+
+                // 0.2.367: the shared lookup (hands, then the Tools pouch, then storage)
+                if (_inventory.FindTool(resource.RequiredTool, resource.MinToolTier, TaskFor(resource)) != null) return true;
             }
             
             foreach (var chest in CollectToolSearchChests())
@@ -553,43 +542,12 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_inventory == null || resource == null) return;
             
-            ItemDrop.ItemData bestTool = null;
-            CompanionInventory.EquipmentSlot? bestSlot = null;
-            
-            if (VerboseLogging)
-                Debug.Log($"[ResourceGathering] {Companion.companionName} searching for {resource.RequiredTool} tier {resource.MinToolTier}...");
-            
-            foreach (var slot in ToolCarrySlots)
-            {
-                var equipped = _inventory.GetEquippedItem(slot);
-                if (equipped != null && VerboseLogging)
-                    Debug.Log($"[ResourceGathering] {slot}: {equipped.m_shared?.m_name}, toolTier={equipped.m_shared?.m_toolTier}, appropriate={ResourceDataHelper.IsToolAppropriate(equipped, resource.RequiredTool, resource.MinToolTier)}");
-            
-                if (ResourceDataHelper.IsToolAppropriate(equipped, resource.RequiredTool, resource.MinToolTier) &&
-                    ResourceDataHelper.IsBetterTool(equipped, bestTool, resource.RequiredTool))
-                {
-                    bestTool = equipped;
-                    bestSlot = slot;
-                }
-            }
-            
-            var storage = _inventory.GetStorageInventory();
-            if (storage != null)
-            {
-                foreach (var item in storage.GetAllItems())
-                {
-                    bool isAppropriate = ResourceDataHelper.IsToolAppropriate(item, resource.RequiredTool, resource.MinToolTier);
-                    if (VerboseLogging && item != null)
-                        Debug.Log($"[ResourceGathering] Storage: {item.m_shared?.m_name ?? "null"}, toolTier={item.m_shared?.m_toolTier ?? 0}, appropriate={isAppropriate}");
-                    
-                    if (isAppropriate && ResourceDataHelper.IsBetterTool(item, bestTool, resource.RequiredTool))
-                    {
-                        bestTool = item;
-                        bestSlot = null;
-                    }
-                }
-            }
-            
+            // 0.2.367: the shared lookup (hands, then the Tools pouch, then storage)
+            var bestTool = _inventory.FindTool(resource.RequiredTool, resource.MinToolTier, TaskFor(resource));
+            CompanionInventory.EquipmentSlot? bestSlot =
+                bestTool != null && _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand) == bestTool
+                    ? CompanionInventory.EquipmentSlot.RightHand : (CompanionInventory.EquipmentSlot?)null;
+
             if (bestTool == null)
             {
                 if (VerboseLogging)
@@ -606,17 +564,13 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
             
-            if (!ResourceDataHelper.TryEquipInRightHand(_inventory, bestTool, bestSlot, holsterWeaponOnBack: true))
+            if (!_inventory.EquipToolInHand(bestTool, TaskFor(resource)))
             {
                 if (VerboseLogging)
                     Debug.Log($"[ResourceGathering] {Companion.companionName} has no room to put away {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
                 return;
             }
-            
-            _inventory.RecalculateEquipmentBonusesPublic();
-            _inventory.ApplyVisualEquipment();
-            _inventory.SaveToZDO();
-            
+
             if (VerboseLogging)
                 Debug.Log($"[ResourceGathering] {Companion.companionName} equipped {bestTool.m_shared.m_name} (tier {bestTool.m_shared.m_toolTier}) from {(bestSlot.HasValue ? bestSlot.ToString() : "storage")}");
         }
@@ -687,28 +641,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
-            var allItems = storage.GetAllItems();
-            Debug.Log($"[ResourceGathering] {Companion?.companionName} searching storage for {requiredTool} tier>={minTier}. Storage has {allItems.Count} items:");
-            
-            ItemDrop.ItemData bestTool = null;
-            
-            foreach (var item in allItems)
-            {
-                if (item == null) continue;
-                
-                string itemName = item.m_shared?.m_name ?? "null";
-                string prefabName = item.m_dropPrefab?.name ?? "null";
-                int toolTier = item.m_shared?.m_toolTier ?? -1;
-                bool isAppropriate = ResourceDataHelper.IsToolAppropriate(item, requiredTool, minTier);
-                
-                Debug.Log($"  - {itemName} (prefab:{prefabName}, tier:{toolTier}, appropriate:{isAppropriate})");
-                
-                if (isAppropriate && ResourceDataHelper.IsBetterTool(item, bestTool, requiredTool))
-                {
-                    bestTool = item;
-                }
-            }
-            
+            // 0.2.367: the shared lookup (hands, then the Tools pouch, then storage)
+            string task = requiredTool == ResourceDataHelper.ToolType.Pickaxe ? "mine" : requiredTool == ResourceDataHelper.ToolType.Axe ? "chop" : "gather";
+            var bestTool = _inventory.FindTool(requiredTool, minTier, task);
             if (bestTool == null)
             {
                 Debug.Log($"[ResourceGathering] {Companion?.companionName} no appropriate tool found in storage for {requiredTool} tier>={minTier}");
@@ -724,18 +659,29 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"[ResourceGathering] {Companion?.companionName} found {bestTool.m_shared?.m_name} in nearby chest!");
             }
             
-            if (!ResourceDataHelper.TryEquipInRightHand(_inventory, bestTool, null, holsterWeaponOnBack: true))
+            if (!_inventory.EquipToolInHand(bestTool, task))
             {
                 Debug.Log($"[ResourceGathering] {Companion?.companionName} has no room to put away {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
                 return false;
             }
-            
-            _inventory.RecalculateEquipmentBonusesPublic();
-            _inventory.ApplyVisualEquipment();
-            _inventory.SaveToZDO();
-            
             return true;
         }
+
+        /// <summary>0.2.367: the real refusal: "no pickaxe" (none anywhere) or "my pickaxe is too weak for this rock" (tier).</summary>
+        private string ToolRefusalFor(ResourceDataHelper.ResourceData resource)
+        {
+            if (resource == null) return "that's not something I can gather";
+            int bestTier = -1;
+            _inventory?.FindTool(resource.RequiredTool, resource.MinToolTier, out _, out bestTier, TaskFor(resource));
+            string noun = resource.Type == ResourceDataHelper.ResourceType.Tree ? "tree" : resource.Type == ResourceDataHelper.ResourceType.Log ? "log"
+                : resource.Type == ResourceDataHelper.ResourceType.Rock ? "rock" : "target";
+            return CompanionInventory.ToolRefusal(resource.RequiredTool, bestTier, noun);
+        }
+
+        /// <summary>0.2.367: the task word for the [Tools] lines.</summary>
+        private static string TaskFor(ResourceDataHelper.ResourceData resource) =>
+            resource == null ? "gather" : resource.RequiredTool == ResourceDataHelper.ToolType.Pickaxe ? "mine"
+            : resource.RequiredTool == ResourceDataHelper.ToolType.Axe ? "chop" : "gather";
         
         // -----------------------------------------------------------------------
         // Tool crafting helpers
@@ -872,7 +818,7 @@ namespace FiresCore.Npc.IdleBehaviors
             Recipe toolRecipe = AI.ChoreBrain.RecipeFor(toolPrefab);
             if (toolRecipe == null) return false;
             var chests = ChestHelper.FindNearbyChests(StockBase, StockRadius).Where(c => c != null && StockMayUse(c)).ToList();
-            int Have(ItemDrop item) => bag.CountItems(item.m_itemData.m_shared.m_name)
+            int Have(ItemDrop item) => CompanionInventory.CountStorage(bag, item.m_itemData.m_shared.m_name)
                 + chests.Sum(c => Core.InventoryTransferService.CountItem(c, item.gameObject.name));
             var need = new Dictionary<string, (ItemDrop Item, int Amount)>();
             void Need(ItemDrop item, int amount)
@@ -1082,26 +1028,21 @@ namespace FiresCore.Npc.IdleBehaviors
                 return null;
             }
             
+            // 0.2.322 (dupe fix): claim the chest first, then find the tool again (the claim can reload the chest's items) and
+            // move it with the shared move. The returned item is the one now in storage.
+            if (!ChestHelper.TryClaimForWrite(bestChest, Companion)) return null;
             var chestInventory = bestChest.GetInventory();
-            if (chestInventory == null) return null;
-            
-            var toolClone = bestTool.Clone();
-            
-            chestInventory.RemoveOneItem(bestTool);
-            
-            if (storage.AddItem(toolClone))
+            var tool = ChestHelper.FindSameItem(chestInventory, bestTool);
+            if (tool == null || ChestHelper.MoveItem(chestInventory, storage, tool, tool.m_stack) == 0)
             {
-                if (VerboseLogging)
-                    Debug.Log($"[ResourceGathering] {Companion?.companionName} pulled {toolClone.m_shared?.m_name} from chest");
-                
-                return toolClone;
-            }
-            else
-            {
-                chestInventory.AddItem(bestTool);
-                Debug.LogWarning($"[ResourceGathering] {Companion?.companionName} failed to add tool to storage, returned to chest");
+                Debug.LogWarning($"[ResourceGathering] {Companion?.companionName} failed to add tool to storage");
                 return null;
             }
+
+            if (VerboseLogging)
+                Debug.Log($"[ResourceGathering] {Companion?.companionName} pulled {tool.m_shared?.m_name} from chest");
+
+            return storage.ContainsItem(tool) ? tool : ChestHelper.FindSameItem(storage, tool);
         }
     }
 }

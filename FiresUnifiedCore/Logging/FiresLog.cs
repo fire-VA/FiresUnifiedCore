@@ -28,18 +28,30 @@ namespace FiresCore.Logging
         public void Info(string message)
         {
             if (!FiresLogLevel.InfoOn) return;
-            Debug.Log(Compose(message));
+            UnityEngine.Debug.Log(Compose(message));
         }
 
         public void Verbose(string message)
         {
             if (!VerboseEnabled) return;
-            Debug.Log(Compose(message));
+            UnityEngine.Debug.Log(Compose(message));
         }
 
-        public void Warning(string message) => Debug.LogWarning(Compose(message));
+        /// <summary>
+        /// 0.2.279 (Fire: "We should not be adding more noisy info logs. We should put them as debug logs and set our configs to see
+        /// them"): a per-action evidence line. It prints only when Core's [Logging] Log Level is Debug or Verbose, and then through Unity's
+        /// log, which BepInEx shows at Info: never ManualLogSource.LogDebug, which the default BepInEx LogLevels hide (turning those on
+        /// would bring back every other mod's debug spam).
+        /// </summary>
+        public void Debug(string message)
+        {
+            if (!FiresLogLevel.DebugOn) return;
+            UnityEngine.Debug.Log(Compose(message));
+        }
 
-        public void Error(string message) => Debug.LogError(Compose(message));
+        public void Warning(string message) => UnityEngine.Debug.LogWarning(Compose(message));
+
+        public void Error(string message) => UnityEngine.Debug.LogError(Compose(message));
 
         // Folded to the console's width here rather than at each call site, so every mod on this logger gets it and
         // no summary line has to be written short by hand. The tag stays on the first row for the colour patch, the
@@ -54,14 +66,18 @@ namespace FiresCore.Logging
         }
     }
 
-    /// <summary>0.2.269: the Fires family's log levels, lowest to highest. Errors and warnings always print, whatever the level.</summary>
+    /// <summary>
+    /// 0.2.269: the Fires family's log levels, lowest to highest. Errors and warnings always print, whatever the level. 0.2.279: Debug
+    /// (every per-action evidence line) sits below Verbose (also each mod's verbose detail), so the rig can run at Debug without every
+    /// mod's verbose flood. The config stores the name, so the renumbering changes no saved setting.
+    /// </summary>
     public enum FiresLogVerbosity
     {
         Error = 0,
         Warning = 1,
         Info = 2,
-        Verbose = 3,
-        Debug = 4,
+        Debug = 3,
+        Verbose = 4,
     }
 
     /// <summary>
@@ -84,8 +100,33 @@ namespace FiresCore.Logging
         /// <summary>Info-level lines from the family print.</summary>
         public static bool InfoOn => Current >= FiresLogVerbosity.Info;
 
+        /// <summary>0.2.279: per-action evidence lines print (FiresLog.Debug, and Core's chatty tags: see <see cref="IsDebugTag"/>).</summary>
+        public static bool DebugOn => Current >= FiresLogVerbosity.Debug;
+
         /// <summary>Every verbose line prints, whatever each mod's own verbose switch says.</summary>
         public static bool VerboseOn => Current >= FiresLogVerbosity.Verbose;
+
+        /// <summary>
+        /// 0.2.279 (Fire's rule: noisy evidence lines are debug lines): Core's per-action tags. A plain Debug.Log line from a Fires
+        /// assembly that starts with one prints only at Debug (RateLimitedLogHandler), the same as FiresLog.Debug. Info keeps the
+        /// one-time load summaries and rare events ([FiresUnifiedCore], [ShaderRebind], [Water], [Characters], [QuestProfileManager] ...).
+        /// F5 test lines ("[XTest] ...") always print.
+        /// </summary>
+        private static readonly System.Collections.Generic.HashSet<string> DebugTags = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+        {
+            "[Chore]", "[CompanionIdleBehavior]", "[CompanionOwnership]", "[PathWalker]", "[Climb]", "[Climbing]", "[CompanionRandomLoadout]",
+            "[Sectors]", "[CompanionChatHelper]", "[CompanionKennel]", "[LootPickup]", "[CompanionController]", "[CompanionAI]",
+            "[CombatAdvisor]", "[Fishing]", "[FishingBrain]", "[Speech]", "[CompanionConsumables]", "[GroupTactics]", "[NpcVisEquipment]",
+            "[CompanionSkills]", "[ArcheryBrain]", "[PlayerFollowingRegistry]", "[NpcSkeleton]", "[Archetype]", "[CompanionTeleportService]",
+            "[CompanionInteractionBehavior]", "[Farming]", "[SmelterOperator]", "[ResourceGathering]", "[FireTending]", "[Swimming]",
+            "[Party]", "[HomeBase]", "[EnemyMemory]", "[Danger]", "[ChoreBrain]", "[MovementAuthority]", "[WeaponSwapManager]",
+            "[TauntShockwave]", "[BowTraining]", "[GroupHud]",
+        };
+
+        internal static bool IsDebugTag(string tag) => tag != null && DebugTags.Contains(tag);
+
+        /// <summary>The per-action tags, for the load line and the docs.</summary>
+        public static System.Collections.Generic.IEnumerable<string> DebugTagList => DebugTags;
 
         /// <summary>True only while the load line below is written, so the gates let it through.</summary>
         internal static bool Announcing { get; private set; }
@@ -95,9 +136,9 @@ namespace FiresCore.Logging
         {
             if (config == null || s_level != null) return;
             s_level = config.Bind(Section, Key, FiresLogVerbosity.Warning, new ConfigDescription(
-                "How much the Fires mods write to the log. Error and Warning: only warnings and errors. Info: also each mod's "
-                + "info lines (what companions and bots did, load summaries). Verbose / Debug: also every verbose line. "
-                + "Errors and warnings always print. A local setting: the server does not set it for you."));
+                "How much the Fires mods write to the log. Error and Warning: only warnings and errors. Info: also load summaries "
+                + "and rare events. Debug: also every per-action line (what companions and bots did, step by step). Verbose: also "
+                + "each mod's verbose detail. Errors and warnings always print. A local setting: the server does not set it for you."));
             s_level.SettingChanged += (_, __) => Announce(s_announceTo);
         }
 
@@ -106,8 +147,9 @@ namespace FiresCore.Logging
         {
             if (log == null) return;
             s_announceTo = log;
-            string what = InfoOn
-                ? (VerboseOn ? "info and verbose lines from Fires mods shown" : "info lines from Fires mods shown; Verbose adds the verbose ones")
+            string what = VerboseOn ? "info, debug and verbose lines from Fires mods shown"
+                : DebugOn ? "info and debug lines from Fires mods shown; Verbose adds each mod's verbose detail"
+                : InfoOn ? "info lines from Fires mods shown; Debug adds the per-action lines"
                 : $"info lines from Fires mods hidden; set [{Section}] {Key} = Info to see them";
             Announcing = true;
             try { log.LogMessage($"[FiresUnifiedCore] {Key}: {Current} ({what})"); }

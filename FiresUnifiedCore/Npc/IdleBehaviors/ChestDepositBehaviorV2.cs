@@ -582,6 +582,12 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool ShouldDepositItem(ItemDrop.ItemData item)
         {
             if (item == null) return false;
+            // 0.2.361: only the companion bag's STORAGE rows are deposited (worn gear and pouch stacks stay)
+            if (!CompanionGridLayout.IsStorage(item.m_gridPos) && CompanionGridLayout.IsCompanionBag(GetStorageInventory()))
+            {
+                LogVerbose($"ShouldDepositItem: {item.m_shared?.m_name} - NO (pouch/equipment cell)");
+                return false;
+            }
             if (item.m_equipped)
             {
                 LogVerbose($"ShouldDepositItem: {item.m_shared?.m_name} - NO (equipped)");

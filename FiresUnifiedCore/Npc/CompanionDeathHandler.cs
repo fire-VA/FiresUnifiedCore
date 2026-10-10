@@ -207,6 +207,9 @@ namespace FiresCore.Npc
                 CreateTombstone();
             }
 
+            // 0.2.382: the Pet cell item is not "worn", so it went to the tombstone with storage above; dismiss the pet
+            if (_inventory != null) _inventory.ClearPet("death");
+
             // 3. Now that tombstone ZDOID is known, save death metadata
             SaveDeathMetadata();
 
@@ -516,6 +519,8 @@ namespace FiresCore.Npc
                 {
                     foreach (var item in storageInv.GetAllItems().ToArray())
                     {
+                        // 0.2.361: worn gear lives in the bag's equip cells now; it follows dropEquipmentOnDeath below, as before.
+                        if (_inventory.IsWorn(item)) continue;
                         if (tombstoneInv.AddItem(item.Clone()))
                         {
                             storageInv.RemoveItem(item);
@@ -546,6 +551,8 @@ namespace FiresCore.Npc
 
             foreach (var item in storageInv.GetAllItems().ToArray())
             {
+                // 0.2.361: worn gear (equip cells) was never part of this drop; it stays as before.
+                if (_inventory.IsWorn(item)) continue;
                 Vector3 dropPos = transform.position + UnityEngine.Random.insideUnitSphere * 2f;
                 dropPos.y = transform.position.y + 1f;
 

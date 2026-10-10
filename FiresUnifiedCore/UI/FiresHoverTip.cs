@@ -77,6 +77,8 @@ namespace FiresCore.UI
 
         private void Update()
         {
+            // 0.2.293: none while the HUD is hidden (vanilla's Ctrl+F3, the test runner, FiresValcast filming).
+            if (Hud.IsUserHidden()) { if (_shown) { _shown = false; TipView.Hide(); } return; }
             if (!Enabled || _hoverStart < 0f || _shown) return;
             if (Time.unscaledTime - _hoverStart < HoverDelay) return;
             _shown = true;

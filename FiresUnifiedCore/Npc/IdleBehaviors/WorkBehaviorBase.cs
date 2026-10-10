@@ -331,12 +331,6 @@ namespace FiresCore.Npc.IdleBehaviors
             // Use base class authority-aware stop
             base.StopMovement();
             
-            // Also zero velocity directly for immediate effect
-            if (Rigidbody != null && !Rigidbody.isKinematic)
-            {
-                Vector3 vel = Rigidbody.linearVelocity;
-                Rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
         }
         
         /// <summary>
@@ -358,13 +352,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            dir.Normalize();
-            Quaternion targetRot = Quaternion.LookRotation(dir);
-            if (float.IsNaN(targetRot.x) || float.IsNaN(targetRot.y) || float.IsNaN(targetRot.z) || float.IsNaN(targetRot.w))
-            {
-                return;
-            }
-            Transform.rotation = Quaternion.Slerp(Transform.rotation, targetRot, Time.deltaTime * 5f);
+            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            Character?.SetLookDir(dir.normalized);
         }
         
         /// <summary>

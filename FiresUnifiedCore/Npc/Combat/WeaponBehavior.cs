@@ -494,6 +494,18 @@ ConfigureAI();
                 return false;
             }
 
+            // 0.2.365: an attack that throws its item (spear throw, bombs) needs the item still in the companion's bag; a
+            // spear already out is not thrown again.
+            if (attackTemplate.m_consumeItem && Context.Companion != null)
+            {
+                var carried = Context.Inventory?.GetStorageInventory();
+                if (carried != null && !carried.ContainsItem(AttackWeapon))
+                {
+                    CompanionAmmo.Log(Context.Companion.companionName, "nothrow", $"[Ammo] {Context.Companion.companionName} not throwing {shared.m_name}: no longer held");
+                    return false;
+                }
+            }
+
             // Check and consume stamina
             if (!TryConsumeAttackStamina(attackTemplate))
             {
@@ -561,6 +573,11 @@ ConfigureAI();
                     nativeStarted = false;
                 }
             }
+
+            // 0.2.365: vanilla Attack.ConsumeItem takes the thrown item out of the bag; the tracker refills a throwable's hand
+            // cell or follows the thrown spear for retrieval.
+            if (nativeStarted && attackTemplate.m_consumeItem && Context.Companion != null)
+                CompanionThrowTracker.For(Context)?.OnThrowStarted(AttackWeapon, attackTemplate);
 
             if (nativeStarted && chainedAttack)
             {

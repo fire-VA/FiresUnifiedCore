@@ -360,7 +360,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Exact output prefabs: a name substring ("Iron") also matched the companion's own SwordIron or PickaxeIron.
             var outputPrefabs = new HashSet<string>(GetOutputNames());
             int deposited = 0;
-            foreach (var item in new List<ItemDrop.ItemData>(storageInv.GetAllItems()))
+            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storageInv)))
             {
                 if (!IsCarriedStationItem(item, outputPrefabs) || !TryDepositItem(item, storageInv)) continue;
                 deposited++;
@@ -423,7 +423,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 inputPrefabs.UnionWith(PieceDataHelper.GetStationInputs(_nearbyKiln));
             
             // Return each input type to chests
-            var itemsToReturn = new List<ItemDrop.ItemData>(storageInv.GetAllItems());
+            var itemsToReturn = new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storageInv));
             int returnedCount = 0;
             
             foreach (var item in itemsToReturn)
@@ -682,7 +682,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             var neededOres = GetNeededOres();
             
-            foreach (var item in storageInv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storageInv))
             {
                 if (item == null) continue;
                 string dropName = item.m_dropPrefab?.name ?? "";
@@ -810,7 +810,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
             
-            var items = storageInv.GetAllItems();
+            var items = CompanionInventory.StorageItemsOf(storageInv);
             Debug.Log($"[SmelterOperator] {context} - Inventory has {items.Count} item stacks:");
             foreach (var item in items)
             {
@@ -849,7 +849,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (CompanionIdleBehavior.VerboseLogging)
                 Debug.Log($"[SmelterOperator] TryAddOre: Looking for ores: [{string.Join(", ", neededOres)}], isKiln={_isKilnOperation}");
             
-            var allItems = storageInv.GetAllItems();
+            var allItems = CompanionInventory.StorageItemsOf(storageInv);
             
             if (CompanionIdleBehavior.VerboseLogging)
             {
@@ -936,7 +936,7 @@ namespace FiresCore.Npc.IdleBehaviors
             string fuelPrefabName = _targetSmelter.m_fuelItem.gameObject.name;
             
             // CRITICAL FIX: Find the fuel item FIRST, then verify we can remove it
-            foreach (var item in storageInv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storageInv))
             {
                 if (item == null) continue;
                 if (item.m_stack <= 0) continue; // Skip empty stacks
@@ -968,15 +968,18 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         /// <summary>
-        /// Empties held output the way the station's empty switch does (Smelter.OnEmpty sends RPC_EmptyProcessed,
-        /// Smelter.cs:249): the owner spawns the stack at the output point. Paced so a remote owner can answer.
+        /// Empties held output through the station's own empty switch, as a player's E press does (0.2.322, Fire's
+        /// vanilla-method rule: Switch.Interact -> Smelter.OnEmpty -> RPC_EmptyProcessed; the owner spawns the stack at the
+        /// output point). Paced so a remote owner can answer.
         /// </summary>
         private bool TryCollectOutput()
         {
             if (!HasOutput() || Time.time - _lastEmptyTime < MinSingleInputInterval) return false;
-            
+            Switch empty = _targetSmelter.m_emptyOreSwitch;
+            if (empty == null || _humanoid == null) return false;
+
             _lastEmptyTime = Time.time;
-            _targetSmelter.GetComponent<ZNetView>().InvokeRPC(EmptyProcessedRpc);
+            empty.Interact(_humanoid, false, false);
             
             if (CompanionIdleBehavior.VerboseLogging)
                 Debug.Log($"[SmelterOperator] Emptied held output of {GetStationName()}");
@@ -1040,7 +1043,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var storageInv = _inventory != null ? _inventory.GetStorageInventory() : null;
             if (storageInv == null) return false;
             
-            foreach (var item in storageInv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storageInv))
             {
                 if (item?.m_dropPrefab != null && PieceDataHelper.StationAccepts(kiln, item.m_dropPrefab.name))
                     return true;
@@ -1161,11 +1164,10 @@ namespace FiresCore.Npc.IdleBehaviors
             if (!storageInv.CanAddItem(itemData, itemData.m_stack)) return false;
             
             // Add to inventory
-            if (storageInv.AddItem(itemData))
+            if (ChestHelper.TakeDropVerified(itemDrop, storageInv, Companion?.companionName ?? "companion") > 0)
             {
                 _inventory.SaveToZDO();
-                ZNetScene.instance?.Destroy(itemDrop.gameObject);
-                
+
                 if (CompanionIdleBehavior.VerboseLogging)
                     Debug.Log($"[SmelterOperator] Picked up specific item: {itemData.m_shared.m_name} x{itemData.m_stack}");
                 
@@ -1222,10 +1224,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (!storageInv.CanAddItem(itemData, itemData.m_stack)) continue;
                 
                 // Add to inventory
-                if (storageInv.AddItem(itemData))
+                if (ChestHelper.TakeDropVerified(itemDrop, storageInv, Companion?.companionName ?? "companion") > 0)
                 {
                     _inventory.SaveToZDO();
-                    ZNetScene.instance?.Destroy(itemDrop.gameObject);
                     _itemsCollected++;
                     pickedUp++;
                     
@@ -1326,6 +1327,9 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private void SetPhase(OperatePhase phase)
         {
+            // 0.2.336 (round 18 smelter facing 89 deg, no phase evidence): every phase change at Debug, like WorkBehaviorBase's.
+            if (_currentPhase != phase)
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} phase {_currentPhase} -> {phase} (after {Time.time - _phaseStartTime:0.0} s)");
             _currentPhase = phase;
             _phaseStartTime = Time.time;
         }
@@ -1411,12 +1415,6 @@ namespace FiresCore.Npc.IdleBehaviors
             // Clear combat movement destination as backup
             _combatMovement?.ClearMoveDestination();
             
-            // Zero out horizontal velocity to stop sliding
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
             
             // Stop the character's movement direction
             if (_character != null)
@@ -1461,8 +1459,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            dir.Normalize();
-            Transform.rotation = Quaternion.Slerp(Transform.rotation, Quaternion.LookRotation(dir), Time.deltaTime * 5f);
+            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            _character?.SetLookDir(dir.normalized);
         }
         
         /// <summary>
@@ -1484,12 +1482,6 @@ namespace FiresCore.Npc.IdleBehaviors
                 _character.SetRun(false);
             }
             
-            // Only set velocity if NOT kinematic
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
         }
         
         /// <summary>
@@ -1557,71 +1549,6 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             
             return standoffPos;
-        }
-        
-        /// <summary>
-        /// Finds a safe position near the station to teleport to.
-        /// Position must be WITHIN the arrival threshold so we don't get stuck in a loop!
-        /// </summary>
-        private Vector3 FindSafeTeleportPosition(Vector3 targetPos)
-        {
-            Vector3[] directions = new Vector3[]
-            {
-                Vector3.forward, Vector3.back, Vector3.left, Vector3.right,
-                (Vector3.forward + Vector3.right).normalized,
-                (Vector3.forward + Vector3.left).normalized,
-                (Vector3.back + Vector3.right).normalized,
-                (Vector3.back + Vector3.left).normalized
-            };
-            
-            // CRITICAL: Teleport CLOSER than ArrivalDistance so we actually "arrive"
-            // Use a small offset (0.3m) from the target so we're not exactly on it
-            float safeDistance = 0.3f;
-            
-            foreach (var dir in directions)
-            {
-                Vector3 testPos = targetPos + dir * safeDistance;
-                
-                if (ZoneSystem.instance != null)
-                {
-                    float groundHeight;
-                    if (FiresCore.World.Surface.GroundNear(testPos, out groundHeight))
-                    {
-                        testPos.y = groundHeight + 0.1f;
-                    }
-                }
-                
-                // Check for obstructions
-                Collider[] colliders = Physics.OverlapSphere(testPos + Vector3.up * 0.5f, 0.4f);
-                bool blocked = false;
-                foreach (var collider in colliders)
-                {
-                    if (collider == null || collider.isTrigger) continue;
-                    if (collider.gameObject.layer == LayerMask.NameToLayer("terrain")) continue;
-                    if (collider.GetComponent<Smelter>() != null || collider.GetComponentInParent<Smelter>() != null) continue;
-                    blocked = true;
-                    break;
-                }
-                
-                if (!blocked && Physics.Raycast(testPos + Vector3.up * 2f, Vector3.down, 4f))
-                {
-                    return testPos;
-                }
-            }
-            
-            // Fallback: directly at target position (better than 3m away in loop!)
-            Vector3 fallbackPos = targetPos;
-            
-            if (ZoneSystem.instance != null)
-            {
-                float groundHeight;
-                if (FiresCore.World.Surface.GroundNear(fallbackPos, out groundHeight))
-                {
-                    fallbackPos.y = groundHeight + 0.1f;
-                }
-            }
-            
-            return fallbackPos;
         }
         
         #endregion

@@ -646,6 +646,7 @@ if (prefab == null)
                   zdo.Set(ZDOVars.s_hairColor, new Vector3(savedData.HairColorR, savedData.HairColorG, savedData.HairColorB));
                   zdo.Set(ZDOVars.s_skinColor, new Vector3(savedData.SkinColorR, savedData.SkinColorG, savedData.SkinColorB));
                   zdo.Set("companion_eyeColor", new Vector3(savedData.EyeColorR, savedData.EyeColorG, savedData.EyeColorB));
+                  if (savedData.HasBeardColor) zdo.Set(CompanionAppearanceService.BeardColorKey, new Vector3(savedData.BeardColorR, savedData.BeardColorG, savedData.BeardColorB));
                   zdo.Set(ZDOVars.s_modelIndex, savedData.ModelIndex);
                   
                   if (VerboseLogging)
@@ -698,6 +699,9 @@ if (prefab == null)
          Debug.LogWarning($"[CompanionRespawnManager] Failed to restore storage inventory: {ex.Message}");
                     }
                 }
+
+                // 0.2.362: legacy vault equipment placed synchronously right after the bag load (idempotent)
+                inventory.CommitLegacyVaultEquipment("respawn restore");
 
    // Apply visual equipment
          inventory.RecalculateEquipmentBonusesPublic();
@@ -1221,6 +1225,7 @@ if (prefab == null)
                    zdo.Set(ZDOVars.s_hairColor, new Vector3(savedData.HairColorR, savedData.HairColorG, savedData.HairColorB));
                    zdo.Set(ZDOVars.s_skinColor, new Vector3(savedData.SkinColorR, savedData.SkinColorG, savedData.SkinColorB));
                    zdo.Set("companion_eyeColor", new Vector3(savedData.EyeColorR, savedData.EyeColorG, savedData.EyeColorB));
+                   if (savedData.HasBeardColor) zdo.Set(CompanionAppearanceService.BeardColorKey, new Vector3(savedData.BeardColorR, savedData.BeardColorG, savedData.BeardColorB));
                    zdo.Set(ZDOVars.s_modelIndex, savedData.ModelIndex);
                    
                    if (VerboseLogging)
@@ -1269,6 +1274,9 @@ if (prefab == null)
         Debug.LogWarning($"[CompanionRespawnManager] Failed to restore storage inventory: {ex.Message}");
    }
           }
+
+            // 0.2.362: legacy vault equipment placed synchronously right after the bag load (idempotent)
+            inventory.CommitLegacyVaultEquipment("respawn restore");
 
    // Apply visual equipment
        inventory.RecalculateEquipmentBonusesPublic();

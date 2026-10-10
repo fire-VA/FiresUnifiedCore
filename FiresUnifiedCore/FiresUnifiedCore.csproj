@@ -22,7 +22,7 @@
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <DefineConstants>DEBUG;TRACE;FIRES_POSSESSION_PUBLIC;FIRES_POSSESSION_ENGINE;FIRES_DISCORD_PUBLIC</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
@@ -30,7 +30,7 @@
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
+    <DefineConstants>TRACE;FIRES_POSSESSION_PUBLIC;FIRES_POSSESSION_ENGINE;FIRES_DISCORD_PUBLIC</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
@@ -170,6 +170,24 @@
     <Compile Include="Classes\ClassAbility.cs" />
     <Compile Include="Classes\ClassAbilityRegistry.cs" />
     <Compile Include="Classes\ClassProgressState.cs" />
+    <Compile Include="Classes\SilenceGate.cs" />
+    <Compile Include="Possession\PossessionApi.cs" />
+    <Compile Include="Possession\PossessionRules.cs" />
+    <Compile Include="Possession\PossessionServer.cs" />
+    <Compile Include="Possession\PossessionClient.cs" />
+    <Compile Include="Possession\PossessionEngineBridge.cs" />
+    <Compile Include="Possession\PossessionCamera.cs" />
+    <Compile Include="Possession\PossessionRunner.cs" />
+    <Compile Include="Possession\RavenPossession.cs" />
+    <Compile Include="Summon\SummonApi.cs" />
+    <Compile Include="Variants\VariantTable.cs" />
+    <Compile Include="Variants\VariantApply.cs" />
+    <Compile Include="Variants\VariantFx.cs" />
+    <Compile Include="Variants\VariantHooks.cs" />
+    <Compile Include="Variants\VariantEssences.cs" />
+    <Compile Include="Summon\SummonServer.cs" />
+    <Compile Include="Summon\SummonClient.cs" />
+    <Compile Include="Flight\FlightKeys.cs" />
     <Compile Include="Classes\LuckModel.cs" />
     <Compile Include="Classes\ProgressionEngine.cs" />
     <Compile Include="Classes\ProgressionSettings.cs" />
@@ -197,6 +215,7 @@
     <Compile Include="Bridge\ZdoExtraDataAccess.cs" />
     <Compile Include="Bridge\NpcCompanionBridge.cs" />
     <Compile Include="Bridge\CompanionBridge.cs" />
+    <Compile Include="Bridge\PetBridge.cs" />
     <Compile Include="Bridge\AchievementBridge.cs" />
     <Compile Include="Bridge\DiscordSink.cs" />
     <Compile Include="Bridge\EnvironmentBoxBridge.cs" />
@@ -295,6 +314,7 @@
     <Compile Include="Compat\HdTexturesLoadSpread.cs" />
     <Compile Include="Combat\HitLocator.cs" />
     <Compile Include="Combat\LocationalDamage.cs" />
+    <Compile Include="Combat\NullEffectGuard.cs" />
     <Compile Include="Compat\HdTexturesLoadScreen.cs" />
     <Compile Include="Compat\HdTexturesWorldSpread.cs" />
     <Compile Include="Compat\HdTexturesSize.cs" />
@@ -399,6 +419,7 @@
     <Compile Include="Npc\Archetypes\TauntEffect.cs" />
     <Compile Include="Npc\Combat\BlockingBehavior.cs" />
     <Compile Include="Npc\Combat\BowBehavior.cs" />
+    <Compile Include="Npc\Combat\CompanionAmmo.cs" />
     <Compile Include="Npc\Combat\CombatContext.cs" />
     <Compile Include="Npc\Combat\Agent\CombatAgentCapability.cs" />
     <Compile Include="Npc\Combat\Agent\ICombatAgent.cs" />
@@ -458,7 +479,10 @@
     <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.SubBehaviors.cs" />
     <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.Wandering.cs" />
     <Compile Include="Npc\CompanionIdleBehavior\CompanionIdleBehavior.WeaponHolstering.cs" />
+    <Compile Include="Npc\CompanionAppearanceService.cs" />
+    <Compile Include="Npc\CompanionGridLayout.cs" />
     <Compile Include="Npc\CompanionInventory.cs" />
+    <Compile Include="Npc\CompanionPouchRules.cs" />
     <Compile Include="Npc\CompanionKillTracker.cs" />
     <Compile Include="Npc\CompanionLuck.cs" />
     <Compile Include="Npc\CompanionMapMarker.cs" />
@@ -500,21 +524,17 @@
     <Compile Include="Npc\Formation\GroupFormationManager.cs" />
     <Compile Include="Npc\IdleBehaviors\BowTrainingBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\BuildingRepairBehavior.cs" />
-    <Compile Include="Npc\IdleBehaviors\ChestDepositBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\ChestDepositBehaviorV2.cs" />
     <Compile Include="Npc\IdleBehaviors\ChestHelper.cs" />
     <Compile Include="Npc\IdleBehaviors\CompanionCookingBehavior.cs" />
-    <Compile Include="Npc\IdleBehaviors\CraftingUpgradeBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\CraftingUpgradeBehaviorV2.cs" />
     <Compile Include="Npc\IdleBehaviors\FarmingBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\FarmingBehavior.Phases.cs" />
     <Compile Include="Npc\IdleBehaviors\FarmingDataHelper.cs" />
-    <Compile Include="Npc\IdleBehaviors\FireTendingBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\FireTendingBehaviorV2.cs" />
     <Compile Include="Npc\IdleBehaviors\FishingBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\IdleSubBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\InteractableOccupancyManager.cs" />
-    <Compile Include="Npc\IdleBehaviors\LootPickupBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\LootPickupBehaviorV2.cs" />
     <Compile Include="Npc\IdleBehaviors\PieceDataHelper.cs" />
     <Compile Include="Npc\IdleBehaviors\ResourceDataHelper.cs" />
@@ -533,7 +553,6 @@
     <Compile Include="Npc\IdleBehaviors\SmelterOperator\SmelterOperatorBehavior.StationPhases.cs" />
     <Compile Include="Npc\IdleBehaviors\WoodGatheringBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\WorkBehaviorBase.cs" />
-    <Compile Include="Npc\IdleBehaviors\WorkstationInteractionBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\WorkstationInteractionBehaviorV2.cs" />
     <Compile Include="Npc\Interactions\CompanionInteractionBehavior.cs" />
     <Compile Include="Npc\Movement\CombatMovementHandler.cs" />
@@ -604,6 +623,14 @@
     <EmbeddedResource Include="UI\Chat\Art\*.png" />
     <EmbeddedResource Include="firescoreshaders" />
     <EmbeddedResource Include="firesclimb" />
+    <EmbeddedResource Include="Variants\Essences\FiresEssence_Clarity.png" />
+    <EmbeddedResource Include="Variants\Essences\FiresEssence_Verdancy.png" />
+    <EmbeddedResource Include="Variants\Essences\FiresEssence_Embers.png" />
+    <EmbeddedResource Include="Variants\Essences\FiresEssence_Frost.png" />
+    <EmbeddedResource Include="Variants\Essences\FiresEssence_Shadow.png" />
+    <EmbeddedResource Include="Variants\Essences\FiresEssence_Crystal.png" />
+    <EmbeddedResource Include="Variants\Essences\FiresEssence_Spectre.png" />
+    <EmbeddedResource Include="Variants\Essences\FiresEssence_Cinders.png" />
     <Compile Include="UI\ContextMenu\ContextTarget.cs" />
     <Compile Include="UI\ContextMenu\ContextMenuItem.cs" />
     <Compile Include="UI\ContextMenu\IContextMenuProvider.cs" />
@@ -614,6 +641,7 @@
     <Compile Include="UI\ContextMenu\WorldListContextMenu.cs" />
     <Compile Include="Input\FiresInputBlock.cs" />
     <Compile Include="Input\Chord.cs" />
+    <Compile Include="Input\KeyTaps.cs" />
     <Compile Include="Input\FiresPlaceGate.cs" />
     <Compile Include="UI\UIBuilderHost.cs" />
     <Compile Include="UI\FiresConfigUI.cs" />
@@ -628,6 +656,9 @@
     <Compile Include="UI\ConfigFilesEditor.cs" />
     <Compile Include="UI\SettingEditWindow.cs" />
     <Compile Include="UI\ConfigPanel.cs" />
+    <Compile Include="UI\FiresResizeGrip.cs" />
+    <Compile Include="UI\HeadlessGuard.cs" />
+    <Compile Include="UI\FiresGuiTest.cs" />
     <Compile Include="UI\ConfigMenuButton.cs" />
     <Compile Include="UI\FiresRoundedSkin.cs" />
     <Compile Include="UI\FiresPopupTheme.cs" />
@@ -692,6 +723,8 @@
     <Compile Include="Async\PrewarmCoroutine.cs" />
     <Compile Include="Config\ConfigHotReload.cs" />
     <Compile Include="Config\ConfigManager.cs" />
+    <Compile Include="Config\OwnerGatedConfig.cs" />
+    <Compile Include="Config\CoreFeatures.cs" />
     <Compile Include="Config\FiresConfigPresets.cs" />
     <Compile Include="Config\FiresConfigChoices.cs" />
     <Compile Include="Config\FiresConfigVisibility.cs" />
@@ -733,6 +766,7 @@
     <Compile Include="Npc\Combat\BossTactics.cs" />
     <Compile Include="Npc\Combat\OwnerAssist.cs" />
     <Compile Include="Npc\CompanionOwnershipKeeper.cs" />
+    <Compile Include="Npc\CompanionPossession.cs" />
     <Compile Include="Npc\AI\DoorRule.cs" />
     <Compile Include="Npc\AI\SlopeGuide.cs" />
     <Compile Include="Npc\AI\CarryRules.cs" />
@@ -749,14 +783,26 @@
     <Compile Include="Npc\AI\TaskBodyHands.cs" />
     <Compile Include="Npc\AI\Hazards.cs" />
     <Compile Include="Npc\AI\Swimming.cs" />
+    <Compile Include="Npc\AI\CompanionExits.cs" />
+    <Compile Include="Npc\AI\TamingGuard.cs" />
     <Compile Include="Npc\AI\Foraging.cs" />
     <Compile Include="Npc\Combat\FireScare.cs" />
     <Compile Include="Npc\Combat\ColdRisk.cs" />
     <Compile Include="Movement\Climbing.cs" />
     <Compile Include="Movement\ClimbAnimator.cs" />
+    <Compile Include="Movement\Headroom.cs" />
+    <Compile Include="Movement\MonsterFallDamage.cs" />
+    <Compile Include="Loot\LocationLootRefresh.cs" />
+    <Compile Include="Building\NewPieceFacesAway.cs" />
+    <Compile Include="Movement\Crawl.cs" />
+    <Compile Include="Movement\CrawlCamera.cs" />
+    <Compile Include="Movement\PlayerSwim.cs" />
+    <Compile Include="Input\UndoHistory.cs" />
     <Compile Include="Npc\AI\CompanionTaskBody.cs" />
     <Compile Include="Npc\IdleBehaviors\HaulBehavior.cs" />
     <Compile Include="Npc\CompanionHaulRunner.cs" />
+    <Compile Include="Npc\CompanionPillionDriver.cs" />
+    <Compile Include="Mounts\PillionApi.cs" />
     <Compile Include="World\DistantSectorSkip.cs" />
     <Compile Include="Lifecycle\FiresMod.cs" />
     <Compile Include="Lifecycle\PlayerSpawnGate.cs" />
@@ -777,10 +823,14 @@
     <Compile Include="Materials\VanillaShaderRebindMenuHook.cs" />
     <Compile Include="Materials\VanillaShaderSources.cs" />
     <Compile Include="Materials\FiresShaderBroker.cs" />
+    <Compile Include="Materials\DepthTextureGuarantee.cs" />
     <Compile Include="Net\NetworkObjectHelper.cs" />
+    <Compile Include="Net\RoutedRpcSenderGuard.cs" />
     <Compile Include="Net\SafeRoutedRpc.cs" />
     <Compile Include="Net\WorldCacheSync.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Ravens\RavenPrefabs.cs" />
+    <Compile Include="Ravens\RavenAnimDriver.cs" />
     <Compile Include="Services\BundleLoader.cs" />
     <Compile Include="Services\BundleLoadInterceptor.cs" />
     <Compile Include="Services\DistantRenderer.cs" />
@@ -840,10 +890,60 @@
       <Link>SourceLinked\FiresLogAnalysis\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </Compile>
   </ItemGroup>
+  <!-- 0.2.300: [ghost]'s shared tutorial manager (FiresTutorial, all types internal), linked like FiresLogAnalysis.
+       Every edit there changes Core's next build: core Apply gates its hashes (SHARED_FiresTutorial.txt). -->
+  <PropertyGroup>
+    <FiresTutorialDir>..\..\FiresTutorial\</FiresTutorialDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(FiresTutorialDir)*.cs">
+      <Link>SourceLinked\FiresTutorial\%(Filename)%(Extension)</Link>
+    </Compile>
+    <Compile Include="Tutorials\TutorialBridge.cs" />
+  </ItemGroup>
+  <!-- 0.2.320: [ghost]'s shared possession engine + flight controller (Shared\FiresPossession, namespace FiresPossession),
+       public here through FIRES_POSSESSION_PUBLIC (internal in Valcast); FIRES_POSSESSION_ENGINE turns on Core's bridge to it.
+       Linked per file so files dropped there later don't join a build unchecked. Core Apply gates the hashes
+       (SHARED_FiresPossession.txt). -->
+  <PropertyGroup>
+    <FiresPossessionDir>..\..\Shared\FiresPossession\</FiresPossessionDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(FiresPossessionDir)FlightModel.cs">
+      <Link>SourceLinked\FiresPossession\FlightModel.cs</Link>
+    </Compile>
+    <Compile Include="$(FiresPossessionDir)IPossessionHost.cs">
+      <Link>SourceLinked\FiresPossession\IPossessionHost.cs</Link>
+    </Compile>
+    <Compile Include="$(FiresPossessionDir)PossessionInput.cs">
+      <Link>SourceLinked\FiresPossession\PossessionInput.cs</Link>
+    </Compile>
+    <Compile Include="$(FiresPossessionDir)PossessionOptions.cs">
+      <Link>SourceLinked\FiresPossession\PossessionOptions.cs</Link>
+    </Compile>
+    <Compile Include="$(FiresPossessionDir)PossessionAttacks.cs">
+      <Link>SourceLinked\FiresPossession\PossessionAttacks.cs</Link>
+    </Compile>
+    <Compile Include="$(FiresPossessionDir)PossessionProxy.cs">
+      <Link>SourceLinked\FiresPossession\PossessionProxy.cs</Link>
+    </Compile>
+    <Compile Include="$(FiresPossessionDir)PossessionEngine.cs">
+      <Link>SourceLinked\FiresPossession\PossessionEngine.cs</Link>
+    </Compile>
+  </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- 0.2.341: shared pause-menu Discord help button (Shared\FiresDiscordButton; public here via FIRES_DISCORD_PUBLIC). -->
+  <ItemGroup>
+    <Compile Include="..\..\Shared\FiresDiscordButton\DiscordHelpButton.cs">
+      <Link>SourceLinked\FiresDiscordButton\DiscordHelpButton.cs</Link>
+    </Compile>
+    <EmbeddedResource Include="..\..\Shared\FiresDiscordButton\va_logo.png">
+      <Link>SourceLinked\FiresDiscordButton\va_logo.png</Link>
+    </EmbeddedResource>
+  </ItemGroup>
 </Project>
 
 

@@ -42,7 +42,12 @@ namespace FiresCore.Compat
         // Levels dropped from the top of every chain: Full 0, Half 1, Quarter 2.
         internal static int Drop => Size == null ? 0 : (int)Size.Value;
 
-        internal static void Bind(ConfigFile config) => Size = config.Bind(Section, Key, HdTextureSize.Half, Description);
+        internal static void Bind(ConfigFile config)
+        {
+            Size = config.Bind(Section, Key, HdTextureSize.Half, Description);
+            // Without HDValheimTextures the key leaves the config (0.2.359).
+            FiresCore.Config.OwnerGatedConfig.Gate(Size, FiresCore.Config.OwnerGatedConfig.Owners.HD, synced: false);
+        }
 
         // An entry's texture name, for the finish line's slowest texture.
         internal static string NameOf(object entry) => s_name?.GetValue(entry) as string;

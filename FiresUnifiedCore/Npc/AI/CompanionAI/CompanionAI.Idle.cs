@@ -49,8 +49,23 @@ namespace FiresCore.Npc.AI
                 // UpdateOwnerIdleState polls owner position with a 0.5s throttle and
                 // resets _isOwnerIdle = false the moment ownerMovement > MovementThreshold.
                 UpdateOwnerIdleState(_followTarget.transform.position);
-                if (!_isOwnerIdle)
+                // 0.2.346 (round 22 no_crowding_still: idle at 2.9 m, then the owner ended up 27.5 m away and stood still, and the
+                // companion never came): an owner who is idle but no longer close sends it back to Following too, not only one
+                // who moves. Following then closes in and drops to idle again within 3 m.
+                // 0.2.367: resume at once when the owner has moved > 0.5 m since we went idle, or is > 5 m away.
+                Vector3 idleOwnerNow = _followTarget.transform.position;
+                float ownerDist = Vector3.Distance(transform.position, idleOwnerNow);
+                bool farFromIdleOwner = ownerDist > IdleResumeDistance;
+                bool ownerMovedSinceIdle = _idleOwnerAnchorValid && Vector3.Distance(idleOwnerNow, _idleOwnerAnchor) > IdleResumeOwnerMove;
+                if (!_isOwnerIdle || farFromIdleOwner || ownerMovedSinceIdle)
                 {
+                    if (farFromIdleOwner)
+                        FollowState($"-> Following: owner {ownerDist:0.0} m away");
+                    else if (ownerMovedSinceIdle)
+                        FollowState("-> Following: owner moved");
+                    _idleOwnerAnchorValid = false;
+                    _isOwnerIdle = false;
+                    _ownerIdleStartTime = Time.time;   // a fresh 8 s of stillness before idling again
                     SetState(AIState.Following);
                     return;
                 }
@@ -103,18 +118,21 @@ namespace FiresCore.Npc.AI
             if (hasActiveSubBehavior)
             {
                 // Sub-behavior is active - stop following and let it handle movement
+                FollowState("sub-behaviour active, not moving");
                 StopMoving();
                 return;
             }
 
             if (_targetCreature != null && !_targetCreature.IsDead())
             {
+                FollowState($"-> Combat (target {_targetCreature.m_name})");
                 SetState(AIState.Combat);
                 return;
             }
 
             if (!_shouldFollow || _followTarget == null)
             {
+                FollowState($"-> Idle (shouldFollow {_shouldFollow}, target {(_followTarget != null ? _followTarget.name : "none")})");
                 SetState(AIState.Idle);
                 return;
             }
@@ -130,13 +148,40 @@ namespace FiresCore.Npc.AI
             // local wander/sub-behaviors. UpdateIdleState will snap us back to
             // Following the moment the owner moves again.
             UpdateOwnerIdleState(_followTarget.transform.position);
-            if (_isOwnerIdle && _idleBehavior != null)
+            // 0.2.334 (round 15 [FollowState]: "-> Idle: owner idle" at 27 m, so it wandered and never reached a still owner): idle
+            // wander only once it has come to the owner (within stopDistanceOuter); farther out it keeps following.
+            // 0.2.367: idle only after >= 8 s of owner stillness AND within 4 m.
+            if (_isOwnerIdle && _idleBehavior != null
+                && Vector3.Distance(transform.position, _followTarget.transform.position) <= IdleEnterDistance)
             {
+                _idleOwnerAnchor = _followTarget.transform.position;
+                _idleOwnerAnchorValid = true;
+                FollowState($"-> Idle: owner idle (still for >= {playerIdleThreshold:0.#} s) at {Vector3.Distance(transform.position, _followTarget.transform.position):0.0} m");
                 SetState(AIState.Idle);
                 return;
             }
 
             UpdateFollowMovement(dt);
+        }
+
+        // 0.2.333 (round 13 no_crowding: "following True" yet never within 4 m): the follow state, why it moves or stops.
+        // Debug, at most every 2 s per companion, and at once when the reason changes.
+        private const float IdleEnterDistance = 4f;
+        private const float IdleResumeDistance = 5f;
+        private const float IdleResumeOwnerMove = 0.5f;
+        private Vector3 _idleOwnerAnchor;
+        private bool _idleOwnerAnchorValid;
+
+        private string _lastFollowState;
+        private float _lastFollowStateTime;
+        private void FollowState(string what)
+        {
+            string head = what.Length > 12 ? what.Substring(0, 12) : what;
+            bool changed = _lastFollowState == null || !_lastFollowState.StartsWith(head, System.StringComparison.Ordinal);
+            if (!changed && Time.time - _lastFollowStateTime < 2f) return;
+            _lastFollowState = what;
+            _lastFollowStateTime = Time.time;
+            FiresCore.Logging.FiresLogger.LogDebug($"[FollowState] {m_character?.m_name}: {what}");
         }
 
         private void UpdateFollowMovement(float dt)
@@ -198,7 +243,11 @@ namespace FiresCore.Npc.AI
             //   m_run=true   -> uses m_runSpeed  (sprint)
             //   both false   -> uses m_speed     (default jog)
             ApplyFollowSpeedToCharacter(_currentFollowSpeed);
-            
+            var followAuthority = GetMovementAuthority();
+            FollowState($"moving: target {ownerPos:F1} (owner {_followTarget.name}), dist {distToOwner:0.0} m, speed {_currentFollowSpeed}, "
+                + $"stop at {stopDistanceInner:0.0} m, path {(m_path != null ? m_path.Count : -1)} pt(s), "
+                + $"authority {(followAuthority == null ? "none" : followAuthority.HasAuthority(AIAuthorityOwner) || followAuthority.CanAcquireAuthority(GetAIMovementSource()) ? "ok" : "held by another")}");
+
             switch (_currentFollowSpeed)
             {
                 case FollowSpeed.Stopped:

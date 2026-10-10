@@ -13,6 +13,7 @@ namespace FiresCore.Npc.WildSpawn
     /// an old exporter that did so dropped vanilla entries and broke BalrondExtendedAnimals at world load.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class WildCompanionSpawnInjector
     {
         private const string BaseListName = "_SpawnList_base";

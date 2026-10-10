@@ -244,6 +244,9 @@ namespace FiresCore.Npc.NpcMode
             // Static placed NPCs have no CompanionController - allow them through
             if (_companion == null && !isStaticPlacement) return;
 
+            // A body a player is DRIVING (FiresValcast possession) belongs to its driver: no fixture hold, no walk home.
+            if (HoldForPossession()) return;
+
             // Static fixtures NEVER run AI — re-assert every tick regardless of the stationed-flag timing.
             EnforceStaticInertness();
 
@@ -275,12 +278,219 @@ namespace FiresCore.Npc.NpcMode
             // Only logs when it ACTUALLY caught a re-enable — proves the relog dodge/look-at-enemy bug is a
             // downstream re-enable (names the culprit's timing) rather than a willMove data problem.
             if (caught)
-                Debug.LogWarning($"[CompanionNpcModule][ai-guard] re-disabled AI on static fixture '{DisplayName}' — something re-enabled it after the static stage was applied");
+            {
+                // 0.2.301: right after a possession ends the driver's mod puts the AI back as IT saw it; the fixture's own state wins.
+                if (Time.time - _releasedAt < ReleaseGraceSeconds)
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule][ai-guard] '{DisplayName}': AI off again after its possession ended (the fixture's own state)");
+                else
+                    Debug.LogWarning($"[CompanionNpcModule][ai-guard] re-disabled AI on static fixture '{DisplayName}' — something re-enabled it after the static stage was applied");
+            }
         }
+
+        // ── A body a player is DRIVING (FiresValcast possession, CompanionPossession) ───────────────────────────────────────
+        // 0.2.299: a static fixture's Rigidbody is frozen on every axis (FiresNPCs' StaticNpcInitializer, once at spawn), so a possessed
+        // fixture could not take a step; its position was unfrozen while driven.
+        // 0.2.301 (Fire 10-05, valcast_test 30/35: "possession of the npc caused it to lose all friction and slide down into the
+        // bottom of a hole"; then "when possessed npcs are returned they should return to their anchor position and go back to what
+        // they normally do"):
+        // - Driven: the WHOLE walking-NPC body a wandering Fires NPC has (FiresNPCs' willMove stage): rotation-only freeze, gravity,
+        //   not kinematic, the Humanoid enabled, rotation synced, an ordinary target. Vanilla's own motion, ground contact and
+        //   friction then run on the owner, which is the possessor's peer (claimed here if it isn't). Every property is saved first.
+        //   Debug evidence every 2 s on the owner (ground, speed, friction, owner).
+        // - Released: the AI comes back exactly as it was before (a fixture: off), and a stationed or static NPC walks back to its
+        //   anchor (snapping only when stuck, too far or out of time), takes its placed facing, and its routine resumes: a fixture
+        //   re-freezes with every saved property, a stationed NPC takes up its station again. A companion just resumes following.
+        //   A re-disable the ai-guard makes right after a release is expected, and logged at Debug.
+        private bool _possessionFreed;
+        private RigidbodyConstraints _constraintsBeforePossession;
+        private bool _gravityBefore, _kinematicBefore, _humanoidBefore, _syncRotationBefore, _aiSkipBefore, _companionAIBefore, _monsterAIBefore;
+        private float _possessedReportAt, _releasedAt = -100f;
+        private bool _returningFromPossession, _claimedForPossessor;
+        private float _returnStart, _returnDeadline, _returnLastProgressAt, _returnBestDistance;
+        private const float ReturnArrive = 0.5f, ReturnSnapDistance = 40f, ReturnStuckSeconds = 3f, ReturnSecondsPerMetre = 0.6f,
+                            ReturnSlackSeconds = 6f, ReleaseGraceSeconds = 10f, PossessedReportSeconds = 2f;
+
+        private bool HoldForPossession()
+        {
+            bool possessed = FiresCore.Npc.CompanionPossession.IsPossessed(_nview);
+            if (possessed != _possessionFreed)
+            {
+                if (possessed) BeginPossession();
+                else EndPossession();
+            }
+            if (possessed)
+            {
+                KeepPossessorOwning();
+                ReportPossessed();
+                return true;
+            }
+            if (_returningFromPossession)
+            {
+                TickReturnHome();
+                return true;
+            }
+            return false;
+        }
+
+        private void BeginPossession()
+        {
+            _possessionFreed = true;
+            _returningFromPossession = false;   // a re-possession mid-walk-home: the driver has it again
+            _claimedForPossessor = false;
+            var sync = GetComponent<ZSyncTransform>();
+            if (_rigidbody != null)
+            {
+                _constraintsBeforePossession = _rigidbody.constraints;
+                _gravityBefore = _rigidbody.useGravity;
+                _kinematicBefore = _rigidbody.isKinematic;
+                _rigidbody.isKinematic = false;
+                _rigidbody.useGravity = true;
+                _rigidbody.constraints = RigidbodyConstraints.FreezeRotation;
+            }
+            _humanoidBefore = _character == null || _character.enabled;
+            if (_character != null) _character.enabled = true;
+            _syncRotationBefore = sync == null || sync.m_syncRotation;
+            if (sync != null) sync.m_syncRotation = true;
+            _aiSkipBefore = _character != null && _character.m_aiSkipTarget;
+            if (_character != null) _character.m_aiSkipTarget = false;
+            _companionAIBefore = _companionAI != null && _companionAI.enabled;
+            _monsterAIBefore = _monsterAI != null && _monsterAI.enabled;
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule] '{DisplayName}' possessed: walking body on (was constraints {_constraintsBeforePossession}, " +
+                $"gravity {_gravityBefore}, kinematic {_kinematicBefore}, humanoid {_humanoidBefore}, syncRotation {_syncRotationBefore}, aiSkip {_aiSkipBefore}, " +
+                $"AI companion {_companionAIBefore} / monster {_monsterAIBefore}); fixture hold off");
+        }
+
+        private void EndPossession()
+        {
+            _possessionFreed = false;
+            _releasedAt = Time.time;
+            var sync = GetComponent<ZSyncTransform>();
+            if (_character != null) { _character.m_aiSkipTarget = _aiSkipBefore; _character.SetMoveDir(Vector3.zero); }
+            if (sync != null) sync.m_syncRotation = _syncRotationBefore;
+            // The AI exactly as it was; a companion's controller owns its own AI (it stood down while driven) and takes it back itself.
+            if (_companion == null)
+            {
+                if (_companionAI != null) _companionAI.enabled = _companionAIBefore;
+                if (_monsterAI != null) _monsterAI.enabled = _monsterAIBefore;
+            }
+            bool goesHome = _hasStationedPosition && (isStationedAsNpc || isStaticPlacement);
+            if (!goesHome)
+            {
+                RestoreBody();
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule] '{DisplayName}' released: body and AI as before; routine: {Routine()}");
+                return;
+            }
+            _returningFromPossession = true;
+            _returnStart = Time.time;
+            _returnBestDistance = FlatDistance(transform.position, _stationedPosition);
+            _returnLastProgressAt = Time.time;
+            _returnDeadline = Time.time + ReturnSlackSeconds + _returnBestDistance * ReturnSecondsPerMetre;
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule] '{DisplayName}' released {_returnBestDistance:0.0} m from its anchor: walking home " +
+                $"(AI companion {_companionAIBefore} / monster {_monsterAIBefore} as before)");
+        }
+
+        // Every saved body property back (a fixture: frozen again).
+        private void RestoreBody()
+        {
+            if (_rigidbody != null)
+            {
+                _rigidbody.linearVelocity = Vector3.zero;
+                _rigidbody.angularVelocity = Vector3.zero;
+                _rigidbody.constraints = _constraintsBeforePossession;
+                _rigidbody.useGravity = _gravityBefore;
+                _rigidbody.isKinematic = _kinematicBefore;
+            }
+            if (_character != null) _character.enabled = _humanoidBefore;
+        }
+
+        // The owner walks the body to its anchor through vanilla's own movement; the other peers see it through ZSyncTransform and
+        // finish once it is there.
+        private void TickReturnHome()
+        {
+            float distance = FlatDistance(transform.position, _stationedPosition);
+            bool owner = _nview != null && _nview.IsValid() && _nview.IsOwner();
+            if (!owner)
+            {
+                if (distance <= ReturnArrive || Time.time > _returnDeadline + ReturnSlackSeconds) FinishReturn("arrived", distance);
+                return;
+            }
+            if (distance <= ReturnArrive) { FinishReturn("walked", distance); return; }
+            if (distance > ReturnSnapDistance) { FinishReturn($"snapped (more than {ReturnSnapDistance:0} m away)", distance); return; }
+            if (Time.time > _returnDeadline) { FinishReturn("snapped (out of time)", distance); return; }
+            if (distance < _returnBestDistance - 0.1f) { _returnBestDistance = distance; _returnLastProgressAt = Time.time; }
+            else if (Time.time - _returnLastProgressAt > ReturnStuckSeconds) { FinishReturn($"snapped (stuck {ReturnStuckSeconds:0} s)", distance); return; }
+            if (_character == null) return;
+            Vector3 dir = _stationedPosition - transform.position;
+            dir.y = 0f;
+            if (dir.sqrMagnitude < 0.0001f) return;
+            dir.Normalize();
+            _character.SetMoveDir(dir);
+            _character.SetLookDir(dir);
+        }
+
+        private void FinishReturn(string how, float distance)
+        {
+            _returningFromPossession = false;
+            _releasedAt = Time.time;   // the ai-guard's grace runs from here: the fixture hold resumes now
+            bool owner = _nview != null && _nview.IsValid() && _nview.IsOwner();
+            if (_character != null) _character.SetMoveDir(Vector3.zero);
+            if (owner)
+            {
+                // Exactly on the anchor with the placed facing (the walk ends within ReturnArrive; a snap is the whole way).
+                transform.position = _stationedPosition;
+                if (_rigidbody != null) _rigidbody.position = _stationedPosition;
+                transform.rotation = _stationedRotation;
+                if (_rigidbody != null) _rigidbody.rotation = _stationedRotation;
+                if (_character != null) _character.SetLookDir(_stationedRotation * Vector3.forward);
+            }
+            RestoreBody();
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule] '{DisplayName}' back at its anchor ({how}, {distance:0.0} m left, {Time.time - _returnStart:0.0} s" +
+                $"{(owner ? "" : ", seen from a non-owner")}); facing {_stationedRotation.eulerAngles.y:0}°; routine: {Routine()}");
+        }
+
+        private string Routine()
+        {
+            if (_companion != null && !isStationedAsNpc) return "companion, follows again";
+            if (HasPatrolRoute()) return "patrol resumes";
+            if (isStaticPlacement && !allowIdleWandering) return "static fixture, frozen at its anchor";
+            return allowIdleWandering ? "stationed, wanders its bounds again" : "stationed, holds its mark again";
+        }
+
+        // The possessor's peer simulates the body (vanilla motion runs only on the owner); FGN 1.5.37+ keeps it so, this makes sure.
+        private void KeepPossessorOwning()
+        {
+            if (_nview == null || !_nview.IsValid() || _nview.IsOwner() || Player.m_localPlayer == null) return;
+            long possessor = _nview.GetZDO().GetLong(FiresCore.Npc.CompanionPossession.PossessedKey, 0L);
+            if (possessor == 0L || possessor != Player.m_localPlayer.GetPlayerID()) return;
+            _nview.ClaimOwnership();
+            if (!_claimedForPossessor)
+            {
+                _claimedForPossessor = true;
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule] '{DisplayName}' claimed for its possessor (this peer drives it)");
+            }
+        }
+
+        // Evidence for a slide: on the owner every PossessedReportSeconds.
+        private void ReportPossessed()
+        {
+            if (Time.time < _possessedReportAt || _character == null || _nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
+            _possessedReportAt = Time.time + PossessedReportSeconds;
+            var collider = _character.GetComponent<Collider>();
+            var material = collider != null ? collider.sharedMaterial : null;
+            Vector3 v = _rigidbody != null ? _rigidbody.linearVelocity : Vector3.zero;
+            FiresCore.Logging.FiresLogger.LogDebug(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "[CompanionNpcModule] '{0}' driven: at ({1:0.0},{2:0.0},{3:0.0}) onGround {4} speed {5:0.00} m/s moveDir {6:0.00} friction {7} constraints {8} gravity {9} humanoid {10}",
+                DisplayName, transform.position.x, transform.position.y, transform.position.z, _character.IsOnGround(), v.magnitude,
+                _character.GetMoveDir().magnitude, material != null ? material.dynamicFriction.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "?",
+                _rigidbody != null ? _rigidbody.constraints.ToString() : "?", _rigidbody != null && _rigidbody.useGravity, _character.enabled));
+        }
+
+        private static float FlatDistance(Vector3 a, Vector3 b) => new Vector2(a.x - b.x, a.z - b.z).magnitude;
 
         private void LateUpdate()
         {
             if (!isStationedAsNpc || !_hasStationedPosition || _isInPlacementMode) return;
+            if (_possessionFreed || _returningFromPossession) return;   // 0.2.299/0.2.301: its driver's look, or the walk home
 
             // Face nearest player - works WITH Valheim's Character rotation system
             // instead of fighting it. We just set m_lookDir and let Character.UpdateBodyRotation

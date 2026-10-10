@@ -163,7 +163,6 @@ namespace FiresCore.Npc.IdleBehaviors
         private static readonly string[] _waitingEmotes = { "emote_nonono", "emote_shrug", "emote_comehere", "emote_point", "emote_wave" };
         private const string AddOreRpc = "RPC_AddOre";
         private const string AddFuelRpc = "RPC_AddFuel";
-        private const string EmptyProcessedRpc = "RPC_EmptyProcessed";
         private const float MinEmoteInterval = 8f;
         private const float MaxEmoteInterval = 20f;
         

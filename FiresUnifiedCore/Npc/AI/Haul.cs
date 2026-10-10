@@ -480,7 +480,7 @@ namespace FiresCore.Npc.AI
                 int need = req.GetAmount(1);
                 if (need <= 0) continue;
                 string item = req.m_resItem.name;
-                int bag = _body.Inventory.CountItems(req.m_resItem.m_itemData.m_shared.m_name);
+                int bag = CompanionInventory.CountStorage(_body.Inventory, req.m_resItem.m_itemData.m_shared.m_name);
                 Container chest = ChoreBrain.FindChestWith(Home, HomeRadius, _body.OwnerPlayerId, item);
                 int inChests = chest != null ? InventoryTransferService.CountItem(chest.GetInventory(), item) : 0;
                 have.Add(bag > 0 && inChests > 0 ? $"{item} {Math.Min(need, bag + inChests)}/{need} (bag {bag}, chests {inChests})"
@@ -729,7 +729,7 @@ namespace FiresCore.Npc.AI
             var units = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (ItemDrop.ItemData item in ChestHelper.GetDepositableItems(_body.Inventory))
                 Add(units, item);
-            var food = _body.Inventory.GetAllItems().Where(i => i.m_shared.m_food > 0f && i.m_dropPrefab != null)
+            var food = CompanionInventory.StorageItemsOf(_body.Inventory).Where(i => i.m_shared.m_food > 0f && i.m_dropPrefab != null)
                 .OrderByDescending(i => i.m_shared.m_food + i.m_shared.m_foodStamina + i.m_shared.m_foodEitr).ToList();
             foreach (ItemDrop.ItemData item in food.Skip(KeepFoodStacks))
                 Add(units, item);

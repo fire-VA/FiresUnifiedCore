@@ -70,6 +70,8 @@ namespace FiresCore.Npc
         private HashSet<string> _loggedTypeFilterItems = new HashSet<string>();
         private HashSet<string> _loggedCapacityItems = new HashSet<string>();
         private float _lastLogClearTime = 0f;
+        // 0.2.364: drops refused for a full storage are left alone until the next clear (no magnet, no retry each frame).
+        private readonly HashSet<int> _refusedDrops = new HashSet<int>();
         private const float LogClearInterval = 60f; // Clear logged items every 60 seconds
         
         #endregion
@@ -133,6 +135,7 @@ namespace FiresCore.Npc
                 _loggedWeightLimitItems.Clear();
                 _loggedTypeFilterItems.Clear();
                 _loggedCapacityItems.Clear();
+                _refusedDrops.Clear();
             }
             
             // Periodic scan logging
@@ -182,9 +185,12 @@ namespace FiresCore.Npc
                 }
                 
                 if (itemDrop == null) continue;
-                
-                // Check if item has auto-pickup enabled
-                if (!itemDrop.m_autoPickup) continue;
+                if (_refusedDrops.Contains(itemDrop.GetInstanceID())) continue;
+
+                // 0.2.366: items the player dropped from their own inventory are for the companion.
+                // Vanilla clears m_autoPickup on those (OnPlayerDrop); our postfix also stamps the ZDO.
+                bool playerDropped = IsPlayerDropped(itemDrop);
+                if (!itemDrop.m_autoPickup && !playerDropped) continue;
                 
                 // Don't pickup placed pieces
                 if (itemDrop.IsPiece()) continue;
@@ -208,8 +214,14 @@ namespace FiresCore.Npc
                 // If the local player is within their own pickup radius of the item,
                 // OR is closer to the item than we are, leave it for them.  Otherwise
                 // both magnets pull the item back and forth between us and the owner.
-                if (ShouldYieldToPlayer(itemDrop.transform.position, center))
+                // Vanilla CanPickup() above already enforces the 0.5 s just-dropped delay.
+                if (playerDropped)
+                    LogPickupGate(itemDrop, true);
+                else if (ShouldYieldToPlayer(itemDrop.transform.position, center))
+                {
+                    LogPickupGate(itemDrop, false);
                     continue;
+                }
 
                 // Load item data
                 itemDrop.Load();
@@ -243,6 +255,8 @@ namespace FiresCore.Npc
                         _loggedCapacityItems.Add(itemKey);
                         Debug.Log($"[CompanionAutoPickup] {_companion?.companionName} can't add {itemData.m_shared.m_name} - inventory capacity");
                     }
+                    if (_refusedDrops.Add(itemDrop.GetInstanceID()))
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionInventory] {_companion?.companionName} pickup refused: storage full ({itemData.m_shared.m_name} x{itemData.m_stack} stays on the ground)");
                     ShowInventoryFullMessage();
                     continue;
                 }
@@ -325,9 +339,11 @@ namespace FiresCore.Npc
                 // Skip if we already processed via layer mask
                 int itemLayer = itemDrop.gameObject.layer;
                 if (((_autoPickupMask >> itemLayer) & 1) == 1) continue; // Already covered by layer mask
+                if (_refusedDrops.Contains(itemDrop.GetInstanceID())) continue;
                 
                 // Same checks as main loop
-                if (!itemDrop.m_autoPickup) continue;
+                bool playerDropped = IsPlayerDropped(itemDrop);
+                if (!itemDrop.m_autoPickup && !playerDropped) continue;
                 if (itemDrop.IsPiece()) continue;
                 
                 ZNetView itemNview = itemDrop.GetComponent<ZNetView>();
@@ -343,8 +359,13 @@ namespace FiresCore.Npc
 
                 // YIELD TO PLAYER: same rule as the primary scan — don't fight
                 // the player's own auto-pickup magnet on the same drop.
-                if (ShouldYieldToPlayer(itemDrop.transform.position, center))
+                if (playerDropped)
+                    LogPickupGate(itemDrop, true);
+                else if (ShouldYieldToPlayer(itemDrop.transform.position, center))
+                {
+                    LogPickupGate(itemDrop, false);
                     continue;
+                }
 
                 itemDrop.Load();
                 var itemData = itemDrop.m_itemData;
@@ -391,6 +412,31 @@ namespace FiresCore.Npc
         ///   * player is within their own pickup radius of the item, OR
         ///   * player is closer to the item than we are.
         /// </summary>
+        internal const string PlayerDroppedZdoKey = "fires_player_dropped";
+        private static readonly Dictionary<string, float> _gateLogTimes = new Dictionary<string, float>();
+
+        /// <summary>True when a player dropped this item from their inventory (ZDO stamp from the OnPlayerDrop postfix).</summary>
+        internal static bool IsPlayerDropped(ItemDrop itemDrop)
+        {
+            if (itemDrop == null) return false;
+            ZNetView nv = itemDrop.GetComponent<ZNetView>();
+            if (nv == null || !nv.IsValid()) return false;
+            ZDO zdo = nv.GetZDO();
+            return zdo != null && zdo.GetBool(PlayerDroppedZdoKey, false);
+        }
+
+        private static void LogPickupGate(ItemDrop itemDrop, bool allowed)
+        {
+            string name = itemDrop?.m_itemData?.m_shared?.m_name ?? itemDrop?.name ?? "unknown";
+            string key = (allowed ? "a:" : "s:") + name;
+            if (_gateLogTimes.TryGetValue(key, out float last) && Time.time - last < 10f) return;
+            _gateLogTimes[key] = Time.time;
+            if (allowed)
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPickup] player-dropped {name}: allowed");
+            else
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPickup] {name} near the player: skipped (guard)");
+        }
+
         private bool ShouldYieldToPlayer(Vector3 itemPos, Vector3 selfCenter)
         {
             // Vanilla Player.AutoPickup uses a ~2m radius.  Use slightly more so
@@ -428,15 +474,46 @@ namespace FiresCore.Npc
                 // Store stack count before pickup
                 int stack = itemData.m_stack;
                 
-                // Add to inventory (this clones the item internally)
-                if (inv.AddItem(itemData))
+                // 0.2.365: storage rows only (CompanionGridLayout). Refuse up front when storage cannot take the whole stack,
+                // so the drop stays on the ground (and is remembered as refused) instead of a partial add.
+                bool companionBag = CompanionGridLayout.IsCompanionBag(inv);
+                if (companionBag && !inv.CanAddItem(itemData, stack))
+                {
+                    if (_refusedDrops.Add(itemDrop.GetInstanceID()))
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionInventory] {_companion?.companionName} pickup refused: storage full ({itemData.m_shared.m_name} x{stack} stays on the ground)");
+                    return;
+                }
+
+                // 0.2.364 (item loss): add a COPY, count what landed, destroy the drop only when all of it did.
+                // TakeDropVerified is the only place that destroys the drop; it logs "picked up ... -> storage" / "pickup refused".
+                int taken = FiresCore.Npc.IdleBehaviors.ChestHelper.TakeDropVerified(itemDrop, inv, _companion?.companionName ?? "companion");
+                if (taken <= 0)
+                {
+                    _refusedDrops.Add(itemDrop.GetInstanceID());
+                    return;
+                }
+                stack = taken;
+
+                // 0.2.365: anything of this item that landed outside the storage rows moves into a free storage cell.
+                if (companionBag)
+                {
+                    foreach (var it in inv.GetAllItems())
+                    {
+                        if (it?.m_shared == null || it.m_shared.m_name != itemData.m_shared.m_name || CompanionGridLayout.IsStorage(it.m_gridPos)) continue;
+                        Vector2i free = CompanionGridLayout.FirstFreeStorageCell(inv);
+                        if (free.x < 0) break;
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionInventory] {_companion?.companionName} moved {it.m_shared.m_name} x{it.m_stack} ({it.m_gridPos.x},{it.m_gridPos.y}) -> storage ({free.x},{free.y})");
+                        it.m_gridPos = free;
+                    }
+                }
+                else
+                {
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionInventory] {_companion?.companionName} pickup went to a bag that is not registered as a companion bag");
+                }
                 {
                     // Save inventory to ZDO
                     _inventory.SaveToZDO();
-                    
-                    // Destroy the world item
-                    ZNetScene.instance?.Destroy(itemDrop.gameObject);
-                    
+
                     _pickupsThisSession++;
                     
                     // Track for gathering session reporting
@@ -621,5 +698,21 @@ namespace FiresCore.Npc
         }
         
         #endregion
+    }
+
+    /// <summary>
+    /// 0.2.366: vanilla Humanoid.DropItem calls ItemDrop.OnPlayerDrop only when IsPlayer(); it just clears the local,
+    /// unsynced m_autoPickup. Stamp the drop's ZDO so companions (on any peer) can tell a deliberate player drop.
+    /// </summary>
+    [HarmonyLib.HarmonyPatch(typeof(ItemDrop), nameof(ItemDrop.OnPlayerDrop))]
+    internal static class CompanionPlayerDropStampPatch
+    {
+        private static void Postfix(ItemDrop __instance)
+        {
+            if (__instance == null) return;
+            ZNetView nv = __instance.GetComponent<ZNetView>();
+            if (nv == null || !nv.IsValid() || !nv.IsOwner()) return;
+            nv.GetZDO()?.Set(CompanionAutoPickup.PlayerDroppedZdoKey, true);
+        }
     }
 }

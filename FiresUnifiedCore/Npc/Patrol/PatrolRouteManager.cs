@@ -33,6 +33,17 @@ namespace FiresCore.Npc.Patrol
 
         public static void Reset() { _routes.Clear(); _initialized = false; }
 
+        // 0.2.373: RPGmaker's file watcher calls this after a PatrolRoutes file changes on disk (server sync).
+        /// <summary>Drops the route cache and reloads every route from disk; raises <see cref="RoutesReloaded"/>.</summary>
+        public static void ReloadAll()
+        {
+            Reset();
+            Initialize();
+            try { RoutesReloaded?.Invoke(); } catch (Exception ex) { Debug.LogWarning($"[Patrol] RoutesReloaded handler: {ex.Message}"); }
+        }
+
+        public static event Action RoutesReloaded;
+
         public static PatrolRoute GetRoute(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
@@ -86,6 +97,28 @@ namespace FiresCore.Npc.Patrol
             Reset();
             Initialize();
             Debug.Log($"[PatrolRoute] saved route '{name}' ({points.Count} points, {presets?.Count ?? 0} presets)");
+            PushToServer(MakeSafeFileName(name) + ".cfg", text);
+        }
+
+        // 0.2.308 ([ghost]'s admin-save audit): a client's save or delete also goes to the server through FiresNPCs' admin-checked
+        // "FiresRPGmaker_SyncFiles" routed RPC (folder key "PatrolRoutes", empty content = delete), by name, so Core needs no
+        // reference to FiresNPCs. The server writes the cfg; FiresNPCs' watcher reloads and rebroadcasts. On a host or single
+        // player the local write already is the server copy.
+        private const string SyncFilesRpc = "FiresRPGmaker_SyncFiles", SyncFolder = "PatrolRoutes";
+
+        private static void PushToServer(string fileName, string content)
+        {
+            try
+            {
+                if (ZNet.instance == null || ZNet.instance.IsServer() || ZRoutedRpc.instance == null) return;
+                var pkg = new ZPackage();
+                pkg.Write(SyncFolder);
+                pkg.Write(fileName);
+                pkg.Write(content ?? string.Empty);
+                ZRoutedRpc.instance.InvokeRoutedRPC(0L, SyncFilesRpc, pkg);
+                FiresCore.Logging.FiresLogger.LogDebug($"[PatrolRoute] pushed {SyncFolder}/{fileName} ({(content ?? string.Empty).Length} chars) to the server");
+            }
+            catch (Exception ex) { Debug.LogWarning($"[PatrolRoute] push {fileName} to the server failed: {ex.Message}"); }
         }
 
         // XYZ point block FIRST (backward-compatible: the old parser and any tool reading only points still
@@ -158,6 +191,7 @@ namespace FiresCore.Npc.Patrol
                 if (existed) File.Delete(path);
                 _routes.Remove(name);
                 if (existed) Debug.Log($"[PatrolRoute] deleted route '{name}'");
+                PushToServer(MakeSafeFileName(name) + ".cfg", string.Empty);
                 return existed;
             }
             catch (Exception ex)

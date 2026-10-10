@@ -20,41 +20,87 @@ namespace FiresCore.Audio
 
         public static bool Loaded { get; private set; }
 
-        /// <summary>Loads every *.mp3 under <paramref name="folder"/> (recursive) into <see cref="Clips"/>.</summary>
+        // 0.2.373: .wav and .ogg load too (AudioType from the extension), and RPGmaker can reload after a server sync.
+        private static readonly string[] Extensions = { ".mp3", ".wav", ".ogg" };
+
+        /// <summary>Raised on the main thread after <see cref="ReloadCoroutine"/> or <see cref="LoadFileCoroutine"/> finishes.</summary>
+        public static event Action Reloaded;
+
+        private static AudioType TypeFor(string file)
+        {
+            switch (Path.GetExtension(file).ToLowerInvariant())
+            {
+                case ".wav": return AudioType.WAV;
+                case ".ogg": return AudioType.OGGVORBIS;
+                case ".mp3": return AudioType.MPEG;
+                default: return AudioType.UNKNOWN;
+            }
+        }
+
+        private static bool Headless => SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null;
+
+        /// <summary>Loads every *.mp3 / *.wav / *.ogg under <paramref name="folder"/> (recursive) into <see cref="Clips"/>.</summary>
         public static IEnumerator LoadAllCoroutine(string folder)
         {
             Loaded = true;
-            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+            if (Headless)
                 yield break; // headless / dedicated server: no audio output, skip.
             if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
                 yield break;
 
-            string[] files;
-            try { files = Directory.GetFiles(folder, "*.mp3", SearchOption.AllDirectories); }
+            List<string> files;
+            try
+            {
+                files = new List<string>();
+                foreach (var f in Directory.GetFiles(folder, "*.*", SearchOption.AllDirectories))
+                    if (Array.IndexOf(Extensions, Path.GetExtension(f).ToLowerInvariant()) >= 0) files.Add(f);
+            }
             catch (Exception ex) { Debug.LogWarning($"[FiresAudio] enumerate '{folder}': {ex.Message}"); yield break; }
 
             foreach (var file in files)
+                yield return LoadOne(file);
+            Debug.Log($"[FiresAudio] custom audio store ready — {Clips.Count} clip(s) from {folder}");
+        }
+
+        /// <summary>Clears <see cref="Clips"/> and loads <paramref name="folder"/> again, then raises <see cref="Reloaded"/>.
+        /// Run with StartCoroutine on any MonoBehaviour.</summary>
+        public static IEnumerator ReloadCoroutine(string folder)
+        {
+            if (!Headless) Clips.Clear();
+            yield return LoadAllCoroutine(folder);
+            try { Reloaded?.Invoke(); } catch (Exception ex) { Debug.LogWarning($"[FiresAudio] Reloaded handler: {ex.Message}"); }
+        }
+
+        /// <summary>Loads or replaces one file's clip (key = filename without extension), then raises <see cref="Reloaded"/>.</summary>
+        public static IEnumerator LoadFileCoroutine(string path)
+        {
+            if (Headless || string.IsNullOrEmpty(path) || !File.Exists(path)) yield break;
+            yield return LoadOne(path);
+            try { Reloaded?.Invoke(); } catch (Exception ex) { Debug.LogWarning($"[FiresAudio] Reloaded handler: {ex.Message}"); }
+        }
+
+        private static IEnumerator LoadOne(string file)
+        {
+            var type = TypeFor(file);
+            if (type == AudioType.UNKNOWN) yield break;
+            using (var req = UnityWebRequestMultimedia.GetAudioClip(file, type))
             {
-                using (var req = UnityWebRequestMultimedia.GetAudioClip(file, AudioType.MPEG))
+                yield return req.SendWebRequest();
+                if (req.result != UnityWebRequest.Result.Success)
                 {
-                    yield return req.SendWebRequest();
-                    if (req.result != UnityWebRequest.Result.Success)
-                    {
-                        Debug.LogWarning($"[FiresAudio] failed to load '{file}': {req.error}");
-                        continue;
-                    }
-                    AudioClip clip = null;
-                    try { clip = DownloadHandlerAudioClip.GetContent(req); }
-                    catch (Exception ex) { Debug.LogWarning($"[FiresAudio] decode '{file}': {ex.Message}"); }
-                    if (clip != null)
-                    {
-                        clip.name = Path.GetFileNameWithoutExtension(file);
-                        Clips[clip.name] = clip;
-                        Debug.Log($"[FiresAudio] loaded custom sound '{clip.name}'");
-                    }
+                    Debug.LogWarning($"[FiresAudio] failed to load '{file}': {req.error}");
+                    yield break;
+                }
+                AudioClip clip = null;
+                try { clip = DownloadHandlerAudioClip.GetContent(req); }
+                catch (Exception ex) { Debug.LogWarning($"[FiresAudio] decode '{file}': {ex.Message}"); }
+                if (clip != null)
+                {
+                    clip.name = Path.GetFileNameWithoutExtension(file);
+                    Clips[clip.name] = clip;
+                    Debug.Log($"[FiresAudio] loaded custom sound '{clip.name}' ({type})");
                 }
             }
-            Debug.Log($"[FiresAudio] custom audio store ready — {Clips.Count} clip(s) from {folder}");
         }
     }
 }

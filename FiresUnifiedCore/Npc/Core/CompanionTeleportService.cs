@@ -166,6 +166,7 @@ namespace FiresCore.Npc.Core
         private static bool TryReelIn(ZDO zdo, Vector3 ownerPos, float threshold, string reason)
         {
             if (zdo == null || !zdo.IsValid()) return false;
+            if (CompanionPossession.IsPossessed(zdo)) return false;   // 0.2.292: a player is driving it (FiresValcast)
             if (zdo.GetBool("npc_stationed", false)) return false;
             if (!zdo.GetBool("companion_wasfollowing", false)) return false;
             float distance = Vector3.Distance(zdo.GetPosition(), ownerPos);

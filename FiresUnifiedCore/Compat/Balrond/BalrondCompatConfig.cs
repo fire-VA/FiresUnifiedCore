@@ -90,6 +90,8 @@ namespace FiresCore.Compat.Balrond
             if (RemoveSwampFog != null) configSync.AddConfigEntry(RemoveSwampFog);
             if (NegateMistSicknessDebuff != null) configSync.AddConfigEntry(NegateMistSicknessDebuff);
             if (PoisonGeyserDensityScale != null) configSync.AddConfigEntry(PoisonGeyserDensityScale);
+            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.BALROND, true,
+                RestrictMistlandsLocations, RestrictMistAreaVegetation, RemoveSwampFog, NegateMistSicknessDebuff, PoisonGeyserDensityScale);   // 0.2.359
         }
     }
 }

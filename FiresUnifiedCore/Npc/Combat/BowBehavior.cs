@@ -769,6 +769,15 @@ Context.Animator.SetFloat("drawpercent", 0f);
         
         private void SpawnArrowProjectile(Character target, float drawPercentage)
         {
+            // 0.2.365: a shot spends 1 real arrow (Ammo pouch first, then storage; never an equip cell). No arrow, no shot.
+            bool ammoFromPouch = false;
+            var ammo = CompanionAmmo.FindShotAmmo(Context.Inventory, Context.CurrentWeapon, out ammoFromPouch);
+            if (ammo == null && Context.Inventory != null && CompanionAmmo.NeedsAmmo(Context.CurrentWeapon))
+            {
+                CompanionAmmo.OutOfAmmo(Context, Context.CurrentWeapon);
+                return;
+            }
+
             // Check and consume stamina for the bow shot
             var stats = Context.Agent?.Stamina;
             if (stats != null)
@@ -788,7 +797,6 @@ Context.Animator.SetFloat("drawpercent", 0f);
             }
             
             // Vanilla bows carry no projectile of their own: the arrow brings it, and adds its damage.
-            var ammo = Context.Inventory?.FindAmmoFor(Context.CurrentWeapon);
             GameObject projectilePrefab = ammo?.m_shared.m_attack.m_attackProjectile ?? Context.AttackProjectile ?? GetArrowProjectile();
             if (projectilePrefab == null)
             {
@@ -848,7 +856,10 @@ Context.Animator.SetFloat("drawpercent", 0f);
                     Context.CurrentWeapon
                 );
             }
-            
+
+            // The arrow is in flight: spend it now (damage was read from the stack above).
+            if (ammo != null) CompanionAmmo.ConsumeShot(Context, Context.CurrentWeapon, ammo, ammoFromPouch);
+
             Context.Agent?.Skills?.RaiseSkill(global::Skills.SkillType.Bows, 1f);
         }
     

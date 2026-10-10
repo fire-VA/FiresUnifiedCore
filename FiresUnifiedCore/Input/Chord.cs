@@ -22,8 +22,19 @@ namespace FiresCore.Input
 
         public static bool IsDown(KeyboardShortcut shortcut)
         {
+            // 0.2.321: a key whose single taps a feature claims (KeyTaps: admin possession on G) fires here only on the
+            // second press of a double tap, so FiresGuilds' G opens on a double tap while possession owns the single one.
+            if (KeyTaps.SingleTapClaimed(shortcut)) return KeyTaps.DoubleTapped(shortcut);
+            return IsDownRaw(shortcut);
+        }
+
+        /// <summary>The press itself, ignoring KeyTaps claims (KeyTaps' own input).</summary>
+        internal static bool IsDownRaw(KeyboardShortcut shortcut)
+        {
             var main = shortcut.MainKey;
             if (main == KeyCode.None) return false;
+            // 0.2.376: Fire: no mod hotkey fires while typing anywhere (console, chat, any text field).
+            if (FiresInputBlock.IsTyping()) return false;
             if (!FiresKeys.GetKeyDown(main)) return false;
 
             foreach (var mod in shortcut.Modifiers)

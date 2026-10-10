@@ -373,8 +373,7 @@ namespace FiresCore.Npc.Commands
                     {
                         if (Time.time - assignment.assignTime < duplicateCommandCooldown)
                         {
-                            if (VerboseLogging)
-                                Debug.Log($"[CompanionCommandCoordinator] Target already assigned to {assignment.companion.companionName}");
+                            LogReject("all", $"target already assigned to {assignment.companion.companionName} {Time.time - assignment.assignTime:F1} s ago");
                             return null; // Don't reassign
                         }
                     }
@@ -388,16 +387,39 @@ namespace FiresCore.Npc.Commands
             CompanionController bestBusy = null;
             float bestBusyDist = float.MaxValue;
             
+            // 0.2.367: what the target needs (tree/log -> axe, rock -> pickaxe); companions holding it (hands, Tools pouch,
+            // storage: CompanionInventory.FindTool) win over companions that would have to fetch or craft one
+            var need = targetObject != null ? FiresCore.Npc.IdleBehaviors.ResourceDataHelper.GetResourceData(targetObject) : null;
+            bool needsTool = need != null && need.RequiresCombat;
+            string task = need == null ? "command" : need.RequiredTool == FiresCore.Npc.IdleBehaviors.ResourceDataHelper.ToolType.Axe ? "chop"
+                : need.RequiredTool == FiresCore.Npc.IdleBehaviors.ResourceDataHelper.ToolType.Pickaxe ? "mine" : "gather";
+            CompanionController bestNoTool = null;
+            float bestNoToolDist = float.MaxValue;
+
             foreach (var companion in companions)
             {
+                string cname = companion != null ? companion.companionName : "?";
                 // Skip whistled companions
-                if (_whistledCompanions.ContainsKey(companion)) continue;
-                
+                if (_whistledCompanions.ContainsKey(companion)) { LogReject(cname, "whistled (not following)"); continue; }
+
                 float dist = Vector3.Distance(companion.transform.position, targetPosition);
-                if (dist > maxCommandDistance) continue;
-                
-                bool isBusy = IsCompanionBusy(companion);
-                
+                if (dist > maxCommandDistance) { LogReject(cname, $"too far ({dist:F0} m > {maxCommandDistance:F0} m)"); continue; }
+
+                bool isBusy = IsCompanionBusy(companion, out string busyWhy);
+
+                if (needsTool)
+                {
+                    var inv = companion.GetInventory();
+                    if (inv == null || inv.FindTool(need.RequiredTool, need.MinToolTier, task) == null)
+                    {
+                        LogReject(cname, $"no tool for {task} (checked hands/pouch/storage)");
+                        if (!isBusy && dist < bestNoToolDist) { bestNoToolDist = dist; bestNoTool = companion; }
+                        continue;
+                    }
+                }
+
+                if (isBusy) LogReject(cname, $"busy ({busyWhy}){(allowInterrupt ? ", may be interrupted" : "")}");
+
                 if (!isBusy)
                 {
                     if (dist < bestAvailableDist)
@@ -418,6 +440,8 @@ namespace FiresCore.Npc.Commands
             
             // Prefer available companion, fall back to busy if allowed
             CompanionController selected = bestAvailable;
+            // 0.2.367: nobody holds the tool: the nearest free companion still takes it (the chore fetches/crafts or says the real reason)
+            if (selected == null && bestNoTool != null) selected = bestNoTool;
             if (selected == null && allowInterrupt)
             {
                 selected = bestBusy;
@@ -439,49 +463,50 @@ namespace FiresCore.Npc.Commands
                 RegisterTargetAssignment(targetObject, selected);
             }
             
-            if (VerboseLogging && selected != null)
-                Debug.Log($"[CompanionCommandCoordinator] Selected {selected.companionName} for command (busy={selected == bestBusy})");
-            
+            if (selected != null)
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommand] {selected.companionName}: chosen for {task}{(selected == bestBusy && bestAvailable == null ? " (interrupting)" : selected == bestNoTool ? " (no tool carried: will fetch/craft or refuse)" : "")}");
+            else
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommand] no companion chosen for {task} ({companions.Count} owned)");
+
             return selected;
         }
-        
+
+        private static void LogReject(string name, string reason) =>
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommand] {name}: rejected: {reason}");
+
+        private bool IsCompanionBusy(CompanionController companion) => IsCompanionBusy(companion, out _);
+
         /// <summary>
         /// Checks if a companion is currently busy with a task.
         /// CRITICAL: This should NOT block Move commands - those have absolute priority
         /// and will interrupt whatever the companion is doing.
+        /// 0.2.367: an AUTONOMOUS idle chore no longer counts as busy (a player command takes over from it); only a player
+        /// command, command priority or combat does.
         /// </summary>
-        private bool IsCompanionBusy(CompanionController companion)
+        private bool IsCompanionBusy(CompanionController companion, out string why)
         {
+            why = "";
             if (companion == null) return false;
-            
+
             // Check state controller for active commands
             var stateController = companion.GetComponent<CompanionStateController>();
             if (stateController != null)
             {
                 // CRITICAL FIX: If companion has an active command, they ARE busy
                 // But HasActiveCommand should be checked, not just the state
-                if (stateController.HasActiveCommand)
-                    return true;
-                
+                if (stateController.HasActiveCommand) { why = "has an active command"; return true; }
+
                 // Also check if in PlayerCommand state (may have command without HasActiveCommand briefly)
-                if (stateController.CurrentState == CompanionStateController.CompanionState.PlayerCommand)
-                    return true;
+                if (stateController.CurrentState == CompanionStateController.CompanionState.PlayerCommand) { why = "in PlayerCommand state"; return true; }
             }
-            
-            // Check idle behavior for active sub-behaviors
-            var idleBehavior = companion.GetComponent<CompanionIdleBehavior>();
-            if (idleBehavior != null && idleBehavior.IsInSubBehavior)
-                return true;
-            
+
             // Check combat movement for active command priority
             var combatMovement = companion.GetComponent<CompanionCombatMovement>();
-            if (combatMovement != null && combatMovement.HasCommandPriority)
-                return true;
-            
+            if (combatMovement != null && combatMovement.HasCommandPriority) { why = "command priority active"; return true; }
+
             // Check if in combat - companions fighting enemies are busy
-            if (companion.IsInCombat)
-                return true;
-            
+            if (companion.IsInCombat) { why = "in combat"; return true; }
+
             return false;
         }
         

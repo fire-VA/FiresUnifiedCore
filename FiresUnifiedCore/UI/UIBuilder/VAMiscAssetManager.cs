@@ -2,6 +2,7 @@ using BepInEx;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
@@ -116,12 +117,58 @@ namespace FiresCore.UI
             return null;
     }
 
+        // ── 0.2.330: every mod's bundle, not only the last one set ──
+        // UIBuilderHost.AssetBundle is one global; FiresCompanions loads after FiresRPGmaker and replaced its bundle, so the
+        // RPGmaker globe's prefab was never found. Lookups now try the current mod's bundle, then every bundle a mod has set
+        // (UIBuilderHost.Bundles), then, once per missing name, every loaded bundle by its "Assets/..." paths only: a mod
+        // built before 0.2.330 never calls UIBuilderHost.Register, and its bundle is found that way and remembered.
+        private static readonly HashSet<string> _scanMisses = new HashSet<string>(StringComparer.Ordinal);
+
+        private static T FindInBundles<T>(string[] paths, out string foundAt) where T : UnityEngine.Object
+        {
+            foundAt = null;
+            foreach (AssetBundle bundle in UIBuilderHost.Bundles())
+            {
+                T found = TryLoad<T>(bundle, paths, false, out foundAt);
+                if (found != null) return found;
+            }
+            string key = typeof(T).Name + ":" + paths[0];
+            if (_scanMisses.Contains(key)) return null;
+            AssetBundle[] loaded;
+            try { loaded = AssetBundle.GetAllLoadedAssetBundles().ToArray(); }
+            catch { loaded = Array.Empty<AssetBundle>(); }
+            foreach (AssetBundle bundle in loaded)
+            {
+                if (bundle == null || bundle.isStreamedSceneAssetBundle || UIBuilderHost.IsHostBundle(bundle)) continue;
+                T found = TryLoad<T>(bundle, paths, true, out foundAt);
+                if (found == null) continue;
+                UIBuilderHost.RememberBundle(bundle);
+                FiresCore.Logging.FiresLogger.LogDebug($"[VAMiscAssetManager] '{foundAt}' found in bundle '{bundle.name}', which no mod registered; remembered");
+                return found;
+            }
+            _scanMisses.Add(key);
+            return null;
+        }
+
+        private static T TryLoad<T>(AssetBundle bundle, string[] paths, bool assetPathsOnly, out string foundAt) where T : UnityEngine.Object
+        {
+            foundAt = null;
+            if (bundle == null) return null;
+            foreach (string path in paths)
+            {
+                if (assetPathsOnly && !path.StartsWith("Assets/", StringComparison.Ordinal)) continue;
+                try
+                {
+                    T asset = bundle.LoadAsset<T>(path);
+                    if (asset != null) { foundAt = path; return asset; }
+                }
+                catch { }
+            }
+            return null;
+        }
+
         private static GameObject LoadPrefabFromAssetBundle(string prefabName)
 {
-            var bundle = UIBuilderHost.AssetBundle;
-            if (bundle == null)
-   return null;
-
         // Try paths matching your other managers (Assets/Custom/VAitems/UI/)
    string[] searchPaths = {
             $"{AssetBundleBasePath}{prefabName}",
@@ -135,21 +182,10 @@ namespace FiresCore.UI
       $"{prefabName}.prefab"
         };
 
-       foreach (var path in searchPaths)
-   {
-           try
-    {
-     var prefab = bundle.LoadAsset<GameObject>(path);
-        if (prefab != null)
-        {
-        Debug.Log($"[VAMiscAssetManager] Found prefab at path: {path}");
-      return prefab;
-    }
-           }
-   catch { }
-    }
-
-        return null;
+            var prefab = FindInBundles<GameObject>(searchPaths, out string foundAt);
+            if (prefab != null)
+                Debug.Log($"[VAMiscAssetManager] Found prefab at path: {foundAt}");
+            return prefab;
      }
 
         /// <summary>
@@ -305,10 +341,6 @@ namespace FiresCore.UI
 
         private static Sprite LoadSpriteFromAssetBundle(string spriteName)
         {
-      var bundle = UIBuilderHost.AssetBundle;
-       if (bundle == null)
-     return null;
-
    // Try paths matching your other managers (Assets/Custom/VAitems/Icons/)
      string[] searchPaths = {
                 $"{IconsPath}{spriteName}",
@@ -323,21 +355,10 @@ namespace FiresCore.UI
   $"{spriteName}.png"
             };
 
-            foreach (var path in searchPaths)
-      {
-      try
-                {
-  var sprite = bundle.LoadAsset<Sprite>(path);
-  if (sprite != null)
-        {
-     Debug.Log($"[VAMiscAssetManager] Found sprite at path: {path}");
-  return sprite;
-        }
-                }
-           catch { }
-    }
-
-         return null;
+            var sprite = FindInBundles<Sprite>(searchPaths, out string foundAt);
+            if (sprite != null)
+                Debug.Log($"[VAMiscAssetManager] Found sprite at path: {foundAt}");
+            return sprite;
   }
 
         /// <summary>
@@ -505,10 +526,6 @@ if (!loaded)
         /// </summary>
         public static T LoadAsset<T>(string assetName) where T : UnityEngine.Object
         {
-        var bundle = UIBuilderHost.AssetBundle;
- if (bundle == null)
-       return null;
-
       string[] searchPaths = {
      $"{AssetBundleBasePath}{assetName}",
               $"{IconsPath}{assetName}",
@@ -516,21 +533,10 @@ if (!loaded)
        assetName
             };
 
-            foreach (var path in searchPaths)
-            {
-      try
-      {
-var asset = bundle.LoadAsset<T>(path);
-     if (asset != null)
-     {
-       Debug.Log($"[VAMiscAssetManager] Loaded {typeof(T).Name} '{assetName}' from {path}");
-         return asset;
-             }
-    }
-     catch { }
-        }
-
-  return null;
+            var asset = FindInBundles<T>(searchPaths, out string foundAt);
+            if (asset != null)
+                Debug.Log($"[VAMiscAssetManager] Loaded {typeof(T).Name} '{assetName}' from {foundAt}");
+            return asset;
       }
 
         /// <summary>
@@ -596,10 +602,6 @@ var asset = bundle.LoadAsset<T>(path);
 
         private static Material LoadMaterialFromAssetBundle(string materialName)
         {
-            var bundle = UIBuilderHost.AssetBundle;
-            if (bundle == null)
-                return null;
-
             // Try various paths where materials might be stored
             string[] searchPaths = {
                 $"{AssetBundleBasePath}{materialName}",
@@ -612,21 +614,10 @@ var asset = bundle.LoadAsset<T>(path);
                 $"{materialName}.mat"
             };
 
-            foreach (var path in searchPaths)
-            {
-                try
-                {
-                    var material = bundle.LoadAsset<Material>(path);
-                    if (material != null)
-                    {
-                        Debug.Log($"[VAMiscAssetManager] Found material at path: {path}");
-                        return material;
-                    }
-                }
-                catch { }
-            }
-
-            return null;
+            var material = FindInBundles<Material>(searchPaths, out string foundAt);
+            if (material != null)
+                Debug.Log($"[VAMiscAssetManager] Found material at path: {foundAt}");
+            return material;
         }
 
         /// <summary>

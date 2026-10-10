@@ -159,6 +159,15 @@ namespace FiresCore.Npc.IdleBehaviors
         /// every frame don't trigger a full A* query on each tick.
         /// Falls back to true when <see cref="Pathfinding.instance"/> is unavailable.
         /// </summary>
+        /// <summary>The strict navmesh path test, without IsReachable's close-and-clear fallback (0.2.350): for callers that
+        /// must know a point is off the navmesh (patrol's bridge snap).</summary>
+        protected bool IsNavmeshReachable(Vector3 targetPos)
+        {
+            if (Transform == null || Pathfinding.instance == null) return true;
+            _reachabilityBuffer.Clear();
+            return Pathfinding.instance.GetPath(Transform.position, targetPos, _reachabilityBuffer, Pathfinding.AgentType.Humanoid, cleanup: true);
+        }
+
         protected bool IsReachable(Vector3 targetPos)
         {
             if (Transform == null || Pathfinding.instance == null) return true;
@@ -174,6 +183,20 @@ namespace FiresCore.Npc.IdleBehaviors
                 _reachabilityBuffer,
                 Pathfinding.AgentType.Humanoid,
                 cleanup: true);
+
+            // 0.2.343 (companion_storage cook: the navmesh path query failed on a built floor right beside the station, and the same
+            // would hit haul / smelter / storage jobs in any player base): a target within 10 m with a clear line is reachable too;
+            // vanilla MoveTo walks straight there when close. Logged at Debug when this fallback decides.
+            if (!ok)
+            {
+                float dist = Vector3.Distance(Transform.position, targetPos);
+                if (dist <= 10f && !Physics.Linecast(Transform.position + Vector3.up * 0.8f, targetPos + Vector3.up * 0.8f,
+                        LayerMask.GetMask("Default", "static_solid", "terrain"), QueryTriggerInteraction.Ignore))
+                {
+                    ok = true;
+                    FiresCore.Logging.FiresLogger.LogDebug($"[{GetType().Name}] {Companion?.companionName}: no navmesh path to {targetPos:F1} ({dist:0.0} m) but close and clear; treated as reachable");
+                }
+            }
 
             _reachCache[key] = (ok, Time.time);
             return ok;

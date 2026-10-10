@@ -92,6 +92,13 @@ namespace FiresCore.Npc.AI
                 Debug.Log($"[CompanionAI] {m_character?.m_name} dropped target {_targetCreature.m_name}: no longer hostile (PvP off, party or tame)");
                 ClearTarget();
             }
+            // 0.2.286: a target someone started taming is dropped too (unless it hurt this companion or its owner lately).
+            else if (_targetCreature != null && !_targetCreature.IsDead() && TamingGuard.LeaveAlone(m_character, OwnerBody(), _targetCreature, out string tameWhy))
+            {
+                TamingGuard.Note(m_character, m_character != null ? m_character.m_name : "?", _targetCreature, tameWhy + "; dropped as a target");
+                ClearTarget();
+                SetState(AIState.Idle);
+            }
 
             Character ownerCharacter = null;
             Vector3 ownerPos = transform.position;
@@ -275,6 +282,13 @@ namespace FiresCore.Npc.AI
             return target.IsPlayer() && _companion != null && !_companion.isTamed && IsEnemy(target);
         }
 
+        // 0.2.286: the companion's owner body (the follow target, else the controller's owner) for TamingGuard's defend rule.
+        private Character OwnerBody()
+        {
+            if (_followTarget != null) return _followTarget.GetComponent<Character>();
+            return _companion != null ? _companion.GetOwner() : null;
+        }
+
         private bool IsValidTarget(Character target)
         {
             if (target == null || target.IsDead())
@@ -304,6 +318,13 @@ namespace FiresCore.Npc.AI
                 return false;
             if (!IsEnemy(target))
                 return false;
+            // 0.2.286 (Fire, RIDEj: "the companions are ruining the lox test, they keep walking over and aggroing it"): never a creature a
+            // player is taming, unless it hurt this companion or its owner lately (TamingGuard).
+            if (TamingGuard.LeaveAlone(m_character, OwnerBody(), target, out string tameWhy))
+            {
+                TamingGuard.Note(m_character, m_character != null ? m_character.m_name : "?", target, tameWhy);
+                return false;
+            }
 
             if (IsPassiveCreature(target))
             {

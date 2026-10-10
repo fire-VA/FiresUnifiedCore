@@ -1,3 +1,17 @@
+* v0.2.387 - updates and optimizations for Valheim 1.0
+  - settings and features for other Fires mods only appear when those mods are installed; fixes and polish
+
+* v0.2.319 - updates and optimizations for Valheim 1.0
+  - fixes and polish for the Fires mods
+
+* v0.2.297 - updates and optimizations for Valheim 1.0
+  - status box off by default; quieter logs
+* v0.2.296 - updates and optimizations for Valheim 1.0
+  - one undo/redo (numpad 7/9) shared by all Fires mods, climbing on/off setting, low-ceiling crouch and crawl, settings menu fixes
+
+* v0.2.293 - updates and optimizations for Valheim 1.0
+  - fixes and polish: panels hide with the HUD, companion and camera-mod fixes
+
 * v0.2.277 - updates and optimizations for Valheim 1.0
   - fixes other mods' weapon and item textures being changed, companion fixes, and a Log Level setting
 

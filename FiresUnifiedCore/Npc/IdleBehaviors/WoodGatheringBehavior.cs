@@ -74,6 +74,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // Target tracking
         private GameObject _commandedTarget;
+        private GameObject _commandedTargetAtStart;   // 0.2.367: for the refusal reason
         private ResourceDataHelper.ResourceData _targetResource;
         private Vector3 _targetPosition;
         private Vector3 _lastTreePosition;
@@ -223,6 +224,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (_commandedTarget != null)
             {
+                _commandedTargetAtStart = _commandedTarget;
                 _targetResource = ResourceDataHelper.GetResourceData(_commandedTarget);
                 _commandedTarget = null;
 
@@ -256,9 +258,19 @@ namespace FiresCore.Npc.IdleBehaviors
                         else
                         {
                             Debug.LogWarning($"[WoodGathering] {Companion?.companionName} cannot gather - no axe available");
-                            CompanionChatHelper.QuickMessages.CantDoTask(Companion, "I need an axe");
+                            CompanionChatHelper.QuickMessages.CantDoTask(Companion, "no axe");
+                            EndWith("no axe");
                             SetPhase(GatherPhase.Complete);
                         }
+                    }
+                    else if (_inventory != null && _inventory.FindTool(ResourceDataHelper.ToolType.Axe, _targetResource.MinToolTier, out _, out int bestTier, "chop") == null
+                             && !TryFindAxeInNearbyChests() && !TryPlanAxeCraft(_targetResource.MinToolTier))
+                    {
+                        // 0.2.367: an axe is carried but too weak for this tree, and no better one is reachable
+                        string why = CompanionInventory.ToolRefusal(ResourceDataHelper.ToolType.Axe, bestTier, _wasTargetingTree ? "tree" : "log");
+                        CompanionChatHelper.QuickMessages.CantDoTask(Companion, why);
+                        EndWith(why);
+                        SetPhase(GatherPhase.Complete);
                     }
                     else
                     {
@@ -273,8 +285,11 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 else
                 {
-                    Debug.LogWarning($"[WoodGathering] {Companion?.companionName} - Invalid target resource");
-                    EndWith("the commanded target isn't a gatherable tree or log");
+                    // 0.2.367: say why (the type test, never the axe): ResourceDataHelper.WhyNotGatherable
+                    string why = ResourceDataHelper.WhyNotGatherable(_commandedTargetAtStart);
+                    Debug.LogWarning($"[WoodGathering] {Companion?.companionName} - Invalid target resource: {why}");
+                    CompanionChatHelper.QuickMessages.CantDoTask(Companion, "that's not a tree or log");
+                    EndWith($"that's not a tree or log ({why})");
                 }
             }
             else
@@ -746,11 +761,6 @@ namespace FiresCore.Npc.IdleBehaviors
             _combatMovement?.LockMovement("WaitingForLogs", LogCheckWait + 2f);
             StopMovement();
 
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
 
             FaceTarget(_lastTreePosition);
 
@@ -1138,33 +1148,10 @@ namespace FiresCore.Npc.IdleBehaviors
             CompanionInventory.EquipmentSlot.LeftBack
         };
 
+        /// <summary>0.2.367: the shared lookup (hands, then the Tools pouch, then storage).</summary>
         private bool HasAxeEquippedOrInInventory()
         {
-            // Check equipped weapon
-            var weapon = GetEquippedAxe();
-            if (weapon != null) return true;
-
-            // Check equipment slots
-            if (_inventory != null)
-            {
-                foreach (var slot in AxeCarrySlots)
-                {
-                    var item = _inventory.GetEquippedItem(slot);
-                    if (IsAxe(item)) return true;
-                }
-
-                // Check storage
-                var storage = _inventory.GetStorageInventory();
-                if (storage != null)
-                {
-                    foreach (var item in storage.GetAllItems())
-                    {
-                        if (IsAxe(item)) return true;
-                    }
-                }
-            }
-
-            return false;
+            return _inventory != null && _inventory.FindTool(ResourceDataHelper.ToolType.Axe, 0, "chop") != null;
         }
 
         private bool TryFindAxeInNearbyChests()
@@ -1248,52 +1235,35 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
 
-            // Transfer
-            var clone = _toolToPull.Clone();
-            chestInv.RemoveOneItem(_toolToPull);
-
-            if (storage.AddItem(clone))
+            // 0.2.322 (dupe fix): claim the chest first, like every other chest write, then move the axe with the shared move.
+            // Unclaimed, the removal ran on a machine that didn't own the chest: the owner's copy kept the axe and the companion
+            // had one too. The claim can reload the chest's items, so the axe is found again after it.
+            if (!ChestHelper.TryClaimForWrite(_toolChest, Companion)) return false;
+            chestInv = _toolChest.GetInventory();
+            var axe = ChestHelper.FindSameItem(chestInv, _toolToPull);
+            if (axe == null || ChestHelper.MoveItem(chestInv, storage, axe, axe.m_stack) == 0)
             {
-                _inventory.SaveToZDO();
-                LogVerbose($"Pulled {clone.m_shared?.m_name} from chest");
-                CompanionEvents.FireItemPulled(Companion, clone.m_dropPrefab?.name ?? "axe", 1);
-                return true;
-            }
-            else
-            {
-                chestInv.AddItem(_toolToPull);
                 Debug.LogWarning($"[WoodGathering] {Companion?.companionName} couldn't add axe to storage");
                 return false;
             }
+            _inventory.SaveToZDO();
+            LogVerbose($"Pulled {axe.m_shared?.m_name} from chest");
+            CompanionEvents.FireItemPulled(Companion, axe.m_dropPrefab?.name ?? "axe", 1);
+            return true;
         }
 
         private bool TryEquipAxeFromStorage()
         {
             if (_inventory == null) return false;
-
-            var storage = _inventory.GetStorageInventory();
-            if (storage == null) return false;
-
-            ItemDrop.ItemData bestAxe = null;
-
-            foreach (var item in storage.GetAllItems())
-            {
-                if (IsAxe(item) && ResourceDataHelper.IsBetterTool(item, bestAxe, ResourceDataHelper.ToolType.Axe))
-                    bestAxe = item;
-            }
-
+            // 0.2.367: the shared lookup (hands, pouch, storage); the axe moves into the right-hand cell
+            var bestAxe = _inventory.FindTool(ResourceDataHelper.ToolType.Axe, _targetResource?.MinToolTier ?? 0, "chop");
             if (bestAxe == null) return false;
-
-            if (!ResourceDataHelper.TryEquipInRightHand(_inventory, bestAxe, null, holsterWeaponOnBack: false))
+            if (!_inventory.EquipToolInHand(bestAxe, "chop"))
             {
-                LogVerbose($"No room in storage for {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
+                LogVerbose($"No room for {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
                 return false;
             }
-
-            _inventory.ApplyVisualEquipment();
-            _inventory.SaveToZDO();
-
-            LogVerbose($"Equipped {bestAxe.m_shared?.m_name} from storage");
+            LogVerbose($"Equipped {bestAxe.m_shared?.m_name}");
             return true;
         }
 
@@ -1301,40 +1271,16 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_inventory == null) return;
 
-            ItemDrop.ItemData bestAxe = null;
-            CompanionInventory.EquipmentSlot? bestSlot = null;
-
-            foreach (var slot in AxeCarrySlots)
-            {
-                var equipped = _inventory.GetEquippedItem(slot);
-                if (IsAxe(equipped) && ResourceDataHelper.IsBetterTool(equipped, bestAxe, ResourceDataHelper.ToolType.Axe))
-                {
-                    bestAxe = equipped;
-                    bestSlot = slot;
-                }
-            }
-
-            var storage = _inventory.GetStorageInventory();
-            if (storage != null)
-            {
-                foreach (var item in storage.GetAllItems())
-                {
-                    if (IsAxe(item) && ResourceDataHelper.IsBetterTool(item, bestAxe, ResourceDataHelper.ToolType.Axe))
-                    {
-                        bestAxe = item;
-                        bestSlot = null;
-                    }
-                }
-            }
-
+            // 0.2.367: the shared lookup (hands, then the Tools pouch, then storage)
+            var bestAxe = _inventory.FindTool(ResourceDataHelper.ToolType.Axe, _targetResource?.MinToolTier ?? 0, "chop")
+                          ?? _inventory.FindTool(ResourceDataHelper.ToolType.Axe, 0, "chop");
             if (bestAxe == null)
             {
                 LogVerbose("No axe found to equip");
                 return;
             }
 
-            // Already equipped in right hand
-            if (bestSlot == CompanionInventory.EquipmentSlot.RightHand)
+            if (_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand) == bestAxe)
             {
                 LogVerbose($"Already have {bestAxe.m_shared?.m_name} equipped");
                 return;
@@ -1343,15 +1289,11 @@ namespace FiresCore.Npc.IdleBehaviors
             // Holster left hand item if needed
             HolsterLeftHand();
 
-            if (!ResourceDataHelper.TryEquipInRightHand(_inventory, bestAxe, bestSlot, holsterWeaponOnBack: true))
+            if (!_inventory.EquipToolInHand(bestAxe, "chop"))
             {
                 LogVerbose($"No room to put away {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
                 return;
             }
-
-            _inventory.RecalculateEquipmentBonusesPublic();
-            _inventory.ApplyVisualEquipment();
-            _inventory.SaveToZDO();
 
             LogVerbose($"Equipped {bestAxe.m_shared?.m_name} (tier {bestAxe.m_shared.m_toolTier})");
         }
@@ -1600,11 +1542,6 @@ namespace FiresCore.Npc.IdleBehaviors
             base.StopMovement();
             _combatMovement?.ClearMoveDestination();
 
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
         }
 
         private void FaceTarget(Vector3 targetPos)
@@ -1623,8 +1560,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            dir.Normalize();
-            Transform.rotation = Quaternion.LookRotation(dir);
+            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            _character?.SetLookDir(dir.normalized);
         }
 
         private void NotifyOwner()

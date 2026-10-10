@@ -42,6 +42,44 @@ namespace FiresCore.Storage
             FiresCore.Identity.PlayerIdentity.OnVaultConfigured();
         }
 
+        /// <summary>
+        /// Configures the vault for the loaded world if nobody has yet: FiresConfigPaths.Worlds\&lt;world&gt;\vault.db, the
+        /// per-world rule FiresNPCs' VaultOfKnowledge.EnsureVaultConfigured has used (0.2.329, for [seasons]' camp store,
+        /// so a mod can use the vault without FiresNPCs). Idempotent and server-only. False off-server, before the world
+        /// name is known (call again later) or when Configure throws; true when the vault is configured.
+        /// </summary>
+        public static bool EnsureConfiguredForWorld()
+        {
+            if (IsConfigured) return true;
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return false;
+            string world = ZNet.instance.GetWorldName();
+            if (string.IsNullOrEmpty(world)) return false;
+            try
+            {
+                string path = WorldVaultPath(world);
+                Configure(path);
+                FiresCore.Logging.FiresLogger.LogInfo($"[VaultDatabase] configured (per-world): {path}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                FiresCore.Logging.FiresLogger.LogWarning($"[VaultDatabase] EnsureConfiguredForWorld failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>The vault file for a world: FiresConfigPaths.Worlds\&lt;world name, invalid file characters as '_'&gt;\vault.db.</summary>
+        public static string WorldVaultPath(string worldName) => Path.Combine(FiresConfigPaths.Worlds, WorldFolderName(worldName), "vault.db");
+
+        /// <summary>A world name as a folder name: invalid file-name characters become '_'; empty becomes "default".</summary>
+        public static string WorldFolderName(string worldName)
+        {
+            if (string.IsNullOrEmpty(worldName)) return "default";
+            foreach (char c in Path.GetInvalidFileNameChars()) worldName = worldName.Replace(c, '_');
+            worldName = worldName.Trim();
+            return worldName.Length == 0 ? "default" : worldName;
+        }
+
         public static LiteDatabase Open()
         {
             if (!IsConfigured)

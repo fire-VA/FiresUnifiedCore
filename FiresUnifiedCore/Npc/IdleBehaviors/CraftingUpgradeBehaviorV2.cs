@@ -333,7 +333,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 string itemName = req.m_resItem.m_itemData.m_shared.m_name;
                 int toRemove = req.m_amount;
                 
-                var items = new List<ItemDrop.ItemData>(storageInv.GetAllItems());
+                var items = new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storageInv)); // 0.2.362: storage rows only
                 foreach (var item in items)
                 {
                     if (item.m_shared.m_name == itemName)

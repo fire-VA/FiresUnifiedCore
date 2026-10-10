@@ -34,6 +34,7 @@ namespace FiresCore.Npc.Core
             if (configSync == null) return;
             if (Enable != null) configSync.AddConfigEntry(Enable);
             if (RampSeconds != null) configSync.AddConfigEntry(RampSeconds);
+            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.COMP, true, Enable, RampSeconds);   // 0.2.359
         }
 
         /// <summary>Cheap hot-path read (backing field). False until bound.</summary>

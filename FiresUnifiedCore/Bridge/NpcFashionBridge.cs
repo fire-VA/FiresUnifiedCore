@@ -27,6 +27,7 @@ namespace FiresCore.Bridge
             public string Hair;
             public string Beard;
             public string Color;
+            public string BeardColor;
         }
 
         // Keyed by instance id so a destroyed NPC's entry cannot resurrect a body; swept on miss.
@@ -68,7 +69,7 @@ namespace FiresCore.Bridge
             }
             if (chosen.Beard != null)
             {
-                try { ApplyBeardFn?.Invoke(npc, HelmetHairRules.ResolveBeard(helmet, chosen.Beard), chosen.Color); } catch { }
+                try { ApplyBeardFn?.Invoke(npc, HelmetHairRules.ResolveBeard(helmet, chosen.Beard), chosen.BeardColor ?? chosen.Color); } catch { }
             }
         }
 
@@ -84,9 +85,8 @@ namespace FiresCore.Bridge
         {
             int id = npc.GetInstanceID();
             _chosen.TryGetValue(id, out var chosen);
-            if (hasHair) chosen.Hair = hair;
-            if (hasBeard) chosen.Beard = beard;
-            chosen.Color = colorStr;
+            if (hasHair) { chosen.Hair = hair; chosen.Color = colorStr; }
+            if (hasBeard) { chosen.Beard = beard; chosen.BeardColor = colorStr; }   // 0.2.368: beard keeps its own colour
             _chosen[id] = chosen;
         }
     }

@@ -165,6 +165,11 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 return true;
             }
+            // 0.2.352 (round 24: a farm order on a placed Beehive fell back to a move): why a commanded start was refused.
+            if (_commandedTarget != null || Companion.ShouldBeFollowing)
+                FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion.companionName} CanStart: commanded target '{(_commandedTarget != null ? _commandedTarget.name : "none")}' "
+                    + $"valid {(_commandedTarget != null && IsValidFarmingTarget(_commandedTarget))}, following {Companion.ShouldBeFollowing}"
+                    + (_commandedTarget != null && !IsValidFarmingTarget(_commandedTarget) ? $", components [{string.Join(", ", System.Linq.Enumerable.Select(_commandedTarget.GetComponentsInChildren<Component>(true), c => c == null ? "null" : c.GetType().Name))}]" : ""));
 
             if (!CompanionBehaviorToggles.IsGatherEnabled(Companion)) return false;
             if (IdleBehavior == null || !IdleBehavior.HasHomePosition) return false;
@@ -305,8 +310,8 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool IsValidFarmingTarget(GameObject obj)
         {
             if (obj == null) return false;
-            if (obj.GetComponent<Beehive>() != null || obj.GetComponentInParent<Beehive>() != null) return true;
-            if (obj.GetComponent<Pickable>() != null || obj.GetComponentInParent<Pickable>() != null) return true;
+            if (obj.GetComponent<Beehive>() != null || obj.GetComponentInParent<Beehive>() != null || obj.GetComponentInChildren<Beehive>(true) != null) return true; // 0.2.354: 1.0's placed hive has it on a child
+            if (obj.GetComponent<Pickable>() != null || obj.GetComponentInParent<Pickable>() != null || obj.GetComponentInChildren<Pickable>(true) != null) return true;
             // Cultivated soil — recognised by name on the underlying piece/terrain.
             string objectName = obj.name?.ToLowerInvariant() ?? "";
             if (objectName.Contains("cultivated") || objectName.Contains("plant") || objectName.Contains("seed")) return true;
@@ -326,7 +331,7 @@ namespace FiresCore.Npc.IdleBehaviors
             try
             {
                 var hive = _commandedTarget.GetComponent<Beehive>()
-                        ?? _commandedTarget.GetComponentInParent<Beehive>();
+                        ?? _commandedTarget.GetComponentInParent<Beehive>() ?? _commandedTarget.GetComponentInChildren<Beehive>(true);
                 if (hive != null && ChestHelper.WardsAllow(hive.transform.position, Companion))
                 {
                     _targetBeehive  = hive;
@@ -337,7 +342,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
 
                 var crop = _commandedTarget.GetComponent<Pickable>()
-                        ?? _commandedTarget.GetComponentInParent<Pickable>();
+                        ?? _commandedTarget.GetComponentInParent<Pickable>() ?? _commandedTarget.GetComponentInChildren<Pickable>(true);
                 if (crop != null && ChestHelper.WardsAllow(crop.transform.position, Companion))
                 {
                     _targetCrop     = crop;
@@ -485,6 +490,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private void SetPhase(FarmPhase phase)
         {
+            // 0.2.350 (round 23 chore_farm overshoot 7.2 m, Beehive facing 52 deg): every phase change at Debug, with where it stands.
+            if (_currentPhase != phase)
+                FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} phase {_currentPhase} -> {phase} (after {Time.time - _phaseStartTime:0.0} s) at {Transform.position:F1}, target {_targetPosition:F1}");
             _currentPhase   = phase;
             _phaseStartTime = Time.time;
             if (CompanionIdleBehavior.VerboseLogging)
@@ -553,22 +561,23 @@ namespace FiresCore.Npc.IdleBehaviors
         private int CountItems(Inventory inv, string prefabName)
         {
             int count = 0;
-            foreach (var item in inv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // 0.2.362: storage rows only
                 if (item?.m_dropPrefab?.name == prefabName) count += item.m_stack;
             return count;
         }
 
+        // 0.2.322: vanilla Inventory.RemoveItem(item, amount), so the inventory's Changed (save, UI) fires. The raw m_stack
+        // write skipped it.
         private void RemoveItems(Inventory inv, string prefabName, int amount)
         {
             int remaining = amount;
-            foreach (var item in new List<ItemDrop.ItemData>(inv.GetAllItems()))
+            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(inv))) // 0.2.362: storage rows only
             {
                 if (remaining <= 0) break;
                 if (item?.m_dropPrefab?.name != prefabName) continue;
                 int take = Mathf.Min(item.m_stack, remaining);
-                item.m_stack -= take;
-                remaining    -= take;
-                if (item.m_stack <= 0) inv.RemoveItem(item);
+                inv.RemoveItem(item, take);
+                remaining -= take;
             }
         }
 
@@ -588,8 +597,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            dir.Normalize();
-            Transform.rotation = Quaternion.LookRotation(dir);
+            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            var character = Companion != null ? Companion.GetComponent<Character>() : null;
+            if (character != null) character.SetLookDir(dir.normalized);
         }
 
         private void PlayInteractAnimation() => _zanim?.SetTrigger("interact");

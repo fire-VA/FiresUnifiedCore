@@ -228,7 +228,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     
                     // No tool available anywhere - cannot start this behavior
                     Debug.LogWarning($"[ResourceGathering] {Companion?.companionName} cannot gather {resourceData.Name} - no {resourceData.RequiredTool} available");
-                    CompanionChatHelper.QuickMessages.CantDoTask(Companion, $"I need a {resourceData.RequiredTool.ToString().ToLower()}");
+                    CompanionChatHelper.QuickMessages.CantDoTask(Companion, ToolRefusalFor(resourceData));
                     return false;
                 }
                 
@@ -704,12 +704,6 @@ namespace FiresCore.Npc.IdleBehaviors
                 _combatMovement.ClearMoveDestination();
             }
             
-            // Zero velocity for immediate stop
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
         }
         
         private void FaceTarget(Vector3 targetPos)
@@ -728,8 +722,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            dir.Normalize();
-            Transform.rotation = Quaternion.LookRotation(dir);
+            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            _character?.SetLookDir(dir.normalized);
         }
         
         #endregion

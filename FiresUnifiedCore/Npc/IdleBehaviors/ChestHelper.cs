@@ -263,12 +263,67 @@ namespace FiresCore.Npc.IdleBehaviors
             if (amount <= 0 || !destination.CanAddItem(item, amount)) return 0;
             var copy = ItemDataHelper.CloneItem(item, amount);
             int copied = copy.m_stack;
-            return destination.AddItem(copy) ? copied : copied - copy.m_stack;
+            // 0.2.364 (item loss): count what really landed instead of trusting AddItem's bool.
+            string name = item.m_shared.m_name;
+            int before = destination.CountItems(name, -1, false);
+            destination.AddItem(copy);
+            int landed = destination.CountItems(name, -1, false) - before;
+            return Mathf.Clamp(landed, 0, copied);
         }
 
-        /// <summary>Moves up to <paramref name="amount"/> units between inventories, removing from the source exactly what arrived.</summary>
+        /// <summary>0.2.364: takes <paramref name="drop"/> (any loose drop, player drops included) into a companion bag as a
+        /// copy; the world item is destroyed only when all of it landed, a partial add shrinks the drop, nothing landed leaves
+        /// it untouched. Returns the units taken. The caller must own the drop (CanPickup).</summary>
+        public static int TakeDropVerified(ItemDrop drop, Inventory storage, string who)
+        {
+            if (drop == null || storage == null || drop.m_itemData?.m_shared == null) return 0;
+            drop.Load();
+            var data = drop.m_itemData;
+            int stack = data.m_stack;
+            int taken = AddCopy(storage, data, stack);
+            if (taken <= 0)
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionInventory] {who} pickup refused: storage full ({data.m_shared.m_name} x{stack} stays on the ground)");
+                return 0;
+            }
+            if (taken >= stack) ZNetScene.instance?.Destroy(drop.gameObject);
+            else drop.SetStack(stack - taken);
+            Vector2i cell = new Vector2i(-1, -1);
+            foreach (var it in storage.GetAllItems())
+                if (it?.m_shared != null && it.m_shared.m_name == data.m_shared.m_name && CompanionGridLayout.IsStorage(it.m_gridPos)) { cell = it.m_gridPos; break; }
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionInventory] {who} picked up {data.m_shared.m_name} x{taken} -> storage ({cell.x},{cell.y}){(taken < stack ? $", {stack - taken} stay on the ground" : "")}");
+            return taken;
+        }
+
+        /// <summary>
+        /// <paramref name="wanted"/> in <paramref name="inventory"/>: the same object, or after a claim reloaded the chest
+        /// (TryClaimForWrite -> Container.Load builds new item objects), the first item of the same name and quality. Null if gone.
+        /// </summary>
+        public static ItemDrop.ItemData FindSameItem(Inventory inventory, ItemDrop.ItemData wanted)
+        {
+            if (inventory == null || wanted == null) return null;
+            var items = inventory.GetAllItems();
+            return items.FirstOrDefault(i => i == wanted)
+                ?? items.FirstOrDefault(i => i?.m_shared != null && i.m_shared.m_name == wanted.m_shared.m_name && i.m_quality == wanted.m_quality);
+        }
+
+        /// <summary>
+        /// Moves up to <paramref name="amount"/> units between inventories, removing from the source exactly what arrived.
+        /// 0.2.322 (Fire's vanilla-method rule): a whole stack goes through vanilla Inventory.MoveItemToThis(from, item), the
+        /// move InventoryGui makes for a stack dropped on a grid (AddItem + RemoveItem, both sides Changed). Part of a stack
+        /// stays AddCopy + RemoveItem(item, n), also vanilla calls. The slot overload MoveItemToThis(from, item, n, x, y) needs
+        /// non-public slot finders, and its AddItem only fires the destination's Changed when a local player exists, so a
+        /// chest edited by a dedicated-server-owned companion would never save.
+        /// </summary>
         public static int MoveItem(Inventory source, Inventory destination, ItemDrop.ItemData item, int amount)
         {
+            amount = Mathf.Min(amount, item.m_stack);
+            if (amount <= 0 || !destination.CanAddItem(item, amount)) return 0;
+            if (amount == item.m_stack)
+            {
+                destination.MoveItemToThis(source, item);
+                return source.ContainsItem(item) ? amount - item.m_stack : amount;
+            }
             int moved = AddCopy(destination, item, amount);
             if (moved > 0) source.RemoveItem(item, moved);
             return moved;
@@ -574,11 +629,16 @@ namespace FiresCore.Npc.IdleBehaviors
             var depositable = new List<ItemDrop.ItemData>();
             
             if (inventory == null) return depositable;
-            
+            bool companionBag = CompanionGridLayout.IsCompanionBag(inventory);
+
             foreach (var item in inventory.GetAllItems())
             {
                 if (item == null) continue;
-                
+
+                // 0.2.361: a companion bag deposits from its STORAGE rows only (never worn gear or pouch stacks)
+                if (companionBag && !CompanionGridLayout.IsStorage(item.m_gridPos)) continue;
+                if (item.m_equipped) continue;
+
                 // Skip food
                 if (item.m_shared.m_food > 0) continue;
                 
@@ -819,7 +879,7 @@ namespace FiresCore.Npc.IdleBehaviors
             string filter = itemFilter?.ToLowerInvariant();
             int totalDeposited = 0;
 
-            foreach (var item in new List<ItemDrop.ItemData>(sourceInventory.GetAllItems()))
+            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(sourceInventory))) // 0.2.362: storage rows only
             {
                 if (item == null) continue;
 

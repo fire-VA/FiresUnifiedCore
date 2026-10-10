@@ -131,54 +131,22 @@ _lastSetMoveDir = moveDir;
   }
 
         /// <summary>
-        /// Clamps velocity based on movement mode and target distance.
-   /// </summary>
-        public void ApplyVelocityClamping(MovementMode mode, float targetDistance, bool isStrafing)
+        /// 0.2.327 (audit slice 3, Fire's vanilla-method rule): no longer writes the rigidbody's velocity. Kept as a no-op for binary
+        /// compatibility; callers use <see cref="WantsSlowWalk"/>.
+        /// </summary>
+        [System.Obsolete("Use WantsSlowWalk: speed comes from SetMoveDir / SetWalk, never a velocity write.")]
+        public void ApplyVelocityClamping(MovementMode mode, float targetDistance, bool isStrafing) { }
+
+        /// <summary>
+        /// True when the body should walk instead of run: close to the target in Walk mode, or strafing. The vanilla way to slow
+        /// down is Character.SetWalk (UpdateWalking's walk speed). Stopping is the movement authority's SetMoveDir(0), which
+        /// UpdateWalking brakes. The old version clamped and killed the rigidbody's velocity here.
+        /// </summary>
+        public bool WantsSlowWalk(MovementMode mode, float targetDistance, bool isStrafing)
         {
-            if (_rigidbody == null || _character == null) return;
-            
-            // CRITICAL: Skip if rigidbody is kinematic (Unity 6 doesn't allow setting velocity on kinematic bodies)
-            if (_rigidbody.isKinematic) return;
-            
-            Vector3 velocity = _rigidbody.linearVelocity;
-            Vector3 horizontalVel = new Vector3(velocity.x, 0, velocity.z);
-            float currentSpeed = horizontalVel.magnitude;
-            
-            bool shouldSlowDown = false;
-            float maxAllowedSpeed = float.MaxValue;
-            
-            if (mode == MovementMode.Stop)
-            {
-                shouldSlowDown = true;
-                maxAllowedSpeed = 0.05f; // Much lower threshold for stopping
-                
-                // AGGRESSIVE STOP: When mode is Stop, immediately kill horizontal velocity
-                // This prevents jittering when companions should be standing still
-                if (currentSpeed > 0.1f)
-                {
-                    _rigidbody.linearVelocity = new Vector3(0, velocity.y, 0);
-                }
-            }
-            else if (mode == MovementMode.Walk && targetDistance < SlowdownDistance && targetDistance > 0)
-            {
-                shouldSlowDown = true;
-                float slowdownFactor = Mathf.Clamp01(targetDistance / SlowdownDistance);
-                float walkSpeed = _character.m_walkSpeed;
-                maxAllowedSpeed = walkSpeed * slowdownFactor * SlowWalkSpeedMultiplier;
-                maxAllowedSpeed = Mathf.Max(maxAllowedSpeed, 0.5f);
-            }
-            else if (isStrafing)
-            {
-                shouldSlowDown = true;
-                maxAllowedSpeed = _character.m_walkSpeed * 0.7f;
-            }
-            
-            // Apply velocity clamping for non-stop modes
-            if (shouldSlowDown && currentSpeed > maxAllowedSpeed && mode != MovementMode.Stop)
-            {
-                Vector3 clampedHorizontal = horizontalVel.normalized * maxAllowedSpeed;
-                _rigidbody.linearVelocity = new Vector3(clampedHorizontal.x, velocity.y, clampedHorizontal.z);
-            }
+            if (_character == null || mode == MovementMode.Stop) return false;
+            if (mode == MovementMode.Walk && targetDistance < SlowdownDistance && targetDistance > 0) return true;
+            return isStrafing;
         }
 
         /// <summary>

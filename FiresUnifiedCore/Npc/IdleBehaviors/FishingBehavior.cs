@@ -297,7 +297,6 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool UpdateLine()
         {
             FaceTarget(_plan.Aim);
-            SweepBagIntoStorage();
 
             FishingBrain.FishMove move = FishingBrain.Advise(Character, out string why);
             switch (move)
@@ -332,7 +331,6 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool UpdateCollecting()
         {
-            SweepBagIntoStorage();
             if (TimeInCurrentPhase < 0.5f) return false;
             if (_fishCaught >= MaxCatches) { SetPhase(FishPhase.Complete); return false; }
             NextCast("landed one");
@@ -343,7 +341,6 @@ namespace FiresCore.Npc.IdleBehaviors
         private void NextCast(string why)
         {
             FishingBrain.Withdraw(Character);
-            SweepBagIntoStorage();
             if (_casts >= MaxCasts) { LogVerbose($"Done after {_casts} casts"); SetPhase(FishPhase.Complete); return; }
             Vector3 was = _plan.Stand;
             string refusal = PlanCast();
@@ -445,36 +442,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 FishingBrain.SetReeling(Character, false);
             }
             SetReelPose(false);
-            SweepBagIntoStorage();
             UnequipFishingRod();
         }
 
         #endregion
 
         #region Inventory Helpers
-
-        // The game's float lands a catch (and returns an unused bait) into the companion's Humanoid bag, which nothing else uses; it all
-        // goes into storage.
-        private void SweepBagIntoStorage()
-        {
-            Inventory bag = Humanoid != null ? Humanoid.GetInventory() : null;
-            Inventory storage = GetStorageInventory();
-            if (bag == null || storage == null || bag.NrOfItems() == 0) return;
-            bool moved = false;
-            foreach (ItemDrop.ItemData item in bag.GetAllItems().ToList())
-            {
-                if (item == null || !storage.CanAddItem(item)) continue;
-                bag.RemoveItem(item);
-                storage.AddItem(item);
-                moved = true;
-                if (item.m_dropPrefab != null && item.m_dropPrefab.GetComponent<Fish>() != null)
-                {
-                    Debug.Log($"[Fishing] {Companion?.companionName} stored {item.m_dropPrefab.name}{(item.m_quality > 1 ? $" (q{item.m_quality})" : "")}");
-                    AI.ChoreBrain.ChoreDone(Companion?.companionName, "fishing", $"caught {item.m_dropPrefab.name}{(item.m_quality > 1 ? $" (q{item.m_quality})" : "")}");
-                }
-            }
-            if (moved) SaveInventory();
-        }
 
         private void NotifyOwner()
         {

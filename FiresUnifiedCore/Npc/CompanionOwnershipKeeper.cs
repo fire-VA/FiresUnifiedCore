@@ -43,6 +43,7 @@ namespace FiresCore.Npc
                 if (companion == null || companion.ownerPlayerId != ownerId) continue;
                 ZNetView view = companion.GetComponent<ZNetView>();
                 if (view == null || !view.IsValid() || view.IsOwner()) continue;
+                if (CompanionPossession.IsPossessed(view)) continue;   // 0.2.292: its possessor's peer keeps it (FGN 1.5.37 too)
                 if (Vector3.Distance(at, companion.transform.position) > Radius) continue;
                 long previous = view.GetZDO().GetOwner();
                 view.ClaimOwnership();
@@ -104,6 +105,7 @@ namespace FiresCore.Npc
             foreach (ZDO zdo in s_near)
             {
                 if (zdo == null || zdo.GetOwner() == peerUid) continue;
+                if (CompanionPossession.IsPossessed(zdo)) continue;   // 0.2.292: its possessor's peer keeps it
                 if (zdo.GetLong(s_ownerKey, 0L) != playerId || !zdo.GetBool(s_tamedKey)) continue;
                 if (Vector3.Distance(at, zdo.GetPosition()) > Radius) continue;
                 long would = zdo.GetOwner();

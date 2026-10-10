@@ -2021,7 +2021,7 @@ namespace FiresCore.Npc.Commands
 
             // Deposit items
             int deposited = 0;
-            var itemsToDeposit = new List<ItemDrop.ItemData>(storageInv.GetAllItems());
+            var itemsToDeposit = new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storageInv)); // 0.2.362: storage rows only
 
             foreach (var item in itemsToDeposit)
             {

@@ -210,8 +210,42 @@ namespace FiresCore.Input
             return false;
         }
 
+        // 0.2.339: two keys of the SAME mod never clash (the mod decides which of its own modes is live; FiresValcast listed itself
+        // ten times). Valheim's own buttons have no plugin GUID and still clash with each other as before.
         private static bool Clashes(KeybindEntry a, KeybindEntry b)
-            => BindingContexts.Overlap(a.Context, b.Context) && !IsHandedOff(a, b);
+            => BindingContexts.Overlap(a.Context, b.Context) && !IsHandedOff(a, b) && !SameMod(a, b) && !DeclaredShared(a, b);
+
+        // 0.2.340: mods that use one key with different gestures (a double-tap vs a hold vs a hold-while-aiming) and so never fire
+        // together. Keyed by key + mod display name. A mod (or Core, for its own family) declares the group; then those mods' binds on
+        // that key stop showing as conflicts. A user who rebinds one of them to another key simply leaves the group.
+        private static readonly Dictionary<KeyCode, List<HashSet<string>>> s_shared = new Dictionary<KeyCode, List<HashSet<string>>>
+        {
+            // H: FiresMounts whistle = double-tap; FiresCompanions idle wheel = hold while aiming at your companion; FDT = test-only.
+            [KeyCode.H] = new List<HashSet<string>> { new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "FiresMounts", "FiresCompanions", "FiresDebugginTools" } },
+            // R: FiresCompanions command wheel = hold while aiming at your companion; FiresAllTheItems = its own tap.
+            [KeyCode.R] = new List<HashSet<string>> { new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "FiresAllTheItems", "FiresCompanions" } },
+        };
+
+        /// <summary>Declares that these mods share <paramref name="key"/> by gesture, so their binds on it are not conflicts.</summary>
+        public static void DeclareShared(KeyCode key, params string[] modNames)
+        {
+            if (modNames == null || modNames.Length < 2) return;
+            if (!s_shared.TryGetValue(key, out var groups)) s_shared[key] = groups = new List<HashSet<string>>();
+            groups.Add(new HashSet<string>(modNames, StringComparer.OrdinalIgnoreCase));
+            KeybindRegistry.Invalidate();
+        }
+
+        private static bool DeclaredShared(KeybindEntry a, KeybindEntry b)
+        {
+            if (a.Key != b.Key || !s_shared.TryGetValue(a.Key, out var groups)) return false;
+            foreach (var group in groups)
+                if (group.Contains(a.ModName ?? "") && group.Contains(b.ModName ?? "")) return true;
+            return false;
+        }
+
+        private static bool SameMod(KeybindEntry a, KeybindEntry b)
+            => a.Origin != BindingOrigin.VanillaButton && b.Origin != BindingOrigin.VanillaButton
+            && !string.IsNullOrEmpty(a.PluginGuid) && string.Equals(a.PluginGuid, b.PluginGuid, StringComparison.Ordinal);
 
         /// <summary>
         /// True when either side declared that it replaces the other's vanilla button in an overlapping

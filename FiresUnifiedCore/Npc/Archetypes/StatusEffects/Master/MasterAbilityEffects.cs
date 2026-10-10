@@ -255,11 +255,16 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     internal static class DeathWishBlocksHealing
     {
         private static readonly int s_deathWish = StatusEffectManager.EFFECT_DEATH_WISH.GetStableHashCode();
+        private static readonly int s_wounded = StatusEffectManager.EFFECT_CLASS_WOUNDED.GetStableHashCode();
 
-        private static bool Prefix(Character __instance)
+        // Also the yaml's Wounded (0.2.338, [wishbone]): a Wounded carrier receives half of every heal.
+        private static bool Prefix(Character __instance, ref float hp)
         {
-            var effect = __instance != null ? __instance.GetSEMan()?.GetStatusEffect(s_deathWish) as DeathWishEffect : null;
-            return effect == null || !effect.BlocksHealing;
+            SEMan seman = __instance != null ? __instance.GetSEMan() : null;
+            var effect = seman?.GetStatusEffect(s_deathWish) as DeathWishEffect;
+            if (effect != null && effect.BlocksHealing) return false;
+            if (seman != null && seman.HaveStatusEffect(s_wounded)) hp *= Common.ClassWoundedEffect.HealingReceived;
+            return true;
         }
     }
 

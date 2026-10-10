@@ -367,7 +367,7 @@ namespace FiresCore.Npc.AI
             spot = Vector3.zero;
             if (storage == null || spots == null) return false;
             List<Vector3> nearest = spots.OrderBy(p => (p - from).sqrMagnitude).ToList();
-            foreach (ItemDrop.ItemData item in storage.GetAllItems())
+            foreach (ItemDrop.ItemData item in CompanionInventory.StorageItemsOf(storage))
             {
                 IReadOnlyList<FarmingDataHelper.CropSapling> saplings = FarmingDataHelper.SaplingsForSeed(item?.m_dropPrefab?.name);
                 foreach (FarmingDataHelper.CropSapling candidate in saplings.OrderBy(c => plantedCount != null ? plantedCount(c.Prefab.name) : 0))
@@ -516,7 +516,7 @@ namespace FiresCore.Npc.AI
             Inventory bag = body.Inventory;
             if (need <= 0 || !MayUse(body, station)) return null;
             Reserve(body, station);   // a companion picks another station meanwhile
-            if (bag.CountItems(sharedName) <= 0)
+            if (CompanionInventory.CountStorage(bag,sharedName) <= 0)
             {
                 Container chest = FindChestWith(basePos, radius, body.OwnerPlayerId, prefab);
                 int spare = chest == null || Skipped(chest.gameObject) ? 0 : InventoryTransferService.CountItem(chest, prefab) - reserve;
@@ -529,7 +529,7 @@ namespace FiresCore.Npc.AI
             if (Vector3.Distance(body.Position, station.transform.position) > BaseUseDistance)
                 return MoveOrder(body, station, station.transform.position, $"{state}: bringing {prefab}");
             s_moveSince.Remove(station);
-            int fed = feed(Mathf.Min(need, bag.CountItems(sharedName)));
+            int fed = feed(Mathf.Min(need, CompanionInventory.CountStorage(bag,sharedName)));
             Unreserve(body, station);
             if (fed <= 0) { SkipBaseTarget(station); return null; }
             action = $"{Utils.GetPrefabName(station)} +{fed} {prefab}";
@@ -865,7 +865,7 @@ namespace FiresCore.Npc.AI
             if (piece == null) return null;
             Predicate<ItemDrop.ItemData> builds = i => i?.m_shared?.m_buildPieces != null && i.m_shared.m_buildPieces.m_pieces.Any(p => p != null && p.name == prefab.name);
             var cost = piece.m_resources.Where(r => r.m_resItem != null && !r.m_upgraderResource && r.m_amount > 0).ToList();
-            string shortOf = string.Join(", ", cost.Select(r => (r, have: bag.CountItems(r.m_resItem.m_itemData.m_shared.m_name)
+            string shortOf = string.Join(", ", cost.Select(r => (r, have: CompanionInventory.CountStorage(bag,r.m_resItem.m_itemData.m_shared.m_name)
                     + ChestHelper.FindNearbyChests(basePos, radius).Where(c => c != null && ChestHelper.OwnerMayWrite(c, owner)).Sum(c => InventoryTransferService.CountItem(c, r.m_resItem.gameObject.name))))
                 .Where(t => t.have < t.r.m_amount).Select(t => $"{t.r.m_resItem.gameObject.name} {t.have}/{t.r.m_amount}"));
             bool hammer = bag.GetAllItems().Any(i => builds(i));
@@ -879,7 +879,7 @@ namespace FiresCore.Npc.AI
             foreach (Piece.Requirement req in cost)
             {
                 string material = req.m_resItem.gameObject.name;
-                int missing = req.m_amount - bag.CountItems(req.m_resItem.m_itemData.m_shared.m_name);
+                int missing = req.m_amount - CompanionInventory.CountStorage(bag,req.m_resItem.m_itemData.m_shared.m_name);
                 if (missing <= 0) continue;
                 Container chest = FindChestWith(basePos, radius, owner, material);
                 if (chest == null || Skipped(chest.gameObject)) { SkipBaseTarget(bed.gameObject, BedSkipSeconds); return null; }
@@ -1024,7 +1024,7 @@ namespace FiresCore.Npc.AI
             int added = 0;
             while (added < units)
             {
-                ItemDrop.ItemData item = bag.GetAllItems().FirstOrDefault(i => i?.m_shared != null && i.m_shared.m_name == fuelName && i.m_stack > 0);
+                ItemDrop.ItemData item = CompanionInventory.StorageItemsOf(bag).FirstOrDefault(i => i?.m_shared != null && i.m_shared.m_name == fuelName && i.m_stack > 0);
                 if (item == null || !AddSmelterFuelOne(smelter, bag, item)) break;
                 added++;
             }
@@ -1036,7 +1036,7 @@ namespace FiresCore.Npc.AI
             int added = 0;
             while (added < units)
             {
-                ItemDrop.ItemData item = bag.GetAllItems().FirstOrDefault(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == orePrefab && i.m_stack > 0);
+                ItemDrop.ItemData item = CompanionInventory.StorageItemsOf(bag).FirstOrDefault(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == orePrefab && i.m_stack > 0);
                 if (item == null || !AddSmelterOreOne(smelter, bag, item)) break;
                 added++;
             }
@@ -1044,24 +1044,16 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// Repair <paramref name="piece"/> to full (the companions' BuildingRepairBehavior way, now one copy for every body, 0.2.236): claim
-        /// it so vanilla WearNTear.Repair's owner-side RPC_Repair runs here, try vanilla Repair (syncs to every peer); ownership isn't
-        /// instant, so fall back to the same write RPC_Repair does (the health ZDO key + RPC_HealthChanged to everybody). Wards are the
-        /// caller's to check. True when it was repaired (or written to full).
+        /// Repair <paramref name="piece"/> to full through vanilla WearNTear.Repair, as a player's hammer does (one copy for every
+        /// body, 0.2.236). It sends RPC_Repair to the piece's owner, which writes the health and tells every peer. 0.2.322 (Fire's
+        /// vanilla-method rule): no ownership claim and no fallback write of the health key. Repair refuses a full piece and one
+        /// repaired under 1 s ago, and the caller retries the next pass. Wards are the caller's to check. True when it was sent.
         /// </summary>
         public static bool RepairPiece(WearNTear piece)
         {
             ZNetView view = piece != null ? piece.GetComponent<ZNetView>() : null;
             if (view == null || !view.IsValid()) return false;
-            view.ClaimOwnership();
-            if (piece.Repair()) return true;
-            float max = piece.m_health;   // world-level-scaled max, the value RPC_Repair uses
-            if (max <= 0f) return false;
-            ZDO zdo = view.GetZDO();
-            if (zdo == null || zdo.GetFloat(ZDOVars.s_health, max) >= max) return false;
-            zdo.Set(ZDOVars.s_health, max);
-            view.InvokeRPC(ZNetView.Everybody, "RPC_HealthChanged", (object)max);
-            return true;
+            return piece.Repair();
         }
 
         // ---- 3. Loose drops ----
@@ -1208,7 +1200,7 @@ namespace FiresCore.Npc.AI
             foreach (Piece.Requirement req in cost)
             {
                 string prefab = req.m_resItem.gameObject.name;
-                int inBag = bag.CountItems(req.m_resItem.m_itemData.m_shared.m_name);
+                int inBag = CompanionInventory.CountStorage(bag,req.m_resItem.m_itemData.m_shared.m_name);
                 int inChests = chests.Sum(c => InventoryTransferService.CountItem(c, prefab));
                 if (inBag + inChests < req.m_amount) { shortOf.Add($"{prefab} {inBag + inChests}/{req.m_amount} (bag {inBag}, chests {inChests})"); continue; }
                 int missing = req.m_amount - inBag;
@@ -1266,11 +1258,11 @@ namespace FiresCore.Npc.AI
         }
 
         private static int CountPrefab(Inventory bag, string prefab) =>
-            bag.GetAllItems().Where(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == prefab).Sum(i => i.m_stack);
+            CompanionInventory.StorageItemsOf(bag).Where(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == prefab).Sum(i => i.m_stack);
 
         private static void RemovePrefab(Inventory bag, string prefab, int amount)
         {
-            foreach (ItemDrop.ItemData item in bag.GetAllItems().Where(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == prefab).ToList())
+            foreach (ItemDrop.ItemData item in CompanionInventory.StorageItemsOf(bag).Where(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == prefab).ToList())
             {
                 if (amount <= 0) break;
                 int take = Mathf.Min(amount, item.m_stack);
@@ -1396,7 +1388,7 @@ namespace FiresCore.Npc.AI
         private static string CookableIn(CookingStation station, Inventory bag)
         {
             foreach (CookingStation.ItemConversion conversion in station.m_conversion)
-                if (conversion?.m_from != null && bag.CountItems(conversion.m_from.m_itemData.m_shared.m_name) > 0)
+                if (conversion?.m_from != null && CompanionInventory.CountStorage(bag,conversion.m_from.m_itemData.m_shared.m_name) > 0)
                     return conversion.m_from.gameObject.name;
             return null;
         }

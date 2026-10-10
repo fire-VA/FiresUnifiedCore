@@ -146,16 +146,93 @@ namespace FiresCore.UI
             return true;
         }
 
+        // The ConfigFile's identity as well as its entry count (0.2.294): a plugin that swaps in a new ConfigFile, or removes and
+        // re-binds its entries, keeps the same count, and the window kept the dead entries (see Write).
         private static int Signature()
         {
             unchecked
             {
                 int hash = FiresOnly ? 1 : 0;
                 hash = hash * SignaturePrime + s_nameOverrideVersion;
-                foreach (var kvp in FiresMod.Instances) hash = hash * SignaturePrime + (kvp.Value?.Config?.Count ?? -1);
-                foreach (var kvp in Chainloader.PluginInfos) hash = hash * SignaturePrime + (kvp.Value?.Instance?.Config?.Count ?? -1);
+                hash = hash * SignaturePrime + s_staleVersion;
+                foreach (var kvp in FiresMod.Instances) hash = Mix(hash, kvp.Value?.Config);
+                foreach (var kvp in Chainloader.PluginInfos) hash = Mix(hash, kvp.Value?.Instance?.Config);
                 return hash;
             }
+        }
+
+        private static int Mix(int hash, ConfigFile config)
+        {
+            unchecked
+            {
+                hash = hash * SignaturePrime + (config?.Count ?? -1);
+                return hash * SignaturePrime + (config != null ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(config) : 0);
+            }
+        }
+
+        private static int s_staleVersion;
+
+        /// <summary>Forces the next <see cref="RebuildIfChanged"/> to rescan (tags changed without a count change, e.g. OwnerGatedConfig).</summary>
+        public static void Invalidate() => s_staleVersion++;
+
+        /// <summary>
+        /// The entry the owning plugin uses NOW for <paramref name="entry"/>'s setting: the same object, or, when the plugin replaced its
+        /// ConfigFile or re-bound the key since the window's scan, the live one (the window's list is rebuilt). Writing a dead entry
+        /// changed nothing the plugin reads (no SettingChanged on its live entry) and its Save wrote stale values over the plugin's
+        /// file (Fire 10-05: changes not applied, other settings changed; a player's Infinity Hammer key rebound here kept its old key).
+        /// </summary>
+        public static ConfigEntryBase Live(ConfigEntryBase entry, out bool stale)
+        {
+            stale = false;
+            if (entry == null) return null;
+            ConfigFile file = entry.ConfigFile;
+            ConfigFile current = file;
+            string path = file?.ConfigFilePath;
+            if (!string.IsNullOrEmpty(path))
+            {
+                foreach (var kvp in Chainloader.PluginInfos)
+                {
+                    var config = kvp.Value?.Instance?.Config;
+                    if (config == null || config == file) continue;
+                    if (string.Equals(config.ConfigFilePath, path, StringComparison.OrdinalIgnoreCase)) { current = config; break; }
+                }
+            }
+            ConfigEntryBase live = entry;
+            try
+            {
+                if (current != null && current.ContainsKey(entry.Definition)) live = current[entry.Definition];
+            }
+            catch { live = entry; }
+            if (!ReferenceEquals(live, entry))
+            {
+                stale = true;
+                s_staleVersion++;   // the next RebuildIfChanged rescans
+            }
+            return live;
+        }
+
+        /// <summary>
+        /// The window's one write path (values, keybinds, resets): writes the LIVE entry (<see cref="Live"/>) through BoxedValue, as
+        /// ConfigurationManager does, and logs at Debug what was written, what reads back and whether the entry was stale.
+        /// </summary>
+        public static bool Write(ConfigEntryBase entry, object value, string source)
+        {
+            var live = Live(entry, out bool stale);
+            if (live == null) return false;
+            string before = Show(live);
+            live.BoxedValue = value;
+            string after = Show(live);
+            var file = live.ConfigFile;
+            FiresConfigUI.Log.LogDebug($"set [{live.Definition.Section}] {live.Definition.Key} ({System.IO.Path.GetFileName(file?.ConfigFilePath ?? "?")}) " +
+                                       $"via {source}: '{before}' -> '{after}'{(stale ? "; the window held a STALE entry, wrote the plugin's live one" : "")}" +
+                                       $"{(file != null && !file.SaveOnConfigSet ? "; the plugin saves this file itself (SaveOnConfigSet off)" : "")}");
+            return true;
+        }
+
+        private static string Show(ConfigEntryBase entry)
+        {
+            try { return entry.GetSerializedValue(); }
+            catch { return entry.BoxedValue?.ToString() ?? "null"; }
         }
 
         /// <summary>True when the window is filtered down to the Fires family instead of every loaded plugin.</summary>

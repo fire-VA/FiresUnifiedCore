@@ -144,14 +144,27 @@ if (_companion.isDefeated) return;
             var storageInv = _inventory.GetStorageInventory();
       if (storageInv == null) return;
 
+            // 0.2.356: the Food pouch item first when it is edible now; then the storage pass below as before.
+            if (CompanionPouchRules.TryGetPouchItem(_inventory, CompanionPouchRules.PouchKind.Food, out var pouchFood))
+            {
+                if (IsFood(pouchFood) && CanEat(pouchFood))
+                {
+                    CompanionPouchRules.LogDecision(_companion?.companionName, CompanionPouchRules.PouchKind.Food, $"food from pouch: {pouchFood.m_shared.m_name}");
+                    ConsumeFood(pouchFood, storageInv);
+                }
+                else
+                    CompanionPouchRules.LogDecision(_companion?.companionName, CompanionPouchRules.PouchKind.Food, $"pouch food skipped: {pouchFood.m_shared.m_name} cannot be eaten now");
+            }
+
             // Find food items in storage
-         var items = storageInv.GetAllItems();
+         var items = _inventory.GetStorageItems(); // 0.2.362: pouch handled above; never equip cells
           foreach (var item in items.ToList())
       {
        if (!IsFood(item)) continue;
                 if (!CanEat(item)) continue;
 
         // Consume the food
+                CompanionPouchRules.LogDecision(_companion?.companionName, CompanionPouchRules.PouchKind.Food, $"food from storage: {item.m_shared.m_name}");
                 ConsumeFood(item, storageInv);
       }
         }
@@ -385,7 +398,7 @@ FoodName = shared.m_name,
 
             ItemDrop.ItemData best = null;
             float bestScore = 0f;
-            foreach (var item in storageInv.GetAllItems())
+            foreach (var item in _inventory.GetStorageItems()) // 0.2.362: storage rows only
             {
                 if (!(ConsumeEffect(item) is SE_Stats effect) || !CanConsume(seman, effect)) continue;
                 float score = MeadScore(effect);
@@ -621,6 +634,14 @@ FoodName = shared.m_name,
             SaveToZDO();
         }
 
+        /// <summary>0.2.365: <see cref="ClearFoods()"/> with a reason, logged at Debug (fires_companion_food ... clear).</summary>
+        public void ClearFoods(string reason)
+        {
+            int had = _activeFoodEffects.Count;
+            ClearFoods();
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionConsumables] {_companion?.companionName}: foods cleared ({reason}; {had} active)");
+        }
+
         #region Persistence
 
 public void SaveToZDO()
@@ -717,5 +738,49 @@ public void SaveToZDO()
         }
 
         #endregion
+    }
+
+    /// <summary>0.2.365: "fires_companion_food &lt;name|nearest&gt; clear" (cheat command: needs devcommands), empties a
+    /// companion's active foods through <see cref="CompanionConsumables.ClearFoods(string)"/>.</summary>
+    [HarmonyLib.HarmonyPatch(typeof(Terminal), "InitTerminal")]
+    internal static class CompanionFoodCommand
+    {
+        private static bool s_registered;
+
+        [HarmonyLib.HarmonyPostfix]
+        private static void Postfix()
+        {
+            if (s_registered) return;
+            s_registered = true;
+            new Terminal.ConsoleCommand("fires_companion_food",
+                "[FiresUnifiedCore] fires_companion_food <name|nearest> clear - empties the companion's active food effects.",
+                args =>
+                {
+                    if (args.Length < 3 || !string.Equals(args[args.Length - 1], "clear", System.StringComparison.OrdinalIgnoreCase))
+                    { args.Context?.AddString("fires_companion_food <name|nearest> clear"); return; }
+                    CompanionController pick = null;
+                    if (string.Equals(args[1], "nearest", System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        Vector3 from = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+                        float best = float.MaxValue;
+                        foreach (var c in CompanionController.AllCompanions)
+                        {
+                            if (c == null) continue;
+                            float d = Vector3.Distance(from, c.transform.position);
+                            if (d < best) { best = d; pick = c; }
+                        }
+                    }
+                    else
+                    {
+                        string want = string.Join(" ", args.Args, 1, args.Length - 2);
+                        foreach (var c in CompanionController.AllCompanions)
+                            if (c != null && string.Equals(c.companionName, want, System.StringComparison.OrdinalIgnoreCase)) { pick = c; break; }
+                    }
+                    var food = pick != null ? pick.GetConsumables() : null;
+                    if (food == null) { args.Context?.AddString($"fires_companion_food: no companion '{args[1]}'"); return; }
+                    food.ClearFoods("console command");
+                    args.Context?.AddString($"fires_companion_food: {pick.companionName} foods cleared");
+                }, isCheat: true);
+        }
     }
 }

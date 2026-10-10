@@ -800,7 +800,7 @@ namespace FiresCore.Npc.Archetypes
             var storage = _inventory.GetStorageInventory();
             if (storage != null)
             {
-                foreach (var item in storage.GetAllItems())
+                foreach (var item in _inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
                 {
                     if (item?.m_shared == null) continue;
                     
@@ -1273,7 +1273,7 @@ namespace FiresCore.Npc.Archetypes
                 var storage = _inventory.GetStorageInventory();
                 if (storage != null)
                 {
-                    foreach (var item in storage.GetAllItems())
+                    foreach (var item in _inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
                     {
                         if (item?.m_shared?.m_itemType == ItemDrop.ItemData.ItemType.Shield)
                         {
@@ -1707,7 +1707,7 @@ namespace FiresCore.Npc.Archetypes
                 var storage = _inventory.GetStorageInventory();
                 if (storage != null)
                 {
-                    foreach (var item in storage.GetAllItems())
+                    foreach (var item in _inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
                     {
                         if (ArchetypeUtils.IsSupportStaff(item))
                         {

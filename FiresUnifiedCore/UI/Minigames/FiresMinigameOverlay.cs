@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.UI;
@@ -28,6 +29,21 @@ namespace FiresCore.UI.Minigames
         public RectTransform PlayField { get; private set; }
         /// <summary>Invoked exactly once when the overlay closes (Esc/game-driven/logout).</summary>
         public Action OnClosed;
+
+        // 0.2.380: Esc. The overlay holds the input block, so vanilla's Esc -> menu path (the central close) never ran and
+        // nothing closed. Now Esc closes the topmost popup first, then the overlay itself.
+        /// <summary>False keeps Esc from closing anything (the game handles it alone).</summary>
+        public bool CloseOnEscape = true;
+        /// <summary>Asked first on Esc; return true when the game handled it (nothing else closes this press).</summary>
+        public Func<bool> OnEscape;
+        private readonly List<KeyValuePair<GameObject, Action>> _popups = new List<KeyValuePair<GameObject, Action>>();
+
+        /// <summary>Registers a popup shown over the game: Esc closes the last one pushed (calling <paramref name="close"/>,
+        /// or deactivating it) before the overlay. Popups parented directly under the overlay root are found without this.</summary>
+        public void PushPopup(GameObject popup, Action close = null)
+        {
+            if (popup != null) _popups.Add(new KeyValuePair<GameObject, Action>(popup, close));
+        }
 
         private Image _flash;
         private Color _flashColor;
@@ -103,6 +119,9 @@ namespace FiresCore.UI.Minigames
         {
             if (_closed) return;
 
+            // Raw Input: the gates this overlay holds swallow ZInput, not UnityEngine.Input.
+            if (UnityEngine.Input.GetKeyDown(KeyCode.Escape)) { HandleEscape(); if (_closed) return; }
+
             if (_flash != null)
             {
                 float alpha = _flashT > 0f ? _flashPeak * (_flashT / _flashDur) : 0f;
@@ -129,6 +148,37 @@ namespace FiresCore.UI.Minigames
             }
         }
 
+        private void HandleEscape()
+        {
+            try { if (OnEscape != null && OnEscape()) { FiresCore.Logging.FiresLogger.LogDebug($"[FiresMinigame] Esc: handled by {name}"); return; } }
+            catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresMinigame] OnEscape threw: {ex.Message}"); }
+            if (!CloseOnEscape) return;
+
+            for (int i = _popups.Count - 1; i >= 0; i--)
+            {
+                var entry = _popups[i];
+                _popups.RemoveAt(i);
+                if (entry.Key == null || !entry.Key.activeInHierarchy) continue;
+                try { if (entry.Value != null) entry.Value(); else entry.Key.SetActive(false); }
+                catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresMinigame] popup close threw: {ex.Message}"); }
+                FiresCore.Logging.FiresLogger.LogDebug($"[FiresMinigame] Esc: closed popup {entry.Key.name} on {name}");
+                return;
+            }
+
+            // A popup parented straight under the overlay root (anything but Dim / PlayField / Flash), topmost first.
+            for (int i = transform.childCount - 1; i >= 0; i--)
+            {
+                Transform child = transform.GetChild(i);
+                if (!child.gameObject.activeSelf || child == PlayField || (_flash != null && child == _flash.transform) || child.name == "Dim") continue;
+                child.gameObject.SetActive(false);
+                FiresCore.Logging.FiresLogger.LogDebug($"[FiresMinigame] Esc: closed popup {child.name} on {name}");
+                return;
+            }
+
+            FiresCore.Logging.FiresLogger.LogDebug($"[FiresMinigame] Esc: closed overlay {name}");
+            Close();
+        }
+
         private void AcquireModal()
         {
             FiresContextMenu.SuppressDriver = true;
@@ -136,7 +186,11 @@ namespace FiresCore.UI.Minigames
             _blocked = true;
             FiresInputBlock.Acquire(_token);
             Cursor.lockState = CursorLockMode.None; Cursor.visible = true;
+            // 0.2.380: the central close (ModUiRegistry.CloseAll) closes this overlay too.
+            FiresCore.Bridge.ModUiRegistry.Register(RegistryKey, () => _current != null && !_current._closed, () => _current?.Close(), () => _current != null ? _current.gameObject : null);
         }
+
+        private const string RegistryKey = "FiresMinigameOverlay";
 
         /// <summary>Tear down the overlay, release both input gates, fire <see cref="OnClosed"/> once. Idempotent.</summary>
         public void Close()
@@ -146,7 +200,7 @@ namespace FiresCore.UI.Minigames
             FiresContextMenu.SuppressDriver = false;
             FiresInputBlock.Release(_token);
             if (_blocked) { InputBlock.Block(false); _blocked = false; }
-            if (_current == this) _current = null;
+            if (_current == this) { _current = null; FiresCore.Bridge.ModUiRegistry.Unregister(RegistryKey); }
             var callback = OnClosed; OnClosed = null;
             try { callback?.Invoke(); } catch (Exception ex) { FiresCore.Logging.FiresLogger.LogWarning($"[FiresMinigame] OnClosed threw: {ex.Message}"); }
             if (gameObject != null) UnityEngine.Object.Destroy(gameObject);

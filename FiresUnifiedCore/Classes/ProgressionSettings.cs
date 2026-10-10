@@ -196,6 +196,11 @@ namespace FiresCore.Classes
             configSync.AddConfigEntry(AttributePointsMaximum);
             configSync.AddConfigEntry(ExpectedXpPerHour);
             configSync.AddConfigEntry(WhenPointsDrop);
+            // 0.2.359: hidden behind Show advanced when no classes/companion mod is loaded.
+            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.RPGCLASSES, true,   // 0.2.387: RPGClasses only (owner map)
+                XpMultiplier, KillXpMultiplier, NonCombatXpMultiplier, QuestXpMultiplier, SkillPointsPerLevel, ExtraSkillPointsPerTenthLevel,
+                SkillPointsPerValorLevel, ValorLevelXpMultiplier, AttributePointsPerLevel, AttributePointsPerValorLevel, AttributePointsMaximum,
+                ExpectedXpPerHour, WhenPointsDrop);
         }
 
         /// <summary>

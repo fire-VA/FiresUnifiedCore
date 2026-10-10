@@ -81,8 +81,26 @@ namespace FiresCore.Classes
         public int UnspentSkillPoints(ProgressionRates rates) =>
             ProgressionEngine.UnspentSkillPoints(Level, ValorLevel, SpentSkillPoints, rates);
 
+        // 0.2.384: Fire: lore books can grant attribute points. A plain stored count, added on top of the earned points. No schema
+        // bump: FiresRPGClasses' Newtonsoft store reads a missing field as 0 and an older loader ignores the extra one.
+        public int BonusAttributePoints;
+
+        /// <summary>Most bonus attribute points one record may hold (a guard against a runaway grant).</summary>
+        public const int MaxBonusAttributePoints = 100;
+
         public int UnspentAttributePoints(ProgressionRates rates) =>
-            ProgressionEngine.UnspentAttributePoints(Level, ValorLevel, SpentAttributePoints, rates);
+            Mathf.Max(0, ProgressionEngine.EarnedAttributePoints(Level, ValorLevel, rates) + Mathf.Clamp(BonusAttributePoints, 0, MaxBonusAttributePoints) - SpentAttributePoints);
+
+        /// <summary>Adds <paramref name="n"/> bonus attribute points (lore books). Returns the points actually added (0 when n &lt;= 0 or at the cap).</summary>
+        public int AddBonusAttributePoints(int n)
+        {
+            if (n <= 0) return 0;
+            int before = Mathf.Clamp(BonusAttributePoints, 0, MaxBonusAttributePoints);
+            BonusAttributePoints = Mathf.Min(MaxBonusAttributePoints, before + n);
+            int added = BonusAttributePoints - before;
+            FiresCore.Logging.FiresLogger.LogDebug($"[Classes] bonus attribute points +{added} (asked {n}), now {BonusAttributePoints}");
+            return added;
+        }
 
         public int PassiveSlots => ProgressionEngine.PassiveSlots(Level, ValorLevel);
 

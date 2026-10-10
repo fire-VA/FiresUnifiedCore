@@ -50,6 +50,10 @@ namespace FiresCore.Npc.Archetypes.Effects
                     "How many ground rings may draw at once. The oldest ring is recycled when the cap is reached.",
                     new AcceptableValueRange<int>(MinConcurrentRings, MaxConcurrentRingsLimit)));
 
+            // Companion abilities draw these rings; without a companion host the keys leave the config (0.2.359).
+            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.GROUNDRINGS, false,
+                RingOpacity, ColorBlindPalette, ShowOwnDamageRings, MaxConcurrentRings);
+
             _initialized = true;
         }
 

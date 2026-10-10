@@ -50,6 +50,10 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         public const string EFFECT_CLASS_FLEE = "ClassFlee";
         public const string EFFECT_CLASS_LOSE_TARGET = "ClassLoseTarget";
         public const string EFFECT_CLASS_STAGGER_IMMUNE = "ClassStaggerImmune";
+        public const string EFFECT_CLASS_SILENCE = "ClassSilence"; // no magic/skill attacks; FMO treats it as an interrupt
+        // A boss's cast interrupt (ClassCrowdControl): bosses take a slow instead of a stun / knockdown / silence, so this marker rides
+        // along; Fires Monster Overhaul cancels the boss's cast when it lands. No gameplay of its own.
+        public const string EFFECT_CLASS_INTERRUPT = "ClassInterrupt";
 
         // Class skill presets (Common\ClassPresetEffects.cs): a Core effect carries no numbers over the wire.
         public const string EFFECT_CLASS_SLOW30 = "ClassSlow30";
@@ -71,6 +75,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         public const string EFFECT_CLASS_WARD25 = "ClassWard25";
         public const string EFFECT_CLASS_DAMAGE25 = "ClassDamage25";
         public const string EFFECT_CLASS_SLOW60 = "ClassSlow60";
+        public const string EFFECT_CLASS_WITHERED = "ClassWithered";   // RPGClasses' Wither: +15% damage taken, 20% slow
+        public const string EFFECT_CLASS_WOUNDED = "ClassWounded";     // the yaml's Wounded: 50% less healing received
         
         // Tank
         public const string EFFECT_FORTIFY = "CompanionFortify";
@@ -162,7 +168,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
                 RegisterEffect<FleeEffect>(EFFECT_CLASS_FLEE, _iconColors[EFFECT_CLASS_FLEE]);
                 RegisterEffect<LoseTargetEffect>(EFFECT_CLASS_LOSE_TARGET, _iconColors[EFFECT_CLASS_LOSE_TARGET]);
                 RegisterEffect<StaggerImmuneEffect>(EFFECT_CLASS_STAGGER_IMMUNE, _iconColors[EFFECT_CLASS_STAGGER_IMMUNE]);
+                RegisterEffect<SilenceEffect>(EFFECT_CLASS_SILENCE, _iconColors[EFFECT_CLASS_SILENCE]);
+                RegisterEffect<InterruptMarkerEffect>(EFFECT_CLASS_INTERRUPT, _iconColors[EFFECT_CLASS_INTERRUPT]);
                 RegisterEffect<ClassSlow30Effect>(EFFECT_CLASS_SLOW30, _iconColors[EFFECT_CLASS_SLOW30]);
+                RegisterEffect<ClassWitheredEffect>(EFFECT_CLASS_WITHERED, _iconColors[EFFECT_CLASS_WITHERED]);
+                RegisterEffect<ClassWoundedEffect>(EFFECT_CLASS_WOUNDED, _iconColors[EFFECT_CLASS_WOUNDED]);
                 RegisterEffect<ClassHaste15Effect>(EFFECT_CLASS_HASTE15, _iconColors[EFFECT_CLASS_HASTE15]);
                 RegisterEffect<ClassHaste20Effect>(EFFECT_CLASS_HASTE20, _iconColors[EFFECT_CLASS_HASTE20]);
                 RegisterEffect<ClassHaste25Effect>(EFFECT_CLASS_HASTE25, _iconColors[EFFECT_CLASS_HASTE25]);
@@ -275,7 +285,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
             _iconColors[EFFECT_CLASS_FLEE] = new Color(0.6f, 0.2f, 0.7f); // Violet
             _iconColors[EFFECT_CLASS_LOSE_TARGET] = new Color(0.6f, 0.6f, 0.6f); // Grey
             _iconColors[EFFECT_CLASS_STAGGER_IMMUNE] = new Color(0.5f, 0.7f, 0.5f); // Sage
+            _iconColors[EFFECT_CLASS_SILENCE] = new Color(0.55f, 0.45f, 0.85f); // Hushed violet
+            _iconColors[EFFECT_CLASS_INTERRUPT] = new Color(0.95f, 0.45f, 0.2f); // Ember
             _iconColors[EFFECT_CLASS_SLOW30] = new Color(0.5f, 0.7f, 0.9f); // Pale blue
+            _iconColors[EFFECT_CLASS_WITHERED] = new Color(0.45f, 0.6f, 0.25f); // Rot green
+            _iconColors[EFFECT_CLASS_WOUNDED] = new Color(0.7f, 0.15f, 0.2f); // Dried blood
             _iconColors[EFFECT_CLASS_HASTE15] = new Color(0.7f, 0.95f, 0.8f); // Mint
             _iconColors[EFFECT_CLASS_HASTE20] = new Color(0.6f, 0.95f, 0.75f); // Mint
             _iconColors[EFFECT_CLASS_HASTE25] = new Color(0.5f, 0.95f, 0.7f); // Mint

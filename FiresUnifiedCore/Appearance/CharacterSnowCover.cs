@@ -7,7 +7,7 @@ namespace FiresCore.Appearance
     /// Snow on a character's gear, on the hook Valheim 1.0 shipped and never wired up.
     ///
     /// VisEquipment exposes a public SnowLevel setter that clamps 0..1 and pushes _SnowCover to every renderer under
-    /// the character through MaterialMan (VisEquipment.cs:1134-1147 in the 1.0 decompile). Nothing in the assembly
+    /// the character through MaterialMan (vanilla VisEquipment, Valheim 1.0). Nothing in the assembly
     /// calls it - the property has no caller at all - so the shader work is present and inert. This drives it from the
     /// same conditions vanilla uses for building pieces, so a player crossing the Deep North whitens the way the
     /// structures around them do.
@@ -46,10 +46,14 @@ namespace FiresCore.Appearance
             if (__instance == null || Application.isBatchMode) return;
             if (MaterialMan.instance == null) return;
 
-            var visEquipment = __instance.GetComponent<VisEquipment>();
+            var visEquipment = VisOf(__instance);
             if (visEquipment == null) return;
 
             float level = visEquipment.SnowLevel;
+            // 0.2.305 (the lead 10-06, 1.8 fps fixed-step spiral): bare gear outside the Deep North (or with the setting off)
+            // has nothing to gather or shed - the same answer the full path below reaches, without IsUnderRoof's cast. Every
+            // input is still read every step, so snow that starts (entering the Deep North, the setting turned on) is seen.
+            if (level <= NoCover && (!Enabled || __instance.m_lastBiome != Heightmap.Biome.DeepNorth)) return;
             if (!Enabled)
             {
                 if (level > NoCover) visEquipment.SnowLevel = NoCover;
@@ -62,6 +66,33 @@ namespace FiresCore.Appearance
             float step = (target > level ? GatherRate() : ShedRate()) * dt;
             if (step <= NoCover) return;
             visEquipment.SnowLevel = Mathf.MoveTowards(level, target, step);
+        }
+
+        // 0.2.305: the VisEquipment per character, looked up once instead of a GetComponent every physics step for every character.
+        // A destroyed one reads Unity-null and is looked up again; characters without one are remembered too. Destroyed keys are
+        // swept once the table outgrows PruneAt.
+        private const int PruneAt = 4096;
+        private static readonly System.Collections.Generic.Dictionary<Character, VisEquipment> s_vis =
+            new System.Collections.Generic.Dictionary<Character, VisEquipment>();
+        private static readonly System.Collections.Generic.HashSet<Character> s_noVis = new System.Collections.Generic.HashSet<Character>();
+
+        private static VisEquipment VisOf(Character character)
+        {
+            if (s_vis.TryGetValue(character, out var vis) && vis != null) return vis;
+            if (s_noVis.Contains(character)) return null;
+            if (s_vis.Count + s_noVis.Count > PruneAt) Prune();
+            vis = character.GetComponent<VisEquipment>();
+            if (vis != null) s_vis[character] = vis;
+            else s_noVis.Add(character);
+            return vis;
+        }
+
+        private static void Prune()
+        {
+            var dead = new System.Collections.Generic.List<Character>();
+            foreach (var kv in s_vis) if (kv.Key == null || kv.Value == null) dead.Add(kv.Key);
+            foreach (var c in dead) s_vis.Remove(c);
+            s_noVis.RemoveWhere(c => c == null);
         }
 
         private static bool Gathers(Character character)

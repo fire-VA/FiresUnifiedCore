@@ -17,6 +17,9 @@ namespace FiresCore.Input
         InventoryOpen,
         MapOpen,
         Menu,
+        // 0.2.339: modes that replace normal play. Their keys collide only with Always and their own mode, never Gameplay.
+        Possessed,
+        Minigame,
     }
 
     /// <summary>
@@ -200,11 +203,13 @@ namespace FiresCore.Input
         public const BindingContext Default = BindingContext.Gameplay;
 
         public static bool Overlap(BindingContext a, BindingContext b)
-            => a == BindingContext.Always
-            || b == BindingContext.Always
-            || a == b
-            || a == BindingContext.Gameplay
-            || b == BindingContext.Gameplay;
+        {
+            if (a == BindingContext.Always || b == BindingContext.Always || a == b) return true;
+            if (IsExclusiveMode(a) || IsExclusiveMode(b)) return false;   // 0.2.339: possession / minigame replace gameplay
+            return a == BindingContext.Gameplay || b == BindingContext.Gameplay;
+        }
+
+        private static bool IsExclusiveMode(BindingContext c) => c == BindingContext.Possessed || c == BindingContext.Minigame;
 
         public static string Describe(BindingContext context)
         {
@@ -218,6 +223,8 @@ namespace FiresCore.Input
                 case BindingContext.InventoryOpen: return "inventory open";
                 case BindingContext.MapOpen: return "map open";
                 case BindingContext.Menu: return "menu";
+                case BindingContext.Possessed: return "while possessing";
+                case BindingContext.Minigame: return "in a minigame";
                 default: return context.ToString();
             }
         }

@@ -659,7 +659,7 @@ namespace FiresCore.UI
                 {
                     if (bundle == null) continue;
                     if (IsVanillaBundle(bundle)) continue;
-                    try { if (UIBuilderHost.AssetBundle != null && bundle == UIBuilderHost.AssetBundle) continue; } catch { }
+                    try { if (UIBuilderHost.IsHostBundle(bundle)) continue; } catch { }
 
                     try
                     {
@@ -822,7 +822,7 @@ namespace FiresCore.UI
 
                     if (!bundleNames.Contains(bundleName)) continue;
                     if (IsVanillaBundle(bundle)) continue;
-                    try { if (UIBuilderHost.AssetBundle != null && bundle == UIBuilderHost.AssetBundle) continue; } catch { }
+                    try { if (UIBuilderHost.IsHostBundle(bundle)) continue; } catch { }
 
                     int count = IndexSpritesFromBundle(bundle, bundleName);
                     indexed.Add(bundleName);
@@ -925,7 +925,7 @@ namespace FiresCore.UI
                     try { bundleName = bundle.name; } catch { continue; }
                     if (string.IsNullOrEmpty(bundleName)) continue;
                     if (IsVanillaBundle(bundle)) continue;
-                    try { if (UIBuilderHost.AssetBundle != null && bundle == UIBuilderHost.AssetBundle) continue; } catch { }
+                    try { if (UIBuilderHost.IsHostBundle(bundle)) continue; } catch { }
 
                     // Skip if we've already indexed this bundle
                     if (_loadedBundles.ContainsKey(bundleName)) continue;
@@ -1134,7 +1134,7 @@ namespace FiresCore.UI
                     foreach (var bundle in allBundles)
                     {
                         if (bundle == null) continue;
-                        try { if (UIBuilderHost.AssetBundle != null && bundle == UIBuilderHost.AssetBundle) continue; } catch { }
+                        try { if (UIBuilderHost.IsHostBundle(bundle)) continue; } catch { }
                         if (IsVanillaBundle(bundle)) continue;
                         modBundles.Add(bundle);
                     }
@@ -1492,7 +1492,7 @@ namespace FiresCore.UI
                         if (filePath.IndexOf("CapturedAssets", StringComparison.OrdinalIgnoreCase) >= 0) continue;
                         // Skip files in our own UIAssets/Sprites directory
                         if (filePath.IndexOf("UIAssets", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                            filePath.IndexOf(UIBuilderHost.ModName, StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                            UIBuilderHost.PathHasModName(filePath)) continue;
                         // Skip files in the vanilla game data directory
                         if (filePath.IndexOf("valheim_Data", StringComparison.OrdinalIgnoreCase) >= 0) continue;
 

@@ -21,6 +21,7 @@ namespace FiresCore.Movement
     // Driven from ZSyncAnimation.CustomFixedUpdate, which runs on every peer for every animated character: the owner and the
     // remote peers read the same two ints (Climbing.cs's ClimbZdo.State and ClimbZdo.Clip, written by the climbing body's
     // owner) and each drives its own local animator. Nothing new is synced.
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Climbing)]
     internal static class ClimbAnimator
     {
         private const string Tag = "[Climb] ";
@@ -52,9 +53,21 @@ namespace FiresCore.Movement
             internal RuntimeAnimatorController Original;
             internal int Clip = -1;
             internal float RestoreAt = -1f;   // > 0: back at Movement, waiting to give the original controller back
+            internal float NextRemoteLog;     // 0.2.285: the viewing peer's Debug line, every RemoteLogSeconds while climbing
+            internal int Reasserts;
         }
 
+        private const float RemoteLogSeconds = 2f;
+        private static readonly int FallingHash = Animator.StringToHash("falling");
+
+        // The clips that hold (a borrowed loop state) rather than play once and return to Movement by themselves.
+        private static bool IsLoop(ClimbClip clip) =>
+            clip == ClimbClip.UpLoop || clip == ClimbClip.IdleLoop || clip == ClimbClip.DownLoop || clip == ClimbClip.LeftLoop || clip == ClimbClip.RightLoop;
+
         private static readonly Dictionary<Animator, Body> s_bodies = new Dictionary<Animator, Body>();
+        // 0.2.288: the climb's own override controllers (never wrapped again), and the other mods' overrides already logged once.
+        private static readonly HashSet<AnimatorOverrideController> s_ours = new HashSet<AnimatorOverrideController>();
+        private static readonly HashSet<RuntimeAnimatorController> s_wrapLogged = new HashSet<RuntimeAnimatorController>();
         private static readonly Dictionary<RuntimeAnimatorController, AnimatorOverrideController> s_overrides =
             new Dictionary<RuntimeAnimatorController, AnimatorOverrideController>();
         private static readonly Dictionary<RuntimeAnimatorController, bool> s_fits = new Dictionary<RuntimeAnimatorController, bool>();
@@ -91,10 +104,27 @@ namespace FiresCore.Movement
                     body.RestoreAt = -1f;
                 }
                 int clip = zdo.GetInt(ClimbZdo.ClipHash, 0);
+                bool hasState = s_stateHash.TryGetValue((ClimbClip)clip, out int hash);
                 if (clip != body.Clip)
                 {
                     body.Clip = clip;
-                    if (s_stateHash.TryGetValue((ClimbClip)clip, out int hash)) animator.CrossFadeInFixedTime(hash, CrossFadeSeconds, 0);
+                    if (hasState) animator.CrossFadeInFixedTime(hash, CrossFadeSeconds, 0);
+                }
+                // 0.2.285 (HR5dc, Fire: "the bot floats up the wall", the fall pose on the viewers' screens): a loop clip is held. When anything
+                // (vanilla's falling / inWater transitions) took the animator out of the borrowed state, it goes back to it.
+                else if (hasState && IsLoop((ClimbClip)clip) && !animator.IsInTransition(0) && animator.GetCurrentAnimatorStateInfo(0).shortNameHash != hash)
+                {
+                    animator.CrossFadeInFixedTime(hash, CrossFadeSeconds, 0);
+                    body.Reasserts++;
+                }
+                if (!view.IsOwner() && Time.time >= body.NextRemoteLog)
+                {
+                    body.NextRemoteLog = Time.time + RemoteLogSeconds;
+                    var info = animator.GetCurrentAnimatorStateInfo(0);
+                    Character who = view.GetComponent<Character>();
+                    FiresLogger.LogDebug($"{Tag}remote {(who is Player p ? p.GetPlayerName() : who != null ? who.m_name : view.name)}: state {(Climb.State)state} clip {(ClimbClip)clip}, " +
+                                         $"animator on override {(animator.runtimeAnimatorController is AnimatorOverrideController ? "Y" : "N")}, current state hash {info.shortNameHash}" +
+                                         $"{(hasState ? (info.shortNameHash == hash ? " (the clip's state)" : $" (not the clip's {hash})") : "")}, falling {animator.GetBool(FallingHash)}, re-held {body.Reasserts}x");
                 }
                 return;
             }
@@ -112,20 +142,46 @@ namespace FiresCore.Movement
             s_bodies.Remove(animator);
         }
 
-        // Puts the body on the override controller. False (and logged once per controller) when it can't climb visibly.
+        // Puts the body on the override controller. False (and logged once per controller, 0.2.288) when it can't climb visibly.
         private static bool Begin(Animator animator, out Body body)
         {
             body = null;
             RuntimeAnimatorController original = animator.runtimeAnimatorController;
-            if (original == null || original is AnimatorOverrideController) return false;
-            if (!Fits(animator, original)) return false;
+            if (original == null) { Refused(animator, "its animator has no controller"); return false; }
+            // 0.2.288 (Fire on 0.2.287: "Vafire floats up the wall standing in the plain idle pose", no "loaded … climb clip(s)" line at
+            // all): VikHavnCombat's PlayerAnimationOverrides puts its own AnimatorOverrideController on the local player's animator (from
+            // the first crawl, shield swing, grab or trick on), and this refused ANY override controller, silently. Only the climb's own
+            // override is refused now; another mod's override is wrapped (the climb override builds on top of it) and given back,
+            // the same controller, when the climb ends.
+            if (original is AnimatorOverrideController mine && s_ours.Contains(mine)) { Refused(animator, $"{Named(original)} is already the climb's own override"); return false; }
+            if (original is AnimatorOverrideController && s_wrapLogged.Add(original))
+                FiresLogger.LogInfo($"{Tag}{Named(original)} is another mod's override controller; the climb clips go on top of it, and it is given back after");
+            if (!Fits(animator, original)) return false;   // logged once per controller in Fits
             AnimatorOverrideController overrides = OverrideFor(original);
-            if (overrides == null) return false;
+            if (overrides == null) { Refused(animator, $"no climb clips to put on {Named(original)}"); return false; }
             body = new Body { Original = original };
             s_bodies[animator] = body;
             SwapKeepingParameters(animator, overrides);
             if (s_bodies.Count > 64) Prune();
             return true;
+        }
+
+        // 0.2.289: a controller as the log names it (VikHavn's override has no name: "an unnamed override over 'Player_animator'").
+        private static string Named(RuntimeAnimatorController c)
+        {
+            if (c == null) return "no controller";
+            if (!string.IsNullOrEmpty(c.name)) return "'" + c.name + "'";
+            return c is AnimatorOverrideController o ? "an unnamed override over " + Named(o.runtimeAnimatorController) : "an unnamed controller";
+        }
+
+        // 0.2.288: a refusal is said once per animator controller at Info (a silent no-op hid the VikHavn case).
+        private static readonly HashSet<string> s_refusedLogged = new HashSet<string>();
+        private static void Refused(Animator animator, string why)
+        {
+            RuntimeAnimatorController c = animator != null ? animator.runtimeAnimatorController : null;
+            string key = (c != null ? c.GetInstanceID().ToString() : "none") + ":" + why;
+            if (!s_refusedLogged.Add(key)) return;
+            FiresLogger.LogInfo($"{Tag}no climb clips for '{(animator != null ? animator.gameObject.name : "?")}': {why}");
         }
 
         // Whether the controller has every borrowed state on layer 0 (checked once per controller).
@@ -141,7 +197,7 @@ namespace FiresCore.Movement
             }
             if (!animator.HasState(0, MovementHash)) fits = false;
             s_fits[controller] = fits;
-            if (!fits) FiresLogger.LogInfo($"{Tag}'{controller.name}' lacks the player states the climb clips borrow; its bodies climb without them");
+            if (!fits) FiresLogger.LogInfo($"{Tag}{Named(controller)} lacks the player states the climb clips borrow; its bodies climb without them");
             return fits;
         }
 
@@ -168,7 +224,8 @@ namespace FiresCore.Movement
             }
             overrides.ApplyOverrides(pairs);
             s_overrides[original] = overrides;
-            FiresLogger.LogInfo($"{Tag}climb clips on '{original.name}': {replaced} of {Slots.Length} borrowed clips replaced");
+            s_ours.Add(overrides);
+            FiresLogger.LogInfo($"{Tag}climb clips on {Named(original)}: {replaced} of {Slots.Length} borrowed clips replaced");
             return overrides;
         }
 

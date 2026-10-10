@@ -792,6 +792,40 @@ namespace FiresCore.Npc.Archetypes
                 BonusHealthRegen = 4f,
                 BonusStaminaRegen = 1.5f
             });
+
+            RegisterPossessionClassPairs();
+        }
+
+        /// <summary>
+        /// Druid / Necromancer (10-07): pair entries only, so each pairs with the other nine on the Class pill. No
+        /// special ability or bonuses yet ("hybrid ultimates come later", Tools\CLASSES_DRUID_NECROMANCER.md).
+        /// </summary>
+        private static void RegisterPossessionClassPairs()
+        {
+            var newClasses = new[] { ArchetypeClass.Druid, ArchetypeClass.Necromancer };
+            foreach (var added in newClasses)
+            {
+                for (var other = ArchetypeClass.Tank; other <= ArchetypeClass.Necromancer; other++)
+                {
+                    if (other == added) continue;
+                    if (!_hybrids.ContainsKey((added, other))) RegisterHybrid(added, other, PairOnly(added, other));
+                    if (!_hybrids.ContainsKey((other, added))) RegisterHybrid(other, added, PairOnly(other, added));
+                }
+            }
+        }
+
+        private static HybridDefinition PairOnly(ArchetypeClass main, ArchetypeClass sub)
+        {
+            var mainDef = ArchetypeRegistry.GetDefinition(main);
+            var subDef = ArchetypeRegistry.GetDefinition(sub);
+            string mainName = mainDef != null ? mainDef.DisplayName : main.ToString();
+            string subName = subDef != null ? subDef.DisplayName : sub.ToString();
+            return new HybridDefinition
+            {
+                DisplayName = mainName + " / " + subName,
+                Description = mainName + " with " + subName + " as the sub-class.",
+                IconColor = mainDef != null ? Color.Lerp(mainDef.IconColor, subDef != null ? subDef.IconColor : mainDef.IconColor, 0.35f) : Color.gray
+            };
         }
         
         private static void RegisterHybrid(ArchetypeClass main, ArchetypeClass sub, HybridDefinition definition)

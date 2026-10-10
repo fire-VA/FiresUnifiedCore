@@ -247,10 +247,8 @@ namespace FiresCore.Npc
                 return;
             }
 
-            dir.Normalize();
-            Quaternion rot = Quaternion.LookRotation(dir);
-            if (float.IsNaN(rot.x) || float.IsNaN(rot.y) || float.IsNaN(rot.z) || float.IsNaN(rot.w)) return;
-            transform.rotation = rot;
+            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            _character?.SetLookDir(dir.normalized);
         }
 
         private void ApplyVelocityClamping()
@@ -261,10 +259,9 @@ namespace FiresCore.Npc
             float targetDistance = GetDistanceToCurrentTarget();
             bool isStrafeIntent = _currentIntent == MovementIntent.CombatStrafe;
             
-            _movementModeController.ApplyVelocityClamping(
-                (MovementModeController.MovementMode)(int)mode, 
-                targetDistance, 
-                isStrafeIntent);
+            // 0.2.327 (audit slice 3): slow down by walking (vanilla SetWalk), never by clamping the rigidbody's velocity.
+            if (_movementModeController.WantsSlowWalk((MovementModeController.MovementMode)(int)mode, targetDistance, isStrafeIntent))
+                SetWalkRunSafe(true, false);
         }
 
         private float GetDistanceToCurrentTarget()
@@ -344,15 +341,7 @@ namespace FiresCore.Npc
                     if (actualHorizontalSpeed < 0.15f && !animatorInLocomotion)
                     {
                         SetWalkRunSafe(false, false);
-                        
-                        if (_rigidbody != null && !_rigidbody.isKinematic)
-                        {
-                            if (actualHorizontalSpeed > 0.05f)
-                            {
-                                Vector3 vel = _rigidbody.linearVelocity;
-                                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-                            }
-                        }
+                        // 0.2.327 (audit slice 3): no velocity kill; SetMoveDirSafe(0) above lets vanilla UpdateWalking brake.
                     }
                     else
                     {

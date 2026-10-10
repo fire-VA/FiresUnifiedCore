@@ -179,7 +179,8 @@ namespace FiresCore.Npc.IdleBehaviors
                     facing.SetLookDirection(BehaviorName, dir);
                 return;
             }
-            Transform.rotation = Quaternion.LookRotation(dir.normalized);
+            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            _character?.SetLookDir(dir.normalized);
         }
 
         // The gatherers' swing: the weapon's attack trigger now, the resource hit DamageDelay later.

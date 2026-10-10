@@ -135,7 +135,7 @@ namespace FiresCore.Npc.IdleBehaviors
             int queued = nview.GetZDO().GetInt(ZDOVars.s_queued, 0);
             if (queued >= _nearbyKiln.m_maxOre) return false;
             
-            foreach (var item in storageInv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storageInv))
             {
                 if (item == null) continue;
                 if (item.m_stack <= 0) continue; // Skip empty stacks
@@ -485,25 +485,18 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
-            // Timeout - teleport if needed
+            // Timeout: give up the trip, as a vanilla NPC drops a goal it can't reach (audit slice 4, T2, 0.2.329; this used to
+            // teleport onto the smelter). Returning true ends the phase; Update then runs NotifyOwner (frees the smelter and
+            // kiln) and Complete, and the idle loop picks the next chore from where the companion stands.
             if (Time.time - _phaseStartTime > 20f)
             {
-                Debug.Log($"[SmelterOperator] {Companion?.companionName} timeout returning to smelter - teleporting");
-                
-                Vector3 teleportPos = FindSafeTeleportPosition(smelterPos);
-                Transform.position = teleportPos;
-                
-                var nview = Companion?.GetComponent<ZNetView>();
-                if (nview != null && nview.IsValid())
-                {
-                    nview.GetZDO().SetPosition(teleportPos);
-                }
-                
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} gave up returning to the smelter after 20 s, {dist:0.0} m away; the chore ends here");
+                StopMovement();
                 _primarySmelter = null;
                 _primarySmelterPosition = Vector3.zero;
-                SetPhase(OperatePhase.FillingStation);
+                return true;
             }
-            
+
             return false;
         }
         
