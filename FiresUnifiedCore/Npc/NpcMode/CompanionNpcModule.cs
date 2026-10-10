@@ -265,6 +265,27 @@ namespace FiresCore.Npc.NpcMode
         /// throttle (cached refs, cheap): AI brains OFF, m_aiSkipTarget ON, so it stays an inert prop. Wander
         /// and patrol NPCs are excluded — they keep their AI. Runs on every machine (the visual is client-side).
         /// </summary>
+        // 0.2.390: the static stage hook ([lead] 10-10). RPGmaker's StaticNpcInitializer calls MarkStaticStageApplied() when its
+        // ApplyBodyStage has finished, so the ai-guard knows exactly when the fixture contract was applied.
+        private bool _staticStageApplied;
+        private static bool s_stageHookInUse;
+
+        /// <summary>
+        /// The mod that stages this body (RPGmaker's StaticNpcInitializer.ApplyBodyStage) calls this when the static / wander /
+        /// patrol stage has been applied. Before it, the ai-guard holds a static fixture's AI off quietly (the prefab's AI is still
+        /// on); after it, an AI switched back on is a real re-enable and is warned about.
+        /// </summary>
+        public void MarkStaticStageApplied()
+        {
+            s_stageHookInUse = true;
+            if (_staticStageApplied) return;
+            _staticStageApplied = true;
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule][ai-guard] '{DisplayName}': static stage applied ({Time.time - _loadedAt:0.0} s after load)");
+        }
+
+        /// <summary>True once MarkStaticStageApplied has been called for this body.</summary>
+        public bool StaticStageApplied => _staticStageApplied;
+
         private void EnforceStaticInertness()
         {
             if (!isStaticPlacement || allowIdleWandering || HasPatrolRoute()) return;
@@ -286,7 +307,9 @@ namespace FiresCore.Npc.NpcMode
                 // at load, which arms this guard at once, while RPGmaker's StaticNpcInitializer turns the AI off only after its
                 // DelayedInit (frames + polls, seconds). Until then the AI is still on from the prefab: holding it off is the
                 // contract, not a re-enable. A re-enable after this window still warns.
-                else if (Time.time - _loadedAt < StageGraceSeconds)
+                // 0.2.390: exact, not timed. Once the body's owner mod reports its stage (MarkStaticStageApplied), a fixture whose
+                // stage hasn't been reported yet is simply not staged yet. The 15 s window remains only for builds that never call it.
+                else if (!_staticStageApplied && (s_stageHookInUse || Time.time - _loadedAt < StageGraceSeconds))
                 {
                     if (!_preStageLogged)
                     {
