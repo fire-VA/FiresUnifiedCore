@@ -282,6 +282,18 @@ namespace FiresCore.Npc.NpcMode
                 // 0.2.301: right after a possession ends the driver's mod puts the AI back as IT saw it; the fixture's own state wins.
                 if (Time.time - _releasedAt < ReleaseGraceSeconds)
                     FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule][ai-guard] '{DisplayName}': AI off again after its possession ended (the fixture's own state)");
+                // 0.2.389 (Fire's log 10-10, Sigyn/Fulla on every load): nothing re-enabled them. LoadFromZDO reads npc_static_placement
+                // at load, which arms this guard at once, while RPGmaker's StaticNpcInitializer turns the AI off only after its
+                // DelayedInit (frames + polls, seconds). Until then the AI is still on from the prefab: holding it off is the
+                // contract, not a re-enable. A re-enable after this window still warns.
+                else if (Time.time - _loadedAt < StageGraceSeconds)
+                {
+                    if (!_preStageLogged)
+                    {
+                        _preStageLogged = true;
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule][ai-guard] '{DisplayName}': AI held off before the static stage applied ({Time.time - _loadedAt:0.0} s after load)");
+                    }
+                }
                 else
                     Debug.LogWarning($"[CompanionNpcModule][ai-guard] re-disabled AI on static fixture '{DisplayName}' — something re-enabled it after the static stage was applied");
             }
@@ -306,6 +318,10 @@ namespace FiresCore.Npc.NpcMode
         private bool _gravityBefore, _kinematicBefore, _humanoidBefore, _syncRotationBefore, _aiSkipBefore, _companionAIBefore, _monsterAIBefore;
         private float _possessedReportAt, _releasedAt = -100f;
         private bool _returningFromPossession, _claimedForPossessor;
+        // 0.2.389: the ai-guard's quiet window after load, while RPGmaker's StaticNpcInitializer has not applied the static stage yet.
+        private float _loadedAt = -100f;
+        private bool _preStageLogged;
+        private const float StageGraceSeconds = 15f;
         private float _returnStart, _returnDeadline, _returnLastProgressAt, _returnBestDistance;
         private const float ReturnArrive = 0.5f, ReturnSnapDistance = 40f, ReturnStuckSeconds = 3f, ReturnSecondsPerMetre = 0.6f,
                             ReturnSlackSeconds = 6f, ReleaseGraceSeconds = 10f, PossessedReportSeconds = 2f;
@@ -1390,6 +1406,7 @@ namespace FiresCore.Npc.NpcMode
 
             isStationedAsNpc = zdo.GetBool("npc_stationed", false);
             isStaticPlacement = zdo.GetBool("npc_static_placement", false);
+            _loadedAt = Time.time;   // 0.2.389: the ai-guard's pre-stage window starts here
             allowIdleWandering = zdo.GetBool("npc_allow_idle_wander", false);
             suppressFacePlayer = zdo.GetBool("npc_no_face_player", false);
             allowNpcInteractionsWhileFollowing = zdo.GetBool("npc_allow_while_following", false);

@@ -1,3 +1,6 @@
+* v0.2.389 - updates and optimizations for Valheim 1.0
+  - settings and features for other Fires mods only appear when those mods are installed; companion and NPC fixes; fixes and polish
+
 * v0.2.388 - updates and optimizations for Valheim 1.0
   - settings and features for other Fires mods only appear when those mods are installed; companion equipment fix; fixes and polish
 
