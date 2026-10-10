@@ -57,9 +57,35 @@ namespace FiresCore.Npc
 
         // 2-arg forms: the right-hand family takes (hash, quality) on 1.0; the left/shoulder family took (hash, variant)
         // before 1.0. 3-arg forms are (hash, variant, quality). Quality 0 = vanilla VisEquipment.SetItem's default.
+        // 0.2.388 (Fire's log 10-10: NullReferenceException at VisEquipment.SetRightBackItem 0x18 from CompanionController.Start):
+        // every vanilla Set*Item stores the new hash and THEN reads m_nview.GetZDO(). m_nview is set in VisEquipment.Awake, so a
+        // call before that Awake throws after stamping the hash, and the next call with the same item returns early and never
+        // reaches the ZDO. Until the body's VisEquipment is awake nothing is called; callers retry on their next redraw.
+        private static readonly AccessTools.FieldRef<VisEquipment, ZNetView> NView = AccessTools.FieldRefAccess<VisEquipment, ZNetView>("m_nview");
+        private static readonly HashSet<int> _notReadyLogged = new HashSet<int>();
+
+        /// <summary>True once the VisEquipment has run its Awake (m_nview set), so its Set*Item setters can't throw.</summary>
+        internal static bool IsReady(VisEquipment vis) => vis != null && NView(vis) != null;
+
+        private static bool Ready(VisEquipment vis, string what)
+        {
+            if (vis == null) return false;
+            if (NView(vis) != null) return true;
+            if (_notReadyLogged.Add(vis.GetInstanceID()))
+                FiresCore.Logging.FiresLogger.LogDebug($"[VisEquipmentCompat] {what} on '{vis.name}' skipped: its VisEquipment isn't awake yet (m_nview null); it is drawn on the next redraw");
+            return false;
+        }
+
         private static void Dispatch(VisEquipment vis, string methodName, string name, int variant, bool hasVariant)
         {
-            if (vis == null) return;
+            if (!Ready(vis, methodName))
+            {
+                // What vanilla had stored before it threw: the slot's item field, so the owner still draws it locally
+                // (SetRightBackItem -> m_rightBackItem). The ZDO is written by a later call once the body is awake.
+                if (vis != null && methodName.StartsWith("Set") && methodName.EndsWith("Item"))
+                    SetItemFieldDirect(vis, "m_" + char.ToLowerInvariant(methodName[3]) + methodName.Substring(4), name ?? "");
+                return;
+            }
             MethodInfo method = Resolve(methodName);
             if (method == null) return;
             ParameterInfo[] ps = method.GetParameters();
@@ -107,7 +133,7 @@ namespace FiresCore.Npc
             string fieldName,
             string setMethodName)
         {
-            if (src == null || dst == null) return;
+            if (src == null || !Ready(dst, setMethodName)) return;
             var field = typeof(VisEquipment).GetField(
                 fieldName,
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);

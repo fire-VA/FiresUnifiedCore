@@ -1443,6 +1443,9 @@ EnsureInitialized();
         internal void RedrawBackItems(VisEquipment vis)
         {
             if (vis == null || _inventory == null) return;
+            // 0.2.388: not awake yet -> draw nothing and leave _lastBackCellsHash as it was, so Update's change check redraws
+            // once the body is ready (setting it here used to mark the back as drawn when the setters had thrown).
+            if (!VisEquipmentCompat.IsReady(vis)) return;
             var h = Body;
             var rc = CompanionGridLayout.CellFor(EquipmentSlot.RightBack);
             var lc = CompanionGridLayout.CellFor(EquipmentSlot.LeftBack);
