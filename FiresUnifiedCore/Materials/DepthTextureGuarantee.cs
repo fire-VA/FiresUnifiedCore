@@ -4,7 +4,7 @@ using UnityEngine;
 namespace FiresCore.Materials
 {
     /// <summary>
-    /// 0.2.314: Custom/FiresInlandWater now takes its shore depth per pixel from _CameraDepthTexture (the tint, opacity,
+    /// Custom/FiresInlandWater now takes its shore depth per pixel from _CameraDepthTexture (the tint, opacity,
     /// waterline fade and foam collar). Built-in pipeline cameras only fill that texture when asked; vanilla's own water
     /// asks in practice, but nothing guaranteed it. The game camera asks too, once, when it wakes. Client only (a dedicated
     /// server has no GameCamera).

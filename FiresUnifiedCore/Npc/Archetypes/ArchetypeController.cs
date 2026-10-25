@@ -124,7 +124,7 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>Current assigned archetype class (primary).</summary>
         public ArchetypeClass CurrentArchetypeClass => _currentArchetype;
 
-        // A test's archetype (0.2.204, [ghost]'s synergy step): held against the equipment re-evaluation until released with None.
+        // A test's archetype: held against the equipment re-evaluation until released with None.
         private ArchetypeClass _testArchetype = ArchetypeClass.None;
 
         /// <summary>
@@ -265,7 +265,7 @@ namespace FiresCore.Npc.Archetypes
         }
         
         // A copy on another peer read level and archetype choice once, at load: SetLevel / the archetype override made on the owner
-        // stayed invisible there ([wishbone] R60: Fire's copy showed "level 0" and a Rogue). Re-read both from the ZDO now and then.
+        // stayed invisible there. Re-read both from the ZDO now and then.
         private const float RemoteRefreshInterval = 2f;
         private float _nextRemoteRefresh;
         private int _lastSeenOverride = int.MinValue;
@@ -800,7 +800,7 @@ namespace FiresCore.Npc.Archetypes
             var storage = _inventory.GetStorageInventory();
             if (storage != null)
             {
-                foreach (var item in _inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
+                foreach (var item in _inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag now)
                 {
                     if (item?.m_shared == null) continue;
                     
@@ -1273,7 +1273,7 @@ namespace FiresCore.Npc.Archetypes
                 var storage = _inventory.GetStorageInventory();
                 if (storage != null)
                 {
-                    foreach (var item in _inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
+                    foreach (var item in _inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag now)
                     {
                         if (item?.m_shared?.m_itemType == ItemDrop.ItemData.ItemType.Shield)
                         {
@@ -1707,7 +1707,7 @@ namespace FiresCore.Npc.Archetypes
                 var storage = _inventory.GetStorageInventory();
                 if (storage != null)
                 {
-                    foreach (var item in _inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
+                    foreach (var item in _inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag now)
                     {
                         if (ArchetypeUtils.IsSupportStaff(item))
                         {

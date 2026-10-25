@@ -6,13 +6,14 @@ using UnityEngine;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// How dangerous the fight around a body is, as one number and a tactic (Tools\COMBAT_TACTICS.md §2; Fire, R72 Crypt4: "recognize
-    /// the threat level when there's many bad guys bearing down on him and play accordingly"). Every hostile within
+    /// How dangerous the fight around a body is, as one number and a tactic (Tools\COMBAT_TACTICS.md §2: recognise when many
+    /// foes are bearing down and play accordingly). Every hostile within
     /// <see cref="Radius"/> m that targets the body or its party counts. Its damage per second is its weapon's damage (with the
     /// level bonus) after the body's armour, over its attack interval; the body's seconds to die = health ÷ the sum. The level keys
     /// on that and on how many foes can hit at once. Body-agnostic: the FDT bot (CombatAdvisor) and a companion ask the same thing.
-    /// 0.2.198 chooses fight / space / retreat; pull, chokepoint and run past come with the escape rules (0.2.200).
+    /// The level chooses fight / space / retreat; pull, chokepoint and run past come with the escape rules.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.NpcBrain)]
     public static class ThreatLevel
     {
         public enum Level { Fight, Space, Pull, Chokepoint, RunPast, Retreat }
@@ -34,7 +35,7 @@ namespace FiresCore.Npc.Combat
         private const float RetreatExitSeconds = 10f, RetreatExitStamina = 0.3f, MaxRetreatSeconds = 8f;
         // Each foe's swing also takes its animation: added to its weapon's AI attack interval.
         private const float SwingSeconds = 1f;
-        /// <summary>The body's own swing (s) and the share of swings that land, for its time to kill (0.2.222).</summary>
+        /// <summary>The body's own swing (s) and the share of swings that land, for its time to kill.</summary>
         private const float MySwingSeconds = 1.2f, MyHitShare = 0.8f;
         /// <summary>Time to kill a foe our weapon can't hurt.</summary>
         private const float CantKillSeconds = 999f;
@@ -55,17 +56,18 @@ namespace FiresCore.Npc.Combat
             public int OnMe;
             public float Dps;
             public float SecondsToDie;
-            /// <summary>How long the body's weapon takes to kill every foe after it, one after another (0.2.222; 0 without foes).</summary>
+            /// <summary>How long the body's weapon takes to kill every foe after it, one after another (0 without foes).</summary>
             public float SecondsToKill;
             public float Health, MaxHealth, Stamina;
             /// <summary>The biggest single hit (after armour) a foe in reach can land, and which foe.</summary>
             public float Burst;
             public Character BurstFrom;
+            public string BurstSource;   // "learned", "weapon", "learned, capped at 3x weapon" or "world record"
             /// <summary>The nearest foe after the body, or null.</summary>
             public Character Nearest;
-            /// <summary>A foe that hit the ship the body is aboard (0.2.201), or null; the verdict names it.</summary>
+            /// <summary>A foe that hit the ship the body is aboard, or null; the verdict names it.</summary>
             public Character ShipFoe;
-            /// <summary>The nearest foe after the body that shoots (a bow, a caster, a flier's spit, or one that hit us from afar), or null (0.2.226).</summary>
+            /// <summary>The nearest foe after the body that shoots (a bow, a caster, a flier's spit, or one that hit us from afar), or null.</summary>
             public Character Shooter;
             /// <summary>Flat unit direction away from the foes (their damage-weighted centre), zero with none.</summary>
             public Vector3 Away;
@@ -80,7 +82,7 @@ namespace FiresCore.Npc.Combat
         /// <summary>
         /// Whether <paramref name="foe"/> is after <paramref name="self"/> (or its party). A monster's AI target lives on its OWNER's
         /// peer only (vanilla MonsterAI.m_targetCreature); off the owner (a dedicated server simulating, another player's client) it
-        /// reads null, and R76's drake that killed the bot counted as "0 foe(s) … no foe after us". There: an ALERTED enemy (the
+        /// reads null, so a foe attacking from there would not count. There: an ALERTED enemy (the
         /// synced alert flag) for which we're the nearest player counts. <paramref name="onMe"/>: after self itself.
         /// </summary>
         public static bool IsAfter(Character foe, Character self, out bool onMe)
@@ -89,11 +91,10 @@ namespace FiresCore.Npc.Combat
             if (foe == null || self == null) return false;
             BaseAI ai = foe.GetBaseAI();
             if (ai == null) return false;
-            // A foe going for the ship we're aboard is after its whole crew (0.2.201; Fire, R76: a Serpent bit the Karve 4 times
-            // and nothing aboard reacted).
+            // A foe going for the ship we're aboard is after its whole crew.
             Ship myShip = ShipOf(self);
             if (myShip != null && IsAfterShip(foe, myShip)) return true;
-            // It just hit us: whatever its target reads on this peer (0.2.226).
+            // It just hit us: whatever its target reads on this peer.
             if (HitRecently(foe, self)) { onMe = true; return true; }
             Character target = TargetOf(ai);
             if (target != null)
@@ -101,7 +102,7 @@ namespace FiresCore.Npc.Combat
                 onMe = target == self;
                 return onMe || ClassTargeting.IsPartyMember(self, target) || (myShip != null && ShipOf(target) == myShip);
             }
-            // An alerted shooter with the body in range and in sight is after it, whoever is nearer (0.2.232).
+            // An alerted shooter with the body in range and in sight is after it, whoever is nearer.
             if (BaseAI.IsEnemy(foe, self) && ShootingAt(foe, self, out _)) { onMe = true; return true; }
             if (foe.m_nview != null && foe.m_nview.IsOwner()) return false;   // the owner knows: no target is no target
             ZDO zdo = foe.m_nview != null ? foe.m_nview.GetZDO() : null;
@@ -252,8 +253,7 @@ namespace FiresCore.Npc.Combat
             return zdo != null ? zdo.GetBool(ZDOVars.s_alert) : ai.IsAlerted();
         }
 
-        // ---- Burst: the biggest single hit each kind of foe has landed (R76: one 85 frost hit killed the bot at 51 hp while the
-        // average said "10.9 s to die") ----
+        // ---- Burst: the biggest single hit each kind of foe has landed (an average alone hides a one-shot) ----
 
         private static readonly Dictionary<string, float> s_maxHit = new Dictionary<string, float>();
 
@@ -266,9 +266,10 @@ namespace FiresCore.Npc.Combat
             Character attacker = hit?.GetAttacker();
             if (attacker == null || victim == null) return;
             string key = Utils.GetPrefabName(attacker.gameObject) + ":" + attacker.GetLevel();
-            float raw = hit.GetTotalDamage();
+            float raw = CombatDamage(hit.m_damage);   // combat damage only (a tool's chop/pickaxe is not a body hit)
             if (!s_maxHit.TryGetValue(key, out float max) || raw > max) s_maxHit[key] = raw;
             if (attacker == victim || attacker.GetBaseAI() == null || raw <= 0f) return;
+            if (FiresCore.Npc.Archetypes.ClassTargeting.IsPartyMember(victim, attacker)) return;   // a party member's stray hit is no threat
             if (!s_hitBy.TryGetValue(victim, out var by))
             {
                 if (s_hitBy.Count > 32) s_hitBy.Clear();
@@ -278,9 +279,8 @@ namespace FiresCore.Npc.Combat
             by[attacker] = Time.time;
         }
 
-        // ---- Recent attackers (0.2.226, R90 run 8: a Skeleton ★2 archer shot Coop2 for 39 from 15.1 m; off its owner its target read
-        // null and its bow 0 m, so the reading said "0 foe(s)", the flee ended "nothing after it" and the bot walked back to loot at
-        // 2 hp and was shot dead) ----
+        // ---- Recent attackers (off its owner a foe's target and weapon can read null, so a foe that just hit us must still
+        // count) ----
 
         /// <summary>A foe that hit the body is after it for this long (s) after its last hit, from wherever it shot (out to <see cref="CombatAdvisor.MaxShotRange"/>).</summary>
         public const float HitMemory = 12f;
@@ -294,9 +294,7 @@ namespace FiresCore.Npc.Combat
             return by.TryGetValue(foe, out float at) && Time.time - at < HitMemory;
         }
 
-        // ---- Shooters and cover (0.2.232, R90 run 11: the Skeleton ★2 archer again; "shooter: Skeleton ★2 at 20 m" named it, the flee
-        // ended "nowhere to run and nothing after it" once the 12 s hit memory ran out with the archer still in bow range, and its next
-        // arrow ~20 s later killed Coop2. From an archer "nowhere to run" means: break its line of sight or leave its range) ----
+        // ---- Shooters and cover (from an archer, "nowhere to run" means: break its line of sight or leave its range) ----
 
         /// <summary>A shooter still reaches this far (m) beyond its own weapon's range: it steps in to shoot.</summary>
         public const float ShotRangeSlack = 4f;
@@ -375,22 +373,32 @@ namespace FiresCore.Npc.Combat
         }
 
         /// <summary>The biggest single hit (after the body's armour) this foe can be expected to land: learned, or its weapon's.</summary>
-        public static float Burst(Character foe, float armor)
+        public static float Burst(Character foe, float armor) => Burst(foe, armor, out _);
+
+        /// <summary>Also says where the number came from ("learned", "weapon", "learned, capped").</summary>
+        public static float Burst(Character foe, float armor, out string source)
         {
+            source = null;
             if (foe == null) return 0f;
-            float raw = 0f;
-            s_maxHit.TryGetValue(Utils.GetPrefabName(foe.gameObject) + ":" + foe.GetLevel(), out raw);
+            s_maxHit.TryGetValue(Utils.GetPrefabName(foe.gameObject) + ":" + foe.GetLevel(), out float learned);
             ItemDrop.ItemData weapon = FoeWeapon(foe);
-            if (weapon?.m_shared != null)
-                raw = Mathf.Max(raw, weapon.GetDamage().GetTotalDamage() * (1f + Mathf.Max(0, foe.GetLevel() - 1) * 0.5f));
+            float fromWeapon = weapon?.m_shared != null ? CombatDamage(weapon.GetDamage()) * (1f + Mathf.Max(0, foe.GetLevel() - 1) * 0.5f) : 0f;
+            // A learned hit far above what the weapon can
+            // do (a misattributed attacker, a scaled one-off) no longer rules every later fight; capped at 3x the weapon estimate
+            if (fromWeapon > 0f && learned > fromWeapon * 3f) { learned = fromWeapon * 3f; source = "learned, capped at 3x weapon"; }
+            float raw = Mathf.Max(learned, fromWeapon);
+            if (source == null) source = raw <= 0f ? null : learned >= fromWeapon ? "learned" : "weapon";
             return raw > 0f ? HitData.DamageTypes.ApplyArmor(raw, armor) : 0f;
         }
 
+        /// <summary>The damage a hit does to a body - physical + elemental; chop and pickaxe (tool damage) left out.</summary>
+        internal static float CombatDamage(HitData.DamageTypes d) =>
+            d.m_damage + d.m_blunt + d.m_slash + d.m_pierce + d.m_fire + d.m_frost + d.m_lightning + d.m_poison + d.m_spirit;
+
         /// <summary>
         /// The weapon <paramref name="foe"/> fights with: its live weapon where its inventory lives (its owner's peer), else the hand
-        /// items its ZDO syncs to every peer (right, then left: a bow is a left-hand item, 0.2.226), else the hardest-hitting weapon of
-        /// its prefab's default kit (0.2.221, R90 run 4: a Skeleton ★2's sword read as nothing off its owner, so its 44-damage slash
-        /// weighed 0 against the bot's 25 hp and it fought).
+        /// items its ZDO syncs to every peer (right, then left: a bow is a left-hand item), else the hardest-hitting weapon of
+        /// its prefab's default kit (otherwise a foe's weapon can read as nothing off its owner).
         /// </summary>
         public static ItemDrop.ItemData FoeWeapon(Character foe)
         {
@@ -403,7 +411,7 @@ namespace FiresCore.Npc.Combat
         }
 
         /// <summary>
-        /// The hit this world remembers <paramref name="foe"/>'s kind★ landing (World.Danger, 0.2.221): its biggest hit in health, or for
+        /// The hit this world remembers <paramref name="foe"/>'s kind★ landing (World.Danger): its biggest hit in health, or for
         /// a record older than that, its biggest hit's share of max health times <paramref name="maxHealth"/>; 0 without a record.
         /// </summary>
         public static float LearnedBurst(Character foe, float maxHealth)
@@ -476,7 +484,7 @@ namespace FiresCore.Npc.Combat
             Vector3 weighted = Vector3.zero;
             float weight = 0f;
             Ship myShip = ShipOf(self);
-            // The losing-fight sums (0.2.222): every foe after us at full reach, and how long our weapon takes to kill them all.
+            // The losing-fight sums: every foe after us at full reach, and how long our weapon takes to kill them all.
             ItemDrop.ItemData mine = FoeWeapon(self);
             float packDps = 0f, toKill = 0f;
             Character hardest = null;
@@ -486,12 +494,12 @@ namespace FiresCore.Npc.Combat
                 if (other == null || other == self || other.IsDead()) continue;
                 Vector3 gap = other.transform.position - at;
                 float distance = gap.magnitude;
-                // An archer / caster counts out to its own range (R75: a Skeleton archer at 17 m, "0 hostile"); a flier (a drake
-                // spitting frost from above, R76) out to FlyerReach even when its weapon can't be read on this peer; a foe that hit
+                // An archer / caster counts out to its own range; a flier (a drake
+                // spitting frost from above) out to FlyerReach even when its weapon can't be read on this peer; a foe that hit
                 // our ship out to ShipReach.
                 float shotReach = Mathf.Max(CombatAdvisor.RangedReach(other), other.m_flying ? FlyerReach : 0f);
                 bool shipFoe = myShip != null && IsAfterShip(other, myShip);
-                // A foe that just hit us reaches us from wherever it stands (0.2.226): it proved it.
+                // A foe that just hit us reaches us from wherever it stands: it proved it.
                 bool hitUs = HitRecently(other, self) && distance <= CombatAdvisor.MaxShotRange;
                 if (hitUs) shotReach = Mathf.Max(shotReach, distance);
                 if (distance > Radius && (distance > CombatAdvisor.MaxShotRange || distance > shotReach + ShotRangeSlack) && !(shipFoe && distance <= ShipReach)) continue;
@@ -512,10 +520,11 @@ namespace FiresCore.Npc.Combat
                     r.Dps += dps;
                 }
                 else if (onMe) r.Dps += dps * 0.5f;   // closing in: half counts
-                // A one-hit foe counts before it is in reach (0.2.221, R90 run 4: the Skeleton ★2 was 5 m off when the fight was chosen),
+                // A one-hit foe counts before it is in reach,
                 // and what this world learned counts too: a prefab★ that one-shot a body here, or its biggest hit as a share of max health.
-                float burst = Mathf.Max(Burst(other, armor), LearnedBurst(other, maxHealth));
-                if (burst > r.Burst) { r.Burst = burst; r.BurstFrom = other; }
+                float wb = Burst(other, armor, out string src), lb = LearnedBurst(other, maxHealth);
+                float burst = Mathf.Max(wb, lb);
+                if (burst > r.Burst) { r.Burst = burst; r.BurstFrom = other; r.BurstSource = lb > wb ? "world record" : src; }
                 packDps += dps;
                 float myHit = mine != null ? CombatAdvisor.Effectiveness(mine, other, out _) : 0f;
                 float myDps = myHit * MyHitShare / MySwingSeconds;
@@ -535,8 +544,7 @@ namespace FiresCore.Npc.Combat
             r.FlankShift = Flank(self, at, r.Nearest);
             if (r.Dps > 0.01f) r.SecondsToDie = health / r.Dps;
 
-            // Losing fight (0.2.222, R90 run 6: the bot fought a Skeleton ★1 it couldn't out-trade until it was at 9 of 39 hp, and the
-            // flee came too late): longer to kill them all than to die to all of them, counted before the first swing, with every foe
+            // Losing fight: longer to kill them all than to die to all of them, counted before the first swing, with every foe
             // at full reach. Once retreating it holds until the trade is well in our favour (kill < LosingExit x die).
             r.SecondsToKill = r.Foes > 0 ? toKill : 0f;
             float packDie = packDps > 0.01f ? health / packDps : CantKillSeconds;
@@ -547,7 +555,7 @@ namespace FiresCore.Npc.Combat
             if (r.Foes > 0 && (oneHitKills || losing || r.SecondsToDie < RetreatSeconds || (stamina < RetreatStamina && r.InReach >= 2)))
             {
                 want = Level.Retreat;
-                r.Why = oneHitKills ? $"one hit can kill ({FoeName(r.BurstFrom)}: {r.Burst:0} after armour vs hp {health:0} of {maxHealth:0})"
+                r.Why = oneHitKills ? $"one hit can kill ({FoeName(r.BurstFrom)}: {r.Burst:0} after armour vs hp {health:0} of {maxHealth:0}; {r.BurstSource ?? "?"})"
                     : losing ? $"losing fight (kill in {r.SecondsToKill:0} s, die in {packDie:0} s: {(r.Foes > 1 ? $"{r.Foes} foes, hardest " : "")}{FoeName(hardest)} " +
                                $"hp {(hardest != null ? hardest.GetHealth() : 0f):0} vs my {(mine != null ? (mine.m_dropPrefab != null ? mine.m_dropPrefab.name : mine.m_shared.m_name) : "hands")}; {packDps:0.0} dps on hp {health:0})"
                     : r.SecondsToDie < RetreatSeconds ? $"{r.SecondsToDie:0.0} s to die" : $"stamina {stamina * 100f:0} % with {r.InReach} in reach";
@@ -565,7 +573,7 @@ namespace FiresCore.Npc.Combat
             // Out of retreat only once it's safe again; any easier level only after the harder one held a moment.
             // A retreat that hasn't shaken them off in MaxRetreatSeconds turns to fight again (at "space") unless death is close:
             // running forever with foes on its back lands no hits either.
-            // Never "spent" against a foe that kills in one hit (0.2.221): turning to fight it is the death R90 run 4 had.
+            // Never "spent" against a foe that kills in one hit: turning to fight it is death.
             bool retreatSpent = previous == Level.Retreat && Time.time - since > MaxRetreatSeconds && r.SecondsToDie >= RetreatSeconds / 2f && !oneHitKills && !losing;
             if (retreatSpent) s_retreatSpent[self] = Time.time;
             bool retreatResting = s_retreatSpent.TryGetValue(self, out float spentAt) && Time.time - spentAt < MaxRetreatSeconds;
@@ -630,6 +638,7 @@ namespace FiresCore.Npc.Combat
     /// body. Names as the drill parses them: <see cref="Report"/> gives "threat fight,space; idle 0; filled 0; retreats 0; …".
     /// <see cref="Reset"/> at a drill mark / clear; also cleared at Game.Start.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.NpcBrain)]
     public static class TacticStats
     {
         public sealed class Counters

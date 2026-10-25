@@ -21,10 +21,11 @@ namespace FiresCore.UI.ContextMenu
         {
             if (Enable != null) return; // idempotent
 
+            // Default OFF. Existing cfg files keep their value.
             Enable = config.Bind(
-                "ContextMenu", "Enabled", true,
+                "ContextMenu", "Enabled", false,
                 "Enable the hold-modifier + right-click companion/context menu (companion commands, patrol-node " +
-                "editing, etc.). Turn off to disable it entirely.");
+                "editing, etc.). Off by default: turn on for companion right-click commands (hold Alt+Shift, then right-click).");
 
             Modifier1 = config.Bind(
                 "ContextMenu", "ModifierKey1", KeyCode.LeftAlt,
@@ -37,8 +38,8 @@ namespace FiresCore.UI.ContextMenu
                 "Default LeftShift (so the default arm combo is Alt+Shift, then right-click).");
         }
 
-        /// <summary>Cheap hot-path read. True until bound (feature on by default) unless explicitly disabled.</summary>
-        public static bool Enabled => Enable == null || Enable.Value;
+        /// <summary>Cheap hot-path read. False until bound (the feature is off by default) unless explicitly enabled.</summary>
+        public static bool Enabled => Enable != null && Enable.Value;
 
         /// <summary>True while the configured modifier combo is held (the arm gate for a context-menu right-click).</summary>
         public static bool ModifiersHeld() =>

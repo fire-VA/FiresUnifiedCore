@@ -25,8 +25,8 @@ namespace FiresCore.Npc.AI
     }
 
     /// <summary>
-    /// The haul for any body (Core 0.2.220; Fire: "gather resources and when it gets close to its weight limit wander back towards
-    /// its base and build a chest if it needs to"): gather to a quota, turn home at <see cref="CarryRules.StoreAt"/> of the carry
+    /// The haul for any body (gather near the weight limit, head home,
+    /// build a chest if needed): gather to a quota, turn home at <see cref="CarryRules.StoreAt"/> of the carry
     /// limit, deposit into chests within <see cref="HaulJob.HomeRadius"/> of home, build a chest there when none has room, and go
     /// again. One brain: a companion (CompanionController.StartHaul) and the FDT bot bodies (HaulVerb) run the same job.
     /// </summary>
@@ -292,7 +292,7 @@ namespace FiresCore.Npc.AI
             HashSet<string> wanted = _gatherFor ?? Wanted();
             if (wanted.Count == 0)
             {
-                if (Weight() <= 0f) return GiveUp("nothing left to gather for the quota and nothing to carry home");
+                if (NothingToStore()) return GiveUp("nothing left to gather for the quota and nothing to carry home");   // worn gear / kept food never counted as cargo
                 turnWhy = "the quota is in the bag";
                 return null;
             }
@@ -318,7 +318,7 @@ namespace FiresCore.Npc.AI
                     var found = FindTarget(_body.Position, GatherRange, wanted, false) ?? FindTarget(Home, GatherRange + HomeRadius, wanted, false);
                     if (found == null)
                     {
-                        if (Weight() <= 0f) return GiveUp($"nothing gatherable for {string.Join("/", wanted)} within {GatherRange:0} m");
+                        if (NothingToStore()) return GiveUp($"nothing gatherable for {string.Join("/", wanted)} within {GatherRange:0} m");
                         turnWhy = $"nothing left to gather within {GatherRange:0} m";
                         return null;
                     }
@@ -364,7 +364,7 @@ namespace FiresCore.Npc.AI
             {
                 if (c.Object == null || _skip.Contains(c.Object.GetInstanceID())) continue;
                 if (pickablesOnly && !c.Data.IsPickable) continue;
-                // Not where a remembered killer stood (0.2.221, World.EnemyMemory.DangerAt): skipped once, with the reason.
+                // Not where a remembered killer stood (World.EnemyMemory.DangerAt): skipped once, with the reason.
                 if (World.EnemyMemory.DangerAt(c.Position, DangerRadius, out string danger) >= DangerSkip)
                 {
                     _skip.Add(c.Object.GetInstanceID());
@@ -490,7 +490,7 @@ namespace FiresCore.Npc.AI
 
                 if (chest != null)
                 {
-                    if (Vector3.Distance(_body.Position, chest.transform.position) > UseDistance)
+                    if (Vector3.Distance(_body.Position, chest.transform.position) > UseDistance || !FiresCore.Npc.Core.CompanionReach.CanTouch(_body.Character.transform, chest, out _))
                     {
                         TaskOrder walk = MoveTo(chest.transform.position, chest.gameObject);
                         return Stalled() ? Refuse(plan, $"missing: can't reach the chest holding {item}") : walk;
@@ -510,7 +510,7 @@ namespace FiresCore.Npc.AI
             }
             if (firstLook) plan.Have = string.Join(", ", have);
 
-            if (station != null && Vector3.Distance(_body.Position, station.transform.position) > UseDistance + 0.5f)
+            if (station != null && (Vector3.Distance(_body.Position, station.transform.position) > UseDistance + 0.5f || !FiresCore.Npc.Core.CompanionReach.CanTouch(_body.Character.transform, station, out _)))
             {
                 TaskOrder walk = MoveTo(station.transform.position, station.gameObject);
                 return Stalled() ? Refuse(plan, $"station: can't reach {Utils.GetPrefabName(station.gameObject)}") : walk;
@@ -556,7 +556,7 @@ namespace FiresCore.Npc.AI
             Container chest = FindRoom(toStore);
             if (chest != null)
             {
-                if (Vector3.Distance(_body.Position, chest.transform.position) > UseDistance)
+                if (Vector3.Distance(_body.Position, chest.transform.position) > UseDistance || !FiresCore.Npc.Core.CompanionReach.CanTouch(_body.Character.transform, chest, out _))
                 {
                     TaskOrder walk = MoveTo(chest.transform.position, chest.gameObject);
                     if (Stalled()) return GiveUp($"can't reach {Utils.GetPrefabName(chest.gameObject)} at ({chest.transform.position.x:0}, {chest.transform.position.z:0})");
@@ -576,7 +576,7 @@ namespace FiresCore.Npc.AI
                 Container woodChest = ChoreBrain.FindChestWith(Home, HomeRadius, _body.OwnerPlayerId, "Wood");
                 if (woodChest != null)
                 {
-                    if (Vector3.Distance(_body.Position, woodChest.transform.position) > UseDistance)
+                    if (Vector3.Distance(_body.Position, woodChest.transform.position) > UseDistance || !FiresCore.Npc.Core.CompanionReach.CanTouch(_body.Character.transform, woodChest, out _))
                         return MoveTo(woodChest.transform.position, woodChest.gameObject);
                     ChoreBrain.Withdraw(woodChest, _body.Inventory, "Wood", cost - Carried("Wood"), _body.OwnerPlayerId);
                     return new TaskOrder { Kind = TaskKind.Move, Point = _body.Position };
@@ -613,10 +613,30 @@ namespace FiresCore.Npc.AI
             return LeaveHome();
         }
 
+        // In its home area with
+        // nothing gatherable and nothing it may deposit the job opened a trip, "went home" (already there) and closed it, ~6 a second.
+        // An empty trip that never left home stays open (no trip events), the job waits EmptyTripBackoff before going out again, and after
+        // MaxEmptyTrips such trips in a row it gives up ("no progress").
+        private const float EmptyTripBackoff = 3f; private const int MaxEmptyTrips = 5;
+        private int _emptyTrips; private float _nextLeaveAt;
+        private bool NothingToStore() => ToDeposit(Keep()).Count == 0;
+
         private TaskOrder LeaveHome()
         {
+            bool emptyTrip = _tripOpen && _tripStored.Count == 0;
+            if (emptyTrip)
+            {
+                if (Time.time < _nextLeaveAt) return new TaskOrder { Kind = TaskKind.Move, Point = _body.Position };
+                if (++_emptyTrips >= MaxEmptyTrips) return GiveUp($"no progress: {_emptyTrips} trips in a row found nothing to gather or store");
+                _nextLeaveAt = Time.time + EmptyTripBackoff;
+                Say($"empty trip {_emptyTrips}/{MaxEmptyTrips}: waiting {EmptyTripBackoff:0} s before going out again");
+                _phase = Phase.Outbound;
+                Progress.State = "outbound";
+                return new TaskOrder { Kind = TaskKind.Move, Point = _body.Position };
+            }
+            _emptyTrips = 0;
             if (_tripOpen)
-                CloseTrip(_tripStored.Count > 0 ? "deposited " + string.Join(", ", _tripStored.Select(kv => $"{kv.Key} x{kv.Value}")) : "nothing deposited");
+                CloseTrip(StoredLine());
             if (QuotaDeposited())
             {
                 Finish("quota met", "quota met: " + QuotaLine());
@@ -687,8 +707,13 @@ namespace FiresCore.Npc.AI
             foreach (var kv in toStore)
             {
                 int before = InventoryTransferService.CountItem(inv, kv.Key);
+                int bagBefore = InventoryTransferService.CountItem(_body.Inventory, kv.Key);
                 InventoryTransferService.DepositItem(_body.Inventory, chest, kv.Key, kv.Value, _body.OwnerPlayerId);
                 int gained = InventoryTransferService.CountItem(inv, kv.Key) - before;
+                // Every deposit, with the
+                // bag and chest counts on both sides, and why a deposit fell short
+                int bagAfter = InventoryTransferService.CountItem(_body.Inventory, kv.Key);
+                FiresCore.Logging.FiresLogger.LogDebug($"[Haul] {Name}: deposit {kv.Key} asked {kv.Value}: chest {before} -> {before + gained} (+{gained}), bag {bagBefore} -> {bagAfter} (-{bagBefore - bagAfter}), haul total now {(Progress.deposited.TryGetValue(kv.Key, out int was) ? was : 0) + Mathf.Max(0, gained)}{(gained < kv.Value ? $"; short by {kv.Value - Mathf.Max(0, gained)}: chest {inv.GetEmptySlots()} empty slot(s) of {inv.GetWidth() * inv.GetHeight()}" : "")}");
                 if (gained <= 0) continue;
                 moved.Add($"{kv.Key} x{gained}");
                 Progress.deposited.TryGetValue(kv.Key, out int total);
@@ -839,6 +864,8 @@ namespace FiresCore.Npc.AI
             Trips.RaiseStarted(new Trips.TripInfo(Session, Progress.Trips, Name, "haul", NetTime(), _body.Character));
         }
 
+        private string StoredLine() => _tripStored.Count > 0 ? "deposited " + string.Join(", ", _tripStored.Select(kv => $"{kv.Key} x{kv.Value}")) : "nothing deposited";
+
         private void CloseTrip(string why)
         {
             _tripOpen = false;
@@ -869,7 +896,9 @@ namespace FiresCore.Npc.AI
             Active = false;
             _endReason = line;
             Progress.State = state;
-            if (_tripOpen) CloseTrip(line);
+            // The trip
+            // record always lists what was really deposited, then why it ended
+            if (_tripOpen) CloseTrip(StoredLine() + "; " + line);
             Say(line);
             Publish(force: true);
         }
@@ -904,7 +933,7 @@ namespace FiresCore.Npc.AI
 
         private string Name => _body.Character is Player p ? p.GetPlayerName() : _body.Character != null ? _body.Character.m_name : "?";
 
-        private void Say(string text) => Log($"[Haul] {Name} {text}");
+        private void Say(string text) { Log($"[Haul] {Name} {text}"); FiresCore.Logging.FiresLogger.LogDebug($"[Haul] {Name} {text}"); }   // also in the log (Debug)
 
         private void Log(string line)
         {

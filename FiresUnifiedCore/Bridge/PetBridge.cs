@@ -6,7 +6,7 @@ namespace FiresCore.Bridge
     /// Cosmetic pet seam for the companion bag's Pet cell. The pet owner mod assigns the three delegates at its Awake; Core
     /// never references that mod. When unassigned, the Pet cell accepts nothing and every call site is a no-op.
     /// </summary>
-    // 0.2.382: added for the companion panel's Pet cell.
+    // Added for the companion panel's Pet cell.
     public static class PetBridge
     {
         /// <summary>Returns null on success, else a refusal reason. Must be called on the owner's ZDO owner.

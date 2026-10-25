@@ -5,14 +5,15 @@ using UnityEngine;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// When an attacker's swing lands, learned from the swings themselves (COMBAT_TACTICS §1; Fire, R72: "time his blocks to
-    /// stagger sometimes so he can capitalize"). Vanilla parries a hit that lands less than 0.25 s after the block was RAISED
+    /// When an attacker's swing lands, learned from the swings themselves (COMBAT_TACTICS §1: time blocks to stagger the
+    /// attacker and capitalize). Vanilla parries a hit that lands less than 0.25 s after the block was RAISED
     /// (Humanoid.BlockAttack: m_blockTimer &lt; 0.25 with a blocker whose timedBlockBonus &gt; 1), and staggers the attacker. So the
     /// block has to go up just before the hit, not be held. A swing starts when the attacker's animator enters an attack state
     /// (Humanoid.InAttack, synced to every peer); it ends when a hit from it arrives on this peer (Core's RPC_Damage prefix). The
     /// delay per (creature, attack state) is a running mean; <see cref="Predict"/> answers when the open swing will land.
     /// Counted per body (TacticStats): parries, the staggers they caused, blocks, and hits landed on a staggering foe.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.NpcBrain)]
     public static class ParryTiming
     {
         /// <summary>Raise the block this long before the predicted hit (inside vanilla's 0.25 s window, with margin both ways).</summary>

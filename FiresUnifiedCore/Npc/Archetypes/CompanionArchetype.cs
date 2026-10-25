@@ -167,7 +167,7 @@ namespace FiresCore.Npc.Archetypes
             var storage = inventory.GetStorageInventory();
             if (storage != null)
             {
-                foreach (var item in inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
+                foreach (var item in inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag now)
                 {
                     if (IsSupportStaff(item))
                     {
@@ -212,7 +212,7 @@ namespace FiresCore.Npc.Archetypes
             var storage = inventory.GetStorageInventory();
             if (storage != null)
             {
-                foreach (var item in inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
+                foreach (var item in inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag now)
                 {
                     if (item?.m_shared?.m_itemType == ItemDrop.ItemData.ItemType.Shield)
                     {
@@ -249,7 +249,7 @@ namespace FiresCore.Npc.Archetypes
             var storage = inventory.GetStorageInventory();
             if (storage != null)
             {
-                foreach (var item in inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
+                foreach (var item in inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag now)
                 {
                     if (IsMeleeWeapon(item))
                     {
@@ -324,7 +324,7 @@ namespace FiresCore.Npc.Archetypes
             var storage = inventory.GetStorageInventory();
             if (storage != null)
             {
-                foreach (var item in inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
+                foreach (var item in inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag now)
                 {
                     if (IsRangedWeapon(item))
                     {

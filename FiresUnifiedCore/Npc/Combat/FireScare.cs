@@ -6,10 +6,9 @@ using UnityEngine;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// The torch tactic (Core 0.2.224; Fire 20:4x: "the bots should know that greydwarfs and other meadows creatures are afraid of
-    /// fire, they can pull out their torch to run them off if they are getting swarmed before they have the food and gear to fight
-    /// them all ... picking them off one by one as they get the opportunity"; 0.2.230, Fire: "the torch only fears mobs if it is
-    /// equipped, they have to hold the torch in their off hand and fight with a weapon in the main hand"). Vanilla's fire-shy monsters
+    /// The torch tactic: greydwarfs and other meadows creatures are afraid of fire, so a body that is swarmed before it has the
+    /// food and gear to fight them all can pull out a torch to hold them off and pick them off one by one. The torch only works
+    /// while equipped, so it goes in the off hand with a weapon in the main hand. Vanilla's fire-shy monsters
     /// (BaseAI.m_afraidOfFire / m_avoidFire) keep off any EffectArea of type Fire within 3 m of themselves, and circle instead of
     /// closing on a target that stands inside one (BaseAI.AvoidFire). A lit torch carries one ("FireWarmth", r 2) under its
     /// attach/equiped child, live in either hand (VisEquipment attaches both hands through AttachItem). Vanilla puts a torch in the
@@ -19,6 +18,7 @@ namespace FiresCore.Npc.Combat
     /// Fire area really is round the body once the torch is out and flees when it isn't. One brain: the FDT bot asks it from its
     /// survival rule; a companion can later.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.NpcBrain)]
     public static class FireScare
     {
         public enum Move { None, TorchOut, PickOff, Flee }
@@ -43,7 +43,7 @@ namespace FiresCore.Npc.Combat
         /// <summary>Held this long (s) without a Fire area round the body: the held torch doesn't scare here.</summary>
         public const float VerifySeconds = 1.5f;
 
-        /// <summary>A foe after the body that doesn't fear fire within this (m) turns the torch tactic into a flee (0.2.251: it closes on a torch).</summary>
+        /// <summary>A foe after the body that doesn't fear fire within this (m) turns the torch tactic into a flee (it closes on a torch).</summary>
         public const float FearlessReach = 12f;
 
         /// <summary>A hit this recent (s) while the torch is held means it isn't keeping them off (avoid-fire Greydwarfs circle the fire at its radius + 4 m and throw rocks).</summary>
@@ -78,7 +78,7 @@ namespace FiresCore.Npc.Combat
         /// <summary>
         /// Whether <paramref name="foe"/> keeps off fire: vanilla runs BaseAI.AvoidFire for m_afraidOfFire (flees a Fire area within 3 m
         /// for 6 s) OR m_avoidFire (circles it, and while its target stands inside one, circles that at the area's radius + 4 m instead
-        /// of closing in). 0.2.225, R90 run 8: the Greydwarf is avoid-fire, and the check read only m_afraidOfFire ("0 of 1 foes fear fire").
+        /// of closing in).
         /// </summary>
         public static bool AfraidOfFire(Character foe)
         {
@@ -149,9 +149,8 @@ namespace FiresCore.Npc.Combat
             body != null && EffectArea.IsPointInsideArea(body.transform.position, EffectArea.Type.Fire) != null;
 
         /// <summary>
-        /// A Fire EffectArea is round the body: its feet inside one, or one within 1.5 m of its centre (0.2.227: a held torch's r 2 area
-        /// is centred on the flame in the hand, 1.5-2 m above the feet, so the feet alone can miss it; R90 run 9's "torch held 1.5 s
-        /// and no Fire area round the body" read only the feet).
+        /// A Fire EffectArea is round the body: its feet inside one, or one within 1.5 m of its centre (a held torch's r 2 area
+        /// is centred on the flame in the hand, 1.5-2 m above the feet, so the feet alone can miss it).
         /// </summary>
         public static bool FireAreaRound(Humanoid body) =>
             body != null && (InFireArea(body) || EffectArea.IsPointInsideArea(body.GetCenterPoint(), EffectArea.Type.Fire, 1.5f) != null);
@@ -167,7 +166,7 @@ namespace FiresCore.Npc.Combat
         /// or space), at least half of the foes after it fear fire, and it carries a torch. <see cref="Move.TorchOut"/>: the loadout on
         /// (<see cref="EquipTorchOffHand"/>), back off facing the pack. <see cref="Move.PickOff"/> (only with a one-handed weapon, so the
         /// torch stays in the off hand) when exactly one foe is within <see cref="StragglerReach"/> and the weapon's
-        /// <see cref="MeleeReach"/> (0.2.249) and every other is <see cref="OthersAway"/> or further. <see cref="Move.Flee"/> when the held torch turned out to carry no Fire area here, or
+        /// <see cref="MeleeReach"/> and every other is <see cref="OthersAway"/> or further. <see cref="Move.Flee"/> when the held torch turned out to carry no Fire area here, or
         /// when the body was hit within <see cref="HitWindow"/> while holding it (then for <see cref="TorchFailedSeconds"/>).
         /// None when the tactic doesn't apply.
         /// </summary>
@@ -180,9 +179,8 @@ namespace FiresCore.Npc.Combat
             Count(body, out int foes, out int afraid, out Character nearest, out float nearestD, out float secondD, out string kind,
                 out Character fearless, out float fearlessD);
             if (foes == 0 || afraid * 2 < foes) { advice.Why = foes == 0 ? "no foe after us" : $"{afraid} of {foes} foes fear fire"; return advice; }
-            // 0.2.251 ([visual], Coop1 overnight: "flee because threat retreat: one hit can kill (Bjorn ★0: 130 after armour vs hp 39 of
-            // 39)", then the torch tactic took over for 3 fire-shy Greylings and the Bjorn walked up and hit 63 on 39 hp): the torch keeps
-            // off only the fire-shy. With a foe after us that doesn't fear fire this close, it is no protection at all: flee.
+            // The torch keeps off only the fire-shy. With a foe after us that doesn't fear fire this close, it is no protection
+            // at all: flee.
             if (fearless != null && fearlessD <= FearlessReach)
             {
                 advice.Move = Move.Flee;
@@ -202,8 +200,7 @@ namespace FiresCore.Npc.Combat
                 advice.Why = "the held torch carried no Fire area here; fleeing instead";
                 return advice;
             }
-            // 0.2.247 ([visual], Coop2 04:26: stoned by three avoid-fire Greydwarfs from 5.8-10.4 m, 46 -> 0 hp, TorchOut all along):
-            // vanilla's avoid-fire foes don't close on a body inside fire, they circle it at the area's radius + 4 m and keep throwing.
+            // Vanilla's avoid-fire foes don't close on a body inside fire, they circle it at the area's radius + 4 m and keep throwing.
             // A hit while the torch is held means it isn't keeping them off: flee, and keep the tactic off for a while.
             if (s_torchFailed.TryGetValue(body, out var failed) && Time.time < failed.until)
             {
@@ -237,8 +234,7 @@ namespace FiresCore.Npc.Combat
             }
             else s_heldSince.Remove(body);
 
-            // 0.2.249 ([visual], Coop2 05:58: "picking off Greydwarf ★0 … (6.0 m)" alternating with TorchOut, stuck at 5.9-6.0 m, then
-            // dead): a held torch keeps every fire-shy foe at its area + AvoidFire's distance (avoid-fire foes ring it at radius + 4 m,
+            // A held torch keeps every fire-shy foe at its area + AvoidFire's distance (avoid-fire foes ring it at radius + 4 m,
             // afraid ones flee it), so a straggler at that ring never comes into a swing. PickOff only once it is within the weapon's
             // reach ("picking them off one by one as they get the opportunity"); until then the torch holds them off (and a hit while
             // holding it flees, above).
@@ -293,7 +289,7 @@ namespace FiresCore.Npc.Combat
             }
         }
 
-        // ---- Whether a held torch carries a live Fire area (0.2.227), read off its item prefab once per prefab ----
+        // ---- Whether a held torch carries a live Fire area, read off its item prefab once per prefab ----
 
         private struct TorchAreas
         {

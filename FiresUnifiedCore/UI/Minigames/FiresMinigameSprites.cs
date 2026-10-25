@@ -16,8 +16,8 @@ namespace FiresCore.UI.Minigames
     public static class FiresMinigameSprites
     {
         private static readonly Dictionary<string, Sprite> _cache = new Dictionary<string, Sprite>();
-        // 0.2.323: sprites that failed once (not embedded, or failed to load). They return null at once and are logged only the first
-        // time: callers ask every frame, and 5 missing Druid icons wrote ~136k Error lines in one session (and rescanned the
+        // Sprites that failed once (not embedded, or failed to load). They return null at once and are logged only the first
+        // time: callers ask every frame, so a few missing icons would otherwise flood the log (and rescan the
         // manifest each time).
         private static readonly HashSet<string> _missing = new HashSet<string>();
         private static MethodInfo _loadImage;

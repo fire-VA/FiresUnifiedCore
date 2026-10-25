@@ -21,7 +21,7 @@ namespace FiresCore.Mounts
 
     /// <summary>
     /// Pillion: one companion rides behind the player on a mount.
-    /// 0.2.372: frozen API. Provider calls forward to the registered mount mod; Seat/Unseat do the companion body work.
+    /// Frozen API. Provider calls forward to the registered mount mod; Seat/Unseat do the companion body work.
     /// </summary>
     public static class PillionApi
     {

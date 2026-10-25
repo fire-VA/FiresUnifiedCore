@@ -879,7 +879,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
                         if (matches)
                     {
-                        // One copy with the bot's base chores (0.2.236): ChoreBrain.AddSmelterOreOne removes the unit FIRST, then
+                        // One copy with the bot's base chores: ChoreBrain.AddSmelterOreOne removes the unit FIRST, then
                         // RPC_AddOre(prefab, cheated) as vanilla Smelter.OnAddOre does.
                         string itemName = item.m_shared?.m_name ?? dropName;
                         int stackBefore = item.m_stack;
@@ -945,7 +945,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 if (dropName.Equals(fuelPrefabName, System.StringComparison.OrdinalIgnoreCase))
                 {
-                    // One copy with the bot's base chores (0.2.236): ChoreBrain.AddSmelterFuelOne removes the unit FIRST, then
+                    // One copy with the bot's base chores: ChoreBrain.AddSmelterFuelOne removes the unit FIRST, then
                     // RPC_AddFuel as vanilla Smelter.OnAddFuel does.
                     string itemName = item.m_shared?.m_name ?? dropName;
                     int stackBefore = item.m_stack;
@@ -968,8 +968,8 @@ namespace FiresCore.Npc.IdleBehaviors
         }
         
         /// <summary>
-        /// Empties held output through the station's own empty switch, as a player's E press does (0.2.322, Fire's
-        /// vanilla-method rule: Switch.Interact -> Smelter.OnEmpty -> RPC_EmptyProcessed; the owner spawns the stack at the
+        /// Empties held output through the station's own empty switch, as a player's E press does
+        /// (Switch.Interact -> Smelter.OnEmpty -> RPC_EmptyProcessed; the owner spawns the stack at the
         /// output point). Paced so a remote owner can answer.
         /// </summary>
         private bool TryCollectOutput()
@@ -1327,7 +1327,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private void SetPhase(OperatePhase phase)
         {
-            // 0.2.336 (round 18 smelter facing 89 deg, no phase evidence): every phase change at Debug, like WorkBehaviorBase's.
+            // Every phase change at Debug, like WorkBehaviorBase's.
             if (_currentPhase != phase)
                 FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} phase {_currentPhase} -> {phase} (after {Time.time - _phaseStartTime:0.0} s)");
             _currentPhase = phase;
@@ -1459,7 +1459,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            // Vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
             _character?.SetLookDir(dir.normalized);
         }
         

@@ -55,7 +55,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Tank
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (!IsParty(character)) continue; // Fire: heals and buffs only the caster's party
+                if (!IsParty(character)) continue; // heals and buffs only the caster's party
                 
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)

@@ -205,7 +205,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <param name="excludeCharacter">Optional character to exclude from the check (e.g., "is it occupied by someone other than me?")</param>
         /// <summary>
         /// The name of whoever holds <paramref name="interactable"/> other than <paramref name="excludeCharacter"/>, or null when nobody else
-        /// does (0.2.238: ChoreBrain's "is taken by" evidence line).
+        /// does (ChoreBrain's "is taken by" log line).
         /// </summary>
         public static string OccupantName(GameObject interactable, Character excludeCharacter = null)
         {

@@ -96,7 +96,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
                 float dist = Vector3.Distance(GroundPosition, character.transform.position);
                 if (dist > Radius) continue;
 
-                // Fire: heal the caster's party, damage enemies (it used to heal any player or tame and hit anything else)
+                // heal the caster's party, damage enemies (it used to heal any player or tame and hit anything else)
                 if (IsParty(character))
                 {
                     if (character.GetHealthPercentage() < 1f)

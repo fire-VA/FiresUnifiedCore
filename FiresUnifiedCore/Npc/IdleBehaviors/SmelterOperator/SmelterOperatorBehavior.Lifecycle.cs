@@ -280,7 +280,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Show current status above companion's head
             ShowCurrentStatus();
 
-            // 0.2.257 ([ghost]): every phase handler ends with SetPhase(Complete) + return true in the same tick, so the Complete case
+            // Every phase handler ends with SetPhase(Complete) + return true in the same tick, so the Complete case
             // below never ran and the idle loop dropped the behaviour as it was: the smelter and kiln stayed reserved against every other
             // companion for MaxOperateTime (NotifyOwner releases them), the behaviour stayed active, and the "[Chore] … smelter:" line
             // (in Complete) never printed. Finish here; after Complete IsActive is false, so nothing runs twice.
@@ -421,7 +421,7 @@ namespace FiresCore.Npc.IdleBehaviors
             base.Complete();
         }
 
-        // 0.2.255 (Fire's homestead test): one always-on line per smelter / kiln session with what it did.
+        // One always-on line per smelter / kiln session with what it did.
         private void SayOutcome(string how)
         {
             if (_itemsAdded <= 0 && _itemsCollected <= 0 && _itemsDeposited <= 0) return;

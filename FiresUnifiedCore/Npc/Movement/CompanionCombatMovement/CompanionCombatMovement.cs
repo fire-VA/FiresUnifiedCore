@@ -455,7 +455,7 @@ namespace FiresCore.Npc
 
         private void Update()
         {
-            if (_companion != null && _companion.IsPossessed) return;   // 0.2.292: a player is driving it
+            if (_companion != null && _companion.IsPossessed) return;   // A player is driving it
 
             if (_stateController == null)
                 _stateController = GetComponent<CompanionStateController>();

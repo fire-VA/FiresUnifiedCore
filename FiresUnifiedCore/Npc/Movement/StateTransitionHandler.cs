@@ -152,7 +152,7 @@ namespace FiresCore.Npc.Movement
                 _character.SetRun(false);
             }
             
-            // 0.2.327 (audit slice 3): no velocity write; SetMoveDir(0) above lets vanilla UpdateWalking brake.
+            // No velocity write; SetMoveDir(0) above lets vanilla UpdateWalking brake.
 
             // Wait for physics
             yield return new WaitForFixedUpdate();
@@ -166,7 +166,7 @@ namespace FiresCore.Npc.Movement
                 _character.SetRun(false);
             }
 
-            // 0.2.327 (audit slice 3): no velocity write; SetMoveDir(0) above lets vanilla UpdateWalking brake.
+            // No velocity write; SetMoveDir(0) above lets vanilla UpdateWalking brake.
             
             yield return null;
             

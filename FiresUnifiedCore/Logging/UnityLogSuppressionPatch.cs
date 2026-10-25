@@ -134,6 +134,7 @@ namespace FiresCore.Logging
         {
             try
             {
+                if (!BepInExLogSuppressionPatch.QuietOtherModsOn) return true;   // Only with [Logging] QuietOtherMods on
                 if (VerbosePassThrough()) return true;
                 if (string.IsNullOrEmpty(message)) return true;
                 return !ShouldSuppress(message, type);

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using FiresCore.Npc.Core;
 
 namespace FiresCore.Npc.IdleBehaviors
@@ -36,8 +36,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"  Distance to target: {dist:F2}m (need <{ArrivalDistance:F1}m)");
             }
             
-            // Use ArrivalDistance to check if we've arrived at the standing position
-            if (dist < ArrivalDistance)
+            // Arrived = close AND the station in reach with no wall in between (a station behind a wall is not "here")
+            if (dist < ArrivalDistance && FiresCore.Npc.Core.CompanionReach.CanTouch(Transform, _targetSmelter, out _))
             {
                 StopMovement();
                 ResetProgressTracking();
@@ -176,9 +176,9 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
-            if (Time.time - _phaseStartTime < 1.5f) // 0.2.334: 0.2 s ended the turn ~90 deg short (round 15); the FacingAuthority is the single writer now
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2 s ended the turn ~90 deg short; the FacingAuthority is the single writer now
             {
-                FaceTarget(StationFacePoint()); // 0.2.335: the smelter itself, not its interaction point
+                FaceTarget(StationFacePoint()); // The smelter itself, not its interaction point
             }
             
             // CRITICAL: Re-find nearby chests in case they weren't found initially
@@ -362,8 +362,11 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Check if we're already close enough to the chest
             // Use tight ArrivalDistance to ensure proper positioning
+            if (Time.time < _pullBackoffUntil) { SetPhase(OperatePhase.Complete); return false; }   // the last pull moved nothing: wait it out
+            if (_unreachableChests.TryGetValue(bestChest.GetInstanceID(), out float untilC) && Time.time < untilC) { SetPhase(OperatePhase.Complete); return false; }
+            _lastPullCount = 0;
             float distToChest = Vector3.Distance(Transform.position, bestChest.transform.position);
-            if (distToChest <= ArrivalDistance)
+            if (distToChest <= ArrivalDistance && FiresCore.Npc.Core.CompanionReach.CanTouch(Transform, bestChest, out _))
             {
                 // Already at chest - go directly to interaction
                 SetPhase(OperatePhase.InteractingWithChestForPull);
@@ -400,13 +403,16 @@ namespace FiresCore.Npc.IdleBehaviors
                 _targetChestForPull, Transform.position);
             float dist = Vector3.Distance(Transform.position, interactionPoint);
             
-            // Use tight ArrivalDistance to ensure we reach the correct position in front of chest
-            if (dist <= ArrivalDistance)
+            // Arrived = close AND nothing (a wall, a piece) between the companion and the chest, like a player's reach (Fire 10-23:
+            // companions opened chests from outside the base through the wall).
+            string blockedBy = null;
+            if (dist <= ArrivalDistance && FiresCore.Npc.Core.CompanionReach.CanTouch(Transform, _targetChestForPull, out blockedBy))
             {
                 StopMovement();
                 SetPhase(OperatePhase.InteractingWithChestForPull);
                 return false;
             }
+            if (dist <= ArrivalDistance && Time.time >= _reachLogAt) { _reachLogAt = Time.time + 5f; FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: at the chest but {blockedBy} is in the way; walking round"); }
             
             // CRITICAL FIX (Bug #11): Continue movement every frame!
             // Move to the interaction point, not the chest center
@@ -415,11 +421,12 @@ namespace FiresCore.Npc.IdleBehaviors
             // Timeout check
             if (Time.time - _phaseStartTime > 30f)
             {
-                if (CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[SmelterOperator] Timeout walking to chest - using instant pull");
+                // No more "instant pull" through walls: a chest the companion can't walk up to is skipped for a while.
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: can't reach the chest at {_targetChestForPull.transform.position} in 30 s; skipping it for {UnreachableChestSeconds:0} s");
+                _unreachableChests[_targetChestForPull.GetInstanceID()] = Time.time + UnreachableChestSeconds;
                 StopMovement();
-                PullMaterialsFromChests();
-                SetPhase(OperatePhase.FillingStation);
+                _targetChestForPull = null;
+                SetPhase(OperatePhase.Complete);
             }
             
             return false;
@@ -504,6 +511,15 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
+            // A pull that moved nothing would loop (open, close, walk back, open again every ~1.2 s): back off and say why.
+            if (_lastPullCount <= 0)
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: nothing to pull: no {_pullItemPrefab ?? "item"} moved from the chest at {_targetChestForPull.transform.position} (empty, full bag or not allowed); backing off {PullBackoffSeconds:0} s");
+                _pullBackoffUntil = Time.time + PullBackoffSeconds;
+                _targetChestForPull = null; _pullItemPrefab = null; _pullItemAmount = 0;
+                SetPhase(OperatePhase.Complete);
+                return true;
+            }
             // Done - clear pull target and return to smelter
             _targetChestForPull = null;
             _pullItemPrefab = null;
@@ -818,9 +834,9 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
             // Constantly calling FaceTarget() causes glitchy rotation due to competing rotation updates.
-            if (Time.time - _phaseStartTime < 1.5f) // 0.2.334: 0.2 s ended the turn ~90 deg short (round 15); the FacingAuthority is the single writer now
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2 s ended the turn ~90 deg short; the FacingAuthority is the single writer now
             {
-                FaceTarget(StationFacePoint()); // 0.2.335: the smelter itself, not its interaction point
+                FaceTarget(StationFacePoint()); // The smelter itself, not its interaction point
             }
             
             // CRITICAL: Check if inventory is full - need to deposit before continuing
@@ -1269,9 +1285,9 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
-            if (Time.time - _phaseStartTime < 1.5f) // 0.2.334: 0.2 s ended the turn ~90 deg short (round 15); the FacingAuthority is the single writer now
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2 s ended the turn ~90 deg short; the FacingAuthority is the single writer now
             {
-                FaceTarget(StationFacePoint()); // 0.2.335: the smelter itself, not its switch (round 17: 86 deg off)
+                FaceTarget(StationFacePoint()); // The smelter itself, not its switch
             }
             
             // Wait for animation cooldown before adding next item
@@ -1364,9 +1380,9 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
-            if (Time.time - _phaseStartTime < 1.5f) // 0.2.334: 0.2 s ended the turn ~90 deg short (round 15); the FacingAuthority is the single writer now
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2 s ended the turn ~90 deg short; the FacingAuthority is the single writer now
             {
-                FaceTarget(StationFacePoint()); // 0.2.335: the smelter itself, not its switch
+                FaceTarget(StationFacePoint()); // The smelter itself, not its switch
             }
             
             // Wait for animation cooldown before adding next item

@@ -17,6 +17,7 @@ namespace FiresCore.Npc
     /// companion body a '[NpcSkeleton]' line: its bones against the Player's, name by name and index by index.
     /// </summary>
     [HarmonyPatch(typeof(VisEquipment), "AttachItem")]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class NpcAttachmentScaleFix
     {
         private static ConfigEntry<bool> s_rescale;
@@ -26,10 +27,10 @@ namespace FiresCore.Npc
             s_rescale = config.Bind("Companions", "Core attachment rescale", true,
                 "SERVER. On (default): attachments follow a scaled companion body. The body's scale is on its root, and vanilla's "
                 + "attach keeps each item's WORLD size (SetParent), so without this a dwarf holds a player-size sword: rigid items get "
-                + "the attach child's authored scale times the body's, skinned ones (hair, beards, capes) the body's transform scale "
-                + "(Core 0.2.157). Off = vanilla's sizes, for an A/B only.");
+                + "the attach child's authored scale times the body's, skinned ones (hair, beards, capes) the body's transform scale. "
+                + "Off = vanilla's sizes, for an A/B only.");
             configSync?.AddConfigEntry(s_rescale);
-            FiresCore.Config.OwnerGatedConfig.Gate(s_rescale, FiresCore.Config.OwnerGatedConfig.Owners.COMP, synced: true);   // 0.2.359
+            FiresCore.Config.OwnerGatedConfig.Gate(s_rescale, FiresCore.Config.OwnerGatedConfig.Owners.COMP, synced: true);
         }
 
         private static void Postfix(VisEquipment __instance, int itemHash, Transform joint, bool backAttach, GameObject __result)
@@ -43,7 +44,7 @@ namespace FiresCore.Npc
             // Skinned attaches (attach_skin) ride the body's bones and are parented to the body model's parent, not the joint.
             // Their meshes follow the bones, but vanilla's SetParent kept the item's world scale, so on a scaled body the
             // instance sits at 1/scale. MagicaCloth hair and beards size their simulation from that transform (initScale /
-            // scaleRatio), so a dwarf's cloth hair ran at full size and floated off the small head (Fire, 2026-09-29). Give the
+            // scaleRatio), so a dwarf's cloth hair ran at full size and floated off the small head. Give the
             // instance the body's scale; the cloth follows the change.
             if (joint != null && __result.transform.parent != joint)
             {

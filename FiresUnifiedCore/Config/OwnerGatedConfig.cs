@@ -11,7 +11,7 @@ using HarmonyLib;
 namespace FiresCore.Config
 {
     /// <summary>
-    /// Core settings that only matter when another mod is installed (0.2.359). Each bind site calls <see cref="Gate"/> next to
+    /// Core settings that only matter when another mod is installed. Each bind site calls <see cref="Gate"/> next to
     /// its Bind with the owner mods' GUIDs. Once every plugin has loaded (<see cref="Apply"/>: Core's TitleScene, and WorldStart
     /// on a dedicated server), an entry none of whose owners is loaded is either REMOVED from the ConfigFile (local, non-synced
     /// keys: the window, ConfigurationManager and the .cfg no longer show them) or tagged Advanced (server-synced keys: they stay
@@ -29,14 +29,15 @@ namespace FiresCore.Config
             public static readonly string[] HD = { "Badgers.HDValheimTextures" };
             public static readonly string[] BALROND = { "balrond.astafaraios.BalrondAmazingNature" };
 
-            // 0.2.387 (Fire 10-09, Tools\CORE_CONFIG_GATING_PLAN.md owner map). FAT = com.Fire.FiresAdminTerrain, FAP = com.Fire.adminprefabs.
+            // Owner map (Tools\CORE_CONFIG_GATING_PLAN.md). FAT = com.Fire.FiresAdminTerrain, FAP = com.Fire.adminprefabs.
             public const string FatGuid = "com.Fire.FiresAdminTerrain", FapGuid = "com.Fire.adminprefabs", GalaxiesGuid = "com.Fire.FiresValheimGalaxies",
                 RpgClassesGuid = "com.Fire.FiresRPGClasses", CompanionsGuid = "com.Fire.FiresCompanions", RpgMakerGuid = "com.Fire.FiresRPGmaker",
                 GuildsGuid = "com.Fire.FiresGuilds", FmoGuid = "com.Fire.FiresMonsterOverhaul";
             public static readonly string[] SWIMMING = { GalaxiesGuid };
             public static readonly string[] MOVEMENT = { FatGuid };
-            public static readonly string[] CLIMBING = { FatGuid, RpgClassesGuid };
-            // Fire 10-09: VikHavn installed next to Core also switches crawling on (VikHavn doesn't depend on Core).
+            // FCC uses climbing too (size scaling), so its presence makes the climb live (patches applied).
+            public static readonly string[] CLIMBING = { FatGuid, RpgClassesGuid, "com.Fire.FiresCharacterCreator" };
+            // VikHavn installed next to Core also switches crawling on (VikHavn doesn't depend on Core).
             public static readonly string[] CRAWLING = { FatGuid, RpgClassesGuid, "VikHavn.CombatMovesetAdditions" };
             public static readonly string[] LOOT = { FapGuid, FatGuid };
             public static readonly string[] BUILDING = { FapGuid };
@@ -45,6 +46,9 @@ namespace FiresCore.Config
             public static readonly string[] GROUPHUD = { CompanionsGuid, RpgMakerGuid, GuildsGuid };
             public static readonly string[] GROUNDRINGS = { CompanionsGuid, RpgClassesGuid, FmoGuid };
             public static readonly string[] VAULT = { GuildsGuid, RpgMakerGuid, FapGuid };
+            // The shared NPC brain (combat AI, speech, death memory, fishing, container registry) serves companions, RPGmaker NPCs,
+            // FDT's test bots and FMO's agents.
+            public static readonly string[] NPCBRAIN = { CompanionsGuid, RpgMakerGuid, "com.Fire.FiresDebugginTools", FmoGuid };
         }
 
         private sealed class Gated
@@ -107,7 +111,7 @@ namespace FiresCore.Config
                     var file = gated.Entry.ConfigFile;
                     if (gated.Synced)
                     {
-                        // 0.2.387 (Fire 10-09: an owned feature's config exists ONLY with an owner installed): a synced entry leaves the
+                        // A synced entry leaves the
                         // file and the UIs too. The ConfigEntry stays bound and registered with ConfigSync, so a server's value still
                         // reaches it in memory; BepInEx's Save writes only the file's own entries, so it never comes back to the file.
                         MarkAdvanced(gated.Entry);
@@ -140,7 +144,7 @@ namespace FiresCore.Config
             FiresCore.FiresUnifiedCore.Log?.LogDebug($"[OwnerGatedConfig] removed {skipped} local + {advanced} synced keys from the cfg (absent: {(absent.Count == 0 ? "none" : string.Join(", ", absent.ToArray()))})");
         }
 
-        // The edge Fire's lead asked for: a client without the owner joins a server with it. ServerSync sets the removed entry's
+        // The edge case: a client without the owner joins a server with it. ServerSync sets the removed entry's
         // value; that raises the file's SettingChanged (and a Save that no longer writes the entry). Logged once per key at Debug.
         private static readonly HashSet<ConfigEntryBase> s_removedSynced = new HashSet<ConfigEntryBase>();
         private static readonly HashSet<ConfigFile> s_watchedFiles = new HashSet<ConfigFile>();

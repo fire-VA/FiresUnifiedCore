@@ -9,8 +9,8 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// The one fishing brain for every body (Core 0.2.243; Fire: "they need to stand at the waters edge, equip bait, and cast into the
-    /// water and actually fish, reeling in when they get a bite, aiming the cast towards fish to catch"). It decides where to stand,
+    /// The one fishing brain for every body: stand at the water's edge, equip bait, cast toward fish, and reel in on a bite.
+    /// It decides where to stand,
     /// where to cast and how hard, which bait, and once the float is out what to do each tick; the game does the fishing: the rod
     /// throws its projectile, which drops a FishingFloat where it lands, fish swim to a float over 1 m+ of water within its range and
     /// nibble, holding block in the 0.5 s nibble window hooks, holding block reels, and a line of 0.5 m lands the catch.
@@ -18,6 +18,7 @@ namespace FiresCore.Npc.AI
     /// reel through <see cref="SetReeling"/>. The patches below let a companion own a float (vanilla resolves owners from the player
     /// list by user id, which for a companion finds its owner's player).
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.NpcBrain)]
     public static class FishingBrain
     {
         public enum FishMove { Wait, Hook, Reel, Rest, Recast, Landed, Lost, Failed }
@@ -42,10 +43,10 @@ namespace FiresCore.Npc.AI
             public string Fish;
             /// <summary>Fish within the float's range of <see cref="Aim"/> that take a carried bait.</summary>
             public int FishSeen;
-            /// <summary>0.2.258: how the stand was chosen and its reach: "from where it stands (no walk)", "at the edge, path checked",
+            /// <summary>How the stand was chosen and its reach: "from where it stands (no walk)", "at the edge, path checked",
             /// "2.5 m back from the edge, path checked", or "… unchecked" (the caller gave no reach test).</summary>
             public string Reach = "";
-            /// <summary>0.2.264: the fish the plan saw that take a carried bait ("fish seen: Fish1 x2 within 32 m of (48, 530)"), and the
+            /// <summary>The fish the plan saw that take a carried bait ("fish seen: Fish1 x2 within 32 m of (48, 530)"), and the
             /// move when none were near the asked spot ("no fish in this pond (scanned 32 m); moving to (60, 512) where Fish1 x1").</summary>
             public string Seen = "";
 
@@ -79,15 +80,15 @@ namespace FiresCore.Npc.AI
             public float Draw;
             public bool Measured;
             public string Hooked;
-            // 0.2.259: the stamina and line at the hook (to learn the reel's cost per metre), the last line seen, and since when the line is taut.
+            // The stamina and line at the hook (to learn the reel's cost per metre), the last line seen, and since when the line is taut.
             public float HookStamina = -1f, HookLine, LastLine, TautSince = -1f;
-            // 0.2.261: the last reel sample (every 2 s while hooked): when, the stamina and the line then.
+            // The last reel sample (every 2 s while hooked): when, the stamina and the line then.
             public float SampleAt = -1f, SampleStamina, SampleLine;
-            // 0.2.263: since when the fish is running (an escape).
+            // Since when the fish is running (an escape).
             public float RunningSince = -1f;
         }
 
-        /// <summary>0.2.263: an escape held longer than this reels on slack anyway (a stale escape state; vanilla's escapes last 0.5-3 s + 1.5 s per quality).</summary>
+        /// <summary>An escape held longer than this reels on slack anyway (a stale escape state; vanilla's escapes last 0.5-3 s + 1.5 s per quality).</summary>
         private const float EscapeHoldMax = 12f;
 
         // The fish's stamina use per second on the reel (vanilla: m_staminaUse, or m_escapeStaminaUse while running, times its quality).
@@ -98,7 +99,7 @@ namespace FiresCore.Npc.AI
             return (escaping ? fish.m_escapeStaminaUse : fish.m_staminaUse) * (drop != null ? drop.m_itemData.m_quality : 1);
         }
 
-        // 0.2.261: where a hooked reel's stamina goes, every 2 s: the stamina and line change per second, and every vanilla drain that could
+        // Where a hooked reel's stamina goes, every 2 s: the stamina and line change per second, and every vanilla drain that could
         // be running at once (the reel = the rod held up / blocking, an attack draw held, running, swimming, encumbered), the escape as the
         // fish's owner says, the tension. Vanilla's numbers for that body and fish are on the "hooked" line.
         private static void SampleReel(Character body, CastState cast, FishingFloat line, Fish hooked, float tension, float now)
@@ -127,7 +128,7 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// 0.2.259 (R41: 5 of 5 hooked fish lost at 0 stamina, one 0.3 m from landing): vanilla's reel (FishingFloat.FixedUpdate) spends
+        /// Vanilla's reel (FishingFloat.FixedUpdate) spends
         /// m_pullStaminaUse + the fish's stamina use every tick the rod is held up, but shortens the line only while it has slack (the float
         /// within <see cref="SlackTension"/> of the line's length); a hooked fish drains m_hookedStaminaPerSec on top, which keeps resetting
         /// the stamina regen, so the stamina at the hook is all the reel gets; at 0 the fish is gone. So: reel only on slack, hold while the
@@ -135,7 +136,7 @@ namespace FiresCore.Npc.AI
         /// </summary>
         public const float SlackTension = 0.15f;
         /// <summary>
-        /// 0.2.261 ([lead], R43 measured 19 stamina/m, which a human with 75 stamina would never land with): the cast cap and ReadyToCast stay
+        /// The reel's measured cost was far higher than a human could land with, so the cast cap and ReadyToCast stay
         /// OFF until the reel's real cost is understood (the per-2 s "reel:" lines and the "hooked" line's constants say where it goes).
         /// </summary>
         public const bool CastCapOn = false;
@@ -151,8 +152,8 @@ namespace FiresCore.Npc.AI
         /// </summary>
         public static float ReelCostPerMetre(Character body, FishingFloat floatPrefab)
         {
-            // 0.2.260: only what a real reel measured. Vanilla's numbers for the skill read ~0.9/m on the R42 bot against ~7-11/m
-            // measured in R41, and a wrong model must not block a cast; 0 (no limit) until the first reel ends.
+            // Only what a real reel measured. Vanilla's numbers for the skill read far lower than measured,
+            // and a wrong model must not block a cast; 0 (no limit) until the first reel ends.
             if (!(body is Player) || floatPrefab == null) return 0f;
             return s_reelCost.TryGetValue(body.GetInstanceID(), out float learned) ? learned : 0f;
         }
@@ -165,7 +166,7 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// 0.2.259: whether <paramref name="body"/> has the stamina to reel in a fish hooked at <paramref name="plan"/>'s distance (the
+        /// Whether <paramref name="body"/> has the stamina to reel in a fish hooked at <paramref name="plan"/>'s distance (the
         /// line runs about the cast's length plus 1 m). False with why ("rest: …") when it should rest or eat first; always true for a
         /// non-player.
         /// </summary>
@@ -271,7 +272,7 @@ namespace FiresCore.Npc.AI
         }
 
         // The water surface over (x, z), probed just above the ground (a lake bed) and just below the sea level (the zone's sea volume).
-        // 0.2.256: and FAT's lakes, rivers, pours and ponds (World.Water, FAT 0.2.673's one water query).
+        // Also FAT's lakes, rivers, pours and ponds (World.Water, FAT's one water query).
         private static float LiquidAt(float x, float z, float ground, float seaLevel) =>
             FiresCore.World.Water.SurfaceOr(x, z,
                 Mathf.Max(Floating.GetLiquidLevel(new Vector3(x, ground + 0.3f, z), 1f, LiquidType.Water),
@@ -305,7 +306,7 @@ namespace FiresCore.Npc.AI
             PlanCore(body, bag, rod, near, radius, standOk, false, out plan);
 
         /// <summary>
-        /// 0.2.258 (R37: the bot stalled three times walking to the water's edge at a shelved pond with 3 m deep water 15 m off): a cast
+        /// A cast
         /// from where <paramref name="body"/> stands now, no walk: water at least <see cref="MinCastDepth"/> deep <see cref="MinCast"/>..
         /// <see cref="MaxCast"/> m away with a clear throw, from dry ground. For a caller whose walk to <see cref="FishPlan.Stand"/> stalled.
         /// "" with <paramref name="plan"/>, or a coded reason as <see cref="Plan(Character, Inventory, ItemDrop.ItemData, Vector3, float, Func{Vector3, bool}, out FishPlan)"/>.
@@ -315,7 +316,7 @@ namespace FiresCore.Npc.AI
 
         /// <summary>The rank a cast from where the body stands gets over a walk to the edge (rank: 10 per fish score, 0.1 per metre walked).</summary>
         private const float HereBonus = 2f;
-        /// <summary>Stands tried back from the edge along each way (0.2.258: a step or a shelf at the edge can make the edge itself unreachable).</summary>
+        /// <summary>Stands tried back from the edge along each way (a step or a shelf at the edge can make the edge itself unreachable).</summary>
         private static readonly float[] StandBacks = { 0.75f, 2.5f, 4.5f };
 
         private static string PlanCore(Character body, Inventory bag, ItemDrop.ItemData rod, Vector3 near, float radius, Func<Vector3, bool> standOk, bool hereOnly, out FishPlan plan)
@@ -327,7 +328,7 @@ namespace FiresCore.Npc.AI
             if (floatPrefab == null) return "norod: no fishing rod";
             radius = Mathf.Clamp(radius, GridStep, MaxRadius);
             float range = Mathf.Max(2f, floatPrefab.m_range - 1f);
-            // 0.2.259: no further than a player's full stamina reels in (the line runs about the cast plus 1 m); see ReadyToCast.
+            // No further than a player's full stamina reels in (the line runs about the cast plus 1 m); see ReadyToCast.
             float castMax = MaxCast;
             if (CastCapOn && body is Player bp) castMax = Mathf.Clamp(ReelableMetres(body, floatPrefab, bp.GetMaxStamina()) - 1f, MinCast, MaxCast);
             List<Fish> fish = FishNear(near, radius + MaxCast);
@@ -339,7 +340,7 @@ namespace FiresCore.Npc.AI
             }
             List<ItemDrop.ItemData> baits = CompanionInventory.StorageItemsOf(bag).Where(i => IsBaitFor(i, rod)).ToList();
 
-            // 0.2.264 (R45: 13 casts at empty water, "nothing bit in 30 s" each; Fire: "the bot needs to be casting towards the fish"):
+            // Casting at empty water catches nothing:
             // cast only toward a fish that is there and takes a carried bait. None near the asked spot: the nearest such fish within
             // MaxRadius + MaxCast, and the plan moves there; none at all: "nofish:", no blind cast.
             bool Takes(Fish f) => baits.Any(b => BaitChance(f, b) > 0f);
@@ -359,8 +360,8 @@ namespace FiresCore.Npc.AI
                 Vector3 from0 = near;
                 Fish nearest = farther.OrderBy(f => (f.transform.position - from0).sqrMagnitude).First();
                 Vector3 fishFlat = new Vector3(nearest.transform.position.x, near.y, nearest.transform.position.z);
-                // 0.2.353 (companion_storage fish: ordered on the dry side at (-947,111), the scan ran "near (-986,124)" out in the water
-                // and found no shore): fish just offshore keep the scan centred on the asked spot with the radius widened to reach
+                // When the asked spot is on shore and the nearest fish are just offshore, a scan centred on the fish
+                // can miss the shore: fish just offshore keep the scan centred on the asked spot with the radius widened to reach
                 // them, so the shore by the asked spot stays in range. Only a different pond, farther away, moves the centre.
                 float toFish = Vector3.Distance(from0, fishFlat);
                 if (toFish <= 60f) radius = Mathf.Max(radius, toFish - MaxCast + 4f);
@@ -397,7 +398,7 @@ namespace FiresCore.Npc.AI
                         score += s;
                         if (s > targetScore) { targetScore = s; target = f; }
                     }
-                    if (score <= 0f) { blind++; continue; }   // 0.2.264: only water a seen fish is within the float's range of
+                    if (score <= 0f) { blind++; continue; }   // only water a seen fish is within the float's range of
                     cells.Add((p, depth, score, target));
                 }
             if (cells.Count == 0)
@@ -415,7 +416,7 @@ namespace FiresCore.Npc.AI
             int tried = 0, found = 0;
             string lastRefusal = dry.Count == 0 ? "no dry ground in the scan" : $"no dry ground {MinCast:0}-{castMax:0} m from deep water";
 
-            // 0.2.258 (R37): where the body stands now, when deep water lies within a cast of it (a shelf or a step can block the walk to
+            // Where the body stands now, when deep water lies within a cast of it (a shelf or a step can block the walk to
             // the edge; this one needs no walk and no reach test).
             if (DryAt(from, out Vector3 here))
             {
@@ -453,7 +454,7 @@ namespace FiresCore.Npc.AI
                         if (!WaterAt(cell.p + dir * t, out _, out float dq) || dq <= 0.2f) { edge = t; break; }
                     if (edge < 0f) continue;
                     if (edge < MinCast || edge > castMax) { lastRefusal = edge > castMax && castMax < MaxCast ? $"deep water is {edge:0.0} m out, more than the {castMax:0.0} m its stamina reels in" : "the shore is too close to deep water for a cast"; continue; }
-                    // 0.2.258: the edge itself, and stands further back along the same way while the cast still reaches.
+                    // The edge itself, and stands further back along the same way while the cast still reaches.
                     foreach (float back in StandBacks)
                     {
                         if (edge + back > castMax) break;
@@ -705,10 +706,10 @@ namespace FiresCore.Npc.AI
             Transform top = RodTopOf(body, false);
             float tension = top != null ? Vector3.Distance(top.position, line.transform.position) - line.m_lineLength : 0f;
             SampleReel(body, cast, line, hooked, tension, now);
-            // 0.2.263 (R44, the prefab's real numbers on the "hooked" line: pull 0/s, line 2 m/s, hooked 1/s, Fish1 3/s or 10/s escaping x
+            // The prefab's numbers (pull 0/s, line 2 m/s, hooked 1/s, Fish1 3/s or 10/s escaping x
             // quality): a calm fish reels at (3 x q + 1) / 2 m/s, ~3.5 stamina/m at q2; a running one at (10 x q + 1) / 1 m/s, ~21/m. Holding
-            // costs only the hooked 1/s. So never reel while the fish runs (as its owner says: EscapingNow), the human's pattern; R44 spent
-            // 40 of 74 stamina on 2 m of a running fish through the 3 s taut fallback. Only an escape longer than EscapeHoldMax (a stale
+            // costs only the hooked 1/s. So never reel while the fish runs (as its owner says: EscapingNow), the human's pattern; reeling
+            // a running fish through a taut fallback burns most of the stamina for little line. Only an escape longer than EscapeHoldMax (a stale
             // escape state) reels on slack anyway.
             if (EscapingNow(hooked))
             {
@@ -870,10 +871,10 @@ namespace FiresCore.Npc.AI
                 return result;
             }
 
-            // 0.2.261 (R42/R43): the hooked fish's escape runs on the fish's ZDO owner (Fish.FixedUpdate counts m_escapeTime down there and
-            // writes ZDOVars.s_escape; Fish.OnHooked claims it for the hooker, but on this rig it ends up owned elsewhere). On the float's
+            // The hooked fish's escape runs on the fish's ZDO owner (Fish.FixedUpdate counts m_escapeTime down there and
+            // writes ZDOVars.s_escape; Fish.OnHooked claims it for the hooker, but it can end up owned elsewhere). On the float's
             // owner, a fish it doesn't own keeps the m_escapeTime OnHooked set, so vanilla's reel here read it as escaping for good: half the
-            // line speed and twice the fish's stamina use for the whole fight (measured 19 stamina/m). Mirror the owner's escape state from
+            // line speed and twice the fish's stamina use for the whole fight. Mirror the owner's escape state from
             // the ZDO before the reel runs, for players and companions alike.
             private static void Prefix(FishingFloat __instance)
             {
@@ -884,7 +885,7 @@ namespace FiresCore.Npc.AI
             }
         }
 
-        /// <summary>0.2.261: whether the hooked fish is in an escape now, as its ZDO owner says (Fish.IsEscaping reads a local timer only its owner runs).</summary>
+        /// <summary>Whether the hooked fish is in an escape now, as its ZDO owner says (Fish.IsEscaping reads a local timer only its owner runs).</summary>
         public static bool EscapingNow(Fish fish) =>
             fish != null && fish.m_nview != null && fish.m_nview.IsValid() && fish.IsHooked()
             && (fish.m_nview.IsOwner() ? fish.IsEscaping() : fish.m_nview.GetZDO().GetFloat(ZDOVars.s_escape) > 0f);

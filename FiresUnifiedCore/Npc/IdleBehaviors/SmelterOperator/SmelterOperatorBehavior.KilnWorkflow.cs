@@ -143,7 +143,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 string dropName = item.m_dropPrefab?.name ?? "";
                 if (!PieceDataHelper.StationAccepts(_nearbyKiln, dropName)) continue;
 
-                // One copy with the bot's base chores (0.2.236): ChoreBrain.AddSmelterOreOne removes the unit FIRST, then RPC_AddOre.
+                // One copy with the bot's base chores: ChoreBrain.AddSmelterOreOne removes the unit FIRST, then RPC_AddOre.
                 string itemName = item.m_shared?.m_name ?? dropName;
                 int stackBefore = item.m_stack;
                 if (!AI.ChoreBrain.AddSmelterOreOne(_nearbyKiln, storageInv, item))
@@ -485,7 +485,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
-            // Timeout: give up the trip, as a vanilla NPC drops a goal it can't reach (audit slice 4, T2, 0.2.329; this used to
+            // Timeout: give up the trip, as a vanilla NPC drops a goal it can't reach (this used to
             // teleport onto the smelter). Returning true ends the phase; Update then runs NotifyOwner (frees the smelter and
             // kiln) and Complete, and the idle loop picks the next chore from where the companion stands.
             if (Time.time - _phaseStartTime > 20f)

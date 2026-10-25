@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -152,6 +152,10 @@ namespace FiresCore.Npc
                 var rampage = _character?.GetSEMan()?.GetStatusEffect(Archetypes.StatusEffects.StatusEffectManager.EFFECT_RAMPAGE.GetStableHashCode());
                 (rampage as Archetypes.StatusEffects.Expert.RampageEffect)?.OnKill();
             }
+
+            // One Debug line per kill, on every peer that records it
+            Vector3 kp = victim.transform.position;
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionKill] {_companion?.companionName} (owner {(_companion?.GetOwner() != null ? _companion.GetOwner().GetPlayerName() : "none")}) killed {Utils.GetPrefabName(victim.gameObject)} ({victim.m_name}, ★{victim.GetLevel() - 1}) at ({kp.x:0.0}, {kp.z:0.0}); total {_totalKills}");
 
             // Mark dirty for batched save (don't save immediately)
             MarkDirty();

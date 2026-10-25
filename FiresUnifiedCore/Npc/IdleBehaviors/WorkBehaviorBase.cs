@@ -239,8 +239,8 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         protected void SetPhase(TPhase newPhase)
         {
-            // Always on (0.2.214, R85 workstation: "STARTED sub-behavior WorkstationInteraction" and then nothing for 150 s, no phase
-            // named): every phase change of a work behaviour, with the time spent in the one it leaves.
+            // Always on:
+            // every phase change of a work behaviour, with the time spent in the one it leaves.
             if (PhaseManager != null && !Equals(CurrentPhase, newPhase))
                 Debug.Log($"[{BehaviorName}] {Companion?.companionName} phase {CurrentPhase} -> {newPhase} (after {TimeInCurrentPhase:0.0} s)");
             PhaseManager?.SetPhase(newPhase);
@@ -352,7 +352,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            // Vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
             Character?.SetLookDir(dir.normalized);
         }
         

@@ -7,7 +7,7 @@ using UnityEngine;
 namespace FiresCore.Compat
 {
     /// <summary>
-    /// A vanilla error at quit (Fire: "that's a vanilla error and if we can fix it we should"; [fgn]'s trace, 2026-09-30).
+    /// A vanilla error at quit.
     ///
     /// The game's MagicaCloth 2 is set up once at SubsystemRegistration, and MagicaManager.OnAppQuitting (Application.quitting) sets
     /// its managers to null. EnvMan's GameObject carries a MagicaWindZone, and its Awake/OnEnable call MagicaManager.Wind.AddWind /

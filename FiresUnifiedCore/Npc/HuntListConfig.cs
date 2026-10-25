@@ -42,7 +42,7 @@ namespace FiresCore.Npc
         {
             if (configSync != null && HuntableCreatures != null)
                 configSync.AddConfigEntry(HuntableCreatures);
-            FiresCore.Config.OwnerGatedConfig.Gate(HuntableCreatures, FiresCore.Config.OwnerGatedConfig.Owners.COMP, synced: true);   // 0.2.359
+            FiresCore.Config.OwnerGatedConfig.Gate(HuntableCreatures, FiresCore.Config.OwnerGatedConfig.Owners.COMP, synced: true);
         }
 
         /// <summary>

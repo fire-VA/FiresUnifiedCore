@@ -54,7 +54,7 @@ namespace FiresCore.Storage
         // The row a connecting character should have, without the entry. Opening the vault, ensuring the index and the
         // lookup cost the dedi's main thread 79-188 ms at every join (R3/R5 LoginDiag) even for rows that existed, so a
         // known owner skips the vault. Any other owner (a new character, or a join before the first preload finishes) has
-        // its row found or written on the background VaultWriter: creating it held a new world's first join 50 ms (R23).
+        // its row found or written on the background VaultWriter: creating it held a new world's first join 50 ms.
         public static void EnsureRow(string ownerKey, string playerName)
         {
             if (string.IsNullOrEmpty(ownerKey)) return;

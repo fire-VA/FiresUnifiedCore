@@ -27,6 +27,17 @@ namespace FiresCore.Movement
         private const string Tag = "[Climb] ";
         private const string BundleName = "firesclimb";
         private const float CrossFadeSeconds = 0.15f;
+        // The crossfade length and the body's current layer-0 state, for the vault-start Debug line in Climbing.
+        internal static float CrossFadeTime => CrossFadeSeconds;
+        internal static string CurrentStateName(Character body)
+        {
+            Animator animator = body != null ? FiresCore.Movement.CrawlPose.CrawlPose.AnimatorOf(body) : null;
+            if (animator == null || animator.runtimeAnimatorController == null) return "?";
+            int h = animator.GetCurrentAnimatorStateInfo(0).shortNameHash;
+            if (h == MovementHash) return MovementState;
+            foreach (var pair in s_stateHash) if (pair.Value == h) return pair.Key.ToString();
+            return "state " + h;
+        }
         private const float RestoreAfterSeconds = 0.35f;   // the cross-fade back to Movement finishes before the controller swap
         private const string MovementState = "Movement";
 
@@ -43,6 +54,8 @@ namespace FiresCore.Movement
             (ClimbClip.Up1m, "Emote_point", "Point", "ClimbUp_1m"),
             (ClimbClip.Up2m, "Emote_cheer", "Cheer", "ClimbUp_2m"),
             (ClimbClip.Exit, "Emote_shrug", "Shrug", "Climb_Exit"),
+            // The hand-plant vault, on the thumbs-up emote (vanilla spells it "tumbsup").
+            (ClimbClip.Vault, "Emote_tumbsup", "Thumbsup", "S_Vault_1M"),
         };
 
         private static readonly int MovementHash = Animator.StringToHash(MovementState);
@@ -53,8 +66,28 @@ namespace FiresCore.Movement
             internal RuntimeAnimatorController Original;
             internal int Clip = -1;
             internal float RestoreAt = -1f;   // > 0: back at Movement, waiting to give the original controller back
-            internal float NextRemoteLog;     // 0.2.285: the viewing peer's Debug line, every RemoteLogSeconds while climbing
+            internal float NextRemoteLog;     // The viewing peer's Debug line, every RemoteLogSeconds while climbing
             internal int Reasserts;
+            internal float SpeedFactor = 1f, OriginalSpeed = 1f;   // Climb clips play faster on a bigger player
+        }
+
+        // A scaled-up player's climb
+        // clips play at its size factor (both ways, floor Climbing.MinSpeedScale); the animator's own speed comes back when the climb ends.
+        private static void ApplySizeSpeed(Animator animator, Body body, ZNetView view)
+        {
+            float k = view.GetComponent<Character>() is Player p ? Mathf.Max(Climbing.MinSpeedScale, Climbing.SizeScale(p)) : 1f;   // Both ways
+            if (Mathf.Abs(k - body.SpeedFactor) < 0.01f) return;
+            if (Mathf.Abs(body.SpeedFactor - 1f) < 0.01f) body.OriginalSpeed = animator.speed;
+            body.SpeedFactor = k;
+            animator.speed = body.OriginalSpeed * k;
+            FiresLogger.LogDebug($"{Tag}size speed: climb clips at x{k:0.00} (animator speed {animator.speed:0.00})");
+        }
+
+        private static void ClearSizeSpeed(Animator animator, Body body)
+        {
+            if (Mathf.Abs(body.SpeedFactor - 1f) < 0.01f) return;
+            animator.speed = body.OriginalSpeed;
+            body.SpeedFactor = 1f;
         }
 
         private const float RemoteLogSeconds = 2f;
@@ -65,7 +98,7 @@ namespace FiresCore.Movement
             clip == ClimbClip.UpLoop || clip == ClimbClip.IdleLoop || clip == ClimbClip.DownLoop || clip == ClimbClip.LeftLoop || clip == ClimbClip.RightLoop;
 
         private static readonly Dictionary<Animator, Body> s_bodies = new Dictionary<Animator, Body>();
-        // 0.2.288: the climb's own override controllers (never wrapped again), and the other mods' overrides already logged once.
+        // The climb's own override controllers (never wrapped again), and the other mods' overrides already logged once.
         private static readonly HashSet<AnimatorOverrideController> s_ours = new HashSet<AnimatorOverrideController>();
         private static readonly HashSet<RuntimeAnimatorController> s_wrapLogged = new HashSet<RuntimeAnimatorController>();
         private static readonly Dictionary<RuntimeAnimatorController, AnimatorOverrideController> s_overrides =
@@ -96,6 +129,22 @@ namespace FiresCore.Movement
             s_bodies.TryGetValue(animator, out Body body);
             if (state == 0 && body == null) return;   // the common case: not climbing and never was
 
+            // The climb state lives on the ZDO,
+            // which is saved. A body that logged out or unloaded mid-climb comes back with it set and no climb run to end it, so the animator
+            // held the borrowed climb state forever. The owner clears a state no live run backs.
+            if (state != 0 && view.IsOwner())
+            {
+                Character who = view.GetComponent<Character>();
+                if (who != null && !Climb.HasRun(who))
+                {
+                    zdo.Set(ClimbZdo.StateHash, 0);
+                    zdo.Set(ClimbZdo.ClipHash, 0);
+                    FiresLogger.LogDebug($"{Tag}{(who is Player p ? p.GetPlayerName() : who.m_name)}: stale climb state {(Climb.State)state} on its ZDO with no climb running (saved mid-climb); cleared");
+                    state = 0;
+                    if (body == null) return;
+                }
+            }
+
             if (state != 0)
             {
                 if (body == null || body.RestoreAt > 0f)
@@ -103,6 +152,7 @@ namespace FiresCore.Movement
                     if (body == null && !Begin(animator, out body)) return;
                     body.RestoreAt = -1f;
                 }
+                ApplySizeSpeed(animator, body, view);
                 int clip = zdo.GetInt(ClimbZdo.ClipHash, 0);
                 bool hasState = s_stateHash.TryGetValue((ClimbClip)clip, out int hash);
                 if (clip != body.Clip)
@@ -110,7 +160,7 @@ namespace FiresCore.Movement
                     body.Clip = clip;
                     if (hasState) animator.CrossFadeInFixedTime(hash, CrossFadeSeconds, 0);
                 }
-                // 0.2.285 (HR5dc, Fire: "the bot floats up the wall", the fall pose on the viewers' screens): a loop clip is held. When anything
+                // A loop clip is held. When anything
                 // (vanilla's falling / inWater transitions) took the animator out of the borrowed state, it goes back to it.
                 else if (hasState && IsLoop((ClimbClip)clip) && !animator.IsInTransition(0) && animator.GetCurrentAnimatorStateInfo(0).shortNameHash != hash)
                 {
@@ -132,6 +182,7 @@ namespace FiresCore.Movement
             // Back to Idle: fade to Movement on the override, then give the original controller back once the fade is done.
             if (body.RestoreAt < 0f)
             {
+                ClearSizeSpeed(animator, body);
                 body.RestoreAt = Time.time + RestoreAfterSeconds;
                 body.Clip = -1;
                 animator.CrossFadeInFixedTime(MovementHash, CrossFadeSeconds, 0);
@@ -142,14 +193,14 @@ namespace FiresCore.Movement
             s_bodies.Remove(animator);
         }
 
-        // Puts the body on the override controller. False (and logged once per controller, 0.2.288) when it can't climb visibly.
+        // Puts the body on the override controller. False (and logged once per controller) when it can't climb visibly.
         private static bool Begin(Animator animator, out Body body)
         {
             body = null;
             RuntimeAnimatorController original = animator.runtimeAnimatorController;
             if (original == null) { Refused(animator, "its animator has no controller"); return false; }
-            // 0.2.288 (Fire on 0.2.287: "Vafire floats up the wall standing in the plain idle pose", no "loaded … climb clip(s)" line at
-            // all): VikHavnCombat's PlayerAnimationOverrides puts its own AnimatorOverrideController on the local player's animator (from
+            // A body could float up the wall in the plain idle pose with no climb clips loaded:
+            // VikHavnCombat's PlayerAnimationOverrides puts its own AnimatorOverrideController on the local player's animator (from
             // the first crawl, shield swing, grab or trick on), and this refused ANY override controller, silently. Only the climb's own
             // override is refused now; another mod's override is wrapped (the climb override builds on top of it) and given back,
             // the same controller, when the climb ends.
@@ -166,7 +217,7 @@ namespace FiresCore.Movement
             return true;
         }
 
-        // 0.2.289: a controller as the log names it (VikHavn's override has no name: "an unnamed override over 'Player_animator'").
+        // A controller as the log names it (VikHavn's override has no name: "an unnamed override over 'Player_animator'").
         private static string Named(RuntimeAnimatorController c)
         {
             if (c == null) return "no controller";
@@ -174,7 +225,7 @@ namespace FiresCore.Movement
             return c is AnimatorOverrideController o ? "an unnamed override over " + Named(o.runtimeAnimatorController) : "an unnamed controller";
         }
 
-        // 0.2.288: a refusal is said once per animator controller at Info (a silent no-op hid the VikHavn case).
+        // A refusal is said once per animator controller at Info (a silent no-op hid the VikHavn case).
         private static readonly HashSet<string> s_refusedLogged = new HashSet<string>();
         private static void Refused(Animator animator, string why)
         {
@@ -229,6 +280,13 @@ namespace FiresCore.Movement
             return overrides;
         }
 
+        /// <summary>The embedded firesclimb bundle carries <paramref name="clipName"/> (the vault falls back to ClimbUp_1m without it).</summary>
+        internal static bool HasClip(string clipName)
+        {
+            var clips = Clips();
+            return clips != null && clips.ContainsKey(clipName);
+        }
+
         private static Dictionary<string, AnimationClip> Clips()
         {
             if (s_clips != null || s_loadFailed) return s_clips;
@@ -251,7 +309,8 @@ namespace FiresCore.Movement
 
         // Assigning a controller restarts the state machine and resets every parameter; ZSyncAnimation only re-sends the ones
         // that change, so the current values are copied over (triggers are one-shot and not kept).
-        private static void SwapKeepingParameters(Animator animator, RuntimeAnimatorController controller)
+        // Internal, ClipSlots swaps the same way (no behaviour change for the climb).
+        internal static void SwapKeepingParameters(Animator animator, RuntimeAnimatorController controller)
         {
             AnimatorControllerParameter[] parameters = animator.parameters;
             var floats = new List<(int, float)>();
@@ -266,10 +325,23 @@ namespace FiresCore.Movement
                     case AnimatorControllerParameterType.Bool: bools.Add((p.nameHash, animator.GetBool(p.nameHash))); break;
                 }
             }
+            // The swap restarted every layer at its default state, a one-frame
+            // pose snap before the climb crossfade. Each layer is put back on the state and normalized time it was in, so the crossfade
+            // that follows starts from the pose the body actually had.
+            int layers = animator.layerCount;
+            var states = new (int hash, float time)[layers];
+            for (int l = 0; l < layers; l++)
+            {
+                AnimatorStateInfo info = animator.GetCurrentAnimatorStateInfo(l);
+                states[l] = (info.fullPathHash, info.normalizedTime);
+            }
             animator.runtimeAnimatorController = controller;
             foreach (var (hash, value) in floats) animator.SetFloat(hash, value);
             foreach (var (hash, value) in ints) animator.SetInteger(hash, value);
             foreach (var (hash, value) in bools) animator.SetBool(hash, value);
+            for (int l = 0; l < layers && l < animator.layerCount; l++)
+                if (states[l].hash != 0 && animator.HasState(l, states[l].hash)) animator.Play(states[l].hash, l, states[l].time);
+            animator.Update(0f);
         }
 
         // Bodies whose animator was destroyed mid-climb (a logout, a zone unload) leave nothing to restore.

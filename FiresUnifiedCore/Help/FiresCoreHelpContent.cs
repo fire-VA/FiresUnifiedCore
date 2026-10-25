@@ -26,7 +26,7 @@ namespace FiresCore.Help
             HelpRegistry.RegisterSection(ModId, "Commands (Admin)", "FX & Asset Dump Commands", 40, BuildDumpCommands, adminOnly: true);
         }
 
-        // 0.2.326: Fire's flight presets. The lines come from the shared FlightPresets, so FiresMounts' panel and Valcast say the same.
+        // Flight presets. The lines come from the shared FlightPresets, so FiresMounts' panel and Valcast say the same.
         private static void BuildFlying(HelpContentWriter writer)
         {
             writer.Header("Flying");
@@ -51,9 +51,11 @@ namespace FiresCore.Help
             writer.Bullet("This help panel — the '? Help' button on the pause (Esc) menu. Every [-] " +
                 "subheading in it is collapsible: click the heading to fold or unfold it, and your " +
                 "layout is remembered per section for the session.");
-            writer.Bullet("Hold Alt+Shift + right-click — the context menu on companions, chests, and more.");
+            writer.Bullet("Hold Alt+Shift + right-click — the context menu on companions, chests, and more (OFF by default: turn on ContextMenu / Enabled in the config window).");
             writer.Bullet("The Group HUD under the minimap — status bars for companions traveling with you.");
             writer.Bullet("The Environment Box build piece — custom weather/environment zones.");
+            writer.Bullet("The Fires hub — with UI / Fires UI override on, F1 opens the hub instead: Player (stats, appearance, " +
+                "classes, leaderboard, achievements), Info and Config settings in one window.");
             writer.Divider();
             writer.Paragraph("Each Fires mod documents its own features under its own heading in this panel's " +
                 "sidebar. If you're looking for companions, building tools, water, or minigames, jump to " +
@@ -83,8 +85,8 @@ namespace FiresCore.Help
             writer.Divider();
 
             writer.SubHeader("Notes");
-            writer.Bullet("00 - Config UI section styles the window itself (font, size, opacity, accent color).");
-            writer.Bullet("05 FiresModsOnly narrows the list to Fires mods only (off: every installed plugin).");
+            writer.Bullet("Show advanced (the toggle in the window header) shows the deeper tuning settings; off, each mod lists its keybinds and basic settings only.");
+            writer.Bullet("The Fires toggle in the window header narrows the list to Fires mods only (off: every installed plugin).");
             writer.Bullet("Server-synced settings show the server's value; on locked servers only admins can " +
                 "change them.");
             writer.Bullet("va_config_dump — log every discovered config entry (for debugging).");
@@ -94,7 +96,7 @@ namespace FiresCore.Help
         {
             writer.Header("Context Menu & Group HUD");
             writer.SubHeader("Context Menu");
-            writer.Paragraph("Hold Alt+Shift and right-click an object to open its context menu. What appears " +
+            writer.Paragraph("Turn on ContextMenu / Enabled first (it is OFF by default). Then hold Alt+Shift and right-click an object to open its context menu. What appears " +
                 "depends on the target — companions offer orders ('Go here', 'Sit here', 'Fish here', " +
                 "'Move here'), chests offer 'Deposit items' and 'Organize', and other Fires mods add " +
                 "their own entries (wayshrine admin options, environment boxes, and more).");
@@ -108,7 +110,7 @@ namespace FiresCore.Help
                 "party members — with name, distance, and health/stamina/eitr bars.");
             writer.Bullet("GroupHud.ShowGroupHud — toggle it");
             writer.Bullet("GroupHud.MaxRowsPerColumn / Columns — layout (rows before scrolling; 1 or 2 columns)");
-            writer.Bullet("Drag it to reposition; DefaultPosX/Y set where it starts.");
+            writer.Bullet("Drag it to reposition (Esc menu > Edit layout); your spot is saved.");
         }
 
         private static void BuildEnvironmentBox(HelpContentWriter writer)

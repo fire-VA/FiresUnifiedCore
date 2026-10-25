@@ -30,7 +30,7 @@ namespace FiresCore.UI.Minigames
         /// <summary>Invoked exactly once when the overlay closes (Esc/game-driven/logout).</summary>
         public Action OnClosed;
 
-        // 0.2.380: Esc. The overlay holds the input block, so vanilla's Esc -> menu path (the central close) never ran and
+        // Esc. The overlay holds the input block, so vanilla's Esc -> menu path (the central close) never ran and
         // nothing closed. Now Esc closes the topmost popup first, then the overlay itself.
         /// <summary>False keeps Esc from closing anything (the game handles it alone).</summary>
         public bool CloseOnEscape = true;
@@ -186,7 +186,7 @@ namespace FiresCore.UI.Minigames
             _blocked = true;
             FiresInputBlock.Acquire(_token);
             Cursor.lockState = CursorLockMode.None; Cursor.visible = true;
-            // 0.2.380: the central close (ModUiRegistry.CloseAll) closes this overlay too.
+            // The central close (ModUiRegistry.CloseAll) closes this overlay too.
             FiresCore.Bridge.ModUiRegistry.Register(RegistryKey, () => _current != null && !_current._closed, () => _current?.Close(), () => _current != null ? _current.gameObject : null);
         }
 

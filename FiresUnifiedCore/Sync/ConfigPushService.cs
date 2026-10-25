@@ -25,6 +25,7 @@ namespace FiresCore.Sync
         // ceiling; big ExpandWorld data yaml is split across several and paced
         // by SafeRoutedRpc so a push can't flood the connection.
         private const int ChunkBytes = 350 * 1024;
+        internal const int MaxInboundChunks = 256;   // 256 x 350 KB = about 90 MB: no config file is larger
 
         // Only these extensions may be pushed — never .dll/.bundle/.pdb even if
         // one lives in a config subfolder.
@@ -168,6 +169,12 @@ namespace FiresCore.Sync
             var root = Paths.ConfigPath;
             var results = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // rel → abs
             string norm = pattern.Replace('\\', '/').Trim().TrimStart('/');
+            // a pattern never leaves the config folder: no "..", no drive or root
+            if (norm.IndexOf(':') >= 0 || Path.IsPathRooted(norm) || Array.IndexOf(norm.Split('/'), "..") >= 0)
+            {
+                FiresLogger.LogWarning($"[ConfigPush] refused pattern outside the config folder: '{pattern}'");
+                return new List<(string rel, string abs)>();
+            }
 
             // 1) Exact directory → the whole folder, recursively.
             string absDir = Path.Combine(root, norm.Replace('/', Path.DirectorySeparatorChar));
@@ -243,7 +250,7 @@ namespace FiresCore.Sync
         {
             string rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             string full = Path.GetFullPath(abs);
-            if (!full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase)) return null;
+            if (!full.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;   // a sibling folder never counts
             return full.Substring(rootFull.Length + 1).Replace('\\', '/');
         }
 
@@ -256,6 +263,72 @@ namespace FiresCore.Sync
             foreach (var kv in results) list.Add((kv.Key, kv.Value));
             list.Sort((a, b) => string.Compare(a.rel, b.rel, StringComparison.OrdinalIgnoreCase));
             return list;
+        }
+
+        /// <summary>
+        /// True when <paramref name="rel"/> is one of the files the admin's own pull pattern names: the exact file (with or without
+        /// a config extension), a file inside the named folder, or a wildcard match on the file or a folder above it. A pull only
+        /// ever writes what the local admin asked for, whatever the server sends.
+        /// </summary>
+        internal static bool PatternAllows(string pattern, string rel)
+        {
+            if (string.IsNullOrEmpty(pattern) || string.IsNullOrEmpty(rel)) return false;
+            string norm = pattern.Replace('\\', '/').Trim().TrimStart('/').TrimEnd('/');
+            rel = rel.Replace('\\', '/');
+            if (norm.Length == 0) return false;
+            if (string.Equals(rel, norm, StringComparison.OrdinalIgnoreCase)) return true;
+            if (rel.StartsWith(norm + "/", StringComparison.OrdinalIgnoreCase)) return true;
+            if (!Path.HasExtension(norm) && string.Equals(rel, norm + Path.GetExtension(rel), StringComparison.OrdinalIgnoreCase)) return true;
+            if (!norm.Contains("*")) return false;
+            var regex = GlobToRegex(norm);
+            if (regex.IsMatch(rel) || regex.IsMatch(Path.GetFileName(rel))) return true;
+            string[] parts = rel.Split('/');
+            for (int i = 1; i < parts.Length; i++)   // a matching folder above the file brings the whole folder
+            {
+                string folder = string.Join("/", parts, 0, i);
+                if (regex.IsMatch(folder) || regex.IsMatch(parts[i - 1])) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// The content gate per extension: .cfg / .ini must read as sections and key = value lines, .json must parse, .xml must
+        /// load, .yaml / .yml / .txt must be plain UTF-8 text with no NUL (no yaml parser ships with Core). Anything else is dropped.
+        /// </summary>
+        internal static bool ConfigContentOk(string relPath, byte[] bytes)
+        {
+            string why = null;
+            try
+            {
+                if (bytes == null) why = "no content";
+                else if (Array.IndexOf(bytes, (byte)0) >= 0) why = "binary content";
+                else
+                {
+                    string text = new UTF8Encoding(false, true).GetString(bytes);   // throws on invalid UTF-8
+                    switch (Path.GetExtension(relPath).ToLowerInvariant())
+                    {
+                        case ".cfg":
+                        case ".ini":
+                            foreach (string raw in text.Split('\n'))
+                            {
+                                string line = raw.Trim();
+                                if (line.Length == 0 || line[0] == '#' || line[0] == ';') continue;
+                                if (line[0] == '[' && line[line.Length - 1] == ']') continue;
+                                if (line.IndexOf('=') > 0) continue;
+                                why = "a line that is not [section] or key = value"; break;
+                            }
+                            break;
+                        case ".json": Newtonsoft.Json.Linq.JToken.Parse(text); break;
+                        case ".xml": new System.Xml.XmlDocument { XmlResolver = null }.LoadXml(text); break;
+                        case ".yaml": case ".yml": case ".txt": break;
+                        default: why = "extension not allowed"; break;
+                    }
+                }
+            }
+            catch (Exception ex) { why = "does not parse (" + ex.GetType().Name + ")"; }
+            if (why == null) return true;
+            FiresLogger.LogWarning($"[ConfigSync] dropped config file '{relPath}': {why}");
+            return false;
         }
 
         private static Regex GlobToRegex(string glob)
@@ -333,7 +406,7 @@ namespace FiresCore.Sync
                     FiresLogger.LogWarning($"[ConfigPush] {sender} sent unsafe/blocked path '{relPath}' — refused.");
                     return;
                 }
-                if (count <= 0 || index < 0 || index >= count) return;
+                if (count <= 0 || count > MaxInboundChunks || index < 0 || index >= count) return;
 
                 SweepStaleReassemblies();
 
@@ -380,6 +453,8 @@ namespace FiresCore.Sync
             if (norm.StartsWith("/", StringComparison.Ordinal)) return false;
             if (norm.Length > 1 && norm[1] == ':') return false;   // drive-rooted
             if (!AllowedExtensions.Contains(Path.GetExtension(norm))) return false;
+            if (norm.IndexOf(':') >= 0 || !System.Text.RegularExpressions.Regex.IsMatch(norm, @"^[A-Za-z0-9_\-./ '()+,]+$")) return false;   // plain names only
+            if (norm.Split('/').Length > 6) return false;   // at most 5 folder levels
 
             string root = Path.GetFullPath(Paths.ConfigPath)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -542,6 +617,7 @@ namespace FiresCore.Sync
 
         internal static void WriteConfigAtomic(string relPath, byte[] bytes)
         {
+            if (!IsSafeRelPath(relPath) || !ConfigContentOk(relPath, bytes)) return;   // every network-driven config write passes both gates
             string abs = Path.Combine(Paths.ConfigPath, relPath.Replace('/', Path.DirectorySeparatorChar));
             string dir = Path.GetDirectoryName(abs);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 
 namespace FiresCore.Npc
@@ -102,10 +102,13 @@ namespace FiresCore.Npc
         #region Properties
         
         /// <summary>Current health - uses our tracked value which properly reflects food bonuses</summary>
-        public float CurrentHealth => _currentHealth;
+        // ONE health value. The Character (which
+        // ApplyMaxHealthToCharacter already gives our max, food included) is the truth; the separate _currentHealth tracker only
+        // re-aligned past a 50% drift, so a missed delta (load, owner change, food max change) left the bar wrong for good.
+        public float CurrentHealth => _character != null && _character.GetMaxHealth() > 0f ? _character.GetHealth() : _currentHealth;
         
         /// <summary>Maximum health with attribute bonuses</summary>
-        public float MaxHealth => _maxHealth;
+        public float MaxHealth => _character != null && _character.GetMaxHealth() > 0f ? _character.GetMaxHealth() : _maxHealth;   // same source as CurrentHealth
         
         /// <summary>Health as percentage (0-1)</summary>
         public float HealthPercentage => _maxHealth > 0 ? CurrentHealth / _maxHealth : 0f;
@@ -350,7 +353,12 @@ namespace FiresCore.Npc
             
             // Sync our health with Character's actual health (in case of damage)
             SyncHealthFromCharacter();
-            
+
+            // Our tracker full but the real health below its max (a max
+            // raise at full health, or any other path that raised the max) = the "half bar"; the real health follows
+            if (_character != null && _maxHealth > 0f && _currentHealth >= _maxHealth - 0.5f && _character.GetHealth() < _character.GetMaxHealth() - 0.5f)
+                SetCurrentHealthDirect(_currentHealth);
+
             // Periodically validate and fix health if it seems wrong
             // This catches race conditions where health got stuck at a wrong value
             ValidateHealthPeriodically();
@@ -544,6 +552,8 @@ namespace FiresCore.Npc
         
         // Track last synced character health for change detection
         private float _lastSyncedCharHealth = -1f;
+        private bool _healthPushLogged;   // one proof line per companion
+        private bool _zeroRefusedLogged;
         
         #endregion
         
@@ -600,7 +610,10 @@ namespace FiresCore.Npc
             _maxHealth = ComputeMaxHealth(healthBonus, foodHealthBonus);
             // Stamina keeps the original (base+bonuses)*archetype convention and is intentionally NOT
             // level-scaled (vanilla creatures do not grow stamina with level).
-            _maxStamina = (baseMaxStamina + staminaBonus + foodStaminaBonus) * _archetypeStaminaMultiplier;
+            // Plus the companion's jewelry stamina (FLO FloApi.GetTotals[6], flat, as a player's jewelry gives it)
+            var jewelryInv = GetComponent<CompanionInventory>();
+            _jewelryStamina = jewelryInv != null ? jewelryInv.JewelryStaminaBonus() : Vector2.zero;
+            _maxStamina = (baseMaxStamina + staminaBonus + foodStaminaBonus + _jewelryStamina.x) * _archetypeStaminaMultiplier;
             _maxEitr = baseMaxEitr + eitrBonus + foodEitrBonus;
 
             // Vanilla SetLevel resets max health, so the level follows the effective level before ours is applied.
@@ -627,8 +640,9 @@ namespace FiresCore.Npc
                     if (VerboseLogging)
                         Debug.Log($"[CompanionStats] Health increased proportionally to {_currentHealth:F0}/{_maxHealth:F0}");
                 }
+                SetCurrentHealthDirect(_currentHealth);   // the real health follows the raise (it was only set before it)
             }
-            
+
             // CRITICAL: Update current stamina/eitr when max increases
             // Always update current values to match the increase in max values
             // This ensures that food bonuses properly fill the stat bars
@@ -778,15 +792,33 @@ namespace FiresCore.Npc
         private void SetCurrentHealthDirect(float health)
         {
             if (_character == null) return;
-            
+
             try
             {
-                var healthField = typeof(Character).GetField("m_health",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                    
-                if (healthField != null)
+                // The health bar could show half health while the companion was
+                // full: this used to write Character.m_health, which is the prefab's BASE max, not the current health (that lives in the
+                // ZDO, read by GetHealth and by the overhead bar). Regen filled our tracker to full while the real health stayed
+                // where it was after a max-health raise (e.g. 200 of 310 = the "half" bar). Now the real health is set (owner only).
+                var nview = _character.GetComponent<ZNetView>();
+                if (nview == null || !nview.IsValid() || !nview.IsOwner()) return;
+                float max = _character.GetMaxHealth();
+                float target = max > 0f ? Mathf.Min(health, max) : health;
+                float before = _character.GetHealth();
+                if (Mathf.Abs(before - target) < 0.01f) return;
+                // A server could own a
+                // wild companion whose stat tracker was never loaded there, and the sync wrote that 0 over its real health. A stats sync never
+                // kills: a target of 0 (or below) over a living companion is refused, once-logged; death only comes through damage.
+                if (target <= 0f && before > 0f)
                 {
-                    healthField.SetValue(_character, health);
+                    if (!_zeroRefusedLogged) { _zeroRefusedLogged = true; Debug.Log($"[CompanionStats] {_character.m_name}: refused to set real health {before:F0} -> 0 from the stat tracker ({_currentHealth:F0}/{_maxHealth:F0}, not loaded on this peer?)"); }
+                    return;
+                }
+                _character.SetHealth(target);
+                _lastSyncedCharHealth = target;   // our own write is not a heal for SyncHealthFromCharacter
+                if (!_healthPushLogged && Mathf.Abs(before - target) > 1f)
+                {
+                    _healthPushLogged = true;
+                    Debug.Log($"[CompanionStats] {_character.m_name}: real health set {before:F0} -> {target:F0} of {max:F0} (tracked {_currentHealth:F0}/{_maxHealth:F0}); the overhead bar follows it");
                 }
             }
             catch (Exception ex)
@@ -957,6 +989,7 @@ namespace FiresCore.Npc
         /// At 50 endurance, this provides 50% faster stamina regeneration.
         /// </summary>
         private const float StaminaRegenBonusPerEndurance = 0.01f;
+        private Vector2 _jewelryStamina;   // (flat max, regen %) from the companion's jewelry, read in RecalculateMaxStats
         
         // Cache stamina manager reference
         private Combat.StaminaManager _staminaManager;
@@ -1020,7 +1053,8 @@ namespace FiresCore.Npc
                 
                 float semanStaminaMult = 1f;
                 _character?.GetSEMan()?.ModifyStaminaRegen(ref semanStaminaMult);
-                float staminaRegen = staminaRegenPerSecond * combatMult * enduranceBonus * retreatBonus * semanStaminaMult * dt;
+                float jewelryRegen = 1f + _jewelryStamina.y / 100f;   // FLO jewelry StaminaRegenPct
+                float staminaRegen = staminaRegenPerSecond * combatMult * enduranceBonus * retreatBonus * semanStaminaMult * jewelryRegen * dt;
                 _currentStamina = Mathf.Min(_currentStamina + staminaRegen, _maxStamina);
             }
             

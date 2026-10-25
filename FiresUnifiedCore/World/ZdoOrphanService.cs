@@ -289,6 +289,7 @@ namespace FiresCore.World
 
             int mode = pkg.ReadInt();
             int hashCount = pkg.ReadInt();
+            if (hashCount < 0 || hashCount > 65536) return;
             var hashes = new List<int>(hashCount);
             for (int i = 0; i < hashCount; i++) hashes.Add(pkg.ReadInt());
             bool destroy = mode > 0;

@@ -11,7 +11,7 @@ namespace FiresCore.Summon
     /// <summary>
     /// The local side of summons: spawning, the list for UI, the mode (follow/guard/attack) on the summons this client owns,
     /// the save with the character (Player.m_customData "fires_summons", kept current so every profile save holds it), and the
-    /// despawn + re-spawn around logout, login and portals (Fire S3). Death despawns without saving.
+    /// despawn + re-spawn around logout, login and portals. Death despawns without saving.
     /// </summary>
     internal static class SummonClient
     {
@@ -24,6 +24,7 @@ namespace FiresCore.Summon
         internal static int LastCap = 2;
 
         private static float s_nextScan;
+        private static bool s_ringLogged;
         private static float s_respawnAt = -1f;
         private static string s_respawnList;
         private static bool s_teleportPending;
@@ -47,8 +48,20 @@ namespace FiresCore.Summon
             if (prefab == null || prefab.GetComponent<Character>() == null) { reason = "unknown creature '" + prefabName + "'"; return ZDOID.None; }
 
             Vector3 pos = p.transform.position + p.transform.forward * 2f + UnityEngine.Random.insideUnitSphere * 0.5f;
-            if (ZoneSystem.instance != null && ZoneSystem.instance.GetSolidHeight(pos, out float h)) pos.y = h + 0.2f;
-            GameObject go = UnityEngine.Object.Instantiate(prefab, pos, Quaternion.LookRotation(p.transform.forward));
+            Quaternion rot;
+            if (FiresCore.World.GravityUp.InField(pos, out Vector3 ringUp))
+            {
+                // halo ring: stand the summon on the wall floor along the local up, upright in the local frame (no flat heightmap)
+                if (FiresCore.World.Surface.Point(pos, out Vector3 floor, out _)) pos = floor + ringUp * 0.2f;
+                rot = Quaternion.LookRotation(Vector3.ProjectOnPlane(p.transform.forward, ringUp), ringUp);
+                if (!s_ringLogged) { s_ringLogged = true; FiresCore.Logging.FiresLogger.LogDebug($"[Summon] halo ring: '{prefabName}' placed on the wall floor at {pos:F0}, up {ringUp:F2}"); }
+            }
+            else
+            {
+                if (ZoneSystem.instance != null && ZoneSystem.instance.GetSolidHeight(pos, out float h)) pos.y = h + 0.2f;
+                rot = Quaternion.LookRotation(p.transform.forward);
+            }
+            GameObject go = UnityEngine.Object.Instantiate(prefab, pos, rot);
             Character c = go.GetComponent<Character>();
             ZNetView nv = go.GetComponent<ZNetView>();
             if (nv == null || !nv.IsValid()) { UnityEngine.Object.Destroy(go); reason = "not networked"; return ZDOID.None; }
@@ -265,7 +278,7 @@ namespace FiresCore.Summon
                     CapGroup = f[6],
                     Cap = (int)ParseF(f[7], 2f),
                 };
-                // The cap is enforced again by the server as each one registers ([wishbone]'s restore rule).
+                // The cap is enforced again by the server as each one registers.
                 if (Spawn(f[0], o, remaining > 0f ? remaining : 0f, out string why) != ZDOID.None) restored++;
                 else FiresLogger.LogWarning(SummonKeys.Tag + "couldn't restore '" + f[0] + "': " + why);
             }

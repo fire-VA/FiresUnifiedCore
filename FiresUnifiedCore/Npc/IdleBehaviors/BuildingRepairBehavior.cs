@@ -43,7 +43,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private const float ScanRadius         = 40f;
         private const float InteractionRange   = 2.5f;
-        private const float RepairThreshold    = AI.ChoreBrain.PieceRepairBelow;  // Repair if health below 95% (one rule with the bot's base chores, 0.2.236)
+        private const float RepairThreshold    = AI.ChoreBrain.PieceRepairBelow;  // Repair if health below 95% (one rule with the bot's base chores)
         private const float RepairDuration     = 2.0f;   // Animation hold time
         private const float MaxRepairTime     = 180f;
         private const float ScanCacheDuration = 30f;
@@ -527,7 +527,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             else if (_currentPiece.GetHealthPercentage() < 1f)
             {
-                // 0.2.322: vanilla Repair refuses within 1 s of the last repair; still damaged, so it's picked again next pass.
+                // Vanilla Repair refuses within 1 s of the last repair; still damaged, so it's picked again next pass.
                 _repairedPieces.Remove(_currentPiece);
                 LogVerbose($"RepairPiece returned false — still damaged, retried next pass");
             }
@@ -645,7 +645,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
 
-        // One set of repair rules with the bot's base chores (0.2.237): ChoreBrain.DamagedPieces / PieceWantsRepair (loaded,
+        // One set of repair rules with the bot's base chores: ChoreBrain.DamagedPieces / PieceWantsRepair (loaded,
         // player-built, under PieceRepairBelow), most damaged first; this companion's wards on top.
         private List<WearNTear> ScanForDamagedPieces()
         {
@@ -856,7 +856,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (nview == null || !nview.IsValid()) return false;
             if (!ChestHelper.WardsAllow(wearNTear.transform.position, Companion)) return false;
 
-            // One copy with the bot's base chores (0.2.236): claim, vanilla Repair, the direct health write as the fallback.
+            // One copy with the bot's base chores: claim, vanilla Repair, the direct health write as the fallback.
             return AI.ChoreBrain.RepairPiece(wearNTear);
         }
 
@@ -867,7 +867,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private static int CountItems(Inventory inv, string prefabName)
         {
             int count = 0;
-            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // 0.2.362: storage rows only
+            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // Storage rows only
             {
                 if (item?.m_dropPrefab?.name == prefabName)
                     count += item.m_stack;
@@ -879,10 +879,10 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (CountItems(inv, prefabName) < needed) return false;
 
-            // 0.2.322: vanilla Inventory.RemoveItem(item, amount), so the inventory's Changed (save, UI) fires. The raw
+            // Vanilla Inventory.RemoveItem(item, amount), so the inventory's Changed (save, UI) fires. The raw
             // m_stack write skipped it.
             int remaining = needed;
-            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(inv))) // 0.2.362: storage rows only
+            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(inv))) // Storage rows only
             {
                 if (remaining <= 0) break;
                 if (item?.m_dropPrefab?.name != prefabName) continue;

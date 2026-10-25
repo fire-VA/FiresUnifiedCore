@@ -14,6 +14,7 @@ namespace FiresCore.Npc
     /// AttachArmor, which is also the only one that runs SetupCloth.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class AttachedItemVisuals
     {
         private static readonly HashSet<string> _reportedItems = new HashSet<string>();

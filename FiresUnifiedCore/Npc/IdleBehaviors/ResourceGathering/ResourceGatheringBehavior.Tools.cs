@@ -21,7 +21,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (resource == null || !resource.RequiresCombat) return true;
             if (resource.RequiredTool == ResourceDataHelper.ToolType.None) return true;
 
-            // 0.2.367: the shared lookup (hands, then the Tools pouch, then storage) decides
+            // The shared lookup (hands, then the Tools pouch, then storage) decides
             if (_inventory != null) return _inventory.FindTool(resource.RequiredTool, resource.MinToolTier, TaskFor(resource)) != null;
 
             // Only log verbosely to reduce spam
@@ -325,7 +325,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
             
-            // 0.2.322 (dupe fix): claim the chest first, like every other chest write, then move the tool with the shared move.
+            // Dupe fix: claim the chest first, like every other chest write, then move the tool with the shared move.
             // Unclaimed, the removal ran on a machine that didn't own the chest: the owner's copy kept the tool and the
             // companion had one too. The claim can reload the chest's items, so the tool is found again after it.
             if (!ChestHelper.TryClaimForWrite(_toolChest, Companion)) return false;
@@ -391,7 +391,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (ResourceDataHelper.IsToolAppropriate(leftBack, resource.RequiredTool, resource.MinToolTier))
                     return true;
 
-                // 0.2.367: the shared lookup (hands, then the Tools pouch, then storage)
+                // The shared lookup (hands, then the Tools pouch, then storage)
                 if (_inventory.FindTool(resource.RequiredTool, resource.MinToolTier, TaskFor(resource)) != null) return true;
             }
             
@@ -542,7 +542,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_inventory == null || resource == null) return;
             
-            // 0.2.367: the shared lookup (hands, then the Tools pouch, then storage)
+            // The shared lookup (hands, then the Tools pouch, then storage)
             var bestTool = _inventory.FindTool(resource.RequiredTool, resource.MinToolTier, TaskFor(resource));
             CompanionInventory.EquipmentSlot? bestSlot =
                 bestTool != null && _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand) == bestTool
@@ -641,7 +641,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
-            // 0.2.367: the shared lookup (hands, then the Tools pouch, then storage)
+            // The shared lookup (hands, then the Tools pouch, then storage)
             string task = requiredTool == ResourceDataHelper.ToolType.Pickaxe ? "mine" : requiredTool == ResourceDataHelper.ToolType.Axe ? "chop" : "gather";
             var bestTool = _inventory.FindTool(requiredTool, minTier, task);
             if (bestTool == null)
@@ -667,7 +667,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return true;
         }
 
-        /// <summary>0.2.367: the real refusal: "no pickaxe" (none anywhere) or "my pickaxe is too weak for this rock" (tier).</summary>
+        /// <summary>The real refusal: "no pickaxe" (none anywhere) or "my pickaxe is too weak for this rock" (tier).</summary>
         private string ToolRefusalFor(ResourceDataHelper.ResourceData resource)
         {
             if (resource == null) return "that's not something I can gather";
@@ -678,7 +678,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return CompanionInventory.ToolRefusal(resource.RequiredTool, bestTier, noun);
         }
 
-        /// <summary>0.2.367: the task word for the [Tools] lines.</summary>
+        /// <summary>The task word for the [Tools] lines.</summary>
         private static string TaskFor(ResourceDataHelper.ResourceData resource) =>
             resource == null ? "gather" : resource.RequiredTool == ResourceDataHelper.ToolType.Pickaxe ? "mine"
             : resource.RequiredTool == ResourceDataHelper.ToolType.Axe ? "chop" : "gather";
@@ -687,7 +687,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // Tool crafting helpers
         // -----------------------------------------------------------------------
 
-        // 0.2.274 (Fire: "put enough resources in the yard for them to create themselves. A pickaxe for the mud pile"): the ladders
+        // The tool ladders
         // by tier, cheapest first; the tiers are the runtime prefabs'. Both the bag-only craft and the base-stock craft below use them.
         private static readonly string[] CraftablePickaxes = { "PickaxeAntler", "PickaxeBronze", "PickaxeIron", "PickaxeBlackMetal" };
         private static readonly string[] CraftableAxes = { "AxeStone", "AxeFlint", "AxeBronze", "AxeIron", "AxeBlackMetal" };
@@ -727,7 +727,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return true;
         }
 
-        // ── 0.2.274: a tool crafted from base stock ──────────────────────────────────────────────────────────────────────────────
+        // ── A tool crafted from base stock ──────────────────────────────────────────────────────────────────────────────
         // Paid from the bag plus the base chests the owner may use, through ChoreBrain.CraftFromStock (the bot's decision: the whole cost
         // or nothing fetched; station kind, level, roof and fire checked). At most one intermediate: when the tool is short of exactly
         // one item that has its own recipe (Bronze <- Copper + Tin at the forge) and stock covers k crafts of it plus the rest of the
@@ -1028,7 +1028,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return null;
             }
             
-            // 0.2.322 (dupe fix): claim the chest first, then find the tool again (the claim can reload the chest's items) and
+            // Dupe fix: claim the chest first, then find the tool again (the claim can reload the chest's items) and
             // move it with the shared move. The returned item is the one now in storage.
             if (!ChestHelper.TryClaimForWrite(bestChest, Companion)) return null;
             var chestInventory = bestChest.GetInventory();

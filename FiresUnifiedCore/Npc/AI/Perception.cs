@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace FiresCore.Npc.AI
 {
-    /// <summary>How far and how wide a body senses (Fire, 2026-09-29: "bots need a proper vision cone like monster ai gets").</summary>
+    /// <summary>How far and how wide a body senses: a vision cone like monster AI gets.</summary>
     public struct Senses
     {
         public float ViewRange;
@@ -176,8 +176,7 @@ namespace FiresCore.Npc.AI
             return best;
         }
 
-        // ---- Obstacles (Fire, 2026-09-29: "they need to be able to register what is around them for objects in order to
-        // properly avoid them"; R58 the bot stuck on a rock) ----
+        // ---- Obstacles: what is around the body, so it can avoid them ----
 
         /// <summary>A body steps over anything this high without jumping.</summary>
         public const float StepHeight = 0.45f;
@@ -218,7 +217,7 @@ namespace FiresCore.Npc.AI
                 if (collider.attachedRigidbody != null && collider.attachedRigidbody.GetComponent<Character>() != null) continue;
                 Bounds bounds = collider.bounds;
                 // ClosestPoint only on primitive / convex colliders: a concave mesh (voxel terrain, rocks, many pieces) answers with the
-                // query point itself, which read every such obstacle as touching the body (R69, [visual]: the Unity warning spam).
+                // query point itself, which read every such obstacle as touching the body (and spammed Unity warnings).
                 Vector3 probe = feet + Vector3.up * 0.5f;
                 Vector3 closest = !(collider is MeshCollider mesh) || mesh.convex ? collider.ClosestPoint(probe) : bounds.ClosestPoint(probe);
                 Vector3 flat = new Vector3(closest.x - feet.x, 0f, closest.z - feet.z);

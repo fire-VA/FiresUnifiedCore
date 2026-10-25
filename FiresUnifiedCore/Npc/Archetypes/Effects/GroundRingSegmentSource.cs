@@ -7,8 +7,8 @@ namespace FiresCore.Npc.Archetypes.Effects
     /// Supplies the ground ring's dashes: flat quads of Core's own, one unit long (z) and one unit wide (x), lying on the ground,
     /// scaled by the ring to a thin dash, with a transparent unlit material Core owns.
     ///
-    /// Until 0.2.202 the dashes were clones of the workbench circle's segment, with its "station_radius" material (shader Unlit/Color).
-    /// Fire, R77 class_test fx_ground: the rings came out as SOLID BLACK slabs. That shader is opaque and has no alpha, so the ring's
+    /// The dashes used to be clones of the workbench circle's segment, with its "station_radius" material (shader Unlit/Color).
+    /// The rings came out as SOLID BLACK slabs. That shader is opaque and has no alpha, so the ring's
     /// fade (the colour multiplied by opacity) could only darken it, and its 1 m segments at 28-36 per ring touched end to end.
     /// A colour Core sets on its own transparent material is the colour drawn, and a dash is as long as the ring says.
     /// </summary>

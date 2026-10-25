@@ -30,6 +30,19 @@ namespace FiresCore.UI
         /// <summary>Attaches (or retargets) hover help. The element needs a raycastable Graphic —
         /// when it has none at all, an invisible raycast-catcher Image is added so plain layout rows
         /// can carry help too.</summary>
+        /// <summary>A plain label tip - the
+        /// full text of a label shown cut - for every player. Same look and delay as <see cref="Attach"/>, but it ignores the
+        /// admin-hints master switch (<see cref="Enabled"/>), which is about admin-form help. Add-only.</summary>
+        public static FiresHoverTip AttachLabel(GameObject target, string fullText)
+        {
+            var tip = Attach(target, fullText, "");
+            if (tip != null) tip.IgnoreMaster = true;
+            return tip;
+        }
+
+        /// <summary>True on a label tip (<see cref="AttachLabel"/>) - shown even with the admin-hints switch off.</summary>
+        public bool IgnoreMaster;
+
         public static FiresHoverTip Attach(GameObject target, string topic, string body, Func<string> dynamicBody = null)
         {
             if (target == null) return null;
@@ -77,9 +90,9 @@ namespace FiresCore.UI
 
         private void Update()
         {
-            // 0.2.293: none while the HUD is hidden (vanilla's Ctrl+F3, the test runner, FiresValcast filming).
+            // None while the HUD is hidden (vanilla's Ctrl+F3, the test runner, FiresValcast filming).
             if (Hud.IsUserHidden()) { if (_shown) { _shown = false; TipView.Hide(); } return; }
-            if (!Enabled || _hoverStart < 0f || _shown) return;
+            if ((!Enabled && !IgnoreMaster) || _hoverStart < 0f || _shown) return;   // a label tip (AttachLabel) ignores the admin-hints switch
             if (Time.unscaledTime - _hoverStart < HoverDelay) return;
             _shown = true;
             string body = DynamicBody != null ? (DynamicBody() ?? Body) : Body;

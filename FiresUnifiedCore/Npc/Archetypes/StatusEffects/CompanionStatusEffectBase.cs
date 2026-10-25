@@ -39,14 +39,14 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         /// <summary>
         /// Whether a looping aura FX is due this frame, at about <paramref name="spawnsPerSecond"/> regardless of frame rate. The
         /// auras rolled a fixed chance EVERY frame (Divine Shield 0.3: ~18 spawns a second at 60 fps), and the pile of pooled FX
-        /// washed the screen pink/magenta (Fire's Divine Shield screenshot, 2026-09-29; [wishbone]).
+        /// washed the screen pink/magenta.
         /// </summary>
         protected static bool AuraDue(float dt, float spawnsPerSecond) => UnityEngine.Random.value < spawnsPerSecond * dt;
 
-        /// <summary>Fire: heals and buffs only the caster's party (ClassTargeting).</summary>
+        /// <summary>heals and buffs only the caster's party (ClassTargeting).</summary>
         protected bool IsParty(Character character) => ClassTargeting.IsPartyMember(Caster, character);
 
-        /// <summary>Fire: damage and debuffs only on enemies; a player only when both have PvP on (ClassTargeting).</summary>
+        /// <summary>damage and debuffs only on enemies; a player only when both have PvP on (ClassTargeting).</summary>
         protected bool IsFoe(Character character) => ClassTargeting.IsEnemyTarget(Caster, character);
 
         // ---- Placed areas (Rain of Arrows, Meteor): where the caster aimed, handed over by the class mod just before the cast ----
@@ -67,7 +67,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
 
         /// <summary>
         /// Where a placed area effect lands: the class mod's aim if it was just handed over, else the nearest foe in front of the
-        /// caster within <see cref="AutoPlaceRange"/> m, else <paramref name="fallbackDistance"/> m ahead (R75: Rain of Arrows always
+        /// caster within <see cref="AutoPlaceRange"/> m, else <paramref name="fallbackDistance"/> m ahead (otherwise Rain of Arrows always
         /// fell 8 m ahead, so it hit nothing unless a foe happened to stand there).
         /// </summary>
         protected Vector3 PlacedTarget(float fallbackDistance, out string how)
@@ -116,7 +116,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         /// <summary>Counts a hit or heal this effect landed (ClassEffectLedger, read by class_test) and logs it verbosely.</summary>
         protected void NoteHit(Character target, float amount, bool heal)
         {
-            // Always on (Fire, R75: "the skills don't seem to actually do any damage"): what was sent, and a moment later what the
+            // Always on: what was sent, and a moment later what the
             // target's health did, "[ClassSkill] <effect> hit <foe>: dealt N (hp a -> b)".
             if (!heal && target != null && s_pendingHits.Count < 64)
             {
@@ -162,18 +162,19 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         /// <summary>
         /// Friendly display name for the tooltip. Override in derived classes.
         /// </summary>
-        public virtual string DisplayName => GetDisplayNameFromEffectName(name);
+        public virtual string DisplayName => ClassPresetText.Name(name) ?? GetDisplayNameFromEffectName(name);   // name table first
         
         /// <summary>
         /// Description shown in tooltip. Override in derived classes.
         /// </summary>
-        public virtual string Description => "Companion ability effect.";
+        public virtual string Description => ClassPresetText.Tip(name) ?? "Companion ability effect.";   // tooltip table first
         
         public override void Setup(Character character)
         {
             base.Setup(character);
             m_ttl = Duration;
-            m_icon = EffectIcon;
+            // effects added by hash never pass RegisterEffect, so ask the resolver (swatch fallback unchanged)
+            m_icon = EffectIcon ?? StatusEffectManager.GetEffectIcon(name);
             
             // Set tooltip info for HUD display
             m_name = DisplayName;

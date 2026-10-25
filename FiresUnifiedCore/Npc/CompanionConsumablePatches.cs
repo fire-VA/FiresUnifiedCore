@@ -11,6 +11,7 @@ namespace FiresCore.Npc
     /// keep monster parity and stay armed, but their projectiles no longer leave an item behind.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionConsumablePatches
     {
         private static readonly AccessTools.FieldRef<Attack, Humanoid> CharacterRef =

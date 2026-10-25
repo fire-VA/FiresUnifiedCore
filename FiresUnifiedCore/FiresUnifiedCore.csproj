@@ -125,6 +125,10 @@
     <Reference Include="UnityEngine.ClothModule">
       <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.ClothModule.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.ScreenCaptureModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.ScreenCaptureModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
     </Reference>
@@ -149,6 +153,10 @@
     <Reference Include="UnityEngine.TextRenderingModule">
       <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
     </Reference>
+    <!-- Core step 0/1 (UI\Shell\Kit): GlyphRenderMode for TMP_FontAsset.CreateFontAsset -->
+    <Reference Include="UnityEngine.TextCoreFontEngineModule">
+      <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.TextCoreFontEngineModule.dll</HintPath>
+    </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>..\..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Valheim\valheim_Data\Managed\UnityEngine.UI.dll</HintPath>
     </Reference>
@@ -172,13 +180,16 @@
     <Compile Include="Classes\ClassProgressState.cs" />
     <Compile Include="Classes\SilenceGate.cs" />
     <Compile Include="Possession\PossessionApi.cs" />
+    <Compile Include="Possession\BodyCarrier.cs" />
     <Compile Include="Possession\PossessionRules.cs" />
     <Compile Include="Possession\PossessionServer.cs" />
     <Compile Include="Possession\PossessionClient.cs" />
+    <Compile Include="Possession\PossessedAllies.cs" />
     <Compile Include="Possession\PossessionEngineBridge.cs" />
     <Compile Include="Possession\PossessionCamera.cs" />
     <Compile Include="Possession\PossessionRunner.cs" />
     <Compile Include="Possession\RavenPossession.cs" />
+    <Compile Include="Possession\FlyerAutoLock.cs" />
     <Compile Include="Summon\SummonApi.cs" />
     <Compile Include="Variants\VariantTable.cs" />
     <Compile Include="Variants\VariantApply.cs" />
@@ -203,8 +214,18 @@
     <Compile Include="Bridge\WorldGenStudioBridge.cs" />
     <Compile Include="World\SpawnKnowledge.cs" />
     <Compile Include="World\ResourceMemory.cs" />
+    <Compile Include="World\LocationReset.cs" />
     <Compile Include="World\EnemyMemory.cs" />
     <Compile Include="World\DeathRecorder.cs" />
+    <Compile Include="World\BiomeDisplay.cs" />
+    <Compile Include="World\GravityUp.cs" />
+    <Compile Include="World\GravityBody.cs" />
+    <Compile Include="World\RingGravityPatches.cs" />
+    <Compile Include="World\RingSupportPatches.cs" />
+    <Compile Include="World\Halo\RingMotor.cs" />
+    <Compile Include="World\Halo\RingCreatures.cs" />
+    <Compile Include="World\Halo\RingBoot.cs" />
+    <Compile Include="World\HaloFireSmoke.cs" />
     <Compile Include="Npc\Combat\GroupTactics.cs" />
     <Compile Include="Bridge\MonsterPresetBridge.cs" />
     <Compile Include="Bridge\GroupHudBridge.cs" />
@@ -216,6 +237,7 @@
     <Compile Include="Bridge\NpcCompanionBridge.cs" />
     <Compile Include="Bridge\CompanionBridge.cs" />
     <Compile Include="Bridge\PetBridge.cs" />
+    <Compile Include="Bridge\CraftingBridge.cs" />
     <Compile Include="Bridge\AchievementBridge.cs" />
     <Compile Include="Bridge\DiscordSink.cs" />
     <Compile Include="Bridge\EnvironmentBoxBridge.cs" />
@@ -228,6 +250,13 @@
     <Compile Include="Bridge\LeaderboardBridge.cs" />
     <Compile Include="Bridge\ServerPushBridge.cs" />
     <Compile Include="Bridge\SeasonBridge.cs" />
+    <Compile Include="Snow\SnowConfig.cs" />
+    <Compile Include="Snow\SnowFat.cs" />
+    <Compile Include="Snow\SnowField.cs" />
+    <Compile Include="Snow\SnowFires.cs" />
+    <Compile Include="Snow\SnowHeightmapInject.cs" />
+    <Compile Include="Snow\SnowPathMask.cs" />
+    <Compile Include="Snow\SnowTicker.cs" />
     <Compile Include="Bridge\PlayerAppearanceBridge.cs" />
     <Compile Include="Appearance\CharacterSnowCover.cs" />
     <Compile Include="Appearance\PlayerAppearanceCapture.cs" />
@@ -260,6 +289,7 @@
     <Compile Include="Items\AdminRecipeGate.cs" />
     <Compile Include="Items\ItemDataHelper.cs" />
     <Compile Include="Npc\NpcPrefabSetup.cs" />
+    <Compile Include="Npc\RpcGuard.cs" />
     <Compile Include="Audio\FiresCustomAudioStore.cs" />
     <Compile Include="Npc\Patrol\PatrolRoute.cs" />
     <Compile Include="Npc\Patrol\PatrolSpline.cs" />
@@ -267,6 +297,7 @@
     <Compile Include="Npc\Patrol\PatrolRouteManager.cs" />
     <Compile Include="Npc\Patrol\PatrolRouteVisualizer.cs" />
     <Compile Include="Npc\Patrol\PatrolAssignment.cs" />
+    <Compile Include="Npc\Patrol\IPatrolTimelineDriver.cs" />
     <Compile Include="Npc\Patrol\PatrolSpeedState.cs" />
     <Compile Include="Npc\Patrol\PatrolEditSession.cs" />
     <Compile Include="Npc\IdleBehaviors\PatrolBehavior.cs" />
@@ -274,6 +305,12 @@
     <Compile Include="Npc\NpcBodyMeshGuard.cs" />
     <Compile Include="Npc\AttachedItemVisuals.cs" />
     <Compile Include="Npc\NpcVisEquipment.cs" />
+    <Compile Include="Npc\BodyModelSwap.cs" />
+    <Compile Include="Npc\ExternalModels.cs" />
+    <Compile Include="Npc\CompanionPickupGate.cs" />
+    <Compile Include="Npc\AttachFits.cs" />
+    <Compile Include="Npc\FitAttachTool.cs" />
+    <Compile Include="UI\Gizmo\FitTransformGizmo.cs" />
     <Compile Include="Npc\VisEquipmentCompat.cs" />
     <Compile Include="Npc\VanillaHairSpawnGate.cs" />
     <Compile Include="Npc\HelmetHairRules.cs" />
@@ -293,6 +330,7 @@
     <Compile Include="Storage\BankRepository.cs" />
     <Compile Include="Storage\LeaderboardRepository.cs" />
     <Compile Include="Storage\PlayerAppearance.cs" />
+    <Compile Include="Storage\NpcAppearance.cs" />
     <Compile Include="Storage\PlayerAppearanceRepository.cs" />
     <Compile Include="Storage\GuildRecord.cs" />
     <Compile Include="Storage\GuildRepository.cs" />
@@ -314,6 +352,7 @@
     <Compile Include="Compat\HdTexturesLoadSpread.cs" />
     <Compile Include="Combat\HitLocator.cs" />
     <Compile Include="Combat\LocationalDamage.cs" />
+    <Compile Include="Combat\MeleeCrosshairAim.cs" />
     <Compile Include="Combat\NullEffectGuard.cs" />
     <Compile Include="Compat\HdTexturesLoadScreen.cs" />
     <Compile Include="Compat\HdTexturesWorldSpread.cs" />
@@ -381,6 +420,7 @@
     <Compile Include="Npc\Archetypes\StatusEffects\Common\InvulnerableEffect.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Common\CrowdControlEffects.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Common\ClassPresetEffects.cs" />
+    <Compile Include="Npc\Archetypes\StatusEffects\Common\ClassPresetText.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Common\RootedEffect.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\Common\SlowdownEffect.cs" />
     <Compile Include="Npc\Archetypes\StatusEffects\CompanionStatusEffectBase.cs" />
@@ -435,10 +475,13 @@
     <Compile Include="Npc\Combat\CombatExperience.cs" />
     <Compile Include="Npc\Combat\CombatMemory.cs" />
     <Compile Include="Npc\Combat\CombatRoleDirector.cs" />
+    <Compile Include="Npc\Combat\CompanionAttackProbe.cs" />
+    <Compile Include="Npc\Combat\WeaponTrailGuard.cs" />
     <Compile Include="Npc\Combat\CompanionAttackBridge.cs" />
     <Compile Include="Npc\Combat\CompanionCombat.cs" />
     <Compile Include="Npc\Combat\CrossbowBehavior.cs" />
     <Compile Include="Npc\Combat\DodgeBehavior.cs" />
+    <Compile Include="Npc\Combat\CombatLoopStats.cs" />
     <Compile Include="Npc\Combat\EmergencyEvasion\EmergencyEvasionManager.cs" />
     <Compile Include="Npc\Combat\EnemyAttackRecognition.cs" />
     <Compile Include="Npc\Combat\GroupCombatCoordinator.cs" />
@@ -506,12 +549,17 @@
     <Compile Include="Npc\Core\MovementRampConfig.cs" />
     <Compile Include="Npc\Core\ChestInteractionService.cs" />
     <Compile Include="Npc\Core\CompanionLeash.cs" />
+    <Compile Include="Npc\Core\CompanionReach.cs" />
     <Compile Include="Npc\Core\CompanionTeleportService.cs" />
     <Compile Include="Npc\Core\CompanionZdoCensus.cs" />
     <Compile Include="Npc\Core\ContainerRegistry.cs" />
     <Compile Include="Npc\Core\ContainerRegistryPatches.cs" />
     <Compile Include="Npc\Core\IBehaviorPhase.cs" />
     <Compile Include="Npc\Core\InteractionPointHelper.cs" />
+    <Compile Include="Npc\Core\ProgressWatch.cs" />
+    <Compile Include="Npc\Core\CompanionKeepAlive.cs" />
+    <Compile Include="Npc\Debugging\CompanionIntentView.cs" />
+    <Compile Include="Npc\Debugging\CompanionSlideProbe.cs" />
     <Compile Include="Npc\Core\InventoryTransferService.cs" />
     <Compile Include="Npc\Core\ResourceAccessService.cs" />
     <Compile Include="Npc\Core\UnifiedMovementAuthority.cs" />
@@ -528,11 +576,20 @@
     <Compile Include="Npc\IdleBehaviors\ChestHelper.cs" />
     <Compile Include="Npc\IdleBehaviors\CompanionCookingBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\CraftingUpgradeBehaviorV2.cs" />
+    <Compile Include="Npc\IdleBehaviors\GearUpBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\FarmingBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\FarmingBehavior.Phases.cs" />
+    <Compile Include="Npc\IdleBehaviors\FarmingBehavior.Care.cs" />
+    <Compile Include="Npc\IdleBehaviors\PlantGrowSpaceProbe.cs" />
     <Compile Include="Npc\IdleBehaviors\FarmingDataHelper.cs" />
     <Compile Include="Npc\IdleBehaviors\FireTendingBehaviorV2.cs" />
     <Compile Include="Npc\IdleBehaviors\FishingBehavior.cs" />
+    <Compile Include="Npc\IdleBehaviors\TripBehavior.cs" />
+    <Compile Include="Npc\Commands\TripAreaPicker.cs" />
+    <Compile Include="Npc\JobBoard\JobBoard.cs" />
+    <Compile Include="Npc\JobBoard\JobBoardWindow.cs" />
+    <Compile Include="Npc\JobBoard\TripMapView.cs" />
+    <Compile Include="Npc\JobBoard\JobBoardServer.cs" />
     <Compile Include="Npc\IdleBehaviors\IdleSubBehavior.cs" />
     <Compile Include="Npc\IdleBehaviors\InteractableOccupancyManager.cs" />
     <Compile Include="Npc\IdleBehaviors\LootPickupBehaviorV2.cs" />
@@ -564,6 +621,7 @@
     <Compile Include="Npc\Movement\CompanionCombatMovement\CompanionCombatMovement.Jump.cs" />
     <Compile Include="Npc\Movement\CompanionCombatMovement\CompanionCombatMovement.Movement.cs" />
     <Compile Include="Npc\Movement\CompanionPersonalSpaceEnforcer.cs" />
+    <Compile Include="Npc\CompanionPassThrough.cs" />
     <Compile Include="Npc\Movement\CompanionStance.cs" />
     <Compile Include="Npc\Movement\CompanionStateController.cs" />
     <Compile Include="Npc\Movement\FleeMovementHandler.cs" />
@@ -592,6 +650,7 @@
     <Compile Include="Npc\WildSpawn\CompanionFaction.cs" />
     <Compile Include="Npc\WildSpawn\CompanionNamePool.cs" />
     <Compile Include="Npc\WildSpawn\WildCompanionDresser.cs" />
+    <Compile Include="Npc\Races\CompanionRaces.cs" />
     <Compile Include="Npc\WildSpawn\WildCompanionLootOnDeath.cs" />
     <Compile Include="Npc\WildSpawn\WildCompanionPrefabs.cs" />
     <Compile Include="Npc\WildSpawn\WildCompanionSeed.cs" />
@@ -608,6 +667,46 @@
     <Compile Include="UI\InputBlock.cs" />
     <Compile Include="UI\MenuDialog.cs" />
     <Compile Include="UI\VanillaClone.cs" />
+    <Compile Include="UI\Shell\Kit\FiresTokens.cs" />
+    <Compile Include="UI\Shell\Kit\IShellHost.cs" />
+    <Compile Include="UI\Shell\Kit\KitSprites.cs" />
+    <Compile Include="UI\Shell\Kit\NodeLayout.cs" />
+    <Compile Include="UI\Shell\Kit\Widgets.cs" />
+    <Compile Include="UI\Shell\Kit\KitControls.cs" />
+    <Compile Include="UI\Shell\Kit\FiresImguiWidgets.cs" />
+    <Compile Include="UI\Shell\FiresShell.cs" />
+    <Compile Include="UI\Shell\GameShellHost.cs" />
+    <Compile Include="UI\Shell\ShellContext.cs" />
+    <Compile Include="UI\Shell\ShellHub.cs" />
+    <Compile Include="UI\Shell\ShellPauseMenu.cs" />
+    <Compile Include="UI\Shell\FiresSkin.cs" />
+    <Compile Include="UI\Shell\ShellRuntime.cs" />
+    <Compile Include="UI\Shell\ShellMinimap.cs" />
+    <Compile Include="UI\Shell\VanillaDayClock.cs" />
+    <Compile Include="UI\Shell\ShellWindowDrag.cs" />
+    <Compile Include="UI\Shell\ShellConfigModule.cs" />
+    <Compile Include="UI\Shell\ShellChat.cs" />
+    <Compile Include="UI\Shell\ShellMinimapWatch.cs" />
+    <Compile Include="UI\Shell\ShellStatsApi.cs" />
+    <Compile Include="UI\Shell\ShellPerfProbe.cs" />
+    <Compile Include="UI\Shell\ShellMinimapClicks.cs" />
+    <Compile Include="UI\Shell\ShellPlatePills.cs" />
+    <Compile Include="UI\Shell\ShellDevbar.cs" />
+    <Compile Include="World\DediMinimapTextureSkip.cs" />
+    <Compile Include="UI\Shell\ShellAchievementsModule.cs" />
+    <Compile Include="UI\Dock\DockService.cs" />
+    <Compile Include="UI\Dock\DockLayoutOverlay.cs" />
+    <Compile Include="UI\Dock\DockToggle.cs" />
+    <Compile Include="UI\Shell\ShellVanillaHud.cs" />
+    <Compile Include="UI\Shell\ShellHudProxies.cs" />
+    <Compile Include="UI\Dock\HudElementOptions.cs" />
+    <Compile Include="UI\Shell\ShellForecastLines.cs" />
+    <Compile Include="UI\Shell\CraftingSkin.cs" />
+    <Compile Include="UI\Shell\Kit\HotbarKit.cs" />
+    <Compile Include="Logging\Diag.cs" />
+    <Compile Include="UI\Shell\ShellSkyBackdrop.cs" />
+    <Compile Include="UI\Shell\ShellStatsModule.cs" />
+    <Compile Include="UI\Shell\ShellWindows.cs" />
     <Compile Include="UI\MiniGameCamera.cs" />
     <Compile Include="UI\MiniGameCameraTuner.cs" />
     <Compile Include="UI\ItemIconRenderer.cs" />
@@ -623,6 +722,7 @@
     <EmbeddedResource Include="UI\Chat\Art\*.png" />
     <EmbeddedResource Include="firescoreshaders" />
     <EmbeddedResource Include="firesclimb" />
+    <EmbeddedResource Include="firescorecrawl" />
     <EmbeddedResource Include="Variants\Essences\FiresEssence_Clarity.png" />
     <EmbeddedResource Include="Variants\Essences\FiresEssence_Verdancy.png" />
     <EmbeddedResource Include="Variants\Essences\FiresEssence_Embers.png" />
@@ -647,6 +747,9 @@
     <Compile Include="UI\FiresConfigUI.cs" />
     <Compile Include="UI\CfgTags.cs" />
     <Compile Include="UI\CfgDiscovery.cs" />
+    <Compile Include="UI\CoreConfigTiers.cs" />
+    <Compile Include="UI\KeybindStrings.cs" />
+    <Compile Include="UI\StaleEntries.cs" />
     <Compile Include="UI\ConfigPopup.cs" />
     <Compile Include="UI\ConfigWindowScale.cs" />
     <Compile Include="UI\ScaledLayout.cs" />
@@ -657,6 +760,9 @@
     <Compile Include="UI\SettingEditWindow.cs" />
     <Compile Include="UI\ConfigPanel.cs" />
     <Compile Include="UI\FiresResizeGrip.cs" />
+    <Compile Include="UI\Kit\KitWindow.cs" />
+    <Compile Include="UI\Kit\KitUI.cs" />
+    <Compile Include="UI\Kit\KitWindowDemo.cs" />
     <Compile Include="UI\HeadlessGuard.cs" />
     <Compile Include="UI\FiresGuiTest.cs" />
     <Compile Include="UI\ConfigMenuButton.cs" />
@@ -724,16 +830,47 @@
     <Compile Include="Config\ConfigHotReload.cs" />
     <Compile Include="Config\ConfigManager.cs" />
     <Compile Include="Config\OwnerGatedConfig.cs" />
+    <Compile Include="Config\ConfigMigrate.cs" />
+    <Compile Include="Visuals\RuneGlow.cs" />
+    <Compile Include="Visuals\ArmorRebind.cs" />
+    <Compile Include="Visuals\AttachFit.cs" />
+    <Compile Include="Visuals\CharacterVisuals.cs" />
+    <Compile Include="Diagnostics\PerfLine.cs" />
+    <Compile Include="Visuals\FitMeasure.cs" />
+    <Compile Include="Visuals\RigFacts.cs" />
+    <Compile Include="Visuals\ArmourPaint.cs" />
+    <Compile Include="Curves\SoftCap.cs" />
+    <Compile Include="Visuals\MeshReadback.cs" />
+    <Compile Include="Visuals\CapeRebind.cs" />
+    <Compile Include="Visuals\BoneProxyFollower.cs" />
+    <Compile Include="Visuals\MonsterArmorFit.cs" />
+    <Compile Include="Storage\Containers\StorageFeatures.cs" />
+    <Compile Include="Storage\Containers\StorageConfig.cs" />
+    <Compile Include="Storage\Containers\ContainerRegistry.cs" />
+    <Compile Include="Storage\Containers\ContainerOps.cs" />
+    <Compile Include="Storage\Patches\CraftPullPatches.cs" />
+    <Compile Include="Storage\Containers\InventorySort.cs" />
+    <Compile Include="Storage\Containers\QuickStack.cs" />
+    <Compile Include="Storage\Patches\SortPatches.cs" />
+    <Compile Include="Storage\Containers\ChestTags.cs" />
+    <Compile Include="Storage\Containers\HopperChest.cs" />
+    <Compile Include="Storage\StorageNetwork.cs" />
+    <Compile Include="Storage\Remote\RemoteStore.cs" />
+    <Compile Include="Storage\Containers\SignLabels.cs" />
+    <Compile Include="Storage\Patches\ChestTagsPanel.cs" />
     <Compile Include="Config\CoreFeatures.cs" />
     <Compile Include="Config\FiresConfigPresets.cs" />
     <Compile Include="Config\FiresConfigChoices.cs" />
     <Compile Include="Config\FiresConfigVisibility.cs" />
     <Compile Include="Config\FiresAdminConfigGate.cs" />
     <Compile Include="IO\AtomicFile.cs" />
+    <Compile Include="IO\ConfigSaveGuard.cs" />
     <Compile Include="IO\DirectoryChangeWatch.cs" />
     <Compile Include="IO\FileWatchHub.cs" />
     <Compile Include="IO\FileWatchHubConfig.cs" />
     <Compile Include="Diagnostics\FrameTimer.cs" />
+    <Compile Include="Diagnostics\MemBreakdown.cs" />
+    <Compile Include="Diagnostics\AnimProbe.cs" />
     <Compile Include="Diagnostics\VisEquipmentDropPrefabHeal.cs" />
     <Compile Include="Diagnostics\CharacterListLeakGuard.cs" />
     <Compile Include="Diagnostics\PathfindingStats.cs" />
@@ -751,12 +888,14 @@
     <Compile Include="UI\ConfigPanelPrewarm.cs" />
     <Compile Include="UI\BuildUiSpeedups.cs" />
     <Compile Include="Input\WheelBinding.cs" />
+    <Compile Include="Input\RadiusWheel.cs" />
     <Compile Include="Lifecycle\AdminCheck.cs" />
     <Compile Include="Lifecycle\CollisionCallbackReuse.cs" />
     <Compile Include="Lifecycle\GroundDataThrottle.cs" />
     <Compile Include="Lifecycle\IntroCinematicSkip.cs" />
     <Compile Include="World\SectorChanges.cs" />
     <Compile Include="World\Surface.cs" />
+    <Compile Include="World\RingZones.cs" />
     <Compile Include="IO\BundleCache.cs" />
     <Compile Include="Npc\AI\PathWalker.cs" />
     <Compile Include="World\PrefabIndex.cs" />
@@ -789,13 +928,23 @@
     <Compile Include="Npc\Combat\FireScare.cs" />
     <Compile Include="Npc\Combat\ColdRisk.cs" />
     <Compile Include="Movement\Climbing.cs" />
+    <Compile Include="Movement\MovementFeature.cs" />
+    <Compile Include="Movement\ClipSlots.cs" />
+    <Compile Include="Movement\MovementRegistry.cs" />
+    <Compile Include="Movement\CoreMovement.cs" />
     <Compile Include="Movement\ClimbAnimator.cs" />
     <Compile Include="Movement\Headroom.cs" />
     <Compile Include="Movement\MonsterFallDamage.cs" />
     <Compile Include="Loot\LocationLootRefresh.cs" />
+    <Compile Include="Loot\RespawnMarks.cs" />
+    <Compile Include="Loot\MineralSeeds.cs" />
+    <Compile Include="World\BossProgress.cs" />
     <Compile Include="Building\NewPieceFacesAway.cs" />
     <Compile Include="Movement\Crawl.cs" />
     <Compile Include="Movement\CrawlCamera.cs" />
+    <Compile Include="Movement\CrawlPose\CrawlPose.cs" />
+    <Compile Include="Movement\CrawlPose\CrawlPoseStance.cs" />
+    <Compile Include="Movement\CrawlPose\CrawlPosePatches.cs" />
     <Compile Include="Movement\PlayerSwim.cs" />
     <Compile Include="Input\UndoHistory.cs" />
     <Compile Include="Npc\AI\CompanionTaskBody.cs" />
@@ -828,6 +977,7 @@
     <Compile Include="Net\RoutedRpcSenderGuard.cs" />
     <Compile Include="Net\SafeRoutedRpc.cs" />
     <Compile Include="Net\WorldCacheSync.cs" />
+    <Compile Include="Net\RoutedSenderGuard.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Ravens\RavenPrefabs.cs" />
     <Compile Include="Ravens\RavenAnimDriver.cs" />
@@ -883,7 +1033,7 @@
     <Compile Include="Dungeon\DungeonDoorBlockerController.cs" />
   </ItemGroup>
   <PropertyGroup>
-    <FiresLogAnalysisDir>..\..\FiresLogBot\FiresLogAnalysis\</FiresLogAnalysisDir>
+    <FiresLogAnalysisDir>Shared\FiresLogAnalysis\</FiresLogAnalysisDir>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="$(FiresLogAnalysisDir)**\*.cs" Exclude="$(FiresLogAnalysisDir)bin\**;$(FiresLogAnalysisDir)obj\**">
@@ -893,7 +1043,7 @@
   <!-- 0.2.300: [ghost]'s shared tutorial manager (FiresTutorial, all types internal), linked like FiresLogAnalysis.
        Every edit there changes Core's next build: core Apply gates its hashes (SHARED_FiresTutorial.txt). -->
   <PropertyGroup>
-    <FiresTutorialDir>..\..\FiresTutorial\</FiresTutorialDir>
+    <FiresTutorialDir>Shared\FiresTutorial\</FiresTutorialDir>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="$(FiresTutorialDir)*.cs">
@@ -906,11 +1056,14 @@
        Linked per file so files dropped there later don't join a build unchecked. Core Apply gates the hashes
        (SHARED_FiresPossession.txt). -->
   <PropertyGroup>
-    <FiresPossessionDir>..\..\Shared\FiresPossession\</FiresPossessionDir>
+    <FiresPossessionDir>Shared\FiresPossession\</FiresPossessionDir>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="$(FiresPossessionDir)FlightModel.cs">
       <Link>SourceLinked\FiresPossession\FlightModel.cs</Link>
+    </Compile>
+    <Compile Include="$(FiresPossessionDir)HumanPoseFollower.cs">
+      <Link>SourceLinked\FiresPossession\HumanPoseFollower.cs</Link>
     </Compile>
     <Compile Include="$(FiresPossessionDir)IPossessionHost.cs">
       <Link>SourceLinked\FiresPossession\IPossessionHost.cs</Link>
@@ -937,12 +1090,19 @@
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- 0.2.341: shared pause-menu Discord help button (Shared\FiresDiscordButton; public here via FIRES_DISCORD_PUBLIC). -->
   <ItemGroup>
-    <Compile Include="..\..\Shared\FiresDiscordButton\DiscordHelpButton.cs">
+    <Compile Include="Shared\FiresDiscordButton\DiscordHelpButton.cs">
       <Link>SourceLinked\FiresDiscordButton\DiscordHelpButton.cs</Link>
     </Compile>
-    <EmbeddedResource Include="..\..\Shared\FiresDiscordButton\va_logo.png">
+    <EmbeddedResource Include="Shared\FiresDiscordButton\va_logo.png">
       <Link>SourceLinked\FiresDiscordButton\va_logo.png</Link>
     </EmbeddedResource>
+  </ItemGroup>
+  <!-- Test-only sources: compiled (with FIRES_TESTS) when present; a public clone ships without them and builds clean. -->
+  <PropertyGroup Condition="Exists('Diagnostics\GroundRingShotsTest.cs')">
+    <DefineConstants>$(DefineConstants);FIRES_TESTS</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('Diagnostics\GroundRingShotsTest.cs')">
+    <Compile Include="Diagnostics\GroundRingShotsTest.cs" />
   </ItemGroup>
 </Project>
 

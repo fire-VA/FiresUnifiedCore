@@ -10,10 +10,10 @@ using UnityEngine;
 namespace FiresCore.Variants
 {
     /// <summary>
-    /// The essences (Fire 10-08): one item per variant plus a reset, brewed at the Cauldron. Each is a clone of vanilla's
+    /// The essences: one item per variant plus a reset, brewed at the Cauldron. Each is a clone of vanilla's
     /// BlobVial (a Material-type item, so it can't be thrown or eaten) with its glass tinted to the essence colour, a soft glow
     /// and its own icon. Core only makes the items; using one is the caller's: FiresRPGmaker applies it to the pet you have
-    /// out, FiresMounts to a mount or an egg. Recipes: Tools\FIRES_VARIANTS_PLAN.md section 6 (Fire: "the recipe table stands").
+    /// out, FiresMounts to a mount or an egg. Recipes: Tools\FIRES_VARIANTS_PLAN.md section 6.
     /// </summary>
     public static class VariantEssences
     {
@@ -67,8 +67,26 @@ namespace FiresCore.Variants
             return prefab != null && prefab.StartsWith("FiresEssence_", StringComparison.Ordinal) && VariantTable.TryGetByEssence(prefab, out def);
         }
 
+        // The essences and
+        // their Cauldron recipes exist only when a mod that uses them is loaded. Without one, nothing is added to ObjectDB or ZNetScene.
+        private static readonly string[] OwnerGuids = { "com.Fire.FiresRPGmaker", "com.Fire.FiresMounts" };
+        private static bool s_skipLogged;
+
+        private static bool OwnerLoaded()
+        {
+            foreach (string guid in OwnerGuids)
+                if (BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey(guid)) return true;
+            if (!s_skipLogged)
+            {
+                s_skipLogged = true;
+                FiresLogger.LogDebug("[Variants] essences not registered: no owner loaded (FiresRPGmaker, FiresMounts); no items, recipes or prefabs added.");
+            }
+            return false;
+        }
+
         private static void EnsureRegistered()
         {
+            if (!OwnerLoaded()) return;
             ObjectDB db = ObjectDB.instance;
             if (db == null || db.m_items == null || db.m_items.Count == 0) return;
             GameObject template = db.GetItemPrefab(Template);
@@ -164,7 +182,7 @@ namespace FiresCore.Variants
         {
             string recipeName = "Recipe_" + spec.Item;
             if (db.m_recipes.Any(r => r != null && r.name == recipeName)) return false;
-            // [generator] 0.2.328 integration: the station must resolve first. ObjectDB.Awake can run before ZNetScene.Awake;
+            // The station must resolve first. ObjectDB.Awake can run before ZNetScene.Awake;
             // a recipe added then had no crafting station (craftable by hand anywhere), and the later ZNetScene.Awake pass saw it
             // already there and never fixed it. Without the cauldron, add nothing now; the ZNetScene.Awake postfix adds it.
             CraftingStation station = ZNetScene.instance?.GetPrefab(Station)?.GetComponent<CraftingStation>();

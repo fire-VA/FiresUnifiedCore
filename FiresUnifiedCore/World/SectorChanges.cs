@@ -97,7 +97,7 @@ namespace FiresCore.World
             Add(SectorOf(__instance), value ? 1 : -1);
         }
 
-        // ═══ THE PER-ZDO CHANGE HOOKS ARE GONE, 2026-09-24 ═══════════════════════════════════════════════════════
+        // ═══ THE PER-ZDO CHANGE HOOKS ARE GONE ═══════════════════════════════════════════════════════
         // There were four more postfixes here - IncreaseDataRevision, IncreaseOwnerRevision, Deserialize and
         // SetOwnerInternal - maintaining a per-sector "last changed" frame. They ran more than 50,000 times a SECOND,
         // measured: FDT's stall profiler refused to keep timing them because timing them cost more than the call.

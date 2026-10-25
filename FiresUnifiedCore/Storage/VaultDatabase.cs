@@ -44,7 +44,7 @@ namespace FiresCore.Storage
 
         /// <summary>
         /// Configures the vault for the loaded world if nobody has yet: FiresConfigPaths.Worlds\&lt;world&gt;\vault.db, the
-        /// per-world rule FiresNPCs' VaultOfKnowledge.EnsureVaultConfigured has used (0.2.329, for [seasons]' camp store,
+        /// per-world rule FiresNPCs' VaultOfKnowledge.EnsureVaultConfigured has used (for camp stores,
         /// so a mod can use the vault without FiresNPCs). Idempotent and server-only. False off-server, before the world
         /// name is known (call again later) or when Configure throws; true when the vault is configured.
         /// </summary>

@@ -4,8 +4,8 @@ using UnityEngine;
 namespace FiresCore.World
 {
     /// <summary>
-    /// Targets from the world's own records (Fire 2026-09-29: "the server and world know the exact position of every single prefab
-    /// and its center point"). <see cref="Collect"/> / <see cref="Nearest"/> read the ZDOs this peer knows in the 64 m sectors round a
+    /// Targets from the world's own records (the server and world know the exact position of every prefab
+    /// and its center point). <see cref="Collect"/> / <see cref="Nearest"/> read the ZDOs this peer knows in the 64 m sectors round a
     /// point: prefab and position, loaded into the scene or not, with no physics query. <see cref="HitPoint"/> gives the point on an
     /// instance's own solid colliders to walk to and swing at (the trunk, not the canopy's bounds). One brain: the FDT bot's verbs
     /// and the companions' pickers ask the same thing.
@@ -46,7 +46,7 @@ namespace FiresCore.World
             if (zdos == null || ZoneSystem.instance == null) return s_found;
             int rings = Mathf.Max(0, Mathf.CeilToInt(radius / SectorSize));
             s_sector.Clear();
-            zdos.FindSectorObjects(ZoneSystem.GetZone(at), new SimulationDistance(rings, 0, classic: true), s_sector);
+            zdos.FindSectorObjects(FiresCore.World.RingZones.ObjectSector(at), new SimulationDistance(rings, 0, classic: true), s_sector);
             float r2 = radius * radius;
             foreach (ZDO zdo in s_sector)
             {
@@ -79,7 +79,7 @@ namespace FiresCore.World
         /// <summary>
         /// Where to STAND to work on <paramref name="target"/> from <paramref name="from"/>'s side: its <see cref="HitPoint"/>
         /// snapped to the Humanoid navmesh within <paramref name="reach"/> (vanilla carves the navmesh round trunks and rocks, so a
-        /// walk to the pivot never arrives: R67 "couldn't reach the tree in 23 s (8.5 m away)"). <paramref name="hit"/> is the point
+        /// walk to the pivot never arrives). <paramref name="hit"/> is the point
         /// to measure reach against and swing at; <paramref name="method"/> says how both were found ("… , navmesh" or "… , no navmesh").
         /// </summary>
         public static Vector3 ApproachPoint(GameObject target, Vector3 from, float reach, out Vector3 hit, out string method)
@@ -98,7 +98,7 @@ namespace FiresCore.World
         /// <summary>
         /// The point on <paramref name="target"/>'s own solid colliders nearest <paramref name="from"/>, and how it was found
         /// (for the log): "closest point" on a primitive or convex collider; "bounds" on a concave mesh, whose ClosestPoint gives the
-        /// query point back (R65: the bot "arrived" at once and swung at air for 420 s); "trunk" for a tree (its pivot, at the
+        /// query point back, so the bot would swing at air); "trunk" for a tree (its pivot, at the
         /// trunk's foot, at <paramref name="from"/>'s height band); "pivot" when it has no solid collider.
         /// </summary>
         public static Vector3 HitPoint(GameObject target, Vector3 from, out string method)

@@ -384,6 +384,7 @@ namespace FiresCore.Npc
             }
             if (!_wasOwner) ClearInheritedPoses();
             _wasOwner = true;
+            ReleaseStaleSeatWhileMoving();
 
             if (_stateController == null)
                 _stateController = GetComponent<CompanionStateController>();
@@ -524,7 +525,7 @@ namespace FiresCore.Npc
         }
 
         /// <summary>Drops the chore, seat and emote this machine was running once another machine owns the companion.</summary>
-        // 0.2.267: who called CancelAllIdleBehaviors (the two frames above it), for the sub-behaviour's "cancelled:" end line.
+        // who called CancelAllIdleBehaviors (the two frames above it), for the sub-behaviour's "cancelled:" end line.
         private static string CallerChain()
         {
             try
@@ -556,6 +557,28 @@ namespace FiresCore.Npc
         /// A new owner inherits the previous owner's seat and emote bools through the ZDO (a saved companion keeps them
         /// too), but none of the seat or emote state that would end them, so they are released unless it really sits.
         /// </summary>
+        // Companions could get stuck sitting: a seat / sit bool left set (a Dressing-room preview played on the
+        // real NPC, a saved idle key, a seat whose release was missed) was only cleared on an ownership change, and every "end emote"
+        // path uses StopEmotes, which by design keeps attach_*. A companion that is MOVING and not attached to a seat can't be sitting:
+        // its seat / sit bools are released (StopAll), checked twice a second on the owner. A companion sitting still (its own sit
+        // emote, a chair) is untouched. One Debug line per release.
+        private static readonly string[] s_seatBools = { "emote_sit", "attach_chair", "attach_throne", "attach_bed", "attach_sitship", "attach_divan" };
+        private float _nextSeatCheck;
+        private void ReleaseStaleSeatWhileMoving()
+        {
+            if (Time.time < _nextSeatCheck || _animator == null) return;
+            _nextSeatCheck = Time.time + 0.5f;
+            if (_interactionBehavior != null && _interactionBehavior.IsAttached) return;
+            var body = GetComponent<Character>();
+            if (body == null || body.GetVelocity().magnitude < 0.6f) return;
+            string held = null;
+            foreach (var p in _animator.parameters)
+                if (p.type == AnimatorControllerParameterType.Bool && System.Array.IndexOf(s_seatBools, p.name) >= 0 && _animator.GetBool(p.nameHash)) { held = p.name; break; }
+            if (held == null) return;
+            PlayerAnimationCatalog.StopAll(_zanim, _animator);
+            FiresCore.Logging.FiresLogger.LogDebug($"[IdleBehavior] {name}: '{held}' was still set while moving ({body.GetVelocity().magnitude:0.0} m/s, not attached); seat/sit poses released");
+        }
+
         private void ClearInheritedPoses()
         {
             if (_interactionBehavior != null && _interactionBehavior.IsAttached) return;
@@ -571,15 +594,17 @@ namespace FiresCore.Npc
             // Check if stationed as NPC without idle wandering
             if (_npcModule == null)
                 _npcModule = GetComponent<CompanionNpcModule>();
-            if (_npcModule != null && _npcModule.IsStationedAsNpc && !_npcModule.allowIdleWandering)
+            // A saved patrol route passes these gates like the two above (~359/367) and
+            // EnforceStaticInertness do, so a placed NPC with a route walks it even with idle wandering off.
+            if (_npcModule != null && _npcModule.IsStationedAsNpc && !_npcModule.allowIdleWandering && !HasPatrolRoute())
             {
                 return false;
             }
 
-            // Static placed NPCs should not wander until explicitly enabled
+            // Static placed NPCs should not wander until explicitly enabled (a patrol route counts as enabled)
             if (_companion != null && _companion.isStaticPlacement)
             {
-                if (_npcModule == null || !_npcModule.allowIdleWandering)
+                if (_npcModule == null || (!_npcModule.allowIdleWandering && !HasPatrolRoute()))
                     return false;
             }
             
@@ -1075,6 +1100,22 @@ namespace FiresCore.Npc
         }
 
         #endregion
+
+        // a pose (emote, sit, rest, chair) left on while a job runs is ended; logged once per episode
+        private object _jobPoseCheckedFor;
+        private void EndPoseForJob(string job)
+        {
+            bool emoting = false;
+            try { emoting = FiresCore.Npc.Animation.PlayerAnimationCatalog.IsEmoting(_zanim, _animator); } catch { }
+            bool stateSit = _stateController != null && (_stateController.CurrentState == CompanionStateController.CompanionState.Emote || _stateController.CurrentState == CompanionStateController.CompanionState.ChairSit);
+            if (!emoting && !stateSit && !_isSittingOnChair) return;
+            {
+                FiresCore.Logging.FiresLogger.LogInfo($"[JobPose] {_companion?.companionName}: job {job} started/running in a pose (animator emote {emoting}, state {_stateController?.CurrentState}, chair {_isSittingOnChair}); standing up first");
+            }
+            if (_isSittingOnChair) StandUpFromChair();
+            _stateController?.ForceStopEmote();
+            if (_stateController == null) { try { FiresCore.Npc.Animation.PlayerAnimationCatalog.StopEmotes(_zanim, _animator); } catch { } }
+        }
 
         #region UI Interaction Freeze
         

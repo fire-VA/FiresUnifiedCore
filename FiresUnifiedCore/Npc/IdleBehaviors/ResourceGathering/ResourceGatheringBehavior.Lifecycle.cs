@@ -69,7 +69,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         }
                         else if (TryBeginStockToolCraft(_targetResource))
                         {
-                            // 0.2.274: from the base chests (and one intermediate such as Bronze), then the tool.
+                            // From the base chests (and one intermediate such as Bronze), then the tool.
                             CompanionChatHelper.ShowWorkingStatus(Companion, "Crafting a tool...");
                         }
                         else
@@ -248,7 +248,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
-            // 0.2.271 (Fire: "Companions get stuck in the minerock"): a rock is approached at its nearest face, from just off it, and
+            // A rock is approached at its nearest face, from just off it, and
             // reached when that face is in reach; its root sits inside a fractured rock and was never reached.
             bool rock = IsRockTarget;
             _targetPosition = rock ? StandPointFor(GatherAim()) : _targetResource.InteractionPosition;
@@ -307,7 +307,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
-            // 0.2.271: around a rock's nearest face, 1.6 m out (centre + 2 m put the body inside a big fractured rock).
+            // Around a rock's nearest face, 1.6 m out (centre + 2 m put the body inside a big fractured rock).
             bool rock = IsRockTarget;
             Vector3 resourceCenter = rock ? GatherAim() : _targetResource.InteractionPosition;
             Vector3 currentDir = (Transform.position - resourceCenter).normalized;
@@ -390,7 +390,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _craftRecipe = null;
             _craftWorkbench = null;
 
-            // 0.2.274: an intermediate (Bronze) goes on to the next step of the base-stock chain.
+            // An intermediate (Bronze) goes on to the next step of the base-stock chain.
             if (crafted && ContinueStockCraft(made)) return false;
             if (!crafted && stockChain)
             {

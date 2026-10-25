@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
@@ -14,6 +14,7 @@ namespace FiresCore.Npc.Core
     /// by an explicit owner command, and nearby companions are skipped, so repeat calls are harmless.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class CompanionTeleportService
     {
         private const string LogPrefix = "[CompanionTeleportService]";
@@ -124,7 +125,14 @@ namespace FiresCore.Npc.Core
 
                 CompanionZdoCensus.WhenReady(() =>
                 {
-                    int teleported = ReconcileFollowersFor(playerId, ownerPos, CompanionLeash.ArrivalReelInDistance);
+                    // Only a player's own companions, around where the server sees that player (never the packet's id or position)
+                    long senderPlayer = Possession.PossessionServer.PlayerIdOf(sender, out Vector3 senderPos);
+                    if (senderPlayer == 0L || senderPlayer != playerId || senderPos == Vector3.zero)
+                    {
+                        RpcGuard.Refuse("CompanionReconcile", sender, senderPlayer == 0L ? "the sender has no character yet" : $"asked for player {playerId}, is {senderPlayer}");
+                        return;
+                    }
+                    int teleported = ReconcileFollowersFor(playerId, senderPos, CompanionLeash.ArrivalReelInDistance);
                     Debug.Log($"{LogPrefix} Reconcile complete for player {playerId}: teleported={teleported}");
                 });
             }
@@ -166,7 +174,7 @@ namespace FiresCore.Npc.Core
         private static bool TryReelIn(ZDO zdo, Vector3 ownerPos, float threshold, string reason)
         {
             if (zdo == null || !zdo.IsValid()) return false;
-            if (CompanionPossession.IsPossessed(zdo)) return false;   // 0.2.292: a player is driving it (FiresValcast)
+            if (CompanionPossession.IsPossessed(zdo)) return false;   // a player is driving it (FiresValcast)
             if (zdo.GetBool("npc_stationed", false)) return false;
             if (!zdo.GetBool("companion_wasfollowing", false)) return false;
             float distance = Vector3.Distance(zdo.GetPosition(), ownerPos);
@@ -176,7 +184,7 @@ namespace FiresCore.Npc.Core
             string name = zdo.GetString("companion_name", zdo.m_uid.ToString());
 
             // A companion some machine is running is moved BY that machine: its ZSyncTransform writes the instance's
-            // position into the ZDO every tick, so a server-side ZDO write never lands (2026-09-22: five reel-ins of
+            // position into the ZDO every tick, so a server-side ZDO write never lands (repeated reel-ins of
             // the same 57 m gap in a row). Only a dormant companion (no owner, or a server owner with no instance) is
             // moved here.
             long zdoOwner = zdo.GetOwner();
@@ -223,15 +231,40 @@ namespace FiresCore.Npc.Core
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
             if (ZDOMan.instance == null) return;
 
-            try { CompanionZdoCensus.Tick(); }
-            catch (Exception ex) { Debug.LogWarning($"{LogPrefix} companion census threw: {ex.Message}"); }
+            // The census steps every 4th frame; a pass still finishes in seconds
+            // Split timers - census steps vs the heartbeat - reported once a minute
+            if ((Time.frameCount & 3) == 0)
+            {
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                try { CompanionZdoCensus.Tick(); }
+                catch (Exception ex) { Debug.LogWarning($"{LogPrefix} companion census threw: {ex.Message}"); }
+                s_censusTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0; s_censusSteps++;
+            }
+            ReportSplit();
 
             if (!CompanionZdoCensus.Ready) return;
             if (Time.unscaledTime - _lastHeartbeat < HeartbeatIntervalSeconds) return;
             _lastHeartbeat = Time.unscaledTime;
 
+            long h0 = System.Diagnostics.Stopwatch.GetTimestamp();
             try { ServerHeartbeat(); }
             catch (Exception ex) { Debug.LogWarning($"{LogPrefix} heartbeat threw: {ex.Message}"); }
+            s_heartbeatTicks += System.Diagnostics.Stopwatch.GetTimestamp() - h0; s_heartbeats++;
+        }
+
+        private static long s_censusTicks, s_heartbeatTicks; private static int s_censusSteps, s_heartbeats; private static float s_nextSplit;
+
+        private static void ReportSplit()
+        {
+            if (Time.unscaledTime < s_nextSplit) return;
+            if (s_nextSplit > 0f && FiresCore.Logging.Diag.Periodic && FiresCore.Logging.FiresLogger.DebugEnabled)
+            {
+                double f = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                FiresCore.Logging.FiresLogger.LogDebug($"{LogPrefix} split (60 s): census {s_censusTicks * f:0.0} ms in {s_censusSteps} steps ({(s_censusSteps > 0 ? s_censusTicks * f * 1000 / s_censusSteps : 0):0} us a step), "
+                    + $"heartbeat {s_heartbeatTicks * f:0.0} ms in {s_heartbeats} runs");
+            }
+            s_censusTicks = s_heartbeatTicks = 0; s_censusSteps = s_heartbeats = 0;
+            s_nextSplit = Time.unscaledTime + 60f;
         }
 
         private static void ServerHeartbeat()
@@ -249,8 +282,8 @@ namespace FiresCore.Npc.Core
                 long id = player.GetPlayerID();
                 if (id == 0L) continue;
                 // A remote player's position is what their own client wrote to the ZDO, not the server's copy of the body
-                // (0.2.216, R86 dedi: "Asked peer … to bring 'Eira' 2273 m to its owner at (-759.05, -2195.23, -8.39)", then y
-                // -3973: the server's body of Fire was falling through ground it had no colliders for, and the companions were
+                // (on a dedicated server the server's copy of a player body can fall through ground it has no
+                // colliders for, and companions would be
                 // reeled under the world).
                 ZDO playerZdo = player.m_nview != null && player.m_nview.IsValid() ? player.m_nview.GetZDO() : null;
                 Vector3 at = playerZdo != null && !playerZdo.IsOwner() ? playerZdo.GetPosition() : player.transform.position;

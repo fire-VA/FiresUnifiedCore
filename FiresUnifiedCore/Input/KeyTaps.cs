@@ -7,8 +7,8 @@ using UnityEngine;
 namespace FiresCore.Input
 {
     /// <summary>
-    /// Single and double taps of one key that two features share (Core 0.2.321, Fire 10-07: "G is a guild key as well ...
-    /// Guilds should use double tap G"). A feature claims a key's single taps while it can act (admin possession on G). While
+    /// Single and double taps of one key that two features share (e.g. G for possession and
+    /// double tap G for guilds). A feature claims a key's single taps while it can act (admin possession on G). While
     /// a claim is active, the claimant gets the single tap DoubleTapWindow seconds after the press (no second press came), and
     /// every plain <see cref="Chord.IsDown"/> of that key (FiresGuilds' screen key) fires only on the second press of a double
     /// tap. With no active claim nothing changes: Chord.IsDown fires on every press.
@@ -58,13 +58,36 @@ namespace FiresCore.Input
         private static bool Same(KeyboardShortcut a, KeyboardShortcut b)
         {
             if (a.MainKey != b.MainKey) return false;
-            var am = new HashSet<KeyCode>(a.Modifiers);
-            return am.SetEquals(b.Modifiers);
+            // No HashSet per call; binds carry 0-2 modifiers, so nested loops are cheap.
+            int na = 0, nb = 0;
+            foreach (var m in a.Modifiers) { na++; if (!HasMod(b, m)) return false; }
+            foreach (var m in b.Modifiers) nb++;
+            return na == nb;
+        }
+
+        private static bool HasMod(KeyboardShortcut s, KeyCode k)
+        {
+            foreach (var m in s.Modifiers) if (m == k) return true;
+            return false;
+        }
+
+        // Eval ran key.ToString() every frame; the id is now cached per main key and rebuilt
+        // only when the bind changes.
+        private sealed class IdCache { public KeyboardShortcut Key; public string Id; }
+        private static readonly Dictionary<int, IdCache> s_ids = new Dictionary<int, IdCache>();
+
+        private static string IdOf(KeyboardShortcut key)
+        {
+            int k = (int)key.MainKey;
+            if (s_ids.TryGetValue(k, out IdCache c) && Same(c.Key, key)) return c.Id;
+            if (c == null) s_ids[k] = c = new IdCache();
+            c.Key = key; c.Id = key.ToString();
+            return c.Id;
         }
 
         private static State Eval(KeyboardShortcut key)
         {
-            string id = key.ToString();
+            string id = IdOf(key);
             if (!s_states.TryGetValue(id, out State s)) s_states[id] = s = new State();
             if (s.Frame == Time.frameCount) return s;
             s.Frame = Time.frameCount;

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -212,6 +213,24 @@ namespace FiresCore.UI
             if (Event.current != null && Event.current.type == EventType.Repaint) _pendingTip = null;
         }
 
+        /// <summary>GetLastRect
+        /// that cannot throw. A caller placed right after a Begin* is named ONCE (its stack) and the call is skipped. Add-only.</summary>
+        public static bool SafeLastRect(out Rect rect)
+        {
+            rect = default;
+            try { rect = GUILayoutUtility.GetLastRect(); return true; }
+            catch (ArgumentException)
+            {
+                if (!s_lastRectReported)
+                {
+                    s_lastRectReported = true;
+                    FiresCore.Logging.FiresLogger.LogWarning("[IMGUI] GetLastRect right after a Begin* (skipped from now on, no spam): " + Environment.StackTrace);
+                }
+                return false;
+            }
+        }
+        private static bool s_lastRectReported;
+
         /// <summary>Call right after drawing a control/row: if the cursor is over its last rect, records the hint.
         /// GetLastRect and mousePosition are both in the CURRENT local space (window/scroll), so Contains is valid
         /// here — but we deliberately do NOT record the position; the draw uses the live top-level mouse instead.</summary>
@@ -219,7 +238,7 @@ namespace FiresCore.UI
         {
             if (string.IsNullOrEmpty(hint) || !FiresHoverTip.Enabled) return;
             if (Event.current == null || Event.current.type != EventType.Repaint) return;
-            if (GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition)) _pendingTip = hint;
+            if (SafeLastRect(out var last) && last.Contains(Event.current.mousePosition)) _pendingTip = hint;
         }
 
         /// <summary>Draw the recorded hint near the cursor. Call once per OnGUI AFTER GUILayout.Window returns —

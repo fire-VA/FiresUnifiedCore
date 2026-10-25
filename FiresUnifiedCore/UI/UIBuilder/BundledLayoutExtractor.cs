@@ -19,7 +19,7 @@ namespace FiresCore.UI
         /// <summary>
         /// Writes any missing bundled layouts to disk. Existing files are
         /// never overwritten so users keep their edits across mod updates.
-        /// 0.2.330: every mod's layouts, not only the last mod to set UIBuilderHost (FiresCompanions loads after
+        /// Every mod's layouts, not only the last mod to set UIBuilderHost (FiresCompanions loads after
         /// FiresRPGmaker and replaced its prefix, so RPGmaker's never extracted): each (assembly, prefix) a mod has set,
         /// plus any loaded assembly that references Core and embeds "*.BundledLayouts.*" resources. Only .json is a
         /// layout: Companions' prefix "FiresCompanions." also matched its embedded asset bundle, which was copied here

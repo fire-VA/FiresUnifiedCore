@@ -5,8 +5,8 @@ namespace FiresCore.Npc.AI
 {
     /// <summary>
     /// Walking a body along the Humanoid navmesh the way vanilla monsters and our companions walk (CompanionAI goes through
-    /// BaseAI.MoveTo), for ANY body, a Player included (one brain: the FDT bot, Fire 2026-09-29 "vanilla AI doesn't get stuck like
-    /// this"). The rules (Tools\BOT_MOVEMENT_VS_VANILLA.md):
+    /// BaseAI.MoveTo), for ANY body, a Player included (one brain: the FDT bot too, so it doesn't get stuck where
+    /// vanilla AI wouldn't). The rules:
     /// - the path is asked for at most once a second, and kept for up to 5 s while the goal moves less than a metre;
     /// - the body heads straight for the NEXT corner only, which counts as passed within 0.5 m walking / 1 m running;
     /// - no steering on a path: the navmesh already goes round trees and rocks, and leaving the corner line walks into them;
@@ -18,19 +18,52 @@ namespace FiresCore.Npc.AI
     /// </summary>
     public sealed class PathWalker
     {
+        // ── halo ring frame ([ghost] for [generator], Fire 10-24: "things that need gravity and 'up' are still not re targeted") ──
+        // The walker's up for this call: GravityUp.At(body / start). Off a ring s_up is exactly Vector3.up and s_ring is false, so
+        // every expression below (s_up products, Flat, UpDot, Indoors, FlatDistance) evaluates exactly as the world-up code did.
+        private static Vector3 s_up = Vector3.up;
+        private static bool s_ring;
+        private static bool s_ringSaid;
+
+        /// <summary>Sets the frame for this call from a position (every public entry calls it first).</summary>
+        internal static void SetFrame(Vector3 at)
+        {
+            s_ring = FiresCore.World.GravityUp.InField(at, out Vector3 up) && up.sqrMagnitude > 0.5f;
+            s_up = s_ring ? up.normalized : Vector3.up;
+            if (s_ring && !s_ringSaid)
+            {
+                s_ringSaid = true;
+                FiresCore.Logging.FiresLogger.LogDebug($"[PathWalker] ring frame at ({at.x:0},{at.y:0},{at.z:0}): up ({s_up.x:0.00},{s_up.y:0.00},{s_up.z:0.00}) from GravityUp");
+            }
+        }
+
+        /// <summary>v in the floor plane: v.y = 0 off a ring, minus its up-component on a ring.</summary>
+        private static Vector3 Flat(Vector3 v)
+        {
+            if (s_ring) return v - s_up * Vector3.Dot(v, s_up);
+            v.y = 0f;
+            return v;
+        }
+
+        /// <summary>The up-component of v: v.y off a ring, Dot(v, up) on a ring.</summary>
+        private static float UpDot(Vector3 v) => s_ring ? Vector3.Dot(v, s_up) : v.y;
+
+        /// <summary>A dungeon interior (+3000 m): never on a ring, whose floor can sit far above that.</summary>
+        private static bool Indoors(Vector3 v) => !s_ring && v.y > IndoorsHeight;
+
         /// <summary>
         /// Partial (appended, so older callers' values don't shift): the navmesh path ends short of the goal by more than the reach
-        /// (R70: "arrived" 4.7 m short at a 1.05 m lip, then 90 s standing still). No move; the caller decides (wait and re-ask,
+        /// (else it reads as arrived short of a lip and stands still). No move; the caller decides (wait and re-ask,
         /// jump, go round). A goal within <see cref="FeelRange"/> of the path's end is felt for instead.
         /// </summary>
         /// <remarks>Door (appended): a passable closed door blocks the way (<see cref="DoorRule.DoorOnPath"/>); moveDir heads for it
         /// (zero within <see cref="DoorRule.InteractDistance"/>), <see cref="Door"/> names it. The caller opens it
         /// (<see cref="DoorRule.OpenFor"/>) and may <see cref="DoorRule.CloseBehind"/>; once it is open the walker asks for a new path.</remarks>
-        /// <remarks>Climb (appended, 0.2.252): the body is on a face (FiresCore.Movement.Climb runs the motion); moveDir / lookDir point at
+        /// <remarks>Climb (appended): the body is on a face (FiresCore.Movement.Climb runs the motion); moveDir / lookDir point at
         /// the face. The walker asks the navmesh again from the top.</remarks>
         public enum WalkState { Arrived, Moving, Turning, NoPath, Pending, Partial, Door, Climb }
 
-        // 0.2.252: climbing and swimming as route steps.
+        // Climbing and swimming as route steps.
         private bool _climbing;
         private bool _swimHold;
         private float _climbLogAt, _swimLogAt;
@@ -74,7 +107,7 @@ namespace FiresCore.Npc.AI
         /// <summary>Paths asked since the last <see cref="Reset"/>.</summary>
         public int Repaths { get; private set; }
 
-        /// <summary>This tick walks at a step the body can jump (0.2.202): the driver should jump now (Jumping's own timing still applies).</summary>
+        /// <summary>This tick walks at a step the body can jump: the driver should jump now (Jumping's own timing still applies).</summary>
         public bool WantsJump { get; private set; }
 
         /// <summary>Corners passed since the last <see cref="Reset"/>.</summary>
@@ -119,14 +152,19 @@ namespace FiresCore.Npc.AI
         /// now (a player's look is driven apart from its move). lookDir: turn toward it; moveDir: walk it (zero while turning,
         /// arrived, pending or without a path). Pending = the navmesh isn't loaded there yet: try again.
         /// </summary>
+        // Who walks, for the [NavTest] lines
+        private string _agentName = "?";
+
         public WalkState Tick(Character body, Vector3 facing, Vector3 goal, float reach, bool run, out Vector3 moveDir, out Vector3 lookDir)
         {
+            SetFrame(body != null ? body.transform.position : goal);   // halo ring: this call's up
+            if (body != null) _agentName = body.m_name;
             moveDir = Vector3.zero;
             lookDir = Vector3.zero;
             WantsJump = false;
             if (body == null) { State = "no body"; return WalkState.NoPath; }
             Vector3 at = body.transform.position;
-            // 0.2.252: on a face, Core's climb moves the body; the walker points at the face and asks again from the top.
+            // On a face, Core's climb moves the body; the walker points at the face and asks again from the top.
             if (FiresCore.Movement.Climb.IsClimbing(body))
             {
                 _climbing = true;
@@ -151,15 +189,15 @@ namespace FiresCore.Npc.AI
                 else
                 {
                     Vector3 toFace = climbPlan.Top - at;
-                    toFace.y = 0f;
+                    toFace = Flat(toFace);
                     if (toFace.sqrMagnitude > 0.0001f)
                     {
                         moveDir = toFace.normalized;
-                        // 0.2.282 (HR5be pit, Fire: "he's facing the wrong way"): at the face, square up to it (into its surface, not
+                        // At the face, square up to it (into its surface, not
                         // along the line to the top), so the climb starts facing the wall.
                         bool atFace = FiresCore.Movement.Climbing.FaceAhead(body, moveDir, out RaycastHit faceHit, out _, out _);
                         Vector3 into = atFace ? -faceHit.normal : Vector3.zero;
-                        into.y = 0f;
+                        into = Flat(into);
                         if (into.sqrMagnitude > 0.0001f) moveDir = into.normalized;
                         lookDir = moveDir;
                         State = $"climb planned: {(into.sqrMagnitude > 0.0001f ? "squaring up to" : "to")} the face, {FlatDistance(at, climbPlan.Foot):0.0} m";
@@ -167,7 +205,7 @@ namespace FiresCore.Npc.AI
                     }
                 }
             }
-            // A goal in a fire's damage: its edge instead (0.2.220, R90: the bot's route ran through the base campfire, 25 -> 16 HP).
+            // A goal in a fire's damage: its edge instead.
             Vector3 safeGoal = Hazards.SafeGoal(goal, at, out string goalHazard);
             if (goalHazard != null)
             {
@@ -180,8 +218,8 @@ namespace FiresCore.Npc.AI
             }
             float cornerReach = run ? CornerRun : CornerWalk;
             float goalFlat = FlatDistance(at, goal);
-            // Arrived = near AND no wall between (0.2.213, R84 corridor: the goal in the corridor's closed end was "reached" from outside
-            // the end wall, 0 of 13 samples inside the mouth).
+            // Arrived = near AND no wall between (else a goal at a corridor's closed end
+            // reads as reached from outside the end wall).
             if (goalFlat < Mathf.Max(reach, cornerReach) && (goalFlat < 0.5f || NoWallBefore(at, goal)))
             {
                 _path.Clear();
@@ -191,28 +229,27 @@ namespace FiresCore.Npc.AI
                 return WalkState.Arrived;
             }
 
-            // No progress (0.2.202, R77 u_trap: "circling: walked 15 m in 29 s without getting nearer than 5.2 m", a navmesh path
-            // all along, so no terrain trigger fired): not nearer to the goal by NoProgressMetres in NoProgressSeconds -> a terrain
+            // No progress (a body can circle on a navmesh path
+            // with no terrain trigger firing): not nearer to the goal by NoProgressMetres in NoProgressSeconds -> a terrain
             // route (it sees built walls on its fine grid), whatever the navmesh says.
             if (float.IsNaN(_bestGoal.x) || FlatDistance(goal, _bestGoal) > 3f) { _bestGoal = goal; _bestFlat = goalFlat; _bestAt = Time.time; }
             else if (goalFlat < _bestFlat - NoProgressMetres) { _bestFlat = goalFlat; _bestAt = Time.time; }
-            // 0.2.283 (HR5c pit, Fire: "It's not trying to jump or climb out of the pit at all"; the lead: a body below a rim it can't walk
-            // over plans a climb or mantle at the nearest wall after no headway for 3 s): below the goal and stalled -> a planned climb, on
+            // A body in a pit must jump or climb out: below the goal and stalled -> a planned climb, on
             // the straight way to the goal or else up the nearest wall.
-            else if (goal.y - at.y >= PitRiseMetres && Time.time - _bestAt > PitStallSeconds && Time.time >= _pitNextAt && Door == null)
+            else if (UpDot(goal - at) >= PitRiseMetres && Time.time - _bestAt > PitStallSeconds && Time.time >= _pitNextAt && Door == null)
             {
                 _pitNextAt = Time.time + PitStallSeconds;
-                if (PlanClimbStep(body, at, goal, $"{goal.y - at.y:0.0} m below the goal and no nearer in {Time.time - _bestAt:0} s", nearestWall: true))
+                if (PlanClimbStep(body, at, goal, $"{UpDot(goal - at):0.0} m below the goal and no nearer in {Time.time - _bestAt:0} s", nearestWall: true))
                 {
                     _bestAt = Time.time;
                     return WalkState.Moving;
                 }
             }
             else if (Time.time - _bestAt > NoProgressSeconds && Door == null
-                     && (_detour.Count == 0 || (_detour[0].y - at.y >= WaypointLevelMetres && FlatDistance(at, _detour[0]) < CornerRun + 0.5f)))   // or below a step waypoint it can't get up (0.2.209)
+                     && (_detour.Count == 0 || (UpDot(_detour[0] - at) >= WaypointLevelMetres && FlatDistance(at, _detour[0]) < CornerRun + 0.5f)))   // or below a step waypoint it can't get up
             {
                 _bestAt = Time.time;
-                // The door it's stalled at first (0.2.205, R78 nav_course doorway: stood 0.8 m from a closed gate, then went 26 m round).
+                // The door it's stalled at first (cheaper than a long way round a closed gate).
                 if (FindDoor(body, at, goal, StalledDoorMetres))
                 {
                     Debug.Log($"[PathWalker] {body.m_name}: door: {Utils.GetPrefabName(Door.gameObject)} on the path " +
@@ -222,12 +259,12 @@ namespace FiresCore.Npc.AI
                 if (PlanRooms(body, at, goal, $"no progress: {NoProgressSeconds:0} s without getting nearer than {_bestFlat:0.0} m")
                     || PlanTerrain(body, at, goal, $"no progress: {NoProgressSeconds:0} s without getting nearer than {_bestFlat:0.0} m"))
                     return Steer(body, facing, _detour[0] - at, goalFlat, out moveDir, out lookDir);
-                // 0.2.283: no way round on the grid either -> a climb (the straight way, else the nearest wall), before pressing on.
+                // No way round on the grid either -> a climb (the straight way, else the nearest wall), before pressing on.
                 if (PlanClimbStep(body, at, goal, $"no progress: {NoProgressSeconds:0} s without getting nearer than {_bestFlat:0.0} m and no way round", nearestWall: true))
                     return WalkState.Moving;
-                if (at.y > IndoorsHeight)
+                if (Indoors(at))
                 {
-                    // Vanilla-style indoors (0.2.209): nothing better planned -> a fresh navmesh path from here, not pressing on.
+                    // Vanilla-style indoors: nothing better planned -> a fresh navmesh path from here, not pressing on.
                     Debug.Log($"[PathWalker] {body.m_name}: stuck indoors ({NoProgressSeconds:0} s without getting nearer than {_bestFlat:0.0} m); asking the navmesh again");
                     _path.Clear();
                     _lastAsk = -999f;
@@ -248,18 +285,17 @@ namespace FiresCore.Npc.AI
             _goalNow = goal;
             if (_detour.Count > 0)
             {
-                // A waypoint up a step is reached ON it, not beside it (0.2.209, R80 jump_steps: "corner 3/4" on the 1.0 m row counted
-                // as reached from the ground 0.9 m away, and the walk went on along the rows' side into the 2 m face; Fire: "it needs to
-                // recognize the only way up … is to take the incremental jumps").
-                while (_detour.Count > 0 && FlatDistance(at, _detour[0]) < cornerReach + 0.5f && _detour[0].y - at.y < WaypointLevelMetres)
+                // A waypoint up a step is reached ON it, not beside it (else a raised waypoint counts
+                // as reached from the ground below, and the walk skips the incremental jumps that are the only way up).
+                while (_detour.Count > 0 && FlatDistance(at, _detour[0]) < cornerReach + 0.5f && UpDot(_detour[0] - at) < WaypointLevelMetres)
                 { _detour.RemoveAt(0); _bestAt = Time.time; }
                 if (_detour.Count > 0)
                 {
                     State = $"round {_detourWhat}: corner {_detourTotal - _detour.Count + 1}/{_detourTotal}";
                     Vector3 toWaypoint = _detour[0] - at;
-                    toWaypoint.y = 0f;
+                    toWaypoint = Flat(toWaypoint);
                     // The step up to it is jumped as it comes (the walker's own jump request, as on a navmesh path's SlideAlong).
-                    if (_detour[0].y - at.y > Perception.StepHeight && toWaypoint.magnitude < StepJumpReach && toWaypoint.sqrMagnitude > 0.0001f)
+                    if (UpDot(_detour[0] - at) > Perception.StepHeight && toWaypoint.magnitude < StepJumpReach && toWaypoint.sqrMagnitude > 0.0001f)
                     {
                         JumpAdvice up = Jumping.Check(body, toWaypoint.normalized, false);
                         if (!up.Wall && (up.Jump || (up.LipHeight > Perception.StepHeight && up.LipHeight <= Jumping.MaxLip && up.LipDistance <= Jumping.LipReach + 0.3f)))
@@ -293,12 +329,12 @@ namespace FiresCore.Npc.AI
                     _overshootFrom = new Vector3(float.NaN, 0f, 0f);
                 }
                 bool overshooting = !float.IsNaN(_overshootFrom.x);
-                bool atCorner = at.y <= IndoorsHeight && _path.Count > 1 && (overshooting || FlatDistance(at, _path[0]) < cornerReach || PassedCorner(at));
-                // No overshoot without a way walked toward THIS corner (0.2.209, R80 l_corner: the path's first corner was where the bot
-                // stood, so "the way we came" was a stale heading and it walked 3 m away from the goal): re-plan instead.
+                bool atCorner = !Indoors(at) && _path.Count > 1 && (overshooting || FlatDistance(at, _path[0]) < cornerReach || PassedCorner(at));
+                // No overshoot without a way walked toward THIS corner (when the path's first corner is where the body
+                // stands, "the way we came" is a stale heading): re-plan instead.
                 if (atCorner && !overshooting && _blockedLeg == null && (_approach.sqrMagnitude < 0.0001f || FlatDistance(_approachCorner, _path[0]) > 1f))
                     _blockedLeg = $"corner {_pathCorners - _path.Count + 1}/{_pathCorners}: the next leg hits {LegBlocker(at, _path[1])} and no approach to carry on from";
-                // A corner whose next leg stayed blocked (0.2.209): plan round on the terrain from here, the blocker kept off; only when
+                // A corner whose next leg stayed blocked: plan round on the terrain from here, the blocker kept off; only when
                 // the terrain has no way round is the leg taken as before.
                 if (_blockedLeg != null)
                 {
@@ -321,9 +357,9 @@ namespace FiresCore.Npc.AI
                     atCorner = false;
                 }
                 // At a corner whose next leg isn't clear yet (the wall end is still in the way): keep walking the way we came, past
-                // the end, until the capsule to the next corner is clear (Fire, R77: "tries to turn to round the corner too soon").
-                // Once started, the overshoot carries on forward (0.2.205, R78: out of reach of the corner the walker aimed BACK at it, then
-                // overshot again: "corner 10/11: walking past the wall end" with the heading flipping 164° / 357° and 5 dithers in a minute).
+                // the end, until the capsule to the next corner is clear (don't turn the corner too soon).
+                // Once started, the overshoot carries on forward (else, out of reach of the corner, the walker aims BACK at it, then
+                // overshoots again, the heading flipping).
                 if (atCorner && _approach.sqrMagnitude > 0.0001f)
                 {
                     if (float.IsNaN(_overshootFrom.x))
@@ -337,7 +373,7 @@ namespace FiresCore.Npc.AI
                 if (_path.Count > 0 && FlatDistance(at, _path[0]) >= cornerReach)
                 {
                     Vector3 approach = _path[0] - at;
-                    approach.y = 0f;
+                    approach = Flat(approach);
                     _approach = approach.normalized;
                     _approachCorner = _path[0];
                 }
@@ -365,11 +401,11 @@ namespace FiresCore.Npc.AI
                 else
                 {
                     // A fresh navmesh route that climbs a face steeper than this body can (the navmesh agent climbs far more than a
-                    // player's 38°: R76 "route none … path 0 m vs straight 17 m" straight up a ridge): plan round it on the terrain.
+                    // player's 38°, straight up a ridge): plan round it on the terrain.
                     if (_checkRidge)
                     {
                         _checkRidge = false;
-                        // 0.2.252 (the overnight pond, 117 swims): a fresh route's swims judged against the stamina. No swim route ->
+                        // A fresh route's swims judged against the stamina. No swim route ->
                         // a planned climb if one fits, else no path (the planner picks another goal); a swim it can do rested -> wait on
                         // the bank first.
                         var swim = Swimming.JudgeRoute(body, at, _path, out string swimWhy);
@@ -377,8 +413,8 @@ namespace FiresCore.Npc.AI
                         {
                             Debug.Log($"[PathWalker] {body.m_name}: route: navmesh crosses water it can't swim: {swimWhy}");
                             _path.Clear();
-                            // 0.2.282: a refused route is no route (HR5b: the cleared path read as "partial (end 7.2 m short)" on the next
-                            // ticks, and the driver's no-path fallback jogged the straight line into the hall's woodwall).
+                            // A refused route is no route (else the cleared path reads as partial on the next
+                            // ticks, and the driver's no-path fallback jogs the straight line into a wall).
                             _lastFound = false;
                             if (PlanClimbStep(body, at, goal, $"no swim route ({swimWhy})", nearestWall: true)) return WalkState.Moving;
                             State = "no swim route";
@@ -386,7 +422,7 @@ namespace FiresCore.Npc.AI
                             return WalkState.NoPath;
                         }
                         _swimHold = swim == Swimming.RouteSwim.RestFirst;
-                        // The better route (Fire: climb "if they need to"): a navmesh way round more than 3x the straight way + 30 m,
+                        // The better route (climb only when needed): a navmesh way round more than 3x the straight way + 30 m,
                         // when a planned climb fits.
                         float roundTrip = PathRemaining(at, _path);
                         if (roundTrip > goalFlat * 3f + 30f && PlanClimbStep(body, at, goal, $"the navmesh way is {roundTrip:0} m against {goalFlat:0} m straight"))
@@ -396,19 +432,17 @@ namespace FiresCore.Npc.AI
                         }
                         if (RidgeOnPath(body, at, out string ridge) && PlanTerrain(body, at, goal, ridge))
                             return Steer(body, facing, _detour[0] - at, goalFlat, out moveDir, out lookDir);
-                        // A navmesh leg a body-wide capsule can't walk (0.2.209, R80 l_corner / u_trap on both bodies: "route: navmesh,
-                        // 2 corner(s), 8 m vs straight 7 m" where the way round was 19 m): the tile was baked before the walls were built
+                        // A navmesh leg a body-wide capsule can't walk: the tile was baked before the walls were built
                         // (vanilla re-bakes only when poked 5 s after its last bake), so its corners cut through them. The terrain
                         // planner sees built walls on its own grid.
                         bool staleLeg = StaleLeg(at, out string stale);
-                        // A stale route isn't kept by the re-path hysteresis (0.2.218, R88 corridor: the tile older than the course
-                        // routed round the outside to the cap; the re-baked, longer route through the mouth was never taken because a new
+                        // A stale route isn't kept by the re-path hysteresis (a stale tile can route round the
+                        // outside; the re-baked, longer route through the mouth was never taken because a new
                         // route only replaces the walked one when it is shorter): for StaleRouteSeconds any fresh route replaces it.
                         if (staleLeg) _staleUntil = Time.time + StaleRouteSeconds;
                         if (staleLeg && PlanTerrain(body, at, goal, stale))
                             return Steer(body, facing, _detour[0] - at, goalFlat, out moveDir, out lookDir);
-                        // A closed door on the straight way beats a long way round (0.2.213, R84 doorway, self body: "route: navmesh,
-                        // 13 corner(s), 19 m vs straight 8 m" round the 14 m wall line, "door passes 0"): the navmesh routes round a shut
+                        // A closed door on the straight way beats a long way round: the navmesh routes round a shut
                         // door; the door rule opens it.
                         float roundLength = PathRemaining(at, _path);
                         if (roundLength > goalFlat * DoorDetourShare + DoorDetourMetres && FindDoor(body, at, goal))
@@ -417,7 +451,7 @@ namespace FiresCore.Npc.AI
                                       $"{roundLength:0} m way round; opening it");
                             return ToDoor(body, at, out moveDir, out lookDir);
                         }
-                        // Which planner each walk uses, so a regression names itself (0.2.206, the lead: "route: navmesh" / "route: terrain (<why>)").
+                        // Which planner each walk uses, so a regression names itself.
                         float pathLength = PathRemaining(at, _path);
                         if (Time.time >= _navLogAt)
                         {
@@ -440,8 +474,7 @@ namespace FiresCore.Npc.AI
                     }
                     want = _path[0] - at;
                     State = $"moving to corner {_pathCorners - _path.Count + 1}/{_pathCorners}";
-                    // One shoulder on a corner: a short sidestep off it, still facing the way on (0.2.209, Fire: "simply move a little
-                    // bit more to the right or the left … it can strafe as well"), before any slide, re-plan or turn.
+                    // One shoulder on a corner: a short sidestep off it, still facing the way on (a strafe), before any slide, re-plan or turn.
                     if (Strafe(body, at, want, out moveDir, out lookDir)) return WalkState.Moving;
                     want = SlideAlong(body, want);
                     if (_slideDoor != null)
@@ -466,8 +499,8 @@ namespace FiresCore.Npc.AI
             else
             {
                 if (FindDoor(body, at, goal)) return ToDoor(body, at, out moveDir, out lookDir);
-                // No navmesh route and a building in the straight way (Fire, R74/R75: pinned at the mausoleum facade for
-                // minutes): go round its footprint, corner by corner, the shorter way.
+                // No navmesh route and a building in the straight way (else the body stays pinned at its
+                // facade): go round its footprint, corner by corner, the shorter way.
                 if (!PlanRooms(body, at, goal, "no navmesh path") && !PlanRound(body, at, goal, null) && !PlanTerrain(body, at, goal, "no navmesh path"))
                 {
                     if (PlanClimbStep(body, at, goal, "no navmesh path and no way round", nearestWall: true)) return WalkState.Moving;
@@ -481,16 +514,16 @@ namespace FiresCore.Npc.AI
             return Steer(body, facing, want, goalFlat, out moveDir, out lookDir);
         }
 
-        // A planned climb as a route step (0.2.252, Fire: climb "if they need to", never as a stuck reflex): Core's PlanClimb on the
+        // A planned climb as a route step (only when needed, never as a stuck reflex): Core's PlanClimb on the
         // straight way to a real goal (higher, the top known, the stamina for all of it with a margin) -> Climb.Plan, and the next ticks
         // walk to its face, where the climb starts. Logged either way, rate-limited.
-        // 0.2.283: nearestWall (a body stalled below the goal, boxed in: a pit, a ledge): when the straight way has no climb, the nearest
+        // nearestWall (a body stalled below the goal, boxed in: a pit, a ledge): when the straight way has no climb, the nearest
         // climbable wall round it instead (Climbing.PlanNearestWall), its plan still serving this goal.
         private bool PlanClimbStep(Character body, Vector3 at, Vector3 goal, string why, bool nearestWall = false)
         {
             bool planned = FiresCore.Movement.Climbing.PlanClimb(body, at, goal, out FiresCore.Movement.Climbing.ClimbPlan plan, out string refusal);
             string where = "";
-            if (!planned && nearestWall && goal.y - at.y >= PitRiseMetres)
+            if (!planned && nearestWall && UpDot(goal - at) >= PitRiseMetres)
             {
                 if (FiresCore.Movement.Climbing.PlanNearestWall(body, at, goal, out plan, out string wallWhy))
                 {
@@ -522,7 +555,7 @@ namespace FiresCore.Npc.AI
             Vector3 flat = new Vector3(want.x, 0f, want.z);
             if (flat.sqrMagnitude < 0.0001f) return WalkState.Moving;
             // Ground ahead too steep for this body (it would slide): the nearest walkable heading along the contour; nothing
-            // walkable round it = a partial way (Fire: the bot wandered into steep hills, on paths and on the loot walk). Not in
+            // walkable round it = a partial way (keeps bodies off steep hills, on paths and on the loot walk). Not in
             // the last SlopeFreeNearGoal m: a drop lying on the slope is reached by sliding if need be.
             if (goalFlat > SlopeFreeNearGoal)
             {
@@ -559,15 +592,14 @@ namespace FiresCore.Npc.AI
                     want = steered;
                 }
             }
-            // Never into a dungeon's exit teleport unless the goal is the exit (0.2.206, R78 Crypt4: the "walk on past the wall end" step
-            // right after entering walked into the exit door's trigger at the spawn point and left the dungeon).
+            // Never into a dungeon's exit teleport unless the goal is the exit (a step right after entering could walk into the
+            // exit door's trigger at the spawn point and leave the dungeon).
             if (KeepOffExit(body, flat, out Vector3 around))
             {
                 flat = around;
                 want = around * want.magnitude;
             }
-            // A look-ahead (0.2.206, Fire: "i just dont understand how it is incapable of detecting objects its walking directly into"; every
-            // stall line read "at 0.6 m"): a body-wide cast LookAheadMetres along the heading; something solid there (not a door it may
+            // A look-ahead, so the body detects what it is walking directly into: a body-wide cast LookAheadMetres along the heading; something solid there (not a door it may
             // open, not a step it can jump) turns the heading the least that clears it, before contact.
             if (goalFlat > LookAheadMetres && flat.sqrMagnitude > 0.0001f && Time.time >= _calmUntil
                 && LookAhead(body, flat.normalized, _goalNow, Mathf.Min(LookAheadMetres, want.magnitude), out Vector3 clearDir, out string blocker, out float at, out float turned))
@@ -581,12 +613,12 @@ namespace FiresCore.Npc.AI
                     Debug.Log($"[PathWalker] {body.m_name}: look-ahead: {blocker} {at:0.0} m ahead on the way; steering {turned:0}° wide");
                 }
             }
-            // A soft margin (0.2.206, Fire: "always hugging walls and edges"): a wall closer than SoftMargin on one side than the other eases
+            // A soft margin (no hugging walls and edges): a wall closer than SoftMargin on one side than the other eases
             // the heading toward the middle, so a corridor is walked down its middle and a wall is passed with room. Not in the last 2 m.
             if (goalFlat > 2f && flat.sqrMagnitude > 0.0001f)
             {
                 Vector3 dirN = flat.normalized;
-                Vector3 right = Vector3.Cross(Vector3.up, dirN);
+                Vector3 right = Vector3.Cross(s_up, dirN);
                 float l = SideRoom(body, -right), r = SideRoom(body, right);
                 if (Mathf.Min(l, r) < SoftMargin && Mathf.Abs(l - r) > 0.15f)
                 {
@@ -622,7 +654,7 @@ namespace FiresCore.Npc.AI
         {
             around = flat;
             Vector3 at = body.transform.position;
-            if (at.y <= IndoorsHeight || flat.sqrMagnitude < 0.0001f) return false;
+            if (!Indoors(at) || flat.sqrMagnitude < 0.0001f) return false;
             if (s_teleports == null || Time.time >= s_teleportsUntil)
             {
                 s_teleports = Object.FindObjectsByType<Teleport>(FindObjectsSortMode.None);
@@ -633,19 +665,19 @@ namespace FiresCore.Npc.AI
             {
                 if (t == null) continue;
                 Vector3 tp = t.transform.position;
-                if (Mathf.Abs(tp.y - at.y) > 4f) continue;
+                if (Mathf.Abs(UpDot(tp - at)) > 4f) continue;
                 if (FlatDistance(_goalNow, tp) <= ExitKeepOut + 1f) continue;   // the goal is the exit: go in
                 // Where the next metre of this heading ends, and whether it is inside (or deeper into) the disc.
                 Vector3 next = at + dir * 1f;
                 float now = FlatDistance(at, tp), then = FlatDistance(next, tp);
                 if (then > ExitKeepOut || then >= now) continue;
                 Vector3 away = at - tp;
-                away.y = 0f;
+                away = Flat(away);
                 if (away.sqrMagnitude < 0.0001f) away = -dir;
                 away.Normalize();
-                Vector3 tangent = Vector3.Cross(Vector3.up, away);
+                Vector3 tangent = Vector3.Cross(s_up, away);
                 Vector3 toGoal = _goalNow - at;
-                toGoal.y = 0f;
+                toGoal = Flat(toGoal);
                 if (Vector3.Dot(tangent, toGoal) < 0f) tangent = -tangent;
                 around = (tangent + (now < ExitKeepOut ? away : Vector3.zero)).normalized;
                 if (Time.time - _exitLoggedAt > 5f)
@@ -659,7 +691,7 @@ namespace FiresCore.Npc.AI
         }
 
         // The path to goal, asked at most once a second and kept while the goal stays put; false with no path.
-        // Fire: "closed doors should not cut their route". The one door rule (DoorRule), for the bot like the companions.
+        // Closed doors should not cut a route. The one door rule (DoorRule), for the bot like the companions.
         private bool FindDoor(Character body, Vector3 at, Vector3 goal, float radius = 4f)
         {
             Door = DoorRule.DoorOnPath(at, goal, radius, body as Humanoid);
@@ -673,14 +705,14 @@ namespace FiresCore.Npc.AI
         private const float WayOutSeconds = 3f;
         private float _wayOutNext;
 
-        // The goal is close (feel range) but a wall stands between (R77 [visual]: the bot inside the base's bed hut, the drill point
-        // 2.7 m away just outside its wall; "route none" and 90 s against the wall; R76 the same hut): the room's closed door first
+        // The goal is close (feel range) but a wall stands between (a body inside a hut with the goal just
+        // outside its wall): the room's closed door first
         // (Door set), else round the wall or a terrain route (Detour set). False: nothing better than feeling forward.
         private bool WayOut(Character body, Vector3 at, Vector3 goal, float goalFlat)
         {
             if (Time.time < _wayOutNext || InSight(at, goal)) return false;
             _wayOutNext = Time.time + WayOutSeconds;
-            Vector3 from = at + Vector3.up * 1f, to = goal + Vector3.up * 1f;
+            Vector3 from = at + s_up * 1f, to = goal + s_up * 1f;
             Physics.Linecast(from, to, out RaycastHit wall, SolidMask, QueryTriggerInteraction.Ignore);
             string what = wall.collider != null ? wall.collider.name : "a wall";
             if (FindDoor(body, at, goal, EnclosureDoorRadius))
@@ -689,7 +721,7 @@ namespace FiresCore.Npc.AI
                           $"({FlatDistance(at, Door.transform.position):0.0} m)");
                 return true;
             }
-            if (PlanRooms(body, at, goal, $"{what} between us and the goal {goalFlat:0.0} m away")) return true;   // indoors: through the doorways (0.2.207)
+            if (PlanRooms(body, at, goal, $"{what} between us and the goal {goalFlat:0.0} m away")) return true;   // indoors: through the doorways
             if (wall.collider != null && PlanRound(body, at, goal, wall.collider)) return true;
             return PlanTerrain(body, at, goal, $"{what} between us and the goal {goalFlat:0.0} m away (no door within {EnclosureDoorRadius:0} m)");
         }
@@ -697,31 +729,29 @@ namespace FiresCore.Npc.AI
         private WalkState ToDoor(Character body, Vector3 at, out Vector3 moveDir, out Vector3 lookDir)
         {
             Vector3 to = Door.transform.position - at;
-            to.y = 0f;
+            to = Flat(to);
             float toDoor = to.magnitude;
             // Come at it from the front, not along the wall (FrontApproach): the point before it first, then the door.
             Vector3 front = FrontApproach(Door.transform, at, DoorFrontStandoff);
             Vector3 toFront = front - at;
-            toFront.y = 0f;
+            toFront = Flat(toFront);
             bool viaFront = toDoor > DoorFrontStandoff + 0.5f && toFront.magnitude > 0.6f
                             && Vector3.Angle(to, Door.transform.forward) > 45f && Vector3.Angle(to, -Door.transform.forward) > 45f;
             Vector3 aim = viaFront ? toFront : to;
             lookDir = aim.sqrMagnitude > 0.0001f ? aim.normalized : Vector3.zero;
             moveDir = viaFront || toDoor > DoorRule.InteractDistance ? lookDir : Vector3.zero;
-            // At the door: open it here (the door rule), close it behind (R76: the bot stood 74 s at its own hut's door after
-            // respawning, "door: wood_door on the path (1.6 m)", and nothing opened it). The rule's toggle guard stops a second
+            // At the door: open it here (the door rule), close it behind. The rule's toggle guard stops a second
             // opener (the driver) from shutting it again.
             if (!viaFront && toDoor <= DoorRule.InteractDistance && body is Humanoid opener)
             {
                 if (DoorRule.OpenFor(opener, Door))
                 {
                     DoorRule.CloseBehind(opener, Door);
-                    // Opened: straight through it (0.2.209, R80 doorway, both bodies: the re-path right after the opening came back
-                    // "14 corners" round the west wall end, 17.9 m vs straight 8.0, the tile still baked with the door shut and the
-                    // clearance push off its jambs). Through the doorway on waypoints, then back to the navmesh on the far side.
+                    // Opened: straight through it (a re-path right after the opening still routes round the wall, the tile
+                    // baked with the door shut and the clearance push off its jambs). Through the doorway on waypoints, then back to the navmesh on the far side.
                     Transform t = Door.transform;
                     Vector3 across = t.forward;
-                    across.y = 0f;
+                    across = Flat(across);
                     across = across.sqrMagnitude > 0.0001f ? across.normalized : Vector3.forward;
                     if (Vector3.Dot(at - t.position, across) > 0f) across = -across;   // from our side to the other
                     _detour.Clear();
@@ -749,6 +779,9 @@ namespace FiresCore.Npc.AI
         public const float DoorThroughMetres = 2f;
 
         private float _doorWhyAt;
+        private bool _navTestFound;
+        private Vector3 _pathAskGoal = new Vector3(float.NaN, 0f, 0f);
+        private float _pathAskAt = -999f;
 
         /// <summary>A slide side against one blocker holds until the body has gone this far along it (m).</summary>
         public const float SlideSideHoldMetres = 2.5f;
@@ -768,15 +801,30 @@ namespace FiresCore.Npc.AI
             _lastAsk = now;
             _lastGoal = goal;
             Repaths++;
-            // Re-path hysteresis (R75 outdoors: 4 heading flips in 8 s): with the goal where it was and the current route still
+            // Re-path hysteresis (stops heading flips): with the goal where it was and the current route still
             // being walked, a new route only replaces it when it is clearly shorter.
             float oldRemaining = _path.Count > 0 && _lastFound ? PathRemaining(at, _path) : float.MaxValue;
             bool found = finder.GetPath(at, goal, s_fresh, Pathfinding.AgentType.Humanoid);
+            // Straight from GetPath's result, no state -
+            // per agent once per new goal (>= 2 m) or every 3 s. "last y" vs the goal's y says whether the navmesh path reaches an upper floor.
+            if (Vector3.Distance(goal, _pathAskGoal) >= 2f || now - _pathAskAt >= 3f)
+            {
+                _pathAskGoal = goal; _pathAskAt = now;
+                Vector3 last = s_fresh.Count > 0 ? s_fresh[s_fresh.Count - 1] : at;
+                FiresCore.Logging.FiresLogger.LogInfo($"[PathAsk] {_agentName}: from ({at.x:0.0}, {at.y:0.0}, {at.z:0.0}) to ({goal.x:0.0}, {goal.y:0.0}, {goal.z:0.0}) found {(found ? "yes" : "no")}, {s_fresh.Count} nodes, last ({last.x:0.0}, {last.y:0.0}, {last.z:0.0}), last-to-goal {Vector3.Distance(last, goal):0.0} m (dy {goal.y - last.y:0.0})");
+            }
+            // [NavTest] line, frozen format: a NEW goal (moved >= 2 m) or a found/no flip, never every re-path
+            if (goalMoved || found != _navTestFound)
+            {
+                _navTestFound = found;
+                if (found) FiresCore.Logging.FiresLogger.LogInfo($"[NavTest] {_agentName}: path to ({goal.x:0.0}, {goal.y:0.0}, {goal.z:0.0}) found yes, {s_fresh.Count} nodes, {PathRemaining(at, s_fresh):0.0} m");
+                else FiresCore.Logging.FiresLogger.LogInfo($"[NavTest] {_agentName}: path to ({goal.x:0.0}, {goal.y:0.0}, {goal.z:0.0}) found no (navmesh has no full path from ({at.x:0.0}, {at.y:0.0}, {at.z:0.0}))");
+            }
             if (found && !goalMoved && oldRemaining < float.MaxValue && Time.time >= _staleUntil && PathRemaining(at, s_fresh) > oldRemaining * KeepRouteShare)
                 return _lastFound;   // keep the route being walked
             _lastFound = found;
             _path.Clear();
-            // A navmesh path through a fire's damage is no path (0.2.220): the walk plans round it (PlanRooms / PlanRound / PlanTerrain,
+            // A navmesh path through a fire's damage is no path: the walk plans round it (PlanRooms / PlanRound / PlanTerrain,
             // and TerrainPlanner refuses those cells).
             if (_lastFound && CrossesHazard(at, s_fresh, out Vector3 fireAt, out string fire))
             {
@@ -830,16 +878,16 @@ namespace FiresCore.Npc.AI
             Vector3 corner = _path[0], next = _path[1];
             if (FlatDistance(at, corner) > PassedCornerRange) return false;
             Vector3 leg = next - corner, toCorner = corner - at;
-            leg.y = 0f;
-            toCorner.y = 0f;
+            leg = Flat(leg);
+            toCorner = Flat(toCorner);
             if (Vector3.Dot(toCorner, leg) >= 0f) return false;
-            // Only passed when the next corner is in sight (0.2.202, R77 nav_course u_trap: inside a 4 m U of walls the corners
-            // round the wall's end lay within 3 m THROUGH the wall and "behind" the next leg, so they were dropped and the walker
-            // aimed at corner 4 straight through the back wall for 30 s).
+            // Only passed when the next corner is in sight (inside a U of walls the corners round the wall's
+            // end can lie within reach THROUGH the wall and "behind" the next leg; dropping them aims the walker through the
+            // back wall).
             return InSight(at, next);
         }
 
-        // ---- The next-corner rule (0.2.202, Fire R77: "make it fucking walk AROUND corners") ----
+        // ---- The next-corner rule: walk AROUND corners ----
 
         /// <summary>A capsule this much wider than the body (m) must pass clear to the next corner before the walker turns to it.</summary>
         public const float NextCornerSlack = 0.2f;
@@ -858,14 +906,14 @@ namespace FiresCore.Npc.AI
             Vector3 corner = _path[0];
             bool near = FlatDistance(at, corner) < cornerReach;
             if (_path.Count == 1) return near;
-            // Indoors, corner to corner as vanilla monsters walk the baked navmesh: reached = done, no overshoot (0.2.209).
-            if (at.y > IndoorsHeight) return near || PassedCorner(at);
+            // Indoors, corner to corner as vanilla monsters walk the baked navmesh: reached = done, no overshoot.
+            if (Indoors(at)) return near || PassedCorner(at);
             bool passed = near || PassedCorner(at) || !float.IsNaN(_overshootFrom.x);   // an overshoot in progress counts as passed
             if (!passed) return false;
             if (CapsuleClear(at, _path[1], _radius + NextCornerSlack)) return true;
-            // Overshooting into something solid straight on: the corner can't be walked past, so take it now (0.2.205).
-            // Taking a leg the capsule says is blocked walked both R80 bodies into the woodwall ("… taking it", then "slid along
-            // woodwall … toward corner 2", Fire: "cutting the fucking corner"): a blocked leg is re-planned, not taken (0.2.209).
+            // Overshooting into something solid straight on: the corner can't be walked past, so take it now.
+            // Taking a leg the capsule says is blocked walks the body into the wall, cutting the corner: a blocked leg is
+            // re-planned, not taken.
             if (!float.IsNaN(_overshootFrom.x) && Blocked(body, _approach))
             {
                 _blockedLeg = $"corner {_pathCorners - _path.Count + 1}/{_pathCorners}: blocked straight on while walking past it, the next leg still hits {LegBlocker(at, _path[1])}";
@@ -900,14 +948,14 @@ namespace FiresCore.Npc.AI
         private string LegBlocker(Vector3 a, Vector3 b)
         {
             float r = _radius + NextCornerSlack;
-            Vector3 low = a + Vector3.up * (r + 0.35f), high = a + Vector3.up * Mathf.Max(r + 0.4f, 1.6f);
-            Vector3 dir = (b + Vector3.up * (r + 0.35f)) - low;
+            Vector3 low = a + s_up * (r + 0.35f), high = a + s_up * Mathf.Max(r + 0.4f, 1.6f);
+            Vector3 dir = (b + s_up * (r + 0.35f)) - low;
             float distance = dir.magnitude;
             if (distance < 0.05f) return "nothing";
             if (!FirstNonGround(low, high, r, dir / distance, Mathf.Max(0.05f, distance - r), out RaycastHit hit))
                 return "nothing";
-            // A door the body may open is the way through, not a wall to plan round (0.2.212, R83 doorway, both bodies: "the next leg hits
-            // door … and no approach" -> "route: terrain … 25 m vs straight 8 m" round the wall line, "door passes 0").
+            // A door the body may open is the way through, not a wall to plan round (else the walk takes a long terrain route round
+            // the wall line).
             Door door = hit.collider.GetComponentInParent<Door>();
             if (door != null && DoorRule.IsPassable(door)) _legDoor = door;
             _legAvoid.Clear();
@@ -920,7 +968,7 @@ namespace FiresCore.Npc.AI
         private bool StaleLeg(Vector3 at, out string why)
         {
             why = null;
-            if (at.y > IndoorsHeight) return false;   // a dungeon's navmesh is baked with its rooms: nothing is built after it
+            if (Indoors(at)) return false;   // a dungeon's navmesh is baked with its rooms: nothing is built after it
             Vector3 from = at;
             for (int i = 0; i < _path.Count; i++)
             {
@@ -946,13 +994,14 @@ namespace FiresCore.Npc.AI
         /// </summary>
         public static bool WallAcross(Vector3 a, Vector3 b, float radius, out RaycastHit hit)
         {
+            SetFrame(a);   // halo ring: this call's up
             hit = default;
             if (s_pieceMask == 0) s_pieceMask = LayerMask.GetMask("static_solid", "piece");
-            Vector3 low = a + Vector3.up * (radius + 0.35f), high = a + Vector3.up * Mathf.Max(radius + 0.4f, 1.6f);
-            Vector3 dir = (b + Vector3.up * (radius + 0.35f)) - low;
+            Vector3 low = a + s_up * (radius + 0.35f), high = a + s_up * Mathf.Max(radius + 0.4f, 1.6f);
+            Vector3 dir = (b + s_up * (radius + 0.35f)) - low;
             float distance = dir.magnitude;
             if (distance < 0.05f) return false;
-            int n = Physics.CapsuleCastNonAlloc(low, high, radius, dir / distance, s_wallHits, Mathf.Max(0.05f, distance - radius), s_pieceMask, QueryTriggerInteraction.Ignore);   // a radius short of the end (0.2.212)
+            int n = Physics.CapsuleCastNonAlloc(low, high, radius, dir / distance, s_wallHits, Mathf.Max(0.05f, distance - radius), s_pieceMask, QueryTriggerInteraction.Ignore);   // a radius short of the end
             float floor = Mathf.Min(a.y, b.y);
             bool found = false;
             for (int k = 0; k < n; k++)
@@ -962,7 +1011,7 @@ namespace FiresCore.Npc.AI
                 if (c == null || h.distance <= 0f) continue;   // 0: overlapping at the start (the ground under us, a wall we lean on)
                 if (c.attachedRigidbody != null && c.attachedRigidbody.GetComponent<Character>() != null) continue;
                 if (c.GetComponentInParent<Door>() != null) continue;
-                if (h.normal.y > 0.7f || Grazes(h, dir)) continue;
+                if (UpDot(h.normal) > 0.7f || Grazes(h, dir)) continue;
                 if (c.bounds.max.y - floor <= Jumping.MaxLip) continue;
                 if (!found || h.distance < hit.distance) { hit = h; found = true; }
             }
@@ -972,22 +1021,22 @@ namespace FiresCore.Npc.AI
         /// <summary>A capsule of <paramref name="radius"/> (knee to head height) moved from <paramref name="from"/> to <paramref name="to"/> hits nothing built, rocky or terrain.</summary>
         public static bool CapsuleClear(Vector3 from, Vector3 to, float radius)
         {
-            Vector3 low = from + Vector3.up * (radius + 0.35f), high = from + Vector3.up * Mathf.Max(radius + 0.4f, 1.6f);
-            Vector3 dir = (to + Vector3.up * (radius + 0.35f)) - low;
+            SetFrame(from);   // halo ring: this call's up
+            Vector3 low = from + s_up * (radius + 0.35f), high = from + s_up * Mathf.Max(radius + 0.4f, 1.6f);
+            Vector3 dir = (to + s_up * (radius + 0.35f)) - low;
             float distance = dir.magnitude;
             if (distance < 0.05f) return true;
-            // Stopping a radius short of the end (0.2.212, R83 corridor: the goal sat in a 1.8 m corridor's closed end and the sweep to it
-            // touched the end walls, so the last leg read "blocked" and the walker went on past the mouth, "went round outside").
+            // Stopping a radius short of the end (with the goal in a narrow corridor's closed end, a sweep to it
+            // touches the end walls, the last leg reads blocked and the walker goes on past the mouth).
             return !FirstNonGround(low, high, radius, dir / distance, Mathf.Max(0.05f, distance - radius), out _);
         }
 
         private static readonly RaycastHit[] s_legHits = new RaycastHit[16];
 
-        // The nearest hit of a capsule sweep that isn't ground to stand on (0.2.214, R85 corridor, self body: "the next leg hits
-        // VoxelChunk_-27_1_-12 at (-838.0, -358.7)", a bump of voxel ground read as the wall that blocked the leg).
+        // The nearest hit of a capsule sweep that isn't ground to stand on (a bump of voxel ground must not read as a wall
+        // that blocks the leg).
         // A wall running along the way (its face turned across the travel) is only brushed by the sweep's side, not in the way
-        // (0.2.217, R87 corridor: a 1.7 m passage and a ~1.6 m wide sweep: "the next leg hits woodwall(Clone) at (-837.3, -352.7)" at the
-        // mouth, the leg re-planned round the outside every time).
+        // (in a passage barely wider than the sweep, the walls would otherwise block every leg).
         private static bool Grazes(RaycastHit h, Vector3 travel)
         {
             Vector3 n = new Vector3(h.normal.x, 0f, h.normal.z), t = new Vector3(travel.x, 0f, travel.z);
@@ -1003,7 +1052,7 @@ namespace FiresCore.Npc.AI
             for (int k = 0; k < n; k++)
             {
                 RaycastHit h = s_legHits[k];
-                if (h.collider == null || h.distance <= 0f || h.normal.y > 0.7f || Grazes(h, dir)) continue;
+                if (h.collider == null || h.distance <= 0f || UpDot(h.normal) > 0.7f || Grazes(h, dir)) continue;
                 if (!found || h.distance < first.distance) { first = h; found = true; }
             }
             return found;
@@ -1014,7 +1063,7 @@ namespace FiresCore.Npc.AI
         // a pickable on a table) doesn't count.
         private static bool NoWallBefore(Vector3 from, Vector3 goal)
         {
-            if (!Physics.Linecast(from + Vector3.up * 1f, goal + Vector3.up * 1f, out RaycastHit hit, SolidMask, QueryTriggerInteraction.Ignore)) return true;
+            if (!Physics.Linecast(from + s_up * 1f, goal + s_up * 1f, out RaycastHit hit, SolidMask, QueryTriggerInteraction.Ignore)) return true;
             if (hit.collider.attachedRigidbody != null && hit.collider.attachedRigidbody.GetComponent<Character>() != null) return true;
             return FlatDistance(hit.point, goal) < 0.8f;
         }
@@ -1023,7 +1072,7 @@ namespace FiresCore.Npc.AI
         {
             foreach (float up in SightHeights)
             {
-                if (Physics.Linecast(from + Vector3.up * up, to + Vector3.up * up, out RaycastHit hit, SolidMask, QueryTriggerInteraction.Ignore)
+                if (Physics.Linecast(from + s_up * up, to + s_up * up, out RaycastHit hit, SolidMask, QueryTriggerInteraction.Ignore)
                     && !(hit.collider.attachedRigidbody != null && hit.collider.attachedRigidbody.GetComponent<Character>() != null))
                     return false;
             }
@@ -1040,7 +1089,7 @@ namespace FiresCore.Npc.AI
         {
             Vector3 at = body.transform.position;
             Vector3 want = goal - at;
-            want.y = 0f;
+            want = Flat(want);
             want.Normalize();
             float now = Time.time;
             if (now < _backOutUntil)
@@ -1066,13 +1115,13 @@ namespace FiresCore.Npc.AI
             float radius = body.GetRadius();
             float reach = radius + 1f;
             Vector3 centre = body.GetCenterPoint();
-            Vector3 side = Vector3.Cross(Vector3.up, want) * Mathf.Max(0.05f, radius - 0.1f);
+            Vector3 side = Vector3.Cross(s_up, want) * Mathf.Max(0.05f, radius - 0.1f);
             if (Clear(centre, want, reach) && Clear(centre - side, want, reach) && Clear(centre + side, want, reach))
             {
                 State = "feeling: straight at the goal";
                 return want;
             }
-            // A jumpable step in the way is jumped, not turned from (0.2.202, R77 jump_steps).
+            // A jumpable step in the way is jumped, not turned from.
             JumpAdvice rise = Jumping.Check(body, want, false);
             if (!rise.Wall && (rise.Jump || (rise.LipHeight > Perception.StepHeight && rise.LipHeight <= Jumping.MaxLip && rise.LipDistance <= Jumping.LipReach + 0.3f)))
             {
@@ -1081,9 +1130,9 @@ namespace FiresCore.Npc.AI
                 return want;
             }
             Vector3 forward = body.transform.forward;
-            forward.y = 0f;
+            forward = Flat(forward);
             forward.Normalize();
-            Vector3 offset = Vector3.Cross(Vector3.up, forward) * radius * 0.75f;
+            Vector3 offset = Vector3.Cross(s_up, forward) * radius * 0.75f;
             float look = reach * 1.5f;
             float left = Free(centre - offset, forward, look), right = Free(centre + offset, forward, look);
             if (left >= look && right >= look)
@@ -1096,8 +1145,7 @@ namespace FiresCore.Npc.AI
             return Quaternion.Euler(0f, goLeft ? -SideAngle : SideAngle, 0f) * forward;
         }
 
-        // ---- Corners (Fire, R73: "not recognizing collision objects when trying to round corners"; the bot stalled 20 s on the
-        // mausoleum's stone corner at corner 4/9). The navmesh agent is thinner than a player body, so its corners hug walls. ----
+        // ---- Corners: colliders at a corner must be seen when rounding it. The navmesh agent is thinner than a player body, so its corners hug walls. ----
 
         /// <summary>Extra room (m) kept between a corner and anything solid, past the body's radius.</summary>
         public const float CornerMargin = 0.5f;
@@ -1120,7 +1168,7 @@ namespace FiresCore.Npc.AI
             float radius = Mathf.Max(0.2f, body.GetRadius()) + LookAheadMargin;
             Vector3 centre = body.GetCenterPoint();
             if (reach < 0.5f || !Physics.SphereCast(centre, radius, dir, out RaycastHit hit, reach, SolidMask, QueryTriggerInteraction.Ignore)) return false;
-            if (hit.normal.y >= 0.5f) return false;   // ground, not a wall
+            if (UpDot(hit.normal) >= 0.5f) return false;   // ground, not a wall
             if (hit.collider.attachedRigidbody != null && hit.collider.attachedRigidbody.GetComponent<Character>() != null) return false;
             Door door = hit.collider.GetComponentInParent<Door>();
             if (door != null && DoorRule.IsPassable(door, body as Humanoid)) return false;   // the door rule opens it
@@ -1131,15 +1179,15 @@ namespace FiresCore.Npc.AI
             blocker = hit.collider.name;
             at = hit.distance;
             Vector3 toGoal = goal - body.transform.position;
-            toGoal.y = 0f;
-            float goalSide = Vector3.Cross(dir, toGoal).y >= 0f ? -1f : 1f;
+            toGoal = Flat(toGoal);
+            float goalSide = UpDot(Vector3.Cross(dir, toGoal)) >= 0f ? -1f : 1f;
             foreach (float t in LookTurns)
             {
                 foreach (float side in new[] { goalSide, -goalSide })
                 {
                     Vector3 d = Quaternion.Euler(0f, t * side, 0f) * dir;
                     if (Physics.SphereCast(centre, radius, d, out RaycastHit h2, reach, SolidMask, QueryTriggerInteraction.Ignore)
-                        && h2.normal.y < 0.5f && !(h2.collider.attachedRigidbody != null && h2.collider.attachedRigidbody.GetComponent<Character>() != null)) continue;
+                        && UpDot(h2.normal) < 0.5f && !(h2.collider.attachedRigidbody != null && h2.collider.attachedRigidbody.GetComponent<Character>() != null)) continue;
                     clearDir = d;
                     turned = t;
                     return true;
@@ -1160,19 +1208,19 @@ namespace FiresCore.Npc.AI
             return SoftMargin;
         }
 
-        /// <summary>How far (m) a corner at an obstacle edge is kept off it where the room is there (Fire: walk AROUND, not along the edge).</summary>
+        /// <summary>How far (m) a corner at an obstacle edge is kept off it where the room is there (walk AROUND, not along the edge).</summary>
         public const float WantedCornerClearance = 2f;
-        /// <summary>0.2.278: path points within this (flat m) of the goal are not pushed off nearby solids (see <see cref="ClearCorners"/>).</summary>
+        /// <summary>Path points within this (flat m) of the goal are not pushed off nearby solids (see <see cref="ClearCorners"/>).</summary>
         public const float NoPushNearGoal = 2.5f;
 
         // Flat distance from a point at chest height to the nearest point of a collider (0 without one).
         private static float WallDistance(Vector3 point, Collider wall)
         {
             if (wall == null || !wall) return 0f;
-            Vector3 probe = point + Vector3.up * 1f;
+            Vector3 probe = point + s_up * 1f;
             bool concave = wall is MeshCollider mesh && !mesh.convex;
             Vector3 closest = concave ? wall.bounds.ClosestPoint(probe) : wall.ClosestPoint(probe);
-            closest.y = probe.y;
+            if (s_ring) closest += s_up * UpDot(probe - closest); else closest.y = probe.y;
             return Vector3.Distance(probe, closest);
         }
 
@@ -1184,7 +1232,7 @@ namespace FiresCore.Npc.AI
         private string _cornerNote;
         private string _slideLogged;
 
-        // ---- Making up its mind (R75 Crypt4, Fire: "it turns one way and then turns the other" in an open hallway) ----
+        // ---- Making up its mind (no turning one way and then the other in an open hallway) ----
 
         /// <summary>How long a chosen slide side is kept unless that side is blocked (s).</summary>
         public const float SlideSideHoldSeconds = 3f;
@@ -1217,10 +1265,10 @@ namespace FiresCore.Npc.AI
         // Something solid within 1 m along dir (flat) in front of the body.
         private static bool Blocked(Character body, Vector3 dir)
         {
-            dir.y = 0f;
+            dir = Flat(dir);
             if (dir.sqrMagnitude < 0.0001f) return true;
             return Physics.SphereCast(body.GetCenterPoint(), Mathf.Max(0.2f, body.GetRadius() * 0.8f), dir.normalized, out RaycastHit hit, 1f,
-                SolidMask, QueryTriggerInteraction.Ignore) && hit.normal.y < 0.5f;
+                SolidMask, QueryTriggerInteraction.Ignore) && UpDot(hit.normal) < 0.5f;
         }
 
         // Each corner but the last is pushed out to radius + CornerMargin from the nearest solid (not terrain, not characters).
@@ -1232,15 +1280,15 @@ namespace FiresCore.Npc.AI
 
         /// <summary>
         /// The walkable point <paramref name="standoff"/> m in FRONT of a doorway (a door, a dungeon entrance, a house opening), on
-        /// the side <paramref name="from"/> is on, snapped to the navmesh; walk there first, then straight through (Fire, R74: "if
-        /// it's trying to enter an area, it should approach the doorway from the front" - the bot kept walking into the
-        /// mausoleum's corner). The doorway's forward axis is its facing (Door, Teleport); either side counts as the front.
+        /// the side <paramref name="from"/> is on, snapped to the navmesh; walk there first, then straight through (a body entering
+        /// an area approaches the doorway from the front, not into the building's corner). The doorway's forward axis is its facing (Door, Teleport); either side counts as the front.
         /// </summary>
         public static Vector3 FrontApproach(Transform doorway, Vector3 from, float standoff = 3f)
         {
+            SetFrame(from);   // halo ring: this call's up
             if (doorway == null) return from;
             Vector3 forward = doorway.forward;
-            forward.y = 0f;
+            forward = Flat(forward);
             if (forward.sqrMagnitude < 0.0001f) forward = Vector3.forward;
             forward.Normalize();
             Vector3 centre = doorway.position;
@@ -1259,9 +1307,10 @@ namespace FiresCore.Npc.AI
         /// </summary>
         public static string ClearCorners(List<Vector3> path, float radius)
         {
+            SetFrame(path != null && path.Count > 0 ? path[0] : Vector3.zero);   // halo ring: this call's up
             if (path == null) return null;
-            // Clearance is a property of the whole path (0.2.206, Fire R79: "its just always hugging walls and edges … it gives itself no
-            // room to go around shit"): every point but the last within WantedCornerClearance of a solid goes out along the way away from
+            // Clearance is a property of the whole path (so the body doesn't hug walls and edges and
+            // has room to go round things): every point but the last within WantedCornerClearance of a solid goes out along the way away from
             // it, as far as WantedCornerClearance where there is room (standable: a body-sized sphere free and on the navmesh; both legs
             // free of solid). Where there isn't, at least radius + CornerMargin (the old rule), else it stays.
             float minimum = radius + CornerMargin;
@@ -1270,21 +1319,19 @@ namespace FiresCore.Npc.AI
             string tightWhat = null;
             float tightest = -1f, tightRoom = 0f;
             string passageNote = null;
-            // Indoors the navmesh is baked with the rooms, so it is followed as vanilla monsters follow it (0.2.209, Fire R80: "the
-            // vanilla ai monsters navigate crypts no problem"): centred in a passage, never pushed off a wall ("kept 0.0 m off
-            // stonewall (1) … room 0.2; 34 of 35 point(s) moved" in a crypt corridor).
-            bool indoors = path.Count > 0 && path[0].y > IndoorsHeight;
+            // Indoors the navmesh is baked with the rooms, so it is followed as vanilla monsters follow it (they navigate crypts
+            // fine): centred in a passage, never pushed off a wall.
+            bool indoors = path.Count > 0 && Indoors(path[0]);
             Vector3 end = path.Count > 0 ? path[path.Count - 1] : Vector3.zero;
             for (int i = 0; i < path.Count - 1; i++)
             {
                 Vector3 corner = path[i];
-                // 0.2.278 (HR4: "kept 1.1 m off StandInCollider (wanted 2.0, room 0.2; 10 of 12 point(s) moved)" on the way to a fractured
-                // copper rock, then "never reached it (10.7 m off)"): near the goal the body has to get to the goal, so the points there are
+                // Near the goal the body has to get to the goal, so the points there are
                 // not pushed off the solids around it (the rock, a chest, a bench being walked to).
                 if (FlatDistance(corner, end) < NoPushNearGoal) continue;
-                Vector3 probe = corner + Vector3.up * 1f;
+                Vector3 probe = corner + s_up * 1f;
                 // In a passage narrower than the wanted clearance both sides (a corridor, a doorway, a gap between pieces): the middle
-                // of it, never out of it (0.2.209, R80 corridor 1.8 m, Fire: "they chose to go around instead of down the hallway").
+                // of it, never out of it (else the body goes round instead of down the hallway).
                 if (Passage(path, i, radius, out Vector3 middle, out float width))
                 {
                     if (FlatDistance(middle, corner) > 0.05f) { path[i] = middle; moved++; }
@@ -1301,8 +1348,8 @@ namespace FiresCore.Npc.AI
                     Collider c = s_near[k];
                     if (c == null || (c.attachedRigidbody != null && c.attachedRigidbody.GetComponent<Character>() != null)) continue;
                     // A step the body can get up (its top within a jumpable lip of this floor) is the way on, not a wall to keep off
-                    // (0.2.209, R80 jump_steps: "kept 1.0 m off stone_floor_2x2" pushed the path away from the stair it had to climb);
-                    // an open or passable door is the way through (the doorway leg's "10 of 14 point(s) moved" off its jambs).
+                    // (else the path is pushed away from the stair it has to climb);
+                    // an open or passable door is the way through (else the doorway leg is pushed off its jambs).
                     if (c.bounds.max.y - corner.y <= Jumping.MaxLip) continue;
                     Door door = c.GetComponentInParent<Door>();
                     if (door != null && (!DoorRule.IsClosed(door) || DoorRule.IsPassable(door))) continue;
@@ -1310,7 +1357,7 @@ namespace FiresCore.Npc.AI
                     bool concave = c is MeshCollider mesh && !mesh.convex;
                     Vector3 closest = concave ? c.bounds.ClosestPoint(probe) : c.ClosestPoint(probe);
                     Vector3 off = probe - closest;
-                    off.y = 0f;
+                    off = Flat(off);
                     float d = off.magnitude;
                     if (d < 0.01f || d >= search) continue;
                     away += off / d * (search - d);
@@ -1324,7 +1371,7 @@ namespace FiresCore.Npc.AI
                 for (float d = 0.25f; d <= WideCornerMetres + 0.01f; d += 0.25f)
                 {
                     Vector3 cand = corner + outward * d;
-                    if (Physics.CheckSphere(cand + Vector3.up * 1f, radius + 0.2f, SolidMask, QueryTriggerInteraction.Ignore)) break;   // out of room
+                    if (Physics.CheckSphere(cand + s_up * 1f, radius + 0.2f, SolidMask, QueryTriggerInteraction.Ignore)) break;   // out of room
                     room = d;
                     if (Pathfinding.instance != null)
                     {
@@ -1341,11 +1388,10 @@ namespace FiresCore.Npc.AI
                 {
                     if (nearest >= minimum) continue;   // no room to widen, and already clear of the old minimum: leave it
                     best = corner + outward * (minimum - nearest);   // the old rule: at least radius + CornerMargin off
-                    // Only where the pushed point stands free (0.2.217): 0.2.214 skipped every point with "room 0" (R85 workstation hut),
-                    // but room is 0 whenever the first step still touches the wall being pushed from, so the U-trap's corners stayed on
-                    // its walls (R87 u_trap FAIL on both bodies, "clear of walls" logged, passed in R85). A push into another solid is
-                    // what the hut needed to avoid.
-                    if (Physics.CheckSphere(best + Vector3.up * 1f, radius * 0.6f, SolidMask, QueryTriggerInteraction.Ignore)) continue;
+                    // Only where the pushed point stands free. Skipping every point with room 0 is wrong: room is 0 whenever the
+                    // first step still touches the wall being pushed from, which left corners in a U of walls on its walls. A push
+                    // into another solid is what must be avoided.
+                    if (Physics.CheckSphere(best + s_up * 1f, radius * 0.6f, SolidMask, QueryTriggerInteraction.Ignore)) continue;
                 }
                 float kept = WallDistance(best, pushedFrom);
                 if (tightest < 0f || kept < tightest)
@@ -1372,7 +1418,7 @@ namespace FiresCore.Npc.AI
             middle = path[i];
             width = 0f;
             Vector3 dir = path[i + 1] - (i > 0 ? path[i - 1] : path[i]);
-            dir.y = 0f;
+            dir = Flat(dir);
             if (dir.sqrMagnitude < 0.0001f) return false;
             dir.Normalize();
             Vector3 side = new Vector3(-dir.z, 0f, dir.x);
@@ -1380,7 +1426,7 @@ namespace FiresCore.Npc.AI
             float limit = 2f * WantedCornerClearance + 2f * radius;
             foreach (float up in PassageHeights)
             {
-                Vector3 o = path[i] + Vector3.up * up;
+                Vector3 o = path[i] + s_up * up;
                 if (!PassageSide(o, side, reach, out float right) || !PassageSide(o, -side, reach, out float left)) return false;
                 float w = right + left;
                 if (w >= limit || w < 2f * radius) return false;
@@ -1444,15 +1490,15 @@ namespace FiresCore.Npc.AI
                     return true;
                 }
                 float moved = FlatDistance(at, _strafeFrom);
-                Debug.Log($"[PathWalker] {body.m_name}: unstick: strafed {moved:0.0} m {(Vector3.Dot(_strafeDir, Vector3.Cross(Vector3.up, ahead)) > 0f ? "right" : "left")} off {_strafeWhat}, then on");
-                // A sidestep that went nowhere isn't tried again soon (0.2.211, R82: "strafed 0.0 m" x13).
+                Debug.Log($"[PathWalker] {body.m_name}: unstick: strafed {moved:0.0} m {(Vector3.Dot(_strafeDir, Vector3.Cross(s_up, ahead)) > 0f ? "right" : "left")} off {_strafeWhat}, then on");
+                // A sidestep that went nowhere isn't tried again soon.
                 if (moved < 0.2f) _strafeNext = Time.time + StrafeFailedCooldownSeconds;
                 _strafeUntil = -1f;
                 return false;
             }
             if (Time.time < _strafeNext) return false;
             float radius = body.GetRadius();
-            Vector3 right = Vector3.Cross(Vector3.up, ahead);
+            Vector3 right = Vector3.Cross(s_up, ahead);
             Vector3 centre = body.GetCenterPoint();
             float reach = radius + 0.35f;
             bool hitRight = Physics.Raycast(centre + right * radius * 0.9f, ahead, out RaycastHit r, reach, SolidMask, QueryTriggerInteraction.Ignore) && !IsStep(r.collider, at);
@@ -1482,8 +1528,8 @@ namespace FiresCore.Npc.AI
             if (distance < 0.05f) return want;
             // Calm (after a dither): follow the path corners as they are for a while.
             if (Time.time < _calmUntil) return want;
-            // A step the body can jump is not a wall to slide along (0.2.202, R77 nav_course jump_steps: "slid along
-            // stone_floor_2x2 (left) … (right)" at a 0.5 m riser for 9 s, never walking at it for the jump to fire).
+            // A step the body can jump is not a wall to slide along (sliding along a low riser never
+            // walks at it for the jump to fire).
             JumpAdvice rise = Jumping.Check(body, flat / distance, false);
             if (!rise.Wall && (rise.Jump || (rise.LipHeight > Perception.StepHeight && rise.LipHeight <= Jumping.MaxLip && rise.LipDistance <= Jumping.LipReach + 0.3f)))
             {
@@ -1504,20 +1550,20 @@ namespace FiresCore.Npc.AI
                 _slideSince = -1f;
                 return want;
             }
-            // A door in the way is opened (the door rule), not slid along (R75 Crypt4: "slid along door (left) … (right) …").
+            // A door in the way is opened (the door rule), not slid along.
             Door door = face != null ? face.GetComponentInParent<Door>() : null;
             if (door != null && DoorRule.IsPassable(door, body as Humanoid))
             {
                 _slideDoor = door;
                 return want;
             }
-            // Keep the side a while: re-choosing it every frame flipped left/right in a corridor (R75).
-            // R76 Crypt4 (an open hallway, right -> left -> left against the same stonewall): the side chosen against a blocker holds
+            // Keep the side a while: re-choosing it every frame flipped left/right in a corridor.
+            // The side chosen against a blocker holds
             // while it's the same blocker and the body hasn't gone SlideSideHoldMetres along it, not only for a few seconds.
             int sign = side == "right" ? -1 : 1;
             Vector3 here = body.transform.position;
-            // "The same blocker" includes the next piece of the same wall (0.2.202, R77 u_trap: a wall of 2 m woodwall pieces flipped
-            // right/left at every seam for 30 s): a face whose normal is within 30° of the held one counts as the same wall.
+            // "The same blocker" includes the next piece of the same wall (a wall of pieces flipped the side
+            // at every seam): a face whose normal is within 30° of the held one counts as the same wall.
             Vector3 faceNormal = _slideNormal;
             if (face != null && Physics.SphereCast(body.GetCenterPoint(), Mathf.Max(0.2f, body.GetRadius() * 0.9f), flat / distance, out RaycastHit faceHit,
                     Mathf.Min(0.9f, distance) + 0.1f, SolidMask, QueryTriggerInteraction.Ignore))
@@ -1538,7 +1584,7 @@ namespace FiresCore.Npc.AI
                 _slideNormal = faceNormal;
                 _sideFrom = here;
             }
-            // A slide that gets nowhere (R74/R75: "slid along Facade (right) toward corner 5" for minutes): go round the whole
+            // A slide that gets nowhere: go round the whole
             // thing's footprint instead of re-trying the same face.
             Vector3 at = body.transform.position;
             if (_slideSince < 0f) { _slideSince = Time.time; _slideFrom = at; }
@@ -1570,6 +1616,7 @@ namespace FiresCore.Npc.AI
         public static bool Slide(Character body, Vector3 dir, float reach, Vector3? next, out Vector3 along, out string what, out string side,
             out Collider face)
         {
+            SetFrame(body != null ? body.transform.position : Vector3.zero);   // halo ring: this call's up
             along = dir;
             what = null;
             side = null;
@@ -1578,7 +1625,7 @@ namespace FiresCore.Npc.AI
             float radius = Mathf.Max(0.2f, body.GetRadius() * 0.9f);
             Vector3 centre = body.GetCenterPoint();
             if (!Physics.SphereCast(centre, radius, dir, out RaycastHit hit, reach, SolidMask, QueryTriggerInteraction.Ignore)
-                || hit.normal.y >= 0.5f
+                || UpDot(hit.normal) >= 0.5f
                 || (hit.collider.attachedRigidbody != null && hit.collider.attachedRigidbody.GetComponent<Character>() != null))
                 return false;
             Vector3 normal = new Vector3(hit.normal.x, 0f, hit.normal.z);
@@ -1587,18 +1634,18 @@ namespace FiresCore.Npc.AI
             along = dir - normal * Vector3.Dot(dir, normal);
             if (along.sqrMagnitude < 0.04f)
             {
-                Vector3 tangent = Vector3.Cross(Vector3.up, normal);
+                Vector3 tangent = Vector3.Cross(s_up, normal);
                 Vector3 toward = next.HasValue ? next.Value - body.transform.position : dir;
                 along = Vector3.Dot(tangent, toward) >= 0f ? tangent : -tangent;
             }
             along.Normalize();
-            side = Vector3.Cross(dir, along).y < 0f ? "right" : "left";
+            side = UpDot(Vector3.Cross(dir, along)) < 0f ? "right" : "left";
             what = hit.collider.name;
             face = hit.collider;
             return true;
         }
 
-        // ---- Round a building's footprint (Fire, R74/R75: "make the bot go around the corner") ----
+        // ---- Round a building's footprint ----
 
         /// <summary>Seconds a slide along one face may make no progress (under 1 m) before the walker goes round the whole thing.</summary>
         public const float SlideGiveUpSeconds = 3f;
@@ -1626,14 +1673,15 @@ namespace FiresCore.Npc.AI
         /// </summary>
         public bool PlanRound(Character body, Vector3 at, Vector3 goal, Collider seed)
         {
+            SetFrame(at);   // halo ring: this call's up
             _detour.Clear();
             if (body == null) return false;
-            if (at.y > IndoorsHeight) return false;   // indoors: the navmesh and the room graph only (0.2.209, vanilla-style)
-            // The same failed round isn't re-tried every frame (0.2.211, R82 u_trap: "round woodwall: a corner … is off the navmesh" x40 in a row).
+            if (Indoors(at)) return false;   // indoors: the navmesh and the room graph only (vanilla-style)
+            // The same failed round isn't re-tried every frame.
             if (Time.time < _roundFailedUntil && FlatDistance(goal, _roundFailedGoal) < GoalMovedMeters) return false;
             if (seed == null)
             {
-                Vector3 from = at + Vector3.up, to = goal + Vector3.up;
+                Vector3 from = at + s_up, to = goal + s_up;
                 if (!Physics.Linecast(from, to, out RaycastHit hit, SolidMask, QueryTriggerInteraction.Ignore)) return false;
                 if (hit.collider.attachedRigidbody != null && hit.collider.attachedRigidbody.GetComponent<Character>() != null) return false;
                 seed = hit.collider;
@@ -1641,9 +1689,8 @@ namespace FiresCore.Npc.AI
             Bounds box = seed.bounds;
             Transform root = seed.transform.root;
             // Inside a dungeon (Valheim builds them far above the world) every wall shares one root, the whole dungeon: going
-            // round "the thing" there means round the one piece that was hit (a pillar, a wall end), never a cluster of rooms
-            // (R75 Crypt4: "stuck on stonewall", 12 wall stalls a minute on the way to a burial chamber).
-            bool indoors = at.y > IndoorsHeight;
+            // round "the thing" there means round the one piece that was hit (a pillar, a wall end), never a cluster of rooms.
+            bool indoors = Indoors(at);
             float cap = indoors ? MaxFootprintIndoors : MaxFootprint;
             if (box.size.x > cap || box.size.z > cap)
             {
@@ -1653,8 +1700,8 @@ namespace FiresCore.Npc.AI
             if (!indoors)
             {
                 int n = Physics.OverlapSphereNonAlloc(box.center, Mathf.Max(box.extents.magnitude, 20f), s_footprint, SolidMask, QueryTriggerInteraction.Ignore);
-                // Built pieces each have their own root: a wall of pieces (R77 u_trap: a U of woodwalls) grows by the pieces that
-                // touch it (0.2.202), a few passes so a chain of them joins up.
+                // Built pieces each have their own root: a wall of pieces grows by the pieces that
+                // touch it, a few passes so a chain of them joins up.
                 bool seedPiece = seed.GetComponentInParent<Piece>() != null;
                 for (int pass = 0; pass < (seedPiece ? 4 : 1); pass++)
                 {
@@ -1733,7 +1780,7 @@ namespace FiresCore.Npc.AI
                     }
                     p = stand;
                 }
-                if (Physics.Linecast(prev + Vector3.up, p + Vector3.up, out RaycastHit blocked, SolidMask, QueryTriggerInteraction.Ignore)
+                if (Physics.Linecast(prev + s_up, p + s_up, out RaycastHit blocked, SolidMask, QueryTriggerInteraction.Ignore)
                     && blocked.collider != seed)
                 {
                     _detour.Clear();
@@ -1750,7 +1797,7 @@ namespace FiresCore.Npc.AI
             return true;
         }
 
-        // ---- Terrain route (0.2.201): round ridges, banks and pockets the navmesh and the slope guard can't see past ----
+        // ---- Terrain route: round ridges, banks and pockets the navmesh and the slope guard can't see past ----
 
         /// <summary>A slope contour followed this long (s) without clearing asks the terrain planner for a way round.</summary>
         public const float ContourPlanSeconds = 15f;
@@ -1761,7 +1808,7 @@ namespace FiresCore.Npc.AI
 
         /// <summary>A walk not nearer its goal by this much (m) in this long (s) asks the terrain planner.</summary>
         public const float NoProgressMetres = 0.5f, NoProgressSeconds = 6f;
-        /// <summary>0.2.283: a walk this far (m) below its goal and no nearer in PitStallSeconds (s) plans a climb (the straight way, else the nearest wall).</summary>
+        /// <summary>A walk this far (m) below its goal and no nearer in PitStallSeconds (s) plans a climb (the straight way, else the nearest wall).</summary>
         public const float PitRiseMetres = 0.8f, PitStallSeconds = 3f;
         private float _pitNextAt;
         private Vector3 _bestGoal = new Vector3(float.NaN, 0f, 0f);
@@ -1774,7 +1821,7 @@ namespace FiresCore.Npc.AI
         private Vector3 _terrainFailedGoal = new Vector3(float.NaN, 0f, 0f);
         private float _terrainFailedUntil;
         private static readonly List<Vector3> s_terrainRoute = new List<Vector3>();
-        // 0.2.287: walls the leg check found across a terrain route, blocked in the re-plans (TerrainPlanner's hard walls).
+        // Walls the leg check found across a terrain route, blocked in the re-plans (TerrainPlanner's hard walls).
         private static readonly List<Collider> s_hardWalls = new List<Collider>();
         private const int WallReplans = 3;
 
@@ -1784,12 +1831,13 @@ namespace FiresCore.Npc.AI
         /// </summary>
         public bool PlanTerrain(Character body, Vector3 at, Vector3 goal, string reason, bool force = false)
         {
-            // force (0.2.209): a blocked leg re-plans at once; the TerrainPlanSeconds spacing would have it walk the blocked leg meanwhile.
+            SetFrame(at);   // halo ring: this call's up
+            // force: a blocked leg re-plans at once; the TerrainPlanSeconds spacing would have it walk the blocked leg meanwhile.
             if (body == null || (!force && Time.time < _terrainNext)) return false;
             if (!float.IsNaN(_terrainFailedGoal.x) && Time.time < _terrainFailedUntil && FlatDistance(goal, _terrainFailedGoal) < GoalMovedMeters) return false;
             _terrainNext = Time.time + TerrainPlanSeconds;
 
-            // A retry must change something (0.2.206, Fire R79: "turns around to retry and makes the same fucking route"): a second plan
+            // A retry must change something (not the same route again): a second plan
             // for the same goal marks where the last route stalled and weighs walls heavier each time; a route near-equal to the last
             // failed one is re-planned round its other side.
             if (float.IsNaN(_retryGoal.x) || FlatDistance(goal, _retryGoal) > 3f)
@@ -1808,7 +1856,7 @@ namespace FiresCore.Npc.AI
             string retryNote = _retries > 0
                 ? $"retry {_retries}: the last route stalled at ({at.x:0}, {at.z:0}); avoiding {_stalls.Count} stall point(s) ({RetryAvoidMetres:0.#} m), wall weight x{weight:0}"
                 : null;
-            // The wall a blocked leg hit is kept off like a stall point (0.2.209).
+            // The wall a blocked leg hit is kept off like a stall point.
             if (_legAvoid.Count > 0)
             {
                 _stalls.AddRange(_legAvoid);
@@ -1828,10 +1876,9 @@ namespace FiresCore.Npc.AI
                 _lastRoute.Clear();
                 _lastRoute.AddRange(s_terrainRoute);
             }
-            // A route through a wall the grid couldn't see (0.2.209, R80 Crypt4: "route: terrain (the navmesh path ends 8.0 m short) via
-            // (-2369, -2624) -> (-2370, -2626): 8 m vs straight 8 m" straight through a 4.9 m crypt wall, then 7 s against it: cells
-            // inside a thick mesh wall read as open floor) is no route: the walk reports it instead of jogging into the wall.
-            // 0.2.287 (the lead: the bot ran into the hall wall twice): the wall the leg check found is blocked in the grid (a hard wall) and
+            // A route through a wall the grid couldn't see (cells inside a thick mesh wall read as open floor) is no route:
+            // the walk reports it instead of jogging into the wall.
+            // The wall the leg check found is blocked in the grid (a hard wall) and
             // the plan made again, up to WallReplans times, before the walk reports no way.
             s_hardWalls.Clear();
             for (int tries = 0; planned && s_terrainRoute.Count > 0; tries++)
@@ -1875,8 +1922,7 @@ namespace FiresCore.Npc.AI
             return true;
         }
 
-        // ---- Indoors: through the rooms' doorways (0.2.207, Fire R79 Crypt4: "it tries the shortest route rather than the actual open
-        // hallways") ----
+        // ---- Indoors: through the rooms' doorways, the open hallways rather than the shortest line ----
 
         private float _roomsNext;
         private float _islandLoggedAt = -999f;
@@ -1888,7 +1934,8 @@ namespace FiresCore.Npc.AI
         /// </summary>
         public bool PlanRooms(Character body, Vector3 at, Vector3 goal, string reason)
         {
-            if (body == null || at.y <= IndoorsHeight || Time.time < _roomsNext) return false;
+            SetFrame(at);   // halo ring: this call's up
+            if (body == null || !Indoors(at) || Time.time < _roomsNext) return false;
             _roomsNext = Time.time + 3f;
             if (!RoomGraph.Route(at, goal, s_roomRoute, out string why))
             {
@@ -1904,16 +1951,16 @@ namespace FiresCore.Npc.AI
             return true;
         }
 
-        // Why the navmesh inside ends short (R80 evidence): where the path ends, which room each end is in, and the doors near the end.
+        // Why the navmesh inside ends short: where the path ends, which room each end is in, and the doors near the end.
         private void NavmeshIsland(Character body, Vector3 at, Vector3 goal)
         {
-            if (at.y <= IndoorsHeight || Time.time - _islandLoggedAt < 10f) return;
+            if (!Indoors(at) || Time.time - _islandLoggedAt < 10f) return;
             _islandLoggedAt = Time.time;
             Vector3 end = s_fresh.Count > 0 ? s_fresh[s_fresh.Count - 1] : at;
             var doors = new List<string>();
             foreach (Door d in DoorRule.Doors())
             {
-                if (d == null || FlatDistance(d.transform.position, end) > 6f || Mathf.Abs(d.transform.position.y - end.y) > 4f) continue;
+                if (d == null || FlatDistance(d.transform.position, end) > 6f || Mathf.Abs(UpDot(d.transform.position - end)) > 4f) continue;
                 doors.Add($"{Utils.GetPrefabName(d.gameObject)} {(DoorRule.IsClosed(d) ? "closed" : "open")} {FlatDistance(d.transform.position, end):0.0} m");
             }
             Debug.Log($"[PathWalker] {body.m_name}: navmesh: the path ends at ({end.x:0}, {end.z:0}) in {RoomGraph.Name(RoomGraph.RoomAt(end))}; " +
@@ -1937,8 +1984,8 @@ namespace FiresCore.Npc.AI
                 for (int i = 0; i < b.Count; i++)
                 {
                     Vector3 s = i == 0 ? b[0] : b[i - 1], e = b[i];
-                    Vector3 se = e - s; se.y = 0f;
-                    Vector3 sp = p - s; sp.y = 0f;
+                    Vector3 se = e - s; se = Flat(se);
+                    Vector3 sp = p - s; sp = Flat(sp);
                     float t = se.sqrMagnitude > 0.0001f ? Mathf.Clamp01(Vector3.Dot(sp, se) / se.sqrMagnitude) : 0f;
                     best = Mathf.Min(best, FlatDistance(p, s + se * t));
                 }
@@ -1954,7 +2001,7 @@ namespace FiresCore.Npc.AI
         private bool RidgeOnPath(Character body, Vector3 at, out string ridge)
         {
             ridge = null;
-            if (body == null || at.y > IndoorsHeight || _path.Count == 0) return false;
+            if (body == null || Indoors(at) || _path.Count == 0) return false;
             float limit = SlopeGuide.Limit(body);
             if (limit >= 89f) return false;
             Vector3 from = at;
@@ -2008,6 +2055,7 @@ namespace FiresCore.Npc.AI
 
         private static float FlatDistance(Vector3 a, Vector3 b)
         {
+            if (s_ring) return Flat(a - b).magnitude;   // ring: distance in the ring's floor plane
             float x = a.x - b.x, z = a.z - b.z;
             return Mathf.Sqrt(x * x + z * z);
         }

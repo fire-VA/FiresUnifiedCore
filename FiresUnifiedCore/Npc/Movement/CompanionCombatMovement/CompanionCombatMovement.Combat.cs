@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using FiresCore.Npc.Combat;
 using FiresCore.Npc.Movement;
@@ -330,7 +330,7 @@ namespace FiresCore.Npc
                 {
                     var directive = coordinator.GetDirective(_companion);
                     // HasFlank, not FlankAngle != 0: 0° is a real angle (the first companion used to charge straight in), and a
-                    // tank keeps its intercept/taunt directive while holding the front flank spot (0.2.201).
+                    // tank keeps its intercept/taunt directive while holding the front flank spot.
                     if (directive != null && directive.IsValid && directive.HasFlank)
                     {
                         _combatHandler.SetFlankAngle(directive.FlankAngle);
@@ -699,6 +699,14 @@ namespace FiresCore.Npc
             if (IsTargetFleeing(_committedTarget) && distToTarget > attackRange * 1.5f)
             {
                 return (MovementIntent.CombatChase, approachCommitmentDuration * 1.5f);
+            }
+
+            // In reach but still on the owner-foe line (off its flank slot): keep walking to the slot (the approach path is the one
+            // that steers round to it); swings are never cancelled (isAttacking returned above)
+            if (distToTarget <= attackRange * 1.2f && _combatHandler != null && _committedTarget != null
+                && _combatHandler.OffFlankSlot(_committedTarget.transform.position, _committedTarget as Character))
+            {
+                return (MovementIntent.CombatApproach, 0.4f);
             }
 
             if (distToTarget <= attackRange * 1.2f)

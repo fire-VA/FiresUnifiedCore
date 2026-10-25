@@ -1,13 +1,14 @@
-﻿using FiresCore.Bridge;
+using FiresCore.Bridge;
 
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// Who a class ability may touch (Fire, 2026-09-28): heals and buffs only the caster's party, damage and debuffs
+    /// Who a class ability may touch: heals and buffs only the caster's party, damage and debuffs
     /// only enemies. The party is the caster, their companions, and every player allied with them by group or guild
     /// (NpcCompanionBridge.AreOwnersAllied, the rule companion allegiance already uses) with those players' companions.
     /// An enemy is a hostile creature, or another player when PvP is on for both. Every class effect asks here.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public static class ClassTargeting
     {
         // CompanionController.LoadFromZDO's key: every peer reads the same owner from the ZDO, not from local state.
@@ -63,12 +64,14 @@ namespace FiresCore.Npc.Archetypes
         /// A Fires companion and another party's player or companion are enemies when both owners have PvP on and aren't
         /// allied. Vanilla never calls a tame an enemy of a player or of another tame, and its hit checks (Attack's melee and
         /// area hits, Projectile.IsValidTarget) drop every non-player hit on a non-enemy, so the PvP targets the companion AI
-        /// picks (IsHostilePvpTarget) were never hit (R44 companion_test: cross hits 0/0).
+        /// picks (IsHostilePvpTarget) were never hit.
         /// </summary>
         public static bool IsCompanionPvpEnemy(Character a, Character b)
         {
-            bool aCompanion = CompanionController.TryGet(a, out _);
-            bool bCompanion = CompanionController.TryGet(b, out _);
+            // The controller map may not hold another peer's companion; its CompanionController component
+            // (the one PartyOwner reads) counts too
+            bool aCompanion = CompanionController.TryGet(a, out _) || (a != null && !a.IsPlayer() && a.GetComponent<CompanionController>() != null);
+            bool bCompanion = CompanionController.TryGet(b, out _) || (b != null && !b.IsPlayer() && b.GetComponent<CompanionController>() != null);
             if (!aCompanion && !bCompanion) return false;
             if ((!aCompanion && !a.IsPlayer()) || (!bCompanion && !b.IsPlayer())) return false;
             long ownerA = PartyOwner(a), ownerB = PartyOwner(b);
@@ -82,8 +85,8 @@ namespace FiresCore.Npc.Archetypes
         {
             private static void Postfix(Character a, Character b, ref bool __result)
             {
-                // Creatures and companions don't see a stealthed character (Fire, 2026-09-28). First, before the early
-                // return; a set lookup, because this runs for every AI against every candidate ([generator]).
+                // Creatures and companions don't see a stealthed character. First, before the early
+                // return; a set lookup, because this runs for every AI against every candidate.
                 if (a != null && !a.IsPlayer() && b != null && StatusEffects.Rogue.StealthSync.IsStealthed(b))
                 {
                     __result = false;

@@ -43,7 +43,7 @@ namespace FiresCore.UI
 
         public static bool Active => _provider != null;
 
-        /// <summary>The current shot has a tune key (0.2.320: the possession chase camera has none, so the tuner neither
+        /// <summary>The current shot has a tune key (the possession chase camera has none, so the tuner neither
         /// shows its readout nor takes Ctrl+Alt, which possession's attack cycle uses).</summary>
         internal static bool Tunable => _provider != null && _tuneKey != null;
 

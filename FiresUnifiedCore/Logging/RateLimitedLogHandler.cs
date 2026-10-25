@@ -103,7 +103,7 @@ namespace FiresCore.Logging
             return counts.Count == 0 ? null : $"log filter held back {string.Join(", ", counts)} (verbose shows them)";
         }
 
-        // ── 0.2.269: is a plain Debug.Log line from a Fires-family assembly? ────────────────────────────────────────────────────────
+        // ── is a plain Debug.Log line from a Fires-family assembly? ────────────────────────────────────────────────────────
         // A line tagged for the family ("[FiresUnifiedCore] …") is, at once. Else the leading "[Tag]" of the line ("[Chore]",
         // "[PathWalker]") is looked up in a cache filled by ONE stack walk per tag: the first frame outside UnityEngine's logger, this
         // handler and the FiresLog engine names the calling assembly. An untagged line walks every time (rare in our code). Any failure
@@ -119,10 +119,12 @@ namespace FiresCore.Logging
         private static readonly string[] FamilyAssemblyNames =
             { "VAInventory", "VABackpacks", "VAassets", "VerdantsAscentShips", "VAGhettoNetworking", "TechPriestDhakharsPrefabs", "IsThisThingOn", "Vedr", "Norger.Vedr" };
 
-        // 0.2.279: the line starts with one of Core's per-action tags ("[Chore] …", "[PathWalker] …"); any failure answers no.
+        // The line starts with one of Core's per-action tags ("[Chore] …", "[PathWalker] …"); any failure answers no.
         private static bool IsDebugTagged(string message)
         {
-            try { return !string.IsNullOrEmpty(message) && message[0] == '[' && FiresLogLevel.IsDebugTag(LeadingTag(message)); }
+            // A per-action tag named in [Logging] DebugTags is not treated as debug-only at Info.
+            try { return !string.IsNullOrEmpty(message) && message[0] == '[' && FiresLogLevel.IsDebugTag(LeadingTag(message))
+                    && !FiresLogLevel.IsForcedDebugTag(LeadingTag(message)); }
             catch { return false; }
         }
 
@@ -184,8 +186,8 @@ namespace FiresCore.Logging
         public void LogFormat(LogType logType, UnityEngine.Object context, string format, params object[] args)
         {
             string message = ResolveMessage(format, args);
-            // 0.2.269 ([Logging] Log Level): below Info, a plain Debug.Log line from a Fires-family assembly is dropped here. 0.2.279 (Fire:
-            // noisy evidence lines are debug lines): below Debug, so is one that starts with one of Core's per-action tags.
+            // Below Info, a plain Debug.Log line from a Fires-family assembly is dropped here. Noisy evidence lines are
+            // debug lines: below Debug, so is one that starts with one of Core's per-action tags.
             if (logType == LogType.Log && !FiresLogLevel.DebugOn && !FiresLogLevel.Announcing
                 && (!FiresLogLevel.InfoOn || IsDebugTagged(message)) && IsFamilyLine(message))
             {
@@ -194,8 +196,11 @@ namespace FiresCore.Logging
             }
             if (TryWriteOurModLineToBepInEx(logType, message)) return;
 
-            if (!VerbosePassThrough() && ShouldSuppress(logType, message)) return;
-            if (TryRouteOtherModLine(logType, message)) return;
+            // Another mod's line is suppressed or re-routed only with [Logging] QuietOtherMods on (default off);
+            // otherwise it reaches Unity's own handler exactly as written (console, LogOutput and Player.log).
+            bool quiet = BepInExLogSuppressionPatch.QuietOtherModsOn;
+            if (quiet && !VerbosePassThrough() && ShouldSuppress(logType, message)) return;
+            if (quiet && TryRouteOtherModLine(logType, message)) return;
             _inner.LogFormat(logType, context, format, args);
         }
 
@@ -265,6 +270,8 @@ namespace FiresCore.Logging
 
         public void LogException(Exception exception, UnityEngine.Object context)
         {
+            // With QuietOtherMods off an exception goes to Unity's handler untouched (no drop, no relay wording).
+            if (!BepInExLogSuppressionPatch.QuietOtherModsOn) { _inner.LogException(exception, context); return; }
             if (!VerbosePassThrough() && IsKnownNoFixNre(exception))
             {
                 _suppressedValheimNreBugs++;

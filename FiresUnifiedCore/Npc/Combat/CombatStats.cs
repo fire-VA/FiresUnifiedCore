@@ -11,6 +11,7 @@ namespace FiresCore.Npc.Combat
     /// on the peer that drives it: the bot on its own client, a companion on its owner's. Read-only for callers; <see cref="Reset"/>
     /// between runs. Kills are the attacker's estimate (the hit takes the victim's remaining health), not the victim's word.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.NpcBrain)]
     public static class CombatStats
     {
         /// <summary>One character's totals since the last reset.</summary>

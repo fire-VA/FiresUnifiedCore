@@ -218,7 +218,7 @@ namespace FiresCore.Npc.Core
         
         private void Update()
         {
-            // 0.2.292: a player is driving this body (FiresValcast possession); no SetMoveDir of ours until they let go.
+            // a player is driving this body (FiresValcast possession); no SetMoveDir of ours until they let go.
             if (_companion != null && _companion.IsPossessed) return;
 
             // Check authority timeout
@@ -312,8 +312,20 @@ namespace FiresCore.Npc.Core
                 return false;
             }
 
+            // A companion in state Following could be repeatedly denied by its own stale Combat claim:
+            //
+            // an owner asking for a LOWER source than the one it holds itself has left that state - its own stale claim must not
+            // out-rank it. The claim is released and the request goes on below (the stop + grant path). Other owners are unchanged.
+            // Only once the companion's state has really left Combat - a lower request DURING a fight (reposition, tether,
+            // flee) keeps the Combat claim, so fight steps are unchanged.
+            if ((int)source < (int)CurrentAuthority && owner == CurrentAuthorityOwner && !string.IsNullOrEmpty(owner)
+                && CurrentAuthority == MovementSource.Combat
+                && _stateController != null && _stateController.CurrentState != FiresCore.Npc.Movement.CompanionStateController.CompanionState.Combat)
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {owner}: released its own stale {CurrentAuthority} claim for {source} (state {_stateController.CurrentState})");
+            }
             // Check priority
-            if ((int)source < (int)CurrentAuthority)
+            else if ((int)source < (int)CurrentAuthority)
             {
                 // Throttle DENIED logs - only log once per 5 seconds for same source/owner
                 if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DeniedLogInterval)
@@ -978,7 +990,7 @@ namespace FiresCore.Npc.Core
         /// THE ONLY METHOD THAT SHOULD CALL Character.SetMoveDir()
         /// All other code paths should go through the authority system.
         /// </summary>
-        // Local obstacle steering (Fire, 2026-09-29: "register what is around them for objects in order to properly avoid them").
+        // Local obstacle steering.
         // BaseAI's navmesh path ignores rocks, stumps and pieces it wasn't baked with, so the companion snagged on them the way the
         // bot did. AI.Steering (the bot's walk uses the same) is sampled every SteerInterval and its turn held in between; it stays
         // off near the destination, so a companion still walks up to the tree it is about to chop.
@@ -989,7 +1001,7 @@ namespace FiresCore.Npc.Core
         private float _steerTurn;
         private float _nextSteerLog;
 
-        // Jumping (Fire: "they get stuck in holes and on hills … they need to know to jump when they're going uphill"): the same
+        // Jumping (getting out of holes and up hills): the same
         // AI.Steering.ShouldJump the bot uses, asked with each steering sample. "Stuck" = under StuckProgress metres in StuckWindow
         // seconds while trying to move.
         private const float StuckWindow = 1.5f;
@@ -1016,8 +1028,8 @@ namespace FiresCore.Npc.Core
         private const float JumpCooldown = 1.2f;
         private float _nextJump;
 
-        // A lip the body can't clear (R68: "jump: stuck uphill (lip 1.5 m …)" every 1.2 s for 40 s, then "couldn't reach the
-        // tree"): JumpBudget jumps within JumpSpotRadius of one spot inside JumpSpotWindow s, still stuck -> stop jumping there
+        // A lip the body can't clear (repeated jumps that never get the companion past it):
+        // JumpBudget jumps within JumpSpotRadius of one spot inside JumpSpotWindow s, still stuck -> stop jumping there
         // and back out at ±BackOutTurn off the wanted way for BackOutSeconds (sides alternate), so the path finds another line.
         private const int JumpBudget = 3;
         private const float JumpSpotRadius = 1.5f, JumpSpotWindow = 15f, BackOutSeconds = 3f, BackOutTurn = 60f;
@@ -1056,11 +1068,31 @@ namespace FiresCore.Npc.Core
             }
             Debug.Log($"[MovementAuthority] {_companion?.companionName} jump: {(jump.ForStuck ? "stuck uphill" : "lip ahead")} "
                       + $"(lip {jump.LipHeight:0.0} m at {jump.LipDistance:0.0} m, slope {jump.SlopeDegrees:0} deg)");
+            // Diagnostics for being stuck uphill: why it is stuck and whether the jump
+            // left the ground): what it was walking to, how fast it moved, the jump force, and (below) the height gained 0.4 s later.
+            Vector3 v = _character.GetVelocity();
+            Debug.Log($"[MovementAuthority] {_companion?.companionName} jump detail: at ({transform.position.x:0.0}, {transform.position.y:0.00}, {transform.position.z:0.0}), "
+                      + $"{(HasDestination ? $"destination {Vector3.Distance(transform.position, CurrentDestination):0.0} m away" : "no destination")}, wanted ({wanted.x:0.00}, {wanted.z:0.00}), "
+                      + $"speed {new Vector2(v.x, v.z).magnitude:0.00} m/s, jump force {_character.m_jumpForce:0.0}, try {_jumpTries}/{JumpBudget} at this spot, "
+                      + $"back-out {(Time.time < _backOutUntil ? "on" : "off")}");
+            _jumpCheckAt = Time.time + 0.4f;
+            _jumpFromY = transform.position.y;
+        }
+
+        private float _jumpCheckAt = -1f, _jumpFromY;
+
+        // the height the last jump reached 0.4 s on (about its apex), logged once per jump.
+        private void CheckJumpResult()
+        {
+            if (_jumpCheckAt < 0f || Time.time < _jumpCheckAt) return;
+            _jumpCheckAt = -1f;
+            Debug.Log($"[MovementAuthority] {_companion?.companionName} jump result: rose {transform.position.y - _jumpFromY:0.00} m in 0.4 s, on ground {_character.IsOnGround()}");
         }
 
         private Vector3 SteerAround(Vector3 wanted)
         {
             if (_character == null || wanted.sqrMagnitude < 0.01f) return wanted;
+            CheckJumpResult();
             if (Time.time < _backOutUntil) return Quaternion.AngleAxis(BackOutTurn * _backOutSide, Vector3.up) * -wanted;
             TrackProgress();
             if (Time.time >= _nextSteer) TryJump(wanted);

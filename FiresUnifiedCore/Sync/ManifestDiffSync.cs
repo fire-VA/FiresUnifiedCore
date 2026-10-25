@@ -373,6 +373,7 @@ namespace FiresCore.Sync
                 if (string.IsNullOrEmpty(namespaceKey)) return;
 
                 int count = Math.Max(0, pkg.ReadInt());
+                if (count > 65536) { FiresLogger.LogWarning($"[ManifestDiff] manifest with {count} entries from {sender}: dropped"); return; }
 
                 var dict = new Dictionary<string, string>(count, StringComparer.OrdinalIgnoreCase);
                 for (int i = 0; i < count; i++)

@@ -43,7 +43,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Healer
         };
 
         /// <summary>
-        /// 0.2.328 ([release], FMO 0.0.13's Hexer): adds a status effect Purify removes, matched like the built-in list by its object
+        /// Adds a status effect Purify removes, matched like the built-in list by its object
         /// name or its m_name. Other mods register their curses at load (FMO: "FMO_Hex"), so a new curse needs no Core edit. Safe to
         /// call any time and more than once.
         /// </summary>

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 using FiresCore.Npc.Movement;
@@ -120,6 +120,7 @@ namespace FiresCore.Npc.Commands
 
         private void ProcessWhistleInput()
         {
+            if (FiresCore.Input.FiresInputBlock.IsTyping()) return;   // never while typing anywhere (IMGUI field, chat, console, any input field)
             bool shiftHeld = UnityEngine.Input.GetKey(whistleModifier) || UnityEngine.Input.GetKey(KeyCode.RightShift);
             bool altHeld = UnityEngine.Input.GetKey(KeyCode.LeftAlt) || UnityEngine.Input.GetKey(KeyCode.RightAlt);
             bool rightMousePressed = UnityEngine.Input.GetMouseButtonDown(whistleMouseButton);
@@ -387,7 +388,7 @@ namespace FiresCore.Npc.Commands
             CompanionController bestBusy = null;
             float bestBusyDist = float.MaxValue;
             
-            // 0.2.367: what the target needs (tree/log -> axe, rock -> pickaxe); companions holding it (hands, Tools pouch,
+            // what the target needs (tree/log -> axe, rock -> pickaxe); companions holding it (hands, Tools pouch,
             // storage: CompanionInventory.FindTool) win over companions that would have to fetch or craft one
             var need = targetObject != null ? FiresCore.Npc.IdleBehaviors.ResourceDataHelper.GetResourceData(targetObject) : null;
             bool needsTool = need != null && need.RequiresCombat;
@@ -440,7 +441,7 @@ namespace FiresCore.Npc.Commands
             
             // Prefer available companion, fall back to busy if allowed
             CompanionController selected = bestAvailable;
-            // 0.2.367: nobody holds the tool: the nearest free companion still takes it (the chore fetches/crafts or says the real reason)
+            // nobody holds the tool: the nearest free companion still takes it (the chore fetches/crafts or says the real reason)
             if (selected == null && bestNoTool != null) selected = bestNoTool;
             if (selected == null && allowInterrupt)
             {
@@ -480,7 +481,7 @@ namespace FiresCore.Npc.Commands
         /// Checks if a companion is currently busy with a task.
         /// CRITICAL: This should NOT block Move commands - those have absolute priority
         /// and will interrupt whatever the companion is doing.
-        /// 0.2.367: an AUTONOMOUS idle chore no longer counts as busy (a player command takes over from it); only a player
+        /// an AUTONOMOUS idle chore no longer counts as busy (a player command takes over from it); only a player
         /// command, command priority or combat does.
         /// </summary>
         private bool IsCompanionBusy(CompanionController companion, out string why)

@@ -81,7 +81,7 @@ namespace FiresCore.Identity
                 CapturedSessions.Add(sessionUid);
             }
 
-            FiresLogger.LogInfo("[PlayerIdentity] Session recorded steamId='" + record.SteamId + "' uid=" + record.ConnectionUid + " name='" + record.PlayerName + "' admin=" + record.IsAdmin + ".");
+            FiresLogger.LogInfo("[PlayerIdentity] Session recorded platformId='" + record.SteamId + "' uid=" + record.ConnectionUid + " name='" + record.PlayerName + "' admin=" + record.IsAdmin + ".");
 
             double total = clock.Elapsed.TotalMilliseconds;
             if (total < CaptureReportMs)
@@ -411,10 +411,19 @@ namespace FiresCore.Identity
                 return string.IsNullOrWhiteSpace(digits) ? string.Empty : "Steam_" + digits;
             }
 
+            // Fire 10-23 (Jerrol, Xbox / crossplay): any OTHER platform id keeps its own prefix ("Xbox_...", "PlayFab_...") - it was
+            // stripped to digits and re-prefixed "Steam_", so an Xbox player was recorded (and matched) as a Steam id. Only a bare
+            // number (an old adminlist entry / socket host name) is read as Steam.
+            int us = trimmed.IndexOf('_');
+            if (us > 0 && trimmed.Substring(0, us).All(char.IsLetter)) return trimmed;
             string digitsOnly = new string(trimmed.Where(char.IsDigit).ToArray());
-            return !string.IsNullOrWhiteSpace(digitsOnly) && digitsOnly.Length >= MinSteamIdDigits
+            return !string.IsNullOrWhiteSpace(digitsOnly) && digitsOnly.Length >= MinSteamIdDigits && digitsOnly.Length == trimmed.Length
                 ? "Steam_" + digitsOnly
                 : string.Empty;
         }
+
+        /// <summary>The platform user id as the platform gives it ("Steam_...", "Xbox_...", ...); a bare number reads as Steam. Add-only alias
+        /// of <see cref="NormalizeSteamId"/>, whose name predates crossplay.</summary>
+        public static string NormalizePlatformId(string value) => NormalizeSteamId(value);
     }
 }

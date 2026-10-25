@@ -5,7 +5,7 @@ namespace FiresCore.Bridge
 {
     /// <summary>
     /// World Gen Studio for FAT's "New from Gaea" world button, carried by Core so the public FAT launches nothing and reads
-    /// nothing outside the Valheim / BepInEx folders (Fire, 2026-09-29): the private FDT hosts the Studio (finds its executable,
+    /// nothing outside the Valheim / BepInEx folders: the private FDT hosts the Studio (finds its executable,
     /// starts it, asks it to import the Gaea maps and bake, stops it) and sets the delegates; FAT calls them and shows the
     /// button only while <see cref="Available"/>. Core does no I/O here: delegates only.
     ///

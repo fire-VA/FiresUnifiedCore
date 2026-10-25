@@ -19,6 +19,22 @@ namespace FiresCore.Npc.IdleBehaviors
         public const float WaitSeconds = 4.0f;
         public const float DeviationRadius = 1.2f;
         public const float ChatPauseRange = 3.5f;  // stop and let a player interact when this close
+        // Add-only: a player whose own ZDO has this bool set (RPGmaker's route map is open) is watching the
+        // route, not talking to the NPC, so they don't pause the patrol. The ZDO syncs, so it works where the dedi runs the patrol.
+        public const string ViewingMapZdoKey = "fires_viewing_map";
+
+        private static bool NearbyEngagingPlayer(Vector3 pos, float range)
+        {
+            float r2 = range * range;
+            foreach (var p in Player.GetAllPlayers())
+            {
+                if (p == null || (p.transform.position - pos).sqrMagnitude > r2) continue;
+                var zdo = p.m_nview != null ? p.m_nview.GetZDO() : null;
+                if (zdo != null && zdo.GetBool(ViewingMapZdoKey)) continue;
+                return true;
+            }
+            return false;
+        }
         public const float TeleportTimeout = 60f;  // seconds spent trying to reach a waypoint before snapping to it
         public const float MustHitReach = 0.9f;     // a must-hit node must be reached this tightly before the cursor advances past it
         private const float MinArrivalRadius = 0.4f;
@@ -124,6 +140,22 @@ namespace FiresCore.Npc.IdleBehaviors
             _targetSince = Time.time;
             ResetStuckTracking();
             RerollDeviation();
+            // An exact-replay driver resumes its own timeline here (after spawn, combat, an owner change)
+            var driver = ActiveTimelineDriver();
+            if (driver != null)
+            {
+                try { driver.OnPatrolStart(); }
+                catch (System.Exception ex) { Debug.LogWarning($"[PatrolBehavior] timeline driver start: {ex.Message}"); }
+            }
+        }
+
+        // Exact-replay patrols, add-only: the assignment's driver when it wants control, else null (the point walk).
+        private IPatrolTimelineDriver ActiveTimelineDriver()
+        {
+            var d = Assignment?.TimelineDriver;
+            if (d == null) return null;
+            try { return d.WantsControl ? d : null; }
+            catch { return null; }
         }
 
         public override bool Update()
@@ -142,15 +174,29 @@ namespace FiresCore.Npc.IdleBehaviors
                 _targetSince = Time.time;
                 ResetStuckTracking();
                 FiresCore.Npc.Patrol.PatrolSpeedState.Clear(Char); // let combat/other movers own the speed
+                var heldDriver = ActiveTimelineDriver();   // the replay stops its emote/block/crouch and holds its clock
+                if (heldDriver != null)
+                {
+                    try { heldDriver.OnPatrolPaused(InCombatNow ? "combat" : "inactive"); }
+                    catch (System.Exception ex) { Debug.LogWarning($"[PatrolBehavior] timeline driver pause: {ex.Message}"); }
+                }
                 return false;
             }
 
             if (_route == null || _route.Points.Count < 2) return true; // route lost → end (re-evaluated next tick)
 
+            // Exact replay: a timeline driver that wants control runs this tick instead of the point walk below.
+            var timeline = ActiveTimelineDriver();
+            if (timeline != null)
+            {
+                try { timeline.OnPatrolTick(); }
+                catch (System.Exception ex) { Debug.LogWarning($"[PatrolBehavior] timeline driver tick: {ex.Message}"); }
+                return false;
+            }
             // Stop and let a nearby player interact/chat instead of pushing past them — and don't walk off
             // while the player is engaging the NPC (they stay within this range while its UI is open, since
             // the inventory pins them in place). Resumes from the same waypoint once they leave.
-            if (Player.GetClosestPlayer(Transform.position, ChatPauseRange) != null)
+            if (NearbyEngagingPlayer(Transform.position, ChatPauseRange))
             {
                 HoldStill();
                 _targetSince = Time.time;
@@ -165,6 +211,11 @@ namespace FiresCore.Npc.IdleBehaviors
                 FiresCore.Npc.Patrol.PatrolSpeedState.Clear(Char);
                 if (Time.time < _waitUntil) return false;
                 _waiting = false;
+                if (_pointEmote != null && Char != null)   // a node's emote ends with its wait
+                {
+                    FiresCore.Npc.Animation.PlayerAnimationCatalog.Stop(Char.GetComponent<ZSyncAnimation>(), Char.GetComponentInChildren<Animator>(), _pointEmote);
+                    _pointEmote = null;
+                }
                 AdvanceIndex();   // step off the endpoint / stop node, wrapping for loops
             }
 
@@ -225,8 +276,18 @@ namespace FiresCore.Npc.IdleBehaviors
             // + run animation). The published multiplier is applied to the active field by CompanionSpeedRamp —
             // we never touch SetMoveDir. The Default preset keeps the exact legacy path (force walk, no publish).
             var character = Char;
-            if (_preset == null)
+            if (_preset == null && Mathf.Abs(_currentSpeedMul - 1f) > 0.001f)
             {
+                // No preset, but this node has a speed multiple: publish it on the walk tier (run above 1.15, like a preset's default)
+                bool run = _currentSpeedMul > 1.15f;
+                character?.SetWalk(!run);
+                FiresCore.Npc.Patrol.PatrolSpeedState.Set(character, _currentSpeedMul, run); _pointSpeedPublished = true;
+                if (onPiece) TryMoveDirectToPosition(target, run: run);
+                else         TryMoveToPosition(target, walk: !run, run: run);
+            }
+            else if (_preset == null)
+            {
+                if (_pointSpeedPublished) { FiresCore.Npc.Patrol.PatrolSpeedState.Clear(character); _pointSpeedPublished = false; }   // back on a x1 node after a scaled one
                 character?.SetWalk(true);
                 if (onPiece) TryMoveDirectToPosition(target, run: false);
                 else         TryMoveToPosition(target, walk: true);
@@ -252,10 +313,10 @@ namespace FiresCore.Npc.IdleBehaviors
             if (body != null) { body.position = point; body.linearVelocity = Vector3.zero; }
         }
 
-        // Hold still on the idle frames patrol holds, never while walking. 0.2.327 (audit slice 3, Fire's vanilla-method rule):
+        // Hold still on the idle frames patrol holds, never while walking. Vanilla method:
         // only StopMovement (SetMoveDir(0)), which vanilla UpdateWalking brakes. The old horizontal-velocity clamp was a patch
         // for "slides down slopes like ice"; if that comes back, find out why UpdateWalking isn't braking (a frozen state that
-        // skips UpdateMotion?) instead of writing the rigidbody. The companion_test's slope idle check covers it.
+        // skips UpdateMotion?) instead of writing the rigidbody.
         private void HoldStill()
         {
             StopMovement();
@@ -322,7 +383,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private void OnArrived(bool writeCheckpoint = true)
         {
-            // 0.2.350 (round 23 slope_patrol: never within 1.5 m of the stop point in 30 s): each node reached, at Debug.
+            // Each node reached, at Debug.
             FiresCore.Logging.FiresLogger.LogDebug($"[Patrol] {Companion?.companionName} reached node {_index} of {_route.Points.Count} at {Transform.position:F1} (node {_route.Points[_index]:F1}, {Vector3.Distance(Transform.position, _route.Points[_index]):0.0} m 3D), stop here {(_preset?.StopAt(_index) != null)}");
             if (writeCheckpoint) WriteCheckpoint();
             int last = _route.Points.Count - 1;
@@ -332,6 +393,31 @@ namespace FiresCore.Npc.IdleBehaviors
             // which steps off the node (so we don't re-arm the same stop until the route brings us back). The
             // section curve's Floor near the stop provides the ease-in; HoldStill zeroes velocity while paused.
             var stop = _preset?.StopAt(_index);
+
+            // Per-node data. Wait = stand here (the longer of it and a preset stop), Facing =
+            // turn to that yaw, Emote = play that catalog animation; all reuse the stop path below (hold, then step off on wake).
+            var pd = _route.DataAt(_index);
+            if (pd != null && (pd.Wait > 0f || !string.IsNullOrEmpty(pd.Emote) || !float.IsNaN(pd.Facing)))
+            {
+                float wait = Mathf.Max(pd.Wait, stop != null ? stop.Duration : 0f);
+                FiresCore.Npc.Animation.PlayerAnimation anim = string.IsNullOrEmpty(pd.Emote) ? null : FiresCore.Npc.Animation.PlayerAnimationCatalog.Find(pd.Emote);
+                if (anim != null && wait <= 0f) wait = Mathf.Max(0.5f, anim.Seconds);   // an emote with no wait still gets its time
+                if (!float.IsNaN(pd.Facing)) Char?.SetLookDir(Quaternion.Euler(0f, pd.Facing, 0f) * Vector3.forward, 0.4f);
+                bool played = false;
+                if (anim != null && Char != null)
+                    played = FiresCore.Npc.Animation.PlayerAnimationCatalog.Play(Char.GetComponent<ZSyncAnimation>(), Char.GetComponentInChildren<Animator>(), anim);
+                _pointEmote = played ? anim : null;
+                FiresCore.Logging.FiresLogger.LogInfo($"[Patrol] {Companion?.companionName} node {_index}: point data wait {wait:0.#} s, emote '{pd.Emote ?? ""}' {(anim == null ? "" : played ? "played" : "NOT in this animator")}, facing {(float.IsNaN(pd.Facing) ? "next" : pd.Facing.ToString("0") + " deg")}, speed x{pd.SpeedMul:0.##}");
+                if (wait > 0f)
+                {
+                    _waiting = true;
+                    _waitUntil = Time.time + wait;
+                    if (!_route.IsLoop && ((_direction == 1 && _index >= last) || (_direction == -1 && _index <= 0)))
+                        _direction = -_direction;
+                    return;
+                }
+            }
+
             if (stop != null)
             {
                 _waiting = true;
@@ -411,8 +497,8 @@ namespace FiresCore.Npc.IdleBehaviors
             // 60s TeleportTimeout. A must-hit node is likewise snapped onto rather than skipped: it's flagged
             // mandatory (doorway/bridge) precisely because the drawn path is the only correct one there. A plain
             // reachable-but-stuck marker is just skipped, as before.
-            // 0.2.350: the strict navmesh check (no close-and-clear fallback), or a close off-navmesh node read as reachable and
-            // was skipped instead of snapped (round 23 slope_patrol never reached its stop point).
+            // The strict navmesh check (no close-and-clear fallback); otherwise a close off-navmesh node read as reachable and
+            // was skipped instead of snapped.
             if (!IsNavmeshReachable(target) || _route.MustHit.Contains(_index))
             {
                 TeleportTo(target);
@@ -477,11 +563,18 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // Resolve the DBSM speed multiplier + tier for the current node index. Identity (1.0, walk tier) for the
         // Default preset or when outside every section; inside a section, u is arc-length progress across its span.
+        private FiresCore.Npc.Animation.PlayerAnimation _pointEmote;   // the node emote playing during a wait
+        private bool _pointSpeedPublished;   // a no-preset walk published a node speed multiple
+
+        // The target node's SpeedMul (1 = unchanged), clamped.
+        private float PointSpeedMul() { var d = _route?.DataAt(_index); return d != null ? Mathf.Clamp(d.SpeedMul, 0.2f, 3f) : 1f; }
+
         private void ComputeSpeed()
         {
             _currentSpeedMul = 1f;
             _runTier = false;
-            if (_preset == null || _cum == null) return;
+            float pointMul = PointSpeedMul();
+            if (_preset == null || _cum == null) { _currentSpeedMul = pointMul; return; }
 
             var sec = _preset.SectionAt(_index);
             if (sec != null)
@@ -493,12 +586,19 @@ namespace FiresCore.Npc.IdleBehaviors
                 float sectionProgress = len > 1e-3f ? here / len : 0f;
                 _currentSpeedMul = Mathf.Max(MinSectionSpeedMultiplier, sec.Sample(sectionProgress));
             }
+            _currentSpeedMul *= pointMul;
             _runTier = _currentSpeedMul > _preset.RunThreshold;
         }
 
         public override void Cancel()
         {
             FiresCore.Npc.Patrol.PatrolSpeedState.Clear(Char); // drop the speed override when patrol is cancelled
+            var driver = Assignment?.TimelineDriver;   // told even if it no longer wants control, so it lets go of the body
+            if (driver != null)
+            {
+                try { driver.OnPatrolPaused("cancelled"); }
+                catch (System.Exception ex) { Debug.LogWarning($"[PatrolBehavior] timeline driver cancel: {ex.Message}"); }
+            }
             base.Cancel();
         }
 

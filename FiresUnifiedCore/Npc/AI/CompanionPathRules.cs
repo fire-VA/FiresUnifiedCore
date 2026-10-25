@@ -5,12 +5,13 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// The bot's corner rules for the companions (one brain; Fire, R73: "not recognizing collision objects when trying to round
-    /// corners"). Companions walk through vanilla BaseAI (FindPath / MoveTo / MoveTowards), so the same two rules go in there:
+    /// The bot's corner rules for the companions (one brain: companions
+    /// must not snag on solids at corners). Companions walk through vanilla BaseAI (FindPath / MoveTo / MoveTowards), so the same two rules go in there:
     /// each NEW path's corners are pushed off solids (<see cref="PathWalker.ClearCorners"/>), and a step straight into a solid face
     /// slides along it (<see cref="PathWalker.Slide"/>). Only CompanionAI bodies; monsters stay vanilla. The steep-ground rule isn't
     /// needed: vanilla never slides a non-player (Character.GetSlideAngle 90°).
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionPathRules
     {
         private const float SlideReach = 0.9f, LogRepeat = 5f;
@@ -22,7 +23,7 @@ namespace FiresCore.Npc.AI
             if (s_logged.Count > 64) s_logged.Clear();
             s_logged[ai] = (line, Time.time);
             Character body = ai.m_character;
-            Debug.Log($"[PathWalker] {(body != null ? body.m_name : ai.name)}: {line} (companion)");
+            Debug.Log($"[CompanionPath] {(body != null ? body.m_name : ai.name)}: {line} (vanilla FindPath, corners eased)");
         }
 
         [HarmonyPatch(typeof(BaseAI), "FindPath")]
@@ -47,7 +48,7 @@ namespace FiresCore.Npc.AI
                 if (!(__instance is CompanionAI)) return;
                 Character body = __instance.m_character;
                 if (body == null || body.IsFlying() || body.IsSwimming()) return;
-                Vector3 flat = new Vector3(dir.x, 0f, dir.z);
+                Vector3 flat = FiresCore.World.GravityUp.Flat(dir, body.transform.position);   // halo ring: the slide on the local up ([wishbone])
                 if (flat.sqrMagnitude < 0.0001f) return;
                 flat.Normalize();
                 List<Vector3> path = __instance.m_path;

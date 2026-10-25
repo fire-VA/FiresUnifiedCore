@@ -72,7 +72,7 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         Healer = 8,
 
-        // === POSSESSION (Tools\CLASSES_DRUID_NECROMANCER.md, Fire 10-07). APPEND ONLY: BarLayout saves the int. ===
+        // === POSSESSION. APPEND ONLY: BarLayout saves the int. ===
         /// <summary>
         /// Druid - takes on the form of a beaten creature (Wildshape) through Core's possession API.
         /// </summary>
@@ -81,7 +81,10 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>
         /// Necromancer - possesses undead humanoids while the body channels, untouchable.
         /// </summary>
-        Necromancer = 10
+        Necromancer = 10,
+        // Reserved (add-only, never renamed): not rolled by companions (hybrids loop Tank..Necromancer).
+        Werewolf = 11,
+        Vampire = 12
     }
     
     /// <summary>
@@ -510,7 +513,7 @@ namespace FiresCore.Npc.Archetypes
             };
         }
 
-        // Druid / Necromancer: scaffolding with near-neutral stats; the numbers are [wishbone]'s tree data to tune.
+        // Druid / Necromancer: scaffolding with near-neutral stats; the numbers are placeholders to tune.
         private static ArchetypeDefinition CreateDruidDefinition()
         {
             return new ArchetypeDefinition

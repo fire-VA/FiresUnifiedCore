@@ -6,7 +6,7 @@ using UnityEngine;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// 0.2.365: companions spend real ammo. BowBehavior/CrossbowBehavior spawn their own projectile (they never run vanilla
+    /// Companions spend real ammo. BowBehavior/CrossbowBehavior spawn their own projectile (they never run vanilla
     /// Attack.UseAmmo), so each shot takes 1 matching ammo here: the AMMO POUCH cells first, then the STORAGE rows, never an
     /// equip cell. Companion-only: every caller is a companion combat behaviour (the FDT player bot does not use these).
     /// </summary>
@@ -79,7 +79,7 @@ namespace FiresCore.Npc.Combat
     }
 
     /// <summary>
-    /// 0.2.365: what happens after a companion's consume-item attack (vanilla Attack.Start with m_consumeItem: bombs and the
+    /// What happens after a companion's consume-item attack (vanilla Attack.Start with m_consumeItem: bombs and the
     /// spear throw). Vanilla already takes the thrown item out of the bag (Attack.ConsumeItem). Here: a throwable's hand cell is
     /// refilled from the pouch/storage with the same item; a thrown spear's ItemDrop is found where it lands, and once no foe
     /// is targeted the companion walks to it (within 20 m), picks it up into storage and puts it back in its hand cell, where

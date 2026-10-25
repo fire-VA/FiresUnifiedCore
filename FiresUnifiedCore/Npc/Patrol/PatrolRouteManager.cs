@@ -33,7 +33,7 @@ namespace FiresCore.Npc.Patrol
 
         public static void Reset() { _routes.Clear(); _initialized = false; }
 
-        // 0.2.373: RPGmaker's file watcher calls this after a PatrolRoutes file changes on disk (server sync).
+        // RPGmaker's file watcher calls this after a PatrolRoutes file changes on disk (server sync).
         /// <summary>Drops the route cache and reloads every route from disk; raises <see cref="RoutesReloaded"/>.</summary>
         public static void ReloadAll()
         {
@@ -100,7 +100,7 @@ namespace FiresCore.Npc.Patrol
             PushToServer(MakeSafeFileName(name) + ".cfg", text);
         }
 
-        // 0.2.308 ([ghost]'s admin-save audit): a client's save or delete also goes to the server through FiresNPCs' admin-checked
+        // A client's save or delete also goes to the server through FiresNPCs' admin-checked
         // "FiresRPGmaker_SyncFiles" routed RPC (folder key "PatrolRoutes", empty content = delete), by name, so Core needs no
         // reference to FiresNPCs. The server writes the cfg; FiresNPCs' watcher reloads and rebroadcasts. On a host or single
         // player the local write already is the server copy.
@@ -140,6 +140,19 @@ namespace FiresCore.Npc.Patrol
                 {
                     var idx = new List<int>(meta.MustHit); idx.Sort();
                     sb.Append("mustHit=").Append(string.Join(",", idx.Select(i => i.ToString(CultureInfo.InvariantCulture)))).Append('\n');
+                }
+                // per-node data, one line per non-default node ("point=3,wait=4,emote=wave,speed=0.6,facing=90").
+                // Older Cores skip unknown keys, so these files still load there (without the data).
+                for (int i = 0; i < meta.PointData.Count && i < points.Count; i++)
+                {
+                    var d = meta.PointData[i];
+                    if (d == null || d.IsDefault) continue;
+                    sb.Append("point=").Append(i.ToString(CultureInfo.InvariantCulture));
+                    if (d.Wait > 0f) sb.Append(",wait=").Append(N(d.Wait));
+                    if (!string.IsNullOrEmpty(d.Emote)) sb.Append(",emote=").Append(d.Emote.Replace(",", "").Replace("=", "").Trim());
+                    if (Mathf.Abs(d.SpeedMul - 1f) >= 0.001f) sb.Append(",speed=").Append(N(d.SpeedMul));
+                    if (!float.IsNaN(d.Facing)) sb.Append(",facing=").Append(N(d.Facing));
+                    sb.Append('\n');
                 }
             }
 
@@ -258,7 +271,7 @@ namespace FiresCore.Npc.Patrol
                     route.Points.Add(new Vector3(x, y, z));
             }
             if (string.IsNullOrEmpty(route.Name)) route.Name = Path.GetFileNameWithoutExtension(fileName);
-            if (route.Points.Count >= 2) { route.DetectLoop(); route.ClampMustHit(route.Points.Count); _routes[route.Name] = route; }
+            if (route.Points.Count >= 2) { route.DetectLoop(); route.ClampMustHit(route.Points.Count); route.ClampPointData(route.Points.Count); _routes[route.Name] = route; }
         }
 
         // Route-level follow tuning ("arrivalRadius=" / "lookAhead=" / "smoothing=" / "mustHit=2,5,7"). Values are
@@ -285,6 +298,24 @@ namespace FiresCore.Npc.Patrol
             {
                 foreach (var tok in val.Split(','))
                     if (int.TryParse(tok.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) && i >= 0) route.MustHit.Add(i);
+            }
+            else if (key.Equals("point", StringComparison.OrdinalIgnoreCase))
+            {
+                // "point=3,wait=4,emote=wave,speed=0.6,facing=90" (the value after "point=" starts with the index)
+                var parts = val.Split(',');
+                if (parts.Length == 0 || !int.TryParse(parts[0].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx) || idx < 0 || idx > 10000) return;
+                var d = route.EnsureDataAt(idx);
+                for (int p = 1; p < parts.Length; p++)
+                {
+                    int eq = parts[p].IndexOf('=');
+                    if (eq <= 0) continue;
+                    string k = parts[p].Substring(0, eq).Trim(), v = parts[p].Substring(eq + 1).Trim();
+                    float f;
+                    if (k.Equals("wait", StringComparison.OrdinalIgnoreCase) && float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out f)) d.Wait = Mathf.Clamp(f, 0f, 600f);
+                    else if (k.Equals("emote", StringComparison.OrdinalIgnoreCase)) d.Emote = v;
+                    else if (k.Equals("speed", StringComparison.OrdinalIgnoreCase) && float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out f)) d.SpeedMul = Mathf.Clamp(f, 0.2f, 3f);
+                    else if (k.Equals("facing", StringComparison.OrdinalIgnoreCase) && float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out f)) d.Facing = Mathf.Repeat(f, 360f);
+                }
             }
         }
 

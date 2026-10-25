@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using FiresCore.Npc.Archetypes;
@@ -12,12 +13,16 @@ namespace FiresCore.Classes
     public class ClassProgressState
     {
         // 4: talent ranks cost 1/2/3 points (RankCosts), no longer 1 each.
-        public const int CurrentSchema = 4;
+        // 5: Paragon - ParagonRanks added; talent ranks past 3 are paid in Paragon points, not skill points.
+        public const int CurrentSchema = 5;
+
+        /// <summary>Talent ranks from this one up are paid in Paragon points (1 each), not skill points.</summary>
+        public const int ParagonTalentFromRank = 4;
 
         public int Schema = CurrentSchema;
 
         /// <summary>
-        /// What each rank of a talent costs, rank 1 first (Fire, 2026-09-29: the Talents board's 1/2/3). Ranks past the table cost its
+        /// What each rank of a talent costs, rank 1 first (the Talents board's 1/2/3). Ranks past the table cost its
         /// last entry. Core owns the table; FiresRPGClasses' board reads it.
         /// </summary>
         public static readonly int[] RankCosts = { 1, 2, 3 };
@@ -59,7 +64,7 @@ namespace FiresCore.Classes
                 int spent = 0;
                 foreach (var tree in Talents.Values)
                     foreach (int rank in tree.Values)
-                        spent += CumulativeRankCost(rank);
+                        spent += CumulativeRankCost(Mathf.Min(rank, ParagonTalentFromRank - 1));   // Ranks 4+ are Paragon
                 return spent;
             }
         }
@@ -81,7 +86,7 @@ namespace FiresCore.Classes
         public int UnspentSkillPoints(ProgressionRates rates) =>
             ProgressionEngine.UnspentSkillPoints(Level, ValorLevel, SpentSkillPoints, rates);
 
-        // 0.2.384: Fire: lore books can grant attribute points. A plain stored count, added on top of the earned points. No schema
+        // Lore books can grant attribute points. A plain stored count, added on top of the earned points. No schema
         // bump: FiresRPGClasses' Newtonsoft store reads a missing field as 0 and an older loader ignores the extra one.
         public int BonusAttributePoints;
 
@@ -100,6 +105,106 @@ namespace FiresCore.Classes
             int added = BonusAttributePoints - before;
             FiresCore.Logging.FiresLogger.LogDebug($"[Classes] bonus attribute points +{added} (asked {n}), now {BonusAttributePoints}");
             return added;
+        }
+
+        // ── Paragon (ESO Champion Points style) ──────────────────────────────────────────────────────────
+        // Earned points are COMPUTED from ValorLevel (like skill points); only the spend is stored. Ranks have no maximum; what a rank
+        // gives is FiresRPGClasses' (passive definitions on the shared SoftCap curve). Respec works like talents.
+
+        /// <summary>Paragon passive ranks bought: passive id -> rank (no maximum).</summary>
+        public readonly Dictionary<string, int> ParagonRanks = new Dictionary<string, int>();
+
+        public int EarnedParagonPoints() => ProgressionEngine.EarnedParagonPoints(ValorLevel);
+
+        /// <summary>Paragon points spent: every Paragon passive rank (1 each) plus every talent rank from <see cref="ParagonTalentFromRank"/> up.</summary>
+        public int SpentParagonPoints
+        {
+            get
+            {
+                int spent = 0;
+                foreach (int rank in ParagonRanks.Values) spent += Mathf.Max(0, rank);
+                foreach (var tree in Talents.Values)
+                    foreach (int rank in tree.Values) spent += Mathf.Max(0, rank - (ParagonTalentFromRank - 1));
+                return spent;
+            }
+        }
+
+        public int UnspentParagonPoints() => Mathf.Max(0, EarnedParagonPoints() - SpentParagonPoints);
+
+        public int ParagonRank(string id) => id != null && ParagonRanks.TryGetValue(id, out int r) ? r : 0;
+
+        /// <summary>Buys one rank of a Paragon passive for 1 Paragon point. False, changing nothing, when none is left.</summary>
+        public bool TryBuyParagonRank(string id)
+        {
+            if (string.IsNullOrEmpty(id) || UnspentParagonPoints() < 1) return false;
+            ParagonRanks[id] = ParagonRank(id) + 1;
+            return true;
+        }
+
+        /// <summary>As <see cref="TryBuyParagonRank(string)"/>, refusing past <paramref name="maxRank"/> (0 or less = no maximum).</summary>
+        public bool TryBuyParagonRank(string id, int maxRank)
+        {
+            if (maxRank > 0 && ParagonRank(id) >= maxRank) return false;
+            return TryBuyParagonRank(id);
+        }
+
+        /// <summary>Refunds every Paragon passive rank and empties every slot (talent ranks past 3 come back with their tree's respec). Returns the points refunded.</summary>
+        public int RespecParagon()
+        {
+            int refunded = 0;
+            foreach (int rank in ParagonRanks.Values) refunded += Mathf.Max(0, rank);
+            ParagonRanks.Clear();
+            ParagonSlotted.Clear();
+            return refunded;
+        }
+
+        // ── Paragon slots (ESO Champion-Point style: slottable stars per tree). Core stores and validates; the combat lock and what a
+        // slotted star does are FiresRPGClasses'. ──────────────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>Slots a Paragon tree holds.</summary>
+        public const int ParagonSlotsPerTree = 4;
+
+        /// <summary>Slotted stars per tree id: always <see cref="ParagonSlotsPerTree"/> entries, null = an empty slot.</summary>
+        public readonly Dictionary<string, List<string>> ParagonSlotted = new Dictionary<string, List<string>>();
+
+        private List<string> SlotsOf(string tree)
+        {
+            if (!ParagonSlotted.TryGetValue(tree, out var slots) || slots == null) ParagonSlotted[tree] = slots = new List<string>();
+            while (slots.Count < ParagonSlotsPerTree) slots.Add(null);
+            return slots;
+        }
+
+        /// <summary>The star in <paramref name="tree"/>'s slot <paramref name="slot"/> (0-based), or null.</summary>
+        public string ParagonSlot(string tree, int slot) =>
+            tree != null && slot >= 0 && slot < ParagonSlotsPerTree && ParagonSlotted.TryGetValue(tree, out var s) && s != null && slot < s.Count ? s[slot] : null;
+
+        /// <summary>Puts an owned star (rank 1+) in a slot of its tree; it leaves any other slot of that tree. False, changing nothing, otherwise.</summary>
+        public bool TrySlotParagon(string tree, int slot, string starId)
+        {
+            if (string.IsNullOrEmpty(tree) || string.IsNullOrEmpty(starId) || slot < 0 || slot >= ParagonSlotsPerTree || ParagonRank(starId) < 1) return false;
+            var slots = SlotsOf(tree);
+            for (int i = 0; i < slots.Count; i++) if (slots[i] == starId) slots[i] = null;
+            slots[slot] = starId;
+            return true;
+        }
+
+        /// <summary>Empties a slot. False when it was already empty.</summary>
+        public bool UnslotParagon(string tree, int slot)
+        {
+            if (string.IsNullOrEmpty(tree) || slot < 0 || slot >= ParagonSlotsPerTree) return false;
+            var slots = SlotsOf(tree);
+            if (slots[slot] == null) return false;
+            slots[slot] = null;
+            return true;
+        }
+
+        /// <summary>Paragon ranks spent in one tree (for tier gates); <paramref name="treeOf"/> maps a star id to its tree id.</summary>
+        public int ParagonSpentInTree(string tree, Func<string, string> treeOf)
+        {
+            if (tree == null || treeOf == null) return 0;
+            int spent = 0;
+            foreach (var kv in ParagonRanks) if (kv.Value > 0 && treeOf(kv.Key) == tree) spent += kv.Value;
+            return spent;
         }
 
         public int PassiveSlots => ProgressionEngine.PassiveSlots(Level, ValorLevel);
@@ -129,7 +234,7 @@ namespace FiresCore.Classes
             if (!Talents.TryGetValue(archetype, out var tree)) return 0;
 
             int refunded = 0;
-            foreach (int rank in tree.Values) refunded += CumulativeRankCost(rank);
+            foreach (int rank in tree.Values) refunded += CumulativeRankCost(Mathf.Min(rank, ParagonTalentFromRank - 1));
             Talents.Remove(archetype);
 
             foreach (string nodeId in passiveNodeIdsInTree)
@@ -150,7 +255,9 @@ namespace FiresCore.Classes
             if (maxRank < 1) return false;
             int current = TalentRank(archetype, nodeId);
             if (current >= maxRank) return false;
-            if (UnspentSkillPoints(rates) < RankCost(current + 1)) return false;
+            // Ranks past 3 are paid in Paragon points.
+            if (current + 1 >= ParagonTalentFromRank) { if (UnspentParagonPoints() < 1) return false; }
+            else if (UnspentSkillPoints(rates) < RankCost(current + 1)) return false;
 
             if (!Talents.TryGetValue(archetype, out var tree))
             {
@@ -231,7 +338,7 @@ namespace FiresCore.Classes
             return new ClassProgressState
             {
                 Schema = CurrentSchema,
-                Level = Mathf.Clamp(highestArchetypeLevel, ProgressionEngine.FirstLevel, ProgressionEngine.MaxCharacterLevel),
+                Level = Mathf.Clamp(highestArchetypeLevel, ProgressionEngine.FirstLevel, ProgressionEngine.MaxLevel),
                 Xp = carriedXp < 0 ? 0 : carriedXp,
             };
         }

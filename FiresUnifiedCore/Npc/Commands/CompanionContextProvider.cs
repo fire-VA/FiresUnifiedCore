@@ -65,7 +65,53 @@ namespace FiresCore.Npc.Commands
                 rows.Add(ContextMenuItem.Row("Organize nearby chests", () => OrganizeChests(chestPos)));
             }
 
+            AddTripRows(rows, companions, target, cmd.type);
             return rows;
+        }
+
+        // Hunting / fishing trips (TripBehavior): "now" or "every morning", per companion; up to TripBehavior.MaxParty go at once.
+        private static void AddTripRows(List<ContextMenuItem> rows, List<CompanionController> companions, ContextTarget target, CompanionCommandSystem.CommandType type)
+        {
+            var kind = type == CompanionCommandSystem.CommandType.Fish ? TripBehavior.TripKind.Fish : TripBehavior.TripKind.Hunt;
+            if (kind == TripBehavior.TripKind.Hunt && type != CompanionCommandSystem.CommandType.MoveToPosition && type != CompanionCommandSystem.CommandType.AttackTarget) return;
+            string prey = "", preyLabel = "any game";
+            var ch = target.GameObject.GetComponentInParent<Character>();
+            if (kind == TripBehavior.TripKind.Hunt && ch != null && !ch.IsPlayer() && ch.GetComponent<CompanionController>() == null)
+            {
+                prey = Utils.GetPrefabName(ch.gameObject);
+                preyLabel = Localization.instance != null ? Localization.instance.Localize(ch.m_name) : ch.m_name;
+            }
+            Vector3 spot = target.Point;
+            string what = kind == TripBehavior.TripKind.Fish ? "Fishing trip here" : $"Hunting trip: {preyLabel}";
+            rows.Add(ContextMenuItem.Sep());
+            foreach (var companion in companions)
+            {
+                if (companion == null) continue;
+                var c = companion;
+                rows.Add(ContextMenuItem.Row($"{c.GetDisplayName()}: {what}", () => TripAreaPicker.Begin(c, kind, spot, prey, what, false)));
+                rows.Add(ContextMenuItem.Row($"{c.GetDisplayName()}: {what}, every morning", () => TripAreaPicker.Begin(c, kind, spot, prey, what, true)));
+                if (TripBehavior.HasPlan(c))
+                    rows.Add(ContextMenuItem.Row($"{c.GetDisplayName()}: stop the morning trips", () =>
+                    {
+                        TripBehavior.ClearPlan(c);
+                        MessageHud.instance?.ShowMessage(MessageHud.MessageType.TopLeft, $"{c.GetDisplayName()}: no more morning trips");
+                    }));
+            }
+        }
+
+        internal static void StartTrip(CompanionController c, TripBehavior.TripKind kind, Vector3 spot, string prey, float area, bool everyMorning)
+        {
+            var idle = c != null ? c.GetComponent<CompanionIdleBehavior>() : null;
+            var trip = idle?.GetSubBehavior<TripBehavior>();
+            if (trip == null) return;
+            if (!trip.Arm(kind, spot, prey, area, out string why))
+            {
+                MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center, $"{c.GetDisplayName()} can't go: {why}");
+                return;
+            }
+            if (everyMorning) TripBehavior.SavePlan(c, kind, spot, prey, area);
+            if (!idle.TryStartSubBehavior<TripBehavior>())
+                MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center, $"{c.GetDisplayName()} can't go right now");
         }
 
         private static void OrganizeChests(Vector3 center)

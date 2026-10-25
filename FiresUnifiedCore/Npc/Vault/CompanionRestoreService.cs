@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using HarmonyLib;
@@ -16,6 +16,7 @@ namespace FiresCore.Npc.Vault
     /// players have no Player object, as on a listen host.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class CompanionRestoreService
     {
         private const string LogPrefix = "[CompanionRestoreService]";
@@ -308,7 +309,18 @@ namespace FiresCore.Npc.Vault
             {
                 if (entry == null || entry.Snapshot == null) continue;
                 if (entry.Kind == DormancyKind.Dismissed) continue;       // explicit Recall only
-                if (!entry.IsRecallReady(nowTicks)) continue;             // deadline not elapsed yet
+                if (!entry.IsRecallReady(nowTicks))                      // deadline not elapsed yet
+                {
+                    // The respawn timer must survive a restart / relog mid-timer (otherwise the companion stays
+                    // dormant until the next login): re-arm it from the kennel's absolute deadline
+                    if (entry.Kind == DormancyKind.DeadPendingRespawn)
+                    {
+                        float delay = (float)Math.Max(0.0, (new DateTime(entry.RecallDeadlineUtcTicks, DateTimeKind.Utc) - DateTime.UtcNow).TotalSeconds);
+                        try { FiresCore.Npc.CompanionRespawnManager.Instance?.ScheduleRespawn(entry.NpcId, playerId, entry.Snapshot.PrefabName, delay, ZDOID.None); Debug.Log($"{LogPrefix} re-armed the respawn of {entry.NpcId} in {delay:F0}s (kennel deadline)"); }
+                        catch (Exception ex) { Debug.LogWarning($"{LogPrefix} respawn re-arm for {entry.NpcId} failed: {ex.Message}"); }
+                    }
+                    continue;
+                }
 
                 // I1: never spawn a second instance of a companion that's already live.
                 if (IsCompanionLiveInWorld(entry.NpcId))
@@ -338,7 +350,13 @@ namespace FiresCore.Npc.Vault
             foreach (var companion in all)
             {
                 if (companion != null && string.Equals(companion.companionId, npcId, StringComparison.Ordinal))
+                {
+                    // A corpse must not count as live, or the respawn removes the kennel entry and spawns nothing
+                    bool dead = companion.isDefeated;
+                    try { var ch = companion.GetComponent<Character>(); if (ch != null && (ch.IsDead() || ch.GetHealth() <= 0f)) dead = true; } catch { }
+                    if (dead) continue;
                     return true;
+                }
             }
             return false;
         }
@@ -597,5 +615,277 @@ namespace FiresCore.Npc.Vault
         // ──────────────────────────────────────────────────────────────────
 
         public static bool Verbose = false;
+
+        // ──────────────────────────────────────────────────────────────────
+        // Recall on a dedicated server must work for clients (charge only after success):
+        // client → server recall + owned-companion listing. Add-only; RecallDormant is unchanged. Routed RPCs registered
+        // per ZRoutedRpc instance (every ZNet.Awake makes a new one).
+        // ──────────────────────────────────────────────────────────────────
+
+        public const string RecallRpc = "FiresCore_CompanionRecall", RecallResultRpc = "FiresCore_CompanionRecallResult";
+        public const string ListRpc = "FiresCore_CompanionList", ListResultRpc = "FiresCore_CompanionListResult";
+        private const float RequestTimeout = 10f;
+
+        /// <summary>One companion ZDO the player owns, wherever it is (loaded or not). Add-only.</summary>
+        public struct OwnedCompanionInfo { public string CompanionId; public string Name; public ZDOID Zdo; public Vector3 Position; }
+
+        private static ZRoutedRpc s_rpcOn;
+        private static long s_nextRequest = 1;
+        private static readonly Dictionary<long, (Action<bool, string> done, float deadline)> s_pendingRecall = new Dictionary<long, (Action<bool, string>, float)>();
+        private static readonly Dictionary<long, (Action<List<OwnedCompanionInfo>> done, float deadline)> s_pendingList = new Dictionary<long, (Action<List<OwnedCompanionInfo>>, float)>();
+
+        [HarmonyPatch(typeof(ZNet), "Awake")]
+        [HarmonyPostfix]
+        public static void ZNet_Awake_RegisterRecallRpcs() => EnsureRecallRpcs();
+
+        private static void EnsureRecallRpcs()
+        {
+            var cur = ZRoutedRpc.instance;
+            if (cur == null || ReferenceEquals(s_rpcOn, cur)) return;
+            try
+            {
+                cur.Register<long, string, Vector3, long>(RecallRpc, RPC_Recall);
+                cur.Register<long, bool, string>(RecallResultRpc, RPC_RecallResult);
+                cur.Register<long, long>(ListRpc, RPC_List);
+                cur.Register<long, ZPackage>(ListResultRpc, RPC_ListResult);
+                cur.Register<long, long>(KennelRpc, RPC_Kennel);
+                cur.Register<long, ZPackage>(KennelResultRpc, RPC_KennelResult);
+                s_rpcOn = cur;
+                s_pendingRecall.Clear(); s_pendingList.Clear();
+            }
+            catch (Exception ex) { Debug.LogWarning($"{LogPrefix} recall RPCs not registered: {ex.Message}"); }
+        }
+
+        private static bool IsServer => ZNet.instance != null && ZNet.instance.IsServer();
+
+        /// <summary>
+        /// Recall one companion for its owner from anywhere: a live / ZDO-only copy (any zone, loaded or not) is moved next to
+        /// <paramref name="pos"/> and set to follow; otherwise the dormant (kennel) copy is spawned there. Never two copies.
+        /// On the server / host it runs directly; on a client it asks the server and calls <paramref name="done"/>(ok, reason)
+        /// when the answer arrives, or (false, "timeout") after 10 s. Callers charge only when ok is true. Add-only.
+        /// </summary>
+        public static void RequestRecall(long playerId, string companionId, Vector3 pos, Action<bool, string> done)
+        {
+            if (IsServer)
+            {
+                bool ok = RecallOnServer(playerId, companionId, pos, Player.m_localPlayer != null && Player.m_localPlayer.GetPlayerID() == playerId ? Player.m_localPlayer : null, out string why);
+                done?.Invoke(ok, why);
+                return;
+            }
+            EnsureRecallRpcs();
+            if (ZRoutedRpc.instance == null || ZNet.instance == null) { done?.Invoke(false, "not connected"); return; }
+            long id = s_nextRequest++;
+            s_pendingRecall[id] = (done, Time.realtimeSinceStartup + RequestTimeout);
+            ZRoutedRpc.instance.InvokeRoutedRPC(ServerPeer(), RecallRpc, playerId, companionId ?? "", pos, id);
+            TimeoutTicker.Ensure();
+        }
+
+        /// <summary>
+        /// The companion ZDOs <paramref name="playerId"/> owns, loaded or not (so the roster can list companions in unloaded
+        /// zones). On the server / host it answers directly; on a client it asks the server (empty list on timeout). Add-only.
+        /// </summary>
+        public static void RequestOwnedCompanions(long playerId, Action<List<OwnedCompanionInfo>> done)
+        {
+            if (IsServer) { done?.Invoke(ListOwnedCompanionZdos(playerId)); return; }
+            EnsureRecallRpcs();
+            if (ZRoutedRpc.instance == null || ZNet.instance == null) { done?.Invoke(new List<OwnedCompanionInfo>()); return; }
+            long id = s_nextRequest++;
+            s_pendingList[id] = (done, Time.realtimeSinceStartup + RequestTimeout);
+            ZRoutedRpc.instance.InvokeRoutedRPC(ServerPeer(), ListRpc, playerId, id);
+            TimeoutTicker.Ensure();
+        }
+
+        /// <summary>Server / host only: every companion ZDO owned by <paramref name="playerId"/>. Add-only.</summary>
+        public static List<OwnedCompanionInfo> ListOwnedCompanionZdos(long playerId)
+        {
+            var list = new List<OwnedCompanionInfo>();
+            foreach (var zdo in AllZdos())
+            {
+                if (zdo == null || zdo.GetLong("companion_owner", 0L) != playerId) continue;
+                string cid = zdo.GetString("companion_id", "");
+                if (string.IsNullOrEmpty(cid)) continue;
+                list.Add(new OwnedCompanionInfo { CompanionId = cid, Name = zdo.GetString("companion_name", ""), Zdo = zdo.m_uid, Position = zdo.GetPosition() });
+            }
+            return list;
+        }
+
+        private static long ServerPeer()
+        {
+            try { var sp = ZNet.instance.GetServerPeer(); if (sp != null) return sp.m_uid; } catch { }
+            return ZRoutedRpc.instance.GetServerPeerID();
+        }
+
+        private static IEnumerable<ZDO> AllZdos()
+        {
+            if (ZDOMan.instance == null) yield break;
+            var dict = AccessTools.Field(typeof(ZDOMan), "m_objectsByID")?.GetValue(ZDOMan.instance) as System.Collections.IDictionary;
+            if (dict == null) yield break;
+            var copy = new List<ZDO>();
+            foreach (var v in dict.Values) if (v is ZDO z) copy.Add(z);
+            foreach (var z in copy) yield return z;
+        }
+
+        // server: the recall itself (owner checked by the caller)
+        private static bool RecallOnServer(long playerId, string companionId, Vector3 pos, Player owner, out string why)
+        {
+            why = "";
+            if (playerId == 0L || string.IsNullOrEmpty(companionId)) { why = "bad request"; return false; }
+            // 1) a live or ZDO-only copy anywhere: move it to the owner and make it follow (dedupe: the kennel copy is dropped)
+            ZDO found = null; int copies = 0;
+            foreach (var zdo in AllZdos())
+                if (zdo != null && string.Equals(zdo.GetString("companion_id", ""), companionId, StringComparison.Ordinal) && zdo.GetLong("companion_owner", 0L) == playerId
+                    && !zdo.GetBool("companion_defeated", false) && zdo.GetFloat(ZDOVars.s_health, 1f) > 0f)   // a corpse is not a live copy
+                { copies++; if (found == null) found = zdo; }
+            if (found != null)
+            {
+                if (copies > 1) Debug.LogWarning($"{LogPrefix} recall {companionId}: {copies} world copies; moving the first ({found.m_uid})");
+                var inst = ZNetScene.instance != null ? ZNetScene.instance.FindInstance(found) : null;
+                if (inst != null)
+                {
+                    inst.transform.position = pos;
+                    var cc = inst.GetComponent<CompanionController>();
+                    if (cc != null && owner != null) { try { cc.CommandFollow(owner); } catch (Exception ex) { Debug.LogWarning($"{LogPrefix} recall CommandFollow: {ex.Message}"); } }
+                }
+                try
+                {
+                    if (!found.IsOwner()) found.SetOwner(ZDOMan.GetSessionID());   // the server takes the ZDO to move it; a nearby client takes it back as usual
+                    found.SetPosition(pos);
+                    found.Set("companion_wasfollowing", true);   // Recall is the owner's own command: "come back and follow me"
+                }
+                catch (Exception ex) { why = "move failed: " + ex.Message; return false; }
+                NpcDormancyBridge.Remove(playerId, companionId);
+                Debug.Log($"{LogPrefix} recall {companionId} for {playerId}: moved its world copy {found.m_uid} to {pos}{(inst != null ? " (loaded)" : " (unloaded zone)")}");
+                why = "moved";
+                return true;
+            }
+            // 2) the dormant (kennel) copy
+            if (NpcDormancyBridge.Get(playerId, companionId) == null) { why = "no such companion"; return false; }
+            var entry = NpcDormancyBridge.Get(playerId, companionId);
+            if (!TrySpawnDormant(entry, pos, out var controller)) { why = "spawn failed"; return false; }
+            try
+            {
+                if (controller != null && owner != null) controller.CommandFollow(owner);
+                else controller?.GetComponent<ZNetView>()?.GetZDO()?.Set("companion_wasfollowing", true);   // dedicated server: no Player object for the owner
+            }
+            catch (Exception ex) { Debug.LogWarning($"{LogPrefix} recall follow for {companionId}: {ex.Message}"); }
+            NpcDormancyBridge.Remove(playerId, companionId);
+            Debug.Log($"{LogPrefix} recall {companionId} for {playerId}: spawned from the kennel at {pos}");
+            why = "spawned";
+            return true;
+        }
+
+        // The RPC sender is the
+        // peer / session uid, the player id is the profile id. Map the sender peer to its character ZDO and read that ZDO's player id.
+        private static bool SenderIsPlayer(long sender, long playerId)
+        {
+            if (sender == playerId) return true;
+            try
+            {
+                if (ZNet.instance != null && sender == ZNet.GetUID())
+                    return Player.m_localPlayer != null && Player.m_localPlayer.GetPlayerID() == playerId;   // host acting for itself
+                var peer = ZNet.instance?.GetPeer(sender);
+                if (peer == null || peer.m_characterID.IsNone()) return false;
+                var zdo = ZDOMan.instance?.GetZDO(peer.m_characterID);
+                return zdo != null && zdo.GetLong(ZDOVars.s_playerID) == playerId;
+            }
+            catch (Exception ex) { Debug.LogWarning($"{LogPrefix} sender check: {ex.Message}"); return false; }
+        }
+
+        private static void RPC_Recall(long sender, long playerId, string companionId, Vector3 pos, long requestId)
+        {
+            if (!IsServer) return;
+            bool ok; string why;
+            if (!SenderIsPlayer(sender, playerId)) { ok = false; why = "not the owner"; Debug.LogWarning($"{LogPrefix} recall {companionId} refused: sender {sender} is not player {playerId}"); }
+            else ok = RecallOnServer(playerId, companionId, pos, null, out why);
+            ZRoutedRpc.instance.InvokeRoutedRPC(sender, RecallResultRpc, requestId, ok, why ?? "");
+        }
+
+        private static void RPC_RecallResult(long sender, long requestId, bool ok, string why)
+        {
+            if (!RpcGuard.SenderIsServer(sender)) { RpcGuard.Refuse("RPC_RecallResult", sender, "only the server answers"); return; }
+            if (!s_pendingRecall.TryGetValue(requestId, out var p)) return;   // late / duplicate reply: ignored (charge-on-success can't run twice)
+            s_pendingRecall.Remove(requestId);
+            try { p.done?.Invoke(ok, why); } catch (Exception ex) { Debug.LogWarning($"{LogPrefix} recall callback: {ex.Message}"); }
+        }
+
+        private static void RPC_List(long sender, long playerId, long requestId)
+        {
+            if (!IsServer) return;
+            var pkg = new ZPackage();
+            var list = SenderIsPlayer(sender, playerId) ? ListOwnedCompanionZdos(playerId) : new List<OwnedCompanionInfo>();
+            pkg.Write(list.Count);
+            foreach (var c in list) { pkg.Write(c.CompanionId); pkg.Write(c.Name ?? ""); pkg.Write(c.Zdo); pkg.Write(c.Position); }
+            ZRoutedRpc.instance.InvokeRoutedRPC(sender, ListResultRpc, requestId, pkg);
+        }
+
+        // The kennel ZDO sits at the world origin, so a dedi CLIENT only has
+        // it loaded near (0,0) and every stored / dismissed / respawning companion vanished from the roster elsewhere. The server reads its
+        // kennel and answers. Add-only.
+        public const string KennelRpc = "FiresCore_KennelList", KennelResultRpc = "FiresCore_KennelListResult";
+        private static readonly Dictionary<long, (Action<List<DormantNpcEntry>> done, float deadline)> s_pendingKennel = new Dictionary<long, (Action<List<DormantNpcEntry>>, float)>();
+
+        /// <summary>the kennel (dormant / stored / dead-pending) entries of <paramref name="playerId"/>. On the server / host it answers
+        /// at once from its kennel; on a client it asks the server and calls <paramref name="done"/> when the reply lands (no call on a
+        /// timeout or a lost reply: keep the local kennel as the fallback). Add-only.</summary>
+        public static void RequestKennelEntries(long playerId, Action<List<DormantNpcEntry>> done)
+        {
+            if (IsServer) { done?.Invoke(FiresCore.Npc.Persistence.CompanionKennel.GetEntries(playerId) ?? new List<DormantNpcEntry>()); return; }
+            EnsureRecallRpcs();
+            if (ZRoutedRpc.instance == null || ZNet.instance == null) return;
+            float now = Time.realtimeSinceStartup;
+            var stale = new List<long>(); foreach (var kv in s_pendingKennel) if (kv.Value.deadline < now) stale.Add(kv.Key);
+            foreach (var k in stale) s_pendingKennel.Remove(k);
+            long id = s_nextRequest++;
+            s_pendingKennel[id] = (done, now + RequestTimeout);
+            ZRoutedRpc.instance.InvokeRoutedRPC(ServerPeer(), KennelRpc, playerId, id);
+        }
+
+        private static void RPC_Kennel(long sender, long playerId, long requestId)
+        {
+            if (!IsServer) return;
+            var entries = SenderIsPlayer(sender, playerId) ? (FiresCore.Npc.Persistence.CompanionKennel.GetEntries(playerId) ?? new List<DormantNpcEntry>()) : new List<DormantNpcEntry>();   // only your own kennel
+            var pkg = new ZPackage();
+            byte[] bytes = FiresCore.Npc.Persistence.CompanionKennelSerializer.Serialize(entries) ?? new byte[0];
+            pkg.Write(bytes);
+            ZRoutedRpc.instance.InvokeRoutedRPC(sender, KennelResultRpc, requestId, pkg);
+        }
+
+        private static void RPC_KennelResult(long sender, long requestId, ZPackage pkg)
+        {
+            if (!RpcGuard.SenderIsServer(sender)) { RpcGuard.Refuse("RPC_KennelResult", sender, "only the server answers"); return; }
+            if (!s_pendingKennel.TryGetValue(requestId, out var p)) return;
+            s_pendingKennel.Remove(requestId);
+            List<DormantNpcEntry> list = null;
+            try { list = FiresCore.Npc.Persistence.CompanionKennelSerializer.Deserialize(pkg.ReadByteArray()); } catch (Exception ex) { Debug.LogWarning($"{LogPrefix} kennel reply unreadable: {ex.Message}"); }
+            try { p.done?.Invoke(list ?? new List<DormantNpcEntry>()); } catch (Exception ex) { Debug.LogWarning($"{LogPrefix} kennel callback: {ex.Message}"); }
+        }
+
+        private const int MaxListedCompanions = 256;
+        private static void RPC_ListResult(long sender, long requestId, ZPackage pkg)
+        {
+            if (!RpcGuard.SenderIsServer(sender)) { RpcGuard.Refuse("RPC_ListResult", sender, "only the server answers"); return; }
+            if (!s_pendingList.TryGetValue(requestId, out var p)) return;
+            s_pendingList.Remove(requestId);
+            var list = new List<OwnedCompanionInfo>();
+            try { int n = pkg.ReadInt(); if (n < 0 || n > MaxListedCompanions) return; for (int i = 0; i < n; i++) list.Add(new OwnedCompanionInfo { CompanionId = pkg.ReadString(), Name = pkg.ReadString(), Zdo = pkg.ReadZDOID(), Position = pkg.ReadVector3() }); }
+            catch (Exception ex) { Debug.LogWarning($"{LogPrefix} list reply unreadable: {ex.Message}"); }
+            try { p.done?.Invoke(list); } catch (Exception ex) { Debug.LogWarning($"{LogPrefix} list callback: {ex.Message}"); }
+        }
+
+        // times out pending requests (10 s) so a lost reply never leaves the roster waiting; charges never happen on a timeout
+        private sealed class TimeoutTicker : MonoBehaviour
+        {
+            private static TimeoutTicker s_one;
+            internal static void Ensure() { if (s_one != null) return; var go = new GameObject("FiresCompanionRecallTimeouts"); DontDestroyOnLoad(go); s_one = go.AddComponent<TimeoutTicker>(); }
+            private void Update()
+            {
+                if (s_pendingRecall.Count == 0 && s_pendingList.Count == 0) return;
+                float now = Time.realtimeSinceStartup;
+                foreach (var k in s_pendingRecall.Where(kv => kv.Value.deadline < now).Select(kv => kv.Key).ToList())
+                { var p = s_pendingRecall[k]; s_pendingRecall.Remove(k); try { p.done?.Invoke(false, "timeout"); } catch { } }
+                foreach (var k in s_pendingList.Where(kv => kv.Value.deadline < now).Select(kv => kv.Key).ToList())
+                { var p = s_pendingList[k]; s_pendingList.Remove(k); try { p.done?.Invoke(new List<OwnedCompanionInfo>()); } catch { } }
+            }
+        }
     }
 }

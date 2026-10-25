@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc;
 
@@ -123,6 +123,15 @@ namespace FiresCore.Npc.IdleBehaviors
             return SaplingsBySeed.TryGetValue(seedPrefabName, out var saplings) ? saplings : NoSaplings;
         }
         
+        /// <summary>Every field-crop sapling the game knows, once each.</summary>
+        public static IEnumerable<CropSapling> AllSaplings()
+        {
+            if (!EnsureTables()) yield break;
+            var seen = new HashSet<CropSapling>();
+            foreach (var list in SaplingsBySeed.Values)
+                foreach (var crop in list) if (crop != null && seen.Add(crop)) yield return crop;
+        }
+
         /// <summary>
         /// Checks if an item can be planted.
         /// </summary>
@@ -300,8 +309,8 @@ namespace FiresCore.Npc.IdleBehaviors
                     if (heightmap == null || !heightmap.IsCultivated(testPos))
                         continue;
                     
-                    // Check for existing plants (spacing)
-                    if (HasExistingPlantNearby(testPos, plantSpacing * 0.8f))
+                    // Vanilla's grow-space test for a typical crop (the exact crop is checked again when it is planted)
+                    if (!GrowSpaceFree(testPos, null, out _))
                         continue;
                     
                     result.Add(testPos);
@@ -314,6 +323,47 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <summary>
         /// Checks if there's already a plant too close to this position.
         /// </summary>
+        // ---- grow space, exactly as vanilla's Plant.HaveGrowSpace judges it ------------------------------------------------------
+        // A plant grows only when an overlap sphere of its m_growRadius (mask below) holds no collider except other plants that are not
+        // healthy - a rock, bush, piece or a ripe crop (a Pickable, no Plant) blocks, and so does any healthy neighbour plant. So a new
+        // seedling needs (a) its own grow radius clear of every such collider and (b) to stand outside each healthy neighbour's radius
+        // (plus the seedling's own collider). Spacing therefore follows each crop's real m_growRadius, not a fixed 1 m.
+        private const float DefaultGrowRadius = 0.5f, SeedlingColliderRadius = 0.3f, GrowSpaceSlack = 0.05f;
+        private static int s_growMask;
+        private static readonly HashSet<string> s_spacingLogged = new HashSet<string>();
+
+        /// <summary>The centre-to-centre distance this crop needs from a like neighbour: its grow radius + a seedling's collider.</summary>
+        public static float GrowSpacing(CropSapling crop) => (crop?.Plant != null && crop.Plant.m_growRadius > 0f ? crop.Plant.m_growRadius : DefaultGrowRadius) + SeedlingColliderRadius;
+
+        /// <summary>True when a seedling of <paramref name="crop"/> (null = a typical crop) at <paramref name="position"/> would pass
+        /// vanilla's grow-space test and would not stop a healthy neighbour growing. <paramref name="why"/> names the blocker otherwise.</summary>
+        public static bool GrowSpaceFree(Vector3 position, CropSapling crop, out string why)
+        {
+            why = null;
+            if (s_growMask == 0) s_growMask = LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "piece_nonsolid");
+            float r = crop?.Plant != null && crop.Plant.m_growRadius > 0f ? crop.Plant.m_growRadius : DefaultGrowRadius;
+            if (crop?.Prefab != null && s_spacingLogged.Add(crop.Prefab.name))
+                FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {crop.Prefab.name} spacing {GrowSpacing(crop):0.00} m (growRadius {r:0.00})");
+            // (a) its own grow radius: anything vanilla counts (a rock, a piece, a ripe crop, a healthy plant)
+            foreach (var c in Physics.OverlapSphere(position, r + GrowSpaceSlack, s_growMask))
+            {
+                if (c == null) continue;
+                var pl = c.GetComponentInParent<Plant>();
+                if (pl != null && pl.GetStatus() != Plant.Status.Healthy) continue;   // vanilla ignores unhealthy plants
+                why = $"'{c.transform.root.name}' inside its {r:0.00} m grow radius"; return false;
+            }
+            // (b) never inside a healthy neighbour's grow radius (it would stop THAT plant growing)
+            foreach (var c in Physics.OverlapSphere(position, 3f, s_growMask))
+            {
+                var pl = c != null ? c.GetComponentInParent<Plant>() : null;
+                if (pl == null || pl.GetStatus() != Plant.Status.Healthy) continue;
+                float need = pl.m_growRadius + SeedlingColliderRadius;
+                Vector3 d = pl.transform.position - position; d.y = 0f;
+                if (d.magnitude < need) { why = $"inside healthy {pl.name}'s {pl.m_growRadius:0.00} m grow radius"; return false; }
+            }
+            return true;
+        }
+
         public static bool HasExistingPlantNearby(Vector3 position, float spacing)
         {
             int spaceMask = LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "piece_nonsolid");
@@ -367,8 +417,12 @@ namespace FiresCore.Npc.IdleBehaviors
             if (heightmap == null || !heightmap.IsCultivated(position))
                 return false;
             
-            // Check spacing
-            if (HasExistingPlantNearby(position, plantSpacing))
+            // Vanilla's own grow-space rule for THIS crop (Fire 10-23: companion-planted carrots said "Needs more room to grow")
+            if (!GrowSpaceFree(position, crop, out _))
+                return false;
+
+            // A companion's learned spacing (farming build 2) can ask for more room than the crop's floor; never less.
+            if (plantSpacing > GrowSpacing(crop) && HasExistingPlantNearby(position, plantSpacing))
                 return false;
             
             // Check for roof (plants need sunlight)

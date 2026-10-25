@@ -80,7 +80,7 @@ namespace FiresCore.Npc.Core
             return true;
         }
 
-        // 0.2.333 evidence (round 13: chores not facing at +2 s): who was refused facing, and who held it. Once per pair at Debug.
+        // Diagnostics: who was refused facing, and who held it. Once per pair at Debug.
         private readonly System.Collections.Generic.HashSet<string> _refusedSeen = new System.Collections.Generic.HashSet<string>();
         private void NoteRefused(UnifiedMovementAuthority.MovementSource source, string owner)
         {
@@ -138,7 +138,7 @@ namespace FiresCore.Npc.Core
         private void LateUpdate()
         {
             if (CurrentSource == UnifiedMovementAuthority.MovementSource.None) return;
-            if (CompanionPossession.IsPossessed(_nview)) return;   // 0.2.292: its driver's look direction, not ours
+            if (CompanionPossession.IsPossessed(_nview)) return;   // its driver's look direction, not ours
 
             // Only the owning client drives facing — remote clients receive it via ZDO sync (mirrors how
             // movement is owner-driven). Without this, setting transform.rotation here would fight sync.

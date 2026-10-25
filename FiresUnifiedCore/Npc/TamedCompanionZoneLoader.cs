@@ -13,6 +13,7 @@ namespace FiresCore.Npc
     /// FiresValcast's CameraZoneLoader. Only companions with isTamed and an owner qualify.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class TamedCompanionZoneLoader
     {
         // RPC name — namespaced so it can't collide with Valcast's analogous RPC.
@@ -47,7 +48,7 @@ namespace FiresCore.Npc
         private const float AllKnownScanInterval = 5f;
 
         // Vanilla loads zones every 0.1 s, at most one new zone per reference point per pass; the companions' keep-alive ran every
-        // frame instead (R39 dedi: 44 ms in one frame at a join). Every position is still visited each pass: CreateLocalZones also
+        // frame instead (a join could cost tens of ms in one frame on a dedicated server). Every position is still visited each pass: CreateLocalZones also
         // pokes the existing zones, which is what keeps them from expiring.
         private const float KeepAliveInterval = 0.1f;
         private static float _keepAliveTimer;
@@ -59,6 +60,23 @@ namespace FiresCore.Npc
 
         // Reflected ZoneSystem internals — same private methods Valcast reflects.
         // Cached once at ZNet.Start since they never change.
+        // Hundreds of SpawnZone calls around parked companions with no peers grew memory by GBs: a
+        // dedicated server with NO players connected keeps no zones loaded for parked (offline-owner) companions. A fix: always on.
+        private static bool s_noPlayersLogged;
+        private static bool NoPlayersOnDedi()
+        {
+            var zn = ZNet.instance;
+            bool none = zn != null && zn.IsDedicated() && zn.GetPeers().Count == 0;
+            if (none != s_noPlayersLogged)
+            {
+                s_noPlayersLogged = none;
+                Debug.Log(none
+                    ? $"[FiresUnifiedCore] [Companions] dedicated server with no players: parked companions' zones are not kept loaded ({_allKnownCompanionPositions.Count} position(s))"
+                    : "[FiresUnifiedCore] [Companions] a player joined: parked companions' zones are kept loaded again");
+            }
+            return none;
+        }
+
         private static MethodInfo _createLocalZones;
         private static MethodInfo _createGhostZones;
 
@@ -121,11 +139,16 @@ namespace FiresCore.Npc
         //  Server: receive positions from clients
         // ────────────────────────────────────────────────────────────────────
 
+        private const int MaxReportedCompanions = 16;
+        private const float MaxReportedDistance = 300f;   // metres from the reporting client's character
         private static void RPC_OnCompanionPositions(long sender, ZPackage pkg)
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
 
             int count = pkg.ReadInt();
+            if (count < 0 || count > MaxReportedCompanions) { RpcGuard.Refuse("CompanionPositions", sender, $"{count} positions (max {MaxReportedCompanions})"); return; }
+            // A client reports the companions loaded around it, so every position must be near where the server sees that client
+            Possession.PossessionServer.PlayerIdOf(sender, out Vector3 senderPos);
             if (!_peerCompanionPositions.TryGetValue(sender, out var positions))
             {
                 positions = new List<Vector3>();
@@ -134,7 +157,11 @@ namespace FiresCore.Npc
             positions.Clear();
 
             for (int i = 0; i < count; i++)
-                positions.Add(pkg.ReadVector3());
+            {
+                Vector3 p = pkg.ReadVector3();
+                if (senderPos == Vector3.zero || Vector3.Distance(p, senderPos) > MaxReportedDistance) continue;
+                positions.Add(p);
+            }
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -197,7 +224,7 @@ namespace FiresCore.Npc
                         RefreshAllKnownCompanionPositions();
                     }
 
-                    if (keepAliveDue && _allKnownCompanionPositions.Count > 0)
+                    if (keepAliveDue && _allKnownCompanionPositions.Count > 0 && !NoPlayersOnDedi())
                         LoadZonesForPositions(_allKnownCompanionPositions);
                 }
                 else if (_allKnownCompanionPositions.Count > 0)
@@ -288,6 +315,9 @@ namespace FiresCore.Npc
         //  earmarks them and lets them survive the sweep.
         // ────────────────────────────────────────────────────────────────────
 
+        private static readonly HashSet<Vector2s> _zonesDone = new HashSet<Vector2s>();
+        private static float _nextDedupeLog;
+
         [HarmonyPatch(typeof(ZNetScene), "RemoveObjects")]
         [HarmonyPrefix]
         private static void RemoveObjects_Prefix(
@@ -306,7 +336,7 @@ namespace FiresCore.Npc
                 _tempPositions.AddRange(kvp.Value);
 
             bool keepOffline = FiresCore.Bridge.NpcConfigBridge.GetBool("KeepZonesLoadedForOfflinePlayers", true);
-            if (keepOffline && _allKnownCompanionPositions.Count > 0)
+            if (keepOffline && _allKnownCompanionPositions.Count > 0 && !NoPlayersOnDedi())
                 _tempPositions.AddRange(_allKnownCompanionPositions);
 
             if (_tempPositions.Count == 0) return;
@@ -318,10 +348,22 @@ namespace FiresCore.Npc
                 ? ZNet.instance.GetSyncedSimulationDistance()
                 : new SimulationDistance(1, 1, true);
 
+            // One FindSectorObjects per DISTINCT zone - every call uses the same simDistance, so
+            // (zone, area) is unique per zone and the loaded set is identical
+            _zonesDone.Clear();
+            int calls = 0;
             for (int i = 0; i < _tempPositions.Count; i++)
             {
-                Vector2s camZone = ZoneSystem.GetZone(_tempPositions[i]);
+                Vector2s camZone = FiresCore.World.RingZones.ObjectSector(_tempPositions[i]);   // halo ring: the ring object-sector id
+                if (!_zonesDone.Add(camZone)) continue;
                 ZDOMan.instance.FindSectorObjects(camZone, simDistance, _companionZDOs);
+                calls++;
+            }
+            if (Time.unscaledTime >= _nextDedupeLog)
+            {
+                _nextDedupeLog = Time.unscaledTime + 60f;
+                if (FiresCore.Logging.FiresLogger.DebugEnabled)
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionZoneLoader] {_tempPositions.Count} position(s) -> {calls} sector call(s) (distinct zones)");
             }
 
             if (_companionZDOs.Count > 0)

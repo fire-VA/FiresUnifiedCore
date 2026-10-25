@@ -120,7 +120,7 @@ namespace FiresCore.Npc.Interactions
             Bed,
             ShipMast,
             ShipSeat,
-            // 0.2.372: pillion seat behind the rider (FiresCore.Mounts.PillionApi); no occupancy, timers or follow-break.
+            // pillion seat behind the rider (FiresCore.Mounts.PillionApi); no occupancy, timers or follow-break.
             MountPillion
         }
 
@@ -514,7 +514,7 @@ namespace FiresCore.Npc.Interactions
             Detach();
         }
 
-        // 0.2.372: pillion body work for FiresCore.Mounts.PillionApi.
+        // pillion body work for FiresCore.Mounts.PillionApi.
         private const string PillionFallbackPose = "attach_chair";
         private const float PillionHoldSeconds = 1000000f;
 
@@ -829,7 +829,7 @@ namespace FiresCore.Npc.Interactions
             _targetSitRotation     = attachPoint.rotation;
             _ownerAnchor           = _companion?.GetOwner()?.transform.position ?? transform.position;
 
-            // 0.2.372: a pillion has no sit timer; it holds until PillionApi.Unseat.
+            // a pillion has no sit timer; it holds until PillionApi.Unseat.
             if (attachType == AttachType.MountPillion)
             {
                 duration               = PillionHoldSeconds;
@@ -1030,7 +1030,7 @@ namespace FiresCore.Npc.Interactions
                 return;
             }
 
-            // 0.2.372: a pillion stays seated until PillionApi.Unseat; combat, timeouts, the null source object,
+            // a pillion stays seated until PillionApi.Unseat; combat, timeouts, the null source object,
             // ZDO divergence and the follow-break anchor would all dismount it mid-ride.
             if (_currentAttachType == AttachType.MountPillion) return;
 

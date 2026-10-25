@@ -5,14 +5,15 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Speech bubbles every client near the speaker sees (Fire 2026-09-29: "give the bots chat bubbles like the companions have
-    /// that show their intent … maybe some idle chatter"). Vanilla Chat.SetNpcText is local to one screen, so until 0.2.184 a
+    /// Speech bubbles every client near the speaker sees, for intent lines and idle
+    /// chatter. Vanilla Chat.SetNpcText is local to one screen, so on its own a
     /// companion's bubble reached only its owner and the stream never saw it. Here the speaker's peer routes the line to everybody
     /// and each client puts the bubble up on its own copy of the speaker. <see cref="Bubble"/> is for any body (the FDT bot's
     /// player too), rate-limited per speaker (the same line not again within 10 s, at most 5 a minute); the companions'
     /// CompanionChatHelper keeps its own limits and sends through <see cref="Send"/>. Lines: <see cref="IdleLine"/>,
     /// <see cref="CompanionChatHelper.ChatterFor"/>, <see cref="CompanionChatHelper.PickLine"/>, so the bot and the companions talk alike.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.NpcBrain)]
     public static class Speech
     {
         private const string Rpc = "FiresCore_Bubble";
@@ -43,7 +44,7 @@ namespace FiresCore.Npc
             if (!Send(body.gameObject, $"<size={size}>{text}</size>", Mathf.Clamp(ttl, 1f, 20f), BubbleCull, BubbleHeight)) return false;
             times.Enqueue(now);
             s_lastLine[id] = (text, now);
-            // A player's m_name is its prefab's ("Human", R70): name it as others see it.
+            // A player's m_name is its prefab's ("Human"): name it as others see it.
             string who = body is Player player ? player.GetPlayerName() : body.GetHoverName();
             Debug.Log($"[Speech] {who}: \"{text}\" (to everyone within {BubbleCull:0} m, {ttl:0} s)");
             return true;

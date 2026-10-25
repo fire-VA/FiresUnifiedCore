@@ -33,7 +33,7 @@ namespace FiresCore.Variants
 
     /// <summary>
     /// The variant table and the frozen key names (a contract between Core, FiresRPGmaker's pets and FiresMounts; never rename).
-    /// Fire 10-08: seven variants plus a reset, all generic, unlocked by essences brewed at the Cauldron.
+    /// Seven variants plus a reset, all generic, unlocked by essences brewed at the Cauldron.
     /// </summary>
     public static class VariantTable
     {
@@ -64,7 +64,7 @@ namespace FiresCore.Variants
                 Tint = new Color(0.12f, 0.042f, 0.036f),            // mockup v2: tint (1, 0.35, 0.3) x value 0.12 (black-red)
                 HasEmission = true, Emission = new Color(3f, 0.35f, 0.1f), FxColor = new Color(1f, 0.2f, 0.05f) });
             Add(new VariantDef { Id = "frost", DisplayName = "Frost", EssenceItem = "FiresEssence_Frost",
-                // Mockup v2: saturation x0.6 (an OFFSET in game: about -0.2, per [worldgen]), tint (0.85, 0.92, 1) x value 1.2.
+                // Mockup v2: saturation x0.6 (an OFFSET in game: about -0.2), tint (0.85, 0.92, 1) x value 1.2.
                 Saturation = -0.2f, Tint = new Color(1.02f, 1.1f, 1.2f),
                 HasEmission = true, Emission = new Color(0.9f, 2f, 3.2f), FxColor = new Color(0.45f, 0.75f, 1f) });
             Add(new VariantDef { Id = "shadow", DisplayName = "Shadow", EssenceItem = "FiresEssence_Shadow",

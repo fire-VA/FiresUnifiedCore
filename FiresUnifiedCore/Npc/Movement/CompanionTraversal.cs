@@ -79,7 +79,9 @@ _stuckCheckStartPos = transform.position;
        return;
  }
 
-            _isGrounded = Physics.Raycast(_transform.position + Vector3.up * 0.1f, Vector3.down, 0.3f);
+            // 0.2.816 (halo ring): along the local up (GravityUp; world up off the ring, the same check as before)
+            Vector3 gUp = FiresCore.World.GravityUp.At(_transform.position);
+            _isGrounded = Physics.Raycast(_transform.position + gUp * 0.1f, -gUp, 0.3f);
         }
 
         /// <summary>
@@ -127,8 +129,9 @@ _stuckCheckStartPos = transform.position;
    public bool HasSignificantObstacleAhead()
         {
             Vector3 forward = _transform.forward;
-    Vector3 originLow = _transform.position + Vector3.up * 0.2f;
-       Vector3 originMid = _transform.position + Vector3.up * 0.5f;
+            Vector3 up = FiresCore.World.GravityUp.At(_transform.position);   // halo ring: the step / jump-top checks along the local up (world up off a ring)
+    Vector3 originLow = _transform.position + up * 0.2f;
+       Vector3 originMid = _transform.position + up * 0.5f;
 
     if (Physics.Raycast(originLow, forward, out RaycastHit hitLow, ObstacleCheckDistance))
             {
@@ -136,11 +139,11 @@ _stuckCheckStartPos = transform.position;
 
  if (!hitMid)
       {
-           float obstacleHeight = hitLow.point.y - _transform.position.y;
+           float obstacleHeight = FiresCore.World.GravityUp.UpComponent(hitLow.point - _transform.position, _transform.position);
        if (obstacleHeight > 0.3f && obstacleHeight <= MaxJumpableHeight)
    {
-            Vector3 topCheck = hitLow.point + Vector3.up * MaxJumpableHeight;
-   if (!Physics.Raycast(topCheck, Vector3.down, MaxJumpableHeight * 0.5f))
+            Vector3 topCheck = hitLow.point + up * MaxJumpableHeight;
+   if (!Physics.Raycast(topCheck, -up, MaxJumpableHeight * 0.5f))
     {
            return true;
       }
@@ -156,11 +159,10 @@ _stuckCheckStartPos = transform.position;
         /// </summary>
         public bool ShouldJumpToFollowOwner(Vector3 ownerPosition)
   {
-            float heightDiff = ownerPosition.y - _transform.position.y;
-  float horizontalDist = Vector3.Distance(
-      new Vector3(_transform.position.x, 0, _transform.position.z),
-         new Vector3(ownerPosition.x, 0, ownerPosition.z)
-        );
+            float heightDiff = FiresCore.World.GravityUp.UpComponent(ownerPosition - _transform.position, _transform.position);   // halo ring: along the local up
+  float horizontalDist = FiresCore.World.GravityUp.InField(_transform.position)
+      ? FiresCore.World.GravityUp.Flat(ownerPosition - _transform.position, _transform.position).magnitude
+      : Vector3.Distance(new Vector3(_transform.position.x, 0, _transform.position.z), new Vector3(ownerPosition.x, 0, ownerPosition.z));
 
      return heightDiff > MinOwnerHeightDiffForJump &&
              heightDiff <= MaxJumpableHeight &&
@@ -176,7 +178,7 @@ _stuckCheckStartPos = transform.position;
         }
 
         /// <summary>
-        /// Executes a jump through vanilla Character.Jump (0.2.322, Fire's vanilla-method rule): it plays the jump and applies
+        /// Executes a jump through vanilla Character.Jump: it plays the jump and applies
         /// the creature's own m_jumpForce / m_jumpForceForward, as for any vanilla jumper. JumpForce and JumpForwardBoost are
         /// no longer used (vanilla's values apply). 1.0 Character.Jump pulls the local player's grappling hook when the
         /// jumper is airborne or attacking, so it only runs grounded and not attacking.

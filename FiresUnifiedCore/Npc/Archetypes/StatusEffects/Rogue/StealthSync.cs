@@ -5,8 +5,8 @@ using UnityEngine;
 namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
 {
     /// <summary>
-    /// Stealth that every peer sees (Fire, R49 stream: an invisible player was hidden only on their own screen). A status
-    /// effect lives only on its owner (Core 0.2.138), so StealthEffect writes its alpha to the character's ZDO; this
+    /// Stealth that every peer sees (otherwise an invisible player is hidden only on their own screen). A status
+    /// effect lives only on its owner, so StealthEffect writes its alpha to the character's ZDO; this
     /// watcher, on every peer, ghosts each other character carrying it with the same CharacterVisibilityController the
     /// owner uses, and puts it back when the value clears. The HUD (EnemyHud hooks in CompanionPatches) and creature AI
     /// (ClassTargeting's IsEnemy hook) read <see cref="IsStealthed"/>.
@@ -44,7 +44,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
             return zdo != null ? zdo.GetFloat(ZdoHash, 0f) : 0f;
         }
 
-        // BaseAI.IsEnemy asks for every AI against every candidate, many times a second ([generator]): a set the sweep keeps,
+        // BaseAI.IsEnemy asks for every AI against every candidate, many times a second: a set the sweep keeps,
         // no GetComponent or ZDO read per call. Up to one sweep (0.25 s) behind the ZDO.
         private static readonly HashSet<Character> s_stealthed = new HashSet<Character>();
 
@@ -99,7 +99,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
                     continue;
                 }
 
-                // Fire (2026-09-28): the party sees a ghost, everyone else sees nothing.
+                // the party sees a ghost, everyone else sees nothing.
                 bool ghost = local != null && ClassTargeting.IsPartyMember(local, character);
                 if (tracked && _asGhost.TryGetValue(character, out bool wasGhost) && wasGhost == ghost) continue;
                 if (tracked) controller.Restore();
@@ -126,6 +126,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
         /// </summary>
         public static bool HidesHudFor(Character character)
         {
+            // hot path (EnemyHud.TestShow postfix, ~1k calls/s): nobody stealthed is the common case; answer it before
+            // any Unity null/equality check (those cross into native code)
+            if (s_stealthed.Count == 0) return false;
             if (character == null || character == Player.m_localPlayer || !IsStealthed(character)) return false;
             Player local = Player.m_localPlayer;
             return local == null || !ClassTargeting.IsPartyMember(local, character);

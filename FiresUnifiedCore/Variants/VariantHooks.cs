@@ -5,7 +5,7 @@ using UnityEngine;
 namespace FiresCore.Variants
 {
     /// <summary>
-    /// Attack FX follow a variant's colour (Fire 10-08: "the tint of the emission also determines the color of its attack fx").
+    /// Attack FX follow a variant's colour (the tint of the emission also determines the colour of its attack fx).
     /// Three paths, all with a cheap early-out (VariantFx.Any: no variant on this client = one bool check, no allocation):
     /// - EffectList.Create: an effect created with a tinted character (or anything under it) as its parent is recoloured on the
     ///   spot. Every peer runs these locally, and every peer has the variant applied (it rides the ZDO), so remote players see

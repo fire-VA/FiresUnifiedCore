@@ -186,12 +186,12 @@ namespace FiresCore.Npc
                 Invoke(nameof(RestoreModelStateFromZDO), 1.5f);
             }
 
-            // 0.2.266: keep at it until the companion carries a real name, whichever peer owns it (see NameWatch).
+            // Keep at it until the companion carries a real name, whichever peer owns it (see NameWatch).
             _nameWatchUntil = Time.time + NameWatchSeconds;
             InvokeRepeating(nameof(NameWatch), 4f, 2f);   // after a wild spawn's own loadout (3.5 s) has had its turn
         }
 
-        // ── 0.2.266 (Fire's popup: "Core names them at spawn"; HR1's recruits all read "CompanionNpc_Wild") ─────────────────────────
+        // ── Naming at spawn ─────────────────────────
         // A companion's name lives on its ZDO ("companion_name", every peer reads it). Only the ZDO owner names it (at load, 0.7 s, or in
         // GenerateRandomLoadout), and with ownership moving between peers that moment could pass with nobody naming it, or a peer keep the
         // placeholder it loaded with. Every 2 s for NameWatchSeconds while the name is still a placeholder: a real name already on the ZDO
@@ -202,7 +202,7 @@ namespace FiresCore.Npc
         private const float NameWatchSeconds = 120f, NameUniqueRadius = 100f;
         private float _nameWatchUntil;
 
-        /// <summary>0.2.266: the default names a companion carries before it is named (the prefab's, CompanionPrefabManager's).</summary>
+        /// <summary>The default names a companion carries before it is named (the prefab's, CompanionPrefabManager's).</summary>
         public static bool IsPlaceholderName(string name) =>
             string.IsNullOrEmpty(name) || name == "CompanionNpc" || name == "CompanionNpc_Wild" || name == "Companion NPC" || name == "Companion";
 
@@ -353,7 +353,7 @@ namespace FiresCore.Npc
                 string hairColorStr = FiresCore.Bridge.NpcFashionBridge.ColorToString(_hairColor);
                 FiresCore.Bridge.NpcFashionBridge.ApplyHair(gameObject, savedHair, hairColorStr);
                 string savedBeardForGender = _isFemale ? null : savedBeard;
-                // 0.2.368: an independent beard colour when one is stored, else the hair colour (vanilla)
+                // An independent beard colour when one is stored, else the hair colour (vanilla)
                 bool ownBeard = CompanionAppearanceService.TryReadBeardColor(zdo, out Color beardColor);
                 string beardColorStr = ownBeard ? FiresCore.Bridge.NpcFashionBridge.ColorToString(beardColor) : hairColorStr;
                 FiresCore.Bridge.NpcFashionBridge.ApplyBeard(gameObject, savedBeardForGender, beardColorStr);
@@ -750,7 +750,7 @@ namespace FiresCore.Npc
         }
         
         /// <summary>
-        /// 0.2.357: re-applies the stored look (styles, colours, model, scale) after its ZDO changed, e.g. a barber
+        /// Re-applies the stored look (styles, colours, model, scale) after its ZDO changed, e.g. a barber
         /// change. Same restore path as a load; the scale is applied even when it went back to 1.0.
         /// </summary>
         public void RefreshAppearanceFromZDO()
@@ -854,7 +854,7 @@ namespace FiresCore.Npc
                 isFemale = UnityEngine.Random.value < 0.5f;
                 vikingName = GetRandomVikingName(_isGiant, _isDwarf, isFemale);
             }
-            // 0.2.266: no two companions within NameUniqueRadius m share a name (the faction pool is seeded per ZDO, so re-roll from the generic one).
+            // No two companions within NameUniqueRadius m share a name (the faction pool is seeded per ZDO, so re-roll from the generic one).
             for (int tries = 0; tries < 8 && NameTakenNearby(vikingName); tries++) vikingName = GetRandomVikingName(_isGiant, _isDwarf, isFemale);
             _companion.companionName = vikingName;
             _companion.UpdateCharacterName(vikingName);
@@ -1227,7 +1227,7 @@ namespace FiresCore.Npc
         // fillEmpty: on the OWNER, a style that was never saved ('' - not the explicit `none`, which stays) gets the same
         // deterministic pick, written back so every peer shows it (a non-owner may read the ZDO before the owner's first roll). A
         // companion whose ZDO never got hair came back bald on every load, and a female one never re-rolled (her saved gender
-        // counts as "appearance already generated"); Fire, 2026-09-29: companions are supposed to have hair.
+        // counts as "appearance already generated"); companions are supposed to have hair.
         private string ValidSavedStyle(ZDO zdo, string zdoKey, string saved, List<string> styles, string none, bool fillEmpty = false)
         {
             if (IsBarberStyle(saved) || (string.IsNullOrEmpty(saved) && !(fillEmpty && IsOwner()))) return saved;

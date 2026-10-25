@@ -19,7 +19,7 @@ namespace FiresCore.Npc
         private static int Hash(string name) =>
             string.IsNullOrEmpty(name) ? 0 : name.GetStableHashCode();
 
-        // 0.2.332: the overload is found by name, not by one fixed signature. Valheim 1.0 (live) has SetRightItem /
+        // The overload is found by name, not by one fixed signature. Valheim 1.0 (live) has SetRightItem /
         // SetRightItemVisual / SetRightBackItem (int itemHash, int quality) and SetLeftItem / SetLeftBackItem /
         // SetShoulderItem (int itemHash, int variant, int quality); the old lookups asked for (int) and (int, int), found
         // nothing, and returned silently, so a companion's hand, back and shoulder items were never drawn on 1.0.
@@ -57,7 +57,7 @@ namespace FiresCore.Npc
 
         // 2-arg forms: the right-hand family takes (hash, quality) on 1.0; the left/shoulder family took (hash, variant)
         // before 1.0. 3-arg forms are (hash, variant, quality). Quality 0 = vanilla VisEquipment.SetItem's default.
-        // 0.2.388 (Fire's log 10-10: NullReferenceException at VisEquipment.SetRightBackItem 0x18 from CompanionController.Start):
+        // NullReferenceException at VisEquipment.SetRightBackItem from CompanionController.Start:
         // every vanilla Set*Item stores the new hash and THEN reads m_nview.GetZDO(). m_nview is set in VisEquipment.Awake, so a
         // call before that Awake throws after stamping the hash, and the next call with the same item returns early and never
         // reaches the ZDO. Until the body's VisEquipment is awake nothing is called; callers retry on their next redraw.
@@ -145,6 +145,35 @@ namespace FiresCore.Npc
             method.Invoke(dst, new[] { value });
         }
 
+        // fires_attachfit_reload: zeroes the armour slots' m_current*ItemHash so the next vanilla UpdateEquipmentVisuals
+        // sees "changed", destroys the old instances and attaches them again from the ZDO hashes (which are not touched). Field or
+        // property, whichever this build has. Returns how many slots held an item.
+        private static readonly string[] s_armorCurrent =
+            { "m_currentHelmetItemHash", "m_currentChestItemHash", "m_currentLegItemHash", "m_currentShoulderItemHash" };
+
+        internal static int ResetArmorHashes(VisEquipment vis)
+        {
+            if (vis == null) return 0;
+            int n = 0;
+            foreach (var name in s_armorCurrent)
+            {
+                try
+                {
+                    var f = AccessTools.Field(typeof(VisEquipment), name);
+                    if (f != null && f.FieldType == typeof(int))
+                    {
+                        if ((int)f.GetValue(vis) != 0) { f.SetValue(vis, 0); n++; }
+                        continue;
+                    }
+                    var p = AccessTools.Property(typeof(VisEquipment), name);
+                    if (p != null && p.PropertyType == typeof(int) && p.CanRead && p.CanWrite && (int)p.GetValue(vis, null) != 0)
+                    { p.SetValue(vis, 0, null); n++; }
+                }
+                catch (Exception ex) { FiresCore.Logging.FiresLogger.LogDebug($"[VisEquipmentCompat] reset {name} on '{vis.name}' failed: {ex.Message}"); }
+            }
+            return n;
+        }
+
         public static void CopyHairItem(VisEquipment src, VisEquipment dst)
             => CopyTypeShiftedField(src, dst, "m_hairItem", "SetHairItem");
 
@@ -165,7 +194,7 @@ namespace FiresCore.Npc
             {
                 if (_itemFieldCache.TryGetValue(fieldName, out var cached)) return cached;
                 var field = AccessTools.Field(typeof(VisEquipment), fieldName);
-                // 0.2.332: Valheim 1.0's backing fields are int item hashes (m_rightItem etc.); only string fields were
+                // Valheim 1.0's backing fields are int item hashes (m_rightItem etc.); only string fields were
                 // accepted, so on 1.0 every mannequin slot came out empty.
                 if (field != null && field.FieldType != typeof(string) && field.FieldType != typeof(int)) field = null;
                 _itemFieldCache[fieldName] = field;

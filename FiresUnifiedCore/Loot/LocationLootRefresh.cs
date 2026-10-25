@@ -11,7 +11,7 @@ using UnityEngine;
 namespace FiresCore.Loot
 {
     /// <summary>
-    /// 0.2.309 (Fire 10-06): locations, dungeons and caves refresh their loot after a set number of in-game days. Off by default.
+    /// Locations, dungeons and caves refresh their loot after a set number of in-game days. Off by default.
     /// Only what the WORLD placed there counts: a Container or a one-shot Pickable whose ZDO has no creator, inside a Location or
     /// dungeon (Location.GetLocation(pos, true)); never player-built chests, tombstones, carts, ships, player-planted crops, or
     /// pickables vanilla already respawns (m_respawnTimeMinutes > 0).
@@ -49,14 +49,14 @@ namespace FiresCore.Loot
         {
             s_enabled = config.Bind("Loot", "Location loot refresh", false,
                 "SERVER. Chests and one-shot pickables that the world placed in locations, dungeons and caves come back after 'Refresh after days': "
-                + "a partly looted chest is refilled with a fresh roll, an emptied one removes itself and respawns, a picked item reappears. "
+                + "a partly looted chest is refilled with a fresh roll, an emptied one removes itself and respawns, a picked item reappears, a broken mud pile or location spawner (crypt draugr piles and the like) is rebuilt. "
                 + "Never player-built chests, tombstones, carts, ships or planted crops.");
             s_days = config.Bind("Loot", "Refresh after days", 7, "SERVER. In-game days before looted location loot comes back.");
             s_range = config.Bind("Loot", "No refresh within metres", 40f, "SERVER. Nothing is refilled or respawned while a player is this close.");
             configSync?.AddConfigEntry(s_enabled);
             configSync?.AddConfigEntry(s_days);
             configSync?.AddConfigEntry(s_range);
-            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Loot, true, s_enabled, s_days, s_range);   // 0.2.387: FAP or FAT
+            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Loot, true, s_enabled, s_days, s_range);   // FAP or FAT
         }
 
         // ── time and players ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ namespace FiresCore.Loot
 
         internal static bool PlayerNear(Vector3 p) => PlayerNear(p, Range);
 
-        // 0.2.316: a per-object range (a FAP stand preset's own distance); 0 or less = no player check at all.
+        // A per-object range (a FAP stand preset's own distance); 0 or less = no player check at all.
         internal static bool PlayerNear(Vector3 p, float range)
         {
             if (range <= 0f) return false;
@@ -119,23 +119,31 @@ namespace FiresCore.Loot
         private static readonly AccessTools.FieldRef<Pickable, ZNetView> PickableView = AccessTools.FieldRefAccess<Pickable, ZNetView>("m_nview");
         private static readonly System.Reflection.MethodInfo AddDefaultItems = AccessTools.Method(typeof(Container), "AddDefaultItems");
 
+        // A FAP preset chest handed to EWP carries "va_chest" = 1 (FAP 1.1.214; 0, and 2 from older FAP, are the Core route). EWP owns its respawn, so Core never
+        // counts it as location loot and never tracks it: no double handling.
+        private static readonly int FapEwpChestKey = "va_chest".GetStableHashCode();
+        internal static bool OwnedByEwp(ZDO zdo) => zdo != null && zdo.GetInt(FapEwpChestKey, 0) == 1;   // 1 = EWP; 0 and FAP<1.1.214's 2 = Core route
+
         private static bool Counts(Container c, ZNetView view, out string location)
         {
             location = null;
-            if (!WorldPlaced(view)) return false;
+            bool stamped = FiresCore.World.LocationReset.Stamped(view?.GetZDO(), out string resetKind);   // An FDM room's child
+            if (!stamped && !WorldPlaced(view)) return false;
+            if (OwnedByEwp(view.GetZDO())) return false;
             if (c.m_defaultItems == null || c.m_defaultItems.m_drops == null || c.m_defaultItems.m_drops.Count == 0) return false;
             if (c.m_autoDestroyEmpty && !view.GetZDO().GetBool(RegisteredKey)) return false;   // vanilla's own crates (cargo) stay vanilla's
             if (c.m_wagon != null || c.GetComponentInParent<Ship>() != null || c.GetComponent<TombStone>() != null) return false;
-            location = LocationOf(c.transform.position);
+            location = stamped ? resetKind : LocationOf(c.transform.position);
             return location != null;
         }
 
         private static bool Counts(Pickable p, ZNetView view, out string location)
         {
             location = null;
-            if (p.m_respawnTimeMinutes > 0f || !WorldPlaced(view)) return false;
+            bool stamped = FiresCore.World.LocationReset.Stamped(view?.GetZDO(), out string resetKind);   // An FDM room's child
+            if (p.m_respawnTimeMinutes > 0f || (!stamped && !WorldPlaced(view))) return false;
             if (IsGrownCrop(PrefabName(view))) return false;
-            location = LocationOf(p.transform.position);
+            location = stamped ? resetKind : LocationOf(p.transform.position);
             return location != null;
         }
 
@@ -151,7 +159,7 @@ namespace FiresCore.Loot
                 {
                     ZNetView view = ContainerView(__instance);
                     if (view == null || !view.IsValid() || !view.IsOwner()) return;
-                    // 0.2.311: a chest another mod tracked (LootRespawn.Track: FAP's preset chests) respawns whatever the toggle says.
+                    // A chest another mod tracked (LootRespawn.Track: FAP's preset chests) respawns whatever the toggle says.
                     if (view.GetZDO().GetInt(LootRespawn.TrackKey, 0) == 1) { LootRespawn.TrackedContainerTick(__instance, view); return; }
                     if (!Enabled) return;
                     if (!Counts(__instance, view, out string location)) return;
@@ -175,7 +183,7 @@ namespace FiresCore.Loot
                     if (n == 0 && !__instance.IsInUse() && !zdo.GetBool(RegisteredKey))
                     {
                         zdo.Set(RegisteredKey, true);
-                        SendRegister(prefab, p, __instance.transform.rotation, looted >= 0 ? looted : Today, "chest", location);
+                        SendRegister(prefab, p, __instance.transform.rotation, looted >= 0 ? looted : Today, "chest", location, zdo);
                         __instance.m_autoDestroyEmpty = true;   // vanilla's CheckForChanges removes it on its next poll (FAP's path)
                         return;
                     }
@@ -217,7 +225,48 @@ namespace FiresCore.Loot
                         s_picked.Add(__instance);
                         FiresCore.Logging.FiresLogger.LogDebug($"{Tag}{prefab} at ({p.x:0},{p.z:0}) in {location} picked on day {Today}");
                     }
-                    else SendRegister(prefab, p, __instance.transform.rotation, Today, "pickable", location);   // vanilla destroys it next
+                    else SendRegister(prefab, p, __instance.transform.rotation, Today, "pickable", location, view.GetZDO());   // vanilla destroys it next
+                }
+                catch (Exception ex) { Debug.LogWarning(Tag + ex.Message); }
+            }
+        }
+
+        // ── broken location resources and spawners (the owner) ─────────────────────────────────────────────────────────────
+        // Crypt mud piles (mudpile, mudpile2, mudpile_beacon, mudpile_old; Destructible) and the spawners
+        // players break in locations and dungeons (a Destructible carrying a SpawnArea or CreatureSpawner, e.g. Spawner_DraugrPile)
+        // come back like location chests and pickables: the original prefab at its original spot and rotation (interiors at
+        // y > 5000 too), after 'Refresh after days', never with a player inside 'No refresh within metres'. Vegetation nests
+        // outside any location stay vanilla's (LocationOf finds no location for them).
+        private static readonly AccessTools.FieldRef<Destructible, ZNetView> DestructibleView = AccessTools.FieldRefAccess<Destructible, ZNetView>("m_nview");
+
+        internal static bool CountsDestructible(Destructible d, ZNetView view, out string location)
+        {
+            location = null;
+            bool stamped = FiresCore.World.LocationReset.Stamped(view?.GetZDO(), out string resetKind);   // An FDM room's child
+            if (d == null || (!stamped && !WorldPlaced(view))) return false;
+            string prefab = PrefabName(view);
+            bool mudPile = prefab.StartsWith("mudpile", StringComparison.OrdinalIgnoreCase) && !prefab.EndsWith("_frac", StringComparison.OrdinalIgnoreCase);
+            bool spawner = d.GetComponent<SpawnArea>() != null || d.GetComponent<CreatureSpawner>() != null;
+            if (!mudPile && !spawner) return false;
+            location = stamped ? resetKind : LocationOf(d.transform.position);
+            return location != null;
+        }
+
+        [HarmonyPatch(typeof(Destructible), nameof(Destructible.Destroy))]
+        private static class Destructible_Destroy_LootRefresh
+        {
+            private static void Prefix(Destructible __instance)
+            {
+                if (!Enabled || __instance == null) return;
+                try
+                {
+                    ZNetView view = DestructibleView(__instance);
+                    if (view == null || !view.IsValid() || !view.IsOwner()) return;
+                    if (!CountsDestructible(__instance, view, out string location)) return;
+                    Vector3 p = __instance.transform.position;
+                    string prefab = PrefabName(view);
+                    FiresCore.Logging.FiresLogger.LogDebug($"{Tag}{prefab} broken at ({p.x:0},{p.y:0},{p.z:0}) in {location} on day {Today} (zdo {view.GetZDO().m_uid})");
+                    SendRegister(prefab, p, __instance.transform.rotation, Today, "destructible", location, view.GetZDO());
                 }
                 catch (Exception ex) { Debug.LogWarning(Tag + ex.Message); }
             }
@@ -263,31 +312,52 @@ namespace FiresCore.Loot
             public Vector3 Pos;
             public Quaternion Rot;
             public int Day;
-            // 0.2.311, a LootRespawn.Track record: due at an in-game second, its own duplicate radius, whether Core rolls the
+            // A LootRespawn.Track record: due at an in-game second, its own duplicate radius, whether Core rolls the
             // default loot, and the tracking owner's ZDO keys to carry onto the new object ("name\ttype\tvalue" each).
             public bool Tracked;
             public double DueSeconds = -1;
             public float Radius = DuplicateRadius;
             public bool Defaults = true;
             public List<string> Carry = new List<string>();
+            // A tracked chest's own "no player within" metres, from
+            // its "fires_loot_range" ZDO key. 0 = no player check; -1 = the [Loot] "No refresh within metres" setting.
+            public float PlayerRange = -1f;
         }
 
         private static readonly List<Record> s_records = new List<Record>();
+        private const float RegisterReach = 256f;           // a client reports loot within its loaded area
+        private const int MaxRegistersPerPeer = 4000, MaxRecords = 50000;
+        private static readonly Dictionary<long, int> s_registeredBy = new Dictionary<long, int>();
         private static string s_registryWorld;
 
         private static void SendRegister(string prefab, Vector3 pos, Quaternion rot, int day, string kind, string location)
             => SendRegister(new Record { Prefab = prefab, Pos = pos, Rot = rot, Day = day, Kind = kind, Location = location });
 
+        // An FDM room child's reset stamp rides on the record, so the respawned copy is still that room's.
+        private static void SendRegister(string prefab, Vector3 pos, Quaternion rot, int day, string kind, string location, ZDO source)
+        {
+            var r = new Record { Prefab = prefab, Pos = pos, Rot = rot, Day = day, Kind = kind, Location = location };
+            string carry = FiresCore.World.LocationReset.CarryEntry(source);
+            if (carry != null) r.Carry.Add(carry);
+            SendRegister(r);
+        }
+
         internal static void SendRegister(Record r)
         {
             if (ZNet.instance == null) return;
-            if (ZNet.instance.IsServer()) { AddRecord(r); return; }
+            if (ZNet.instance.IsServer())
+            {
+                if (r.Kind == RespawnMarks.Kind && !RespawnMarks.ServerAccept(r, ZDOMan.GetSessionID())) return;   // the host's own path checks the mark too
+                AddRecord(r);
+                return;
+            }
             if (ZRoutedRpc.instance == null) return;
             var pkg = new ZPackage();
             pkg.Write(r.Prefab); pkg.Write(r.Pos); pkg.Write(r.Rot); pkg.Write(r.Day); pkg.Write(r.Kind); pkg.Write(r.Location ?? "");
-            pkg.Write(r.Tracked); pkg.Write(r.DueSeconds); pkg.Write(r.Radius); pkg.Write(r.Defaults);   // 0.2.311 tail
+            pkg.Write(r.Tracked); pkg.Write(r.DueSeconds); pkg.Write(r.Radius); pkg.Write(r.Defaults);   // tracked-record tail
             pkg.Write(r.Carry.Count);
             foreach (string c in r.Carry) pkg.Write(c);
+            pkg.Write(r.PlayerRange);   // player-range tail
             ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.instance.GetServerPeerID(), RegisterRpc, pkg);
         }
 
@@ -297,13 +367,38 @@ namespace FiresCore.Loot
             try
             {
                 var r = new Record { Prefab = pkg.ReadString(), Pos = pkg.ReadVector3(), Rot = pkg.ReadQuaternion(), Day = pkg.ReadInt(), Kind = pkg.ReadString(), Location = pkg.ReadString() };
-                if (pkg.GetPos() < pkg.Size())   // a 0.2.311+ sender
+                if (pkg.GetPos() < pkg.Size())   // a sender with the tracked-record tail
                 {
                     r.Tracked = pkg.ReadBool(); r.DueSeconds = pkg.ReadDouble(); r.Radius = pkg.ReadSingle(); r.Defaults = pkg.ReadBool();
                     int n = pkg.ReadInt();
                     for (int i = 0; i < n && i < 64; i++) r.Carry.Add(pkg.ReadString());
+                    if (pkg.GetPos() < pkg.Size()) r.PlayerRange = pkg.ReadSingle();   // a sender with the player-range tail; older ones stay -1
                 }
-                if (ZNetScene.instance == null || ZNetScene.instance.GetPrefab(r.Prefab) == null) return;   // only known prefabs
+                GameObject known = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(r.Prefab) : null;
+                if (known == null) return;   // only known prefabs
+                // An admin "respawn when destroyed" record: only with the server's OWN mark (RespawnMarks), which also sets its time
+                // and carried keys. The ZDO keys a client owns are never trusted for this.
+                if (r.Kind == RespawnMarks.Kind)
+                {
+                    ZNetPeer markPeer = ZNet.instance.GetPeer(sender);
+                    Vector3 markFrom = markPeer != null ? markPeer.m_refPos : r.Pos + Vector3.one * 1e6f;
+                    if (Mathf.Max(Mathf.Abs(markFrom.x - r.Pos.x), Mathf.Abs(markFrom.z - r.Pos.z)) > RegisterReach) { FiresCore.Logging.FiresLogger.LogDebug($"[Respawn] refused register from {sender}: {r.Prefab} is {Vector3.Distance(markFrom, r.Pos):0} m from that player"); return; }
+                    if (!RespawnMarks.ServerAccept(r, sender)) return;
+                    AddRecord(r);
+                    return;
+                }
+                // only what this system refreshes: chests, pickables and destructibles, never creatures or player pieces
+                if ((known.GetComponent<Container>() == null && known.GetComponent<Pickable>() == null && known.GetComponent<Destructible>() == null && known.GetComponent<PickableItem>() == null)
+                    || known.GetComponent<Character>() != null)
+                { FiresCore.Logging.FiresLogger.LogDebug($"{Tag}register from {sender} dropped: {r.Prefab} is not a refreshable chest / pickable / destructible"); return; }
+                r.Carry.RemoveAll(c => { string k = c.Split('\t')[0]; return !k.StartsWith("fires_", StringComparison.Ordinal); });   // only our own ZDO keys ride along
+                // a client registers what it sees around itself, and only so many per session; the registry has a total cap too
+                ZNetPeer peer = ZNet.instance.GetPeer(sender);
+                Vector3 from = peer != null ? peer.m_refPos : (sender == ZDOMan.GetSessionID() && Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : r.Pos + Vector3.one * 1e6f);
+                if (Mathf.Max(Mathf.Abs(from.x - r.Pos.x), Mathf.Abs(from.z - r.Pos.z)) > RegisterReach) { FiresCore.Logging.FiresLogger.LogDebug($"{Tag}register from {sender} dropped: {r.Prefab} is {Vector3.Distance(from, r.Pos):0} m from that player"); return; }
+                s_registeredBy.TryGetValue(sender, out int sent);
+                if (sent >= MaxRegistersPerPeer || s_records.Count >= MaxRecords) { if (sent == MaxRegistersPerPeer) FiresCore.Logging.FiresLogger.LogDebug($"{Tag}register from {sender} dropped: cap reached ({MaxRegistersPerPeer} per session, {MaxRecords} total)"); s_registeredBy[sender] = sent + 1; return; }
+                s_registeredBy[sender] = sent + 1;
                 AddRecord(r);
             }
             catch (Exception ex) { Debug.LogWarning(Tag + "register: " + ex.Message); }
@@ -349,13 +444,14 @@ namespace FiresCore.Loot
                         Pos = new Vector3(float.Parse(f[1], inv), float.Parse(f[2], inv), float.Parse(f[3], inv)),
                         Rot = new Quaternion(float.Parse(f[4], inv), float.Parse(f[5], inv), float.Parse(f[6], inv), float.Parse(f[7], inv)),
                         Day = int.Parse(f[8], inv), Kind = f[9], Location = f[10],
-                        // 0.2.311 tail (older lines have none): tracked | due second | radius | defaults | carried keys (\u001e between)
+                        // Tracked-record tail (older lines have none): tracked | due second | radius | defaults | carried keys (\u001e between)
                         Tracked = f.Length > 11 && f[11] == "1",
                         DueSeconds = f.Length > 12 ? double.Parse(f[12], inv) : -1,
                         Radius = f.Length > 13 ? float.Parse(f[13], inv) : DuplicateRadius,
                         Defaults = f.Length <= 14 || f[14] == "1",
                         Carry = f.Length > 15 && f[15].Length > 0
                             ? f[15].Split('\u001e').Select(b => Encoding.UTF8.GetString(Convert.FromBase64String(b))).ToList() : new List<string>(),
+                        PlayerRange = f.Length > 16 ? float.Parse(f[16], inv) : -1f,   // older lines: the setting
                     });
                 }
                 catch { }
@@ -378,10 +474,44 @@ namespace FiresCore.Loot
                         r.Day.ToString(inv), r.Kind, (r.Location ?? "").Replace("|", "/"),
                         r.Tracked ? "1" : "0", r.DueSeconds.ToString("R", inv), r.Radius.ToString("R", inv), r.Defaults ? "1" : "0",
                         // carried values are a mod's own data (FAP's loot JSON): base64, so no '|' or line break can break the line
-                        string.Join("\u001e", r.Carry.Select(c => Convert.ToBase64String(Encoding.UTF8.GetBytes(c))).ToArray()) })).Append('\n');
+                        string.Join("\u001e", r.Carry.Select(c => Convert.ToBase64String(Encoding.UTF8.GetBytes(c))).ToArray()),
+                        r.PlayerRange.ToString("R", inv) })).Append('\n');
                 File.WriteAllText(path, sb.ToString());
             }
             catch (Exception ex) { Debug.LogWarning(Tag + "registry save failed: " + ex.Message); }
+        }
+
+        // Test SHORTCUT: `fires_lootrefresh_due` (admin) treats every waiting record as due for the next 120 s, so a
+        // test needn't wait in-game days. The player range, the zone check and the toggle still apply. Logged as SHORTCUT.
+        internal const string DueRpc = "FiresCore_LootRefresh_Due";
+        private static float s_dueUntil = -1f;
+
+        private static void RPC_Due(long sender, ZPackage pkg)
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (!FiresCore.Possession.PossessionServer.IsAdmin(sender)) { FiresCore.Logging.FiresLogger.LogDebug($"{Tag}fires_lootrefresh_due refused: peer {sender} is not an admin"); return; }
+            s_dueUntil = Time.time + 120f;
+            LoadRegistry();
+            FiresCore.Logging.FiresLogger.LogDebug($"{Tag}SHORTCUT fires_lootrefresh_due: {s_records.Count} waiting record(s) count as due for 120 s (player range and zone rules still apply)");
+        }
+
+        [HarmonyPatch(typeof(Terminal), "InitTerminal")]
+        private static class LootRefresh_InitTerminal
+        {
+            private static bool s_done;
+            private static void Postfix()
+            {
+                if (s_done) return;
+                s_done = true;
+                new Terminal.ConsoleCommand("fires_lootrefresh_due",
+                    "[FiresUnifiedCore] fires_lootrefresh_due - TEST SHORTCUT (admin): every waiting location/tracked loot record counts as due for 120 s.",
+                    args =>
+                    {
+                        if (ZRoutedRpc.instance == null) { args.Context?.AddString("fires_lootrefresh_due: not in a world"); return; }
+                        ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.instance.GetServerPeerID(), DueRpc, new ZPackage());
+                        args.Context?.AddString("fires_lootrefresh_due: sent to the server (see the server log for the SHORTCUT line)");
+                    });
+            }
         }
 
         private static void ServerTick()
@@ -393,23 +523,29 @@ namespace FiresCore.Loot
             double nowSeconds = ZNet.instance != null ? ZNet.instance.GetTimeSeconds() : 0;
             foreach (Record r in s_records.ToList())
             {
-                if (r.Tracked ? nowSeconds < r.DueSeconds : today - r.Day < Days) continue;
+                bool dueNow = Time.time < s_dueUntil;   // test SHORTCUT
+                if (!dueNow && (r.Tracked ? nowSeconds < r.DueSeconds : today - r.Day < Days)) continue;
                 if (!r.Tracked && !Enabled) continue;   // world location loot waits while the toggle is off; tracked ones never do
-                if (!ZoneSystem.instance.IsZoneLoaded(r.Pos) || PlayerNear(r.Pos)) continue;
+                // A tracked chest uses its own range when its owner mod set one (0 = no check); location loot stays on [Loot].
+                float near = r.Tracked && r.PlayerRange >= 0f ? r.PlayerRange : Range;
+                if (!ZoneSystem.instance.IsZoneLoaded(r.Pos) || PlayerNear(r.Pos, near)) continue;
+                // a seed deposit (no player-near rule) only regrows into a clear spot: no character standing in it
+                if (r.Kind == RespawnMarks.Kind && r.PlayerRange == 0f && Character.GetAllCharacters().Any(ch => ch != null && !ch.IsDead() && Vector3.Distance(ch.transform.position, r.Pos) < 2f)) continue;
                 GameObject prefab = ZNetScene.instance.GetPrefab(r.Prefab);
                 s_records.Remove(r);
                 changed = true;
                 if (prefab == null) continue;
                 if (DuplicateAt(r)) { FiresCore.Logging.FiresLogger.LogDebug($"{Tag}{r.Prefab} at ({r.Pos.x:0},{r.Pos.z:0}) already there: record dropped"); continue; }
                 Respawn(r);
+                if (r.Kind == RespawnMarks.Kind) FiresCore.Logging.FiresLogger.LogDebug($"[Respawn] {r.Prefab} at ({r.Pos.x:0},{r.Pos.z:0}): respawned");
                 FiresCore.Logging.FiresLogger.LogDebug(r.Tracked
                     ? $"{Tag}tracked {r.Prefab} at ({r.Pos.x:0},{r.Pos.z:0}) respawned ({r.Carry.Count} key(s) carried, default loot {(r.Defaults ? "rolled" : "left to its owner mod")})"
-                    : $"{Tag}{r.Prefab} at ({r.Pos.x:0},{r.Pos.z:0}) in {r.Location} respawned after {today - r.Day} days");
+                    : $"{Tag}{r.Prefab} ({r.Kind}) at ({r.Pos.x:0},{r.Pos.y:0},{r.Pos.z:0}) in {r.Location} respawned after {today - r.Day} days");
             }
             if (changed) SaveRegistry();
         }
 
-        // 0.2.311: vanilla's own order (ZNetScene.CreateObject): the ZDO first, its fields set, then ZNetScene's normal pass
+        // Vanilla's own order (ZNetScene.CreateObject): the ZDO first, its fields set, then ZNetScene's normal pass
         // instantiates it, so every Awake already sees the carried keys. A tracked chest that leaves the loot to its owner mod
         // gets addedDefaultItems set first, so vanilla's AddDefaultItems doesn't roll on top of it.
         private static void Respawn(Record r)
@@ -424,6 +560,7 @@ namespace FiresCore.Loot
                 if (!r.Defaults) zdo.Set(ZDOVars.s_addedDefaultItems, true);
                 LootRespawn.StampTrack(zdo, r);
             }
+            else foreach (string c in r.Carry) LootRespawn.ApplyCarried(zdo, c);   // An untracked record's carried keys (the FDM room stamp)
         }
 
         private static bool DuplicateAt(Record r)
@@ -446,7 +583,7 @@ namespace FiresCore.Loot
                 s_registryWorld = null;
                 s_records.Clear();
                 s_picked.Clear();
-                if (ZRoutedRpc.instance != null) ZRoutedRpc.instance.Register<ZPackage>(RegisterRpc, RPC_Register);
+                if (ZRoutedRpc.instance != null) { ZRoutedRpc.instance.Register<ZPackage>(RegisterRpc, RPC_Register); ZRoutedRpc.instance.Register<ZPackage>(DueRpc, RPC_Due); }
                 if (Runner.Instance == null) new GameObject("FiresLootRefresh").AddComponent<Runner>();
             }
         }
@@ -461,12 +598,12 @@ namespace FiresCore.Loot
 
             private void Update()
             {
-                if (ZNet.instance == null) return;   // 0.2.311: tracked objects (LootRespawn) tick whatever the location-loot toggle says
+                if (ZNet.instance == null) return;   // Tracked objects (LootRespawn) tick whatever the location-loot toggle says
                 float now = Time.time;
                 try
                 {
                     if (now >= _nextOwner) { _nextOwner = now + OwnerTickSeconds; if (Enabled) OwnerTick(); }
-                    // 0.2.317 (Fire: "3 seconds is more like 15"): tracked stands get their own fast tick, for emptiness AND due time.
+                    // Tracked stands get their own fast tick, for emptiness AND due time.
                     if (now >= _nextStand) { _nextStand = now + StandTickSeconds; LootRespawn.OwnerTick(); }
                     if (ZNet.instance.IsServer() && now >= _nextServer) { _nextServer = now + ServerTickSeconds; ServerTick(); }
                 }
@@ -476,7 +613,7 @@ namespace FiresCore.Loot
     }
 
     /// <summary>
-    /// 0.2.311 (Fire 10-06, with [ghost]): Core's respawn service for objects another mod places, e.g. FAP's preset chests and item
+    /// Core's respawn service for objects another mod places, e.g. FAP's preset chests and item
     /// stands. Always on when Core is installed; the [Loot] "Location loot refresh" toggle governs only world location loot. Delays are
     /// in-game SECONDS (ZNet.GetTimeSeconds), from the caller's own presets. The "No refresh within metres" rule applies.
     ///   Track: a chest. Emptied and closed, it is recorded on the server and removed by vanilla's m_autoDestroyEmpty; after the
@@ -528,7 +665,7 @@ namespace FiresCore.Loot
             zdo.Set(RefillKey, 1);
             zdo.Set(DelayKey, Mathf.Max(0f, delaySeconds));
             zdo.Set(DelayMaxKey, Mathf.Max(0f, delaySecondsMax));
-            // 0.2.313 (Fire 10-07: a preset stand placed this session never refilled): FAP tracks a stand right AFTER it was
+            // FAP tracks a stand right AFTER it was
             // placed, when its Awake (where stands join the owner tick) has already run, so the live stand joins here too.
             bool live = false;
             try
@@ -541,7 +678,7 @@ namespace FiresCore.Loot
             FiresCore.Logging.FiresLogger.LogDebug($"{Tag}tracking a stand: refill due {delaySeconds:0}{(delaySecondsMax > delaySeconds ? "-" + delaySecondsMax.ToString("0") : "")} s after it empties{(live ? "" : " (not loaded here: joins when its zone loads)")}");
         }
 
-        /// <summary>0.2.316 (Fire 10-07): TrackRefill with the stand's own "no player within" distance. 0 = it refills even with players
+        /// <summary>TrackRefill with the stand's own "no player within" distance. 0 = it refills even with players
         /// right at it; more than 0 = that many metres. Stamped on the ZDO, so it holds across reloads. The 3-argument TrackRefill and chests
         /// keep [Loot] "No refresh within metres".</summary>
         public static void TrackRefill(ZDO zdo, float delaySeconds, float delaySecondsMax, float playerRange)
@@ -580,6 +717,7 @@ namespace FiresCore.Loot
         internal static void TrackedContainerTick(Container c, ZNetView view)
         {
             ZDO zdo = view.GetZDO();
+            if (LocationLootRefresh.OwnedByEwp(zdo)) return;   // EWP's chest, never Core's
             Inventory inv = c.GetInventory();
             if (inv == null || inv.NrOfItems() > 0) return;
             if (zdo.GetBool(LocationLootRefresh.RegisteredKeyPublic)) { c.m_autoDestroyEmpty = true; return; }
@@ -590,6 +728,7 @@ namespace FiresCore.Loot
                 Prefab = LocationLootRefresh.PrefabName(view), Pos = c.transform.position, Rot = c.transform.rotation, Day = LocationLootRefresh.Today,
                 Kind = "tracked", Location = "", Tracked = true, DueSeconds = Now + DelayOf(zdo),
                 Radius = zdo.GetFloat(RadiusKey, 1f), Defaults = zdo.GetBool(DefaultsKey, false),
+                PlayerRange = zdo.GetFloat(RangeKey, -1f),   // FAP sets it before Track (and carries it), -1 = the setting
             };
             foreach (string name in zdo.GetString(CarryKey, "").Split('\n'))
             {
@@ -669,7 +808,7 @@ namespace FiresCore.Loot
                 if (itemHash != 0)
                 {
                     if (since != 0L) zdo.Set(EmptySinceKey, 0L);
-                    // 0.2.315: the round trip made provable: after a RefillDue, the item coming back is logged.
+                    // The round trip made provable: after a RefillDue, the item coming back is logged.
                     if (zdo.GetBool(RefillPendingKey))
                     {
                         zdo.Set(RefillPendingKey, false);
@@ -683,7 +822,7 @@ namespace FiresCore.Loot
                 Vector3 sp = stand.transform.position;
                 if (since == 0L)
                 {
-                    // 0.2.315: the delay is rolled ONCE when the stand empties (it was re-rolled every tick between min and max).
+                    // The delay is rolled ONCE when the stand empties (it was re-rolled every tick between min and max).
                     float delay = DelayOf(zdo);
                     zdo.Set(EmptySinceKey, nowMs);
                     zdo.Set(DueDelayKey, delay);

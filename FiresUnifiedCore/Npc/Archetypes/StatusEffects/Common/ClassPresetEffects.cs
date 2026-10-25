@@ -17,7 +17,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
     }
 
     /// <summary>
-    /// RPGClasses' Wither / Grave Pestilence / Plague Bearer ([wishbone] 10-08): Withered takes 15% more damage from every source
+    /// RPGClasses' Wither / Grave Pestilence / Plague Bearer: Withered takes 15% more damage from every source
     /// and moves 20% slower (Death Mark's OnDamaged path, the slow's speed path).
     /// </summary>
     public class ClassWitheredEffect : SlowdownEffect
@@ -40,7 +40,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
     }
 
     /// <summary>
-    /// The yaml's Wounded (classes-trees.yaml "Wounded", [wishbone] 10-08): 50% less healing received from every source, its own
+    /// The yaml's Wounded (classes-trees.yaml "Wounded"): 50% less healing received from every source, its own
     /// Mending Aura and Vampiric affixes included. No slow (a 1.0 speed); RPC_Heal's one Core hook (DeathWishBlocksHealing) reads it.
     /// </summary>
     public class ClassWoundedEffect : SlowdownEffect
@@ -107,7 +107,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
         }
     }
 
-    // ---- The lingering zones (Fire, popup 2026-09-28 21:3x): a zone re-applies these every tick for a little over a tick,
+    // ---- The lingering zones: a zone re-applies these every tick for a little over a tick,
     // so they last while the carrier stays inside and fall off shortly after it leaves. ----
 
     /// <summary>rogue_toxic_cloud: "slows enemies 20%".</summary>
@@ -211,4 +211,38 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
     public class ClassEitrWell150Effect : ClassEitrWellEffect { public ClassEitrWell150Effect() : base(2.5f) { } }
 
     public class ClassEitrWell200Effect : ClassEitrWellEffect { public ClassEitrWell200Effect() : base(3f) { } }
+
+    // Name-only carriers for two RPGClasses actives that buff allies. Core applies no stats;
+    // RPGClasses' own hooks on each peer read HaveStatusEffect(name) and apply the effect (attack speed, cheaper attack stamina,
+    // frontal damage reduction judged against SourceCharacter's facing, the caster slowed), so the hot paths stay in one mod.
+
+    /// <summary>berserker_battle_trance (ranks 10 / 15 / 20): the name RPGClasses' trance hooks read.</summary>
+    public class ClassTranceEffect : BuffEffect { public ClassTranceEffect() { m_name = "Battle Trance"; } }
+    public class ClassTrance10Effect : ClassTranceEffect { }
+    public class ClassTrance15Effect : ClassTranceEffect { }
+    public class ClassTrance20Effect : ClassTranceEffect { }
+
+    /// <summary>paladin_shield_wall (40 / 50 / 60): SourceCharacter is the caster (its facing judges the frontal reduction).</summary>
+    public class ClassShieldWallEffect : BuffEffect { public ClassShieldWallEffect() { m_name = "Shield Wall"; } }
+    public class ClassShieldWall40Effect : ClassShieldWallEffect { }
+    public class ClassShieldWall50Effect : ClassShieldWallEffect { }
+    public class ClassShieldWall60Effect : ClassShieldWallEffect { }
+
+    // Three more name-only carriers. SourceCharacter is the caster; RPGClasses' hooks on each peer do the
+    // work, and may remove the effect early with SEMan.RemoveStatusEffect (Core keeps no list of active effects).
+
+    /// <summary>tank_guardian_s_oath (single ally): RPGClasses moves 30% of each hit on the ally to SourceCharacter.</summary>
+    public class ClassOathEffect : BuffEffect { public ClassOathEffect() { m_name = "Guardian's Oath"; } }
+
+    /// <summary>healer_lifeline (20 / 30 / 40, single ally): RPGClasses heals the ally once below 30% health, then removes the effect.</summary>
+    public class ClassLifelineEffect : BuffEffect { public ClassLifelineEffect() { m_name = "Lifeline"; } }
+    public class ClassLifeline20Effect : ClassLifelineEffect { }
+    public class ClassLifeline30Effect : ClassLifelineEffect { }
+    public class ClassLifeline40Effect : ClassLifelineEffect { }
+
+    /// <summary>healer_spirit_link (15 / 20 / 25, group): RPGClasses shares damage across the linked players and regenerates them.</summary>
+    public class ClassSpiritLinkEffect : BuffEffect { public ClassSpiritLinkEffect() { m_name = "Spirit Link"; } }
+    public class ClassSpiritLink15Effect : ClassSpiritLinkEffect { }
+    public class ClassSpiritLink20Effect : ClassSpiritLinkEffect { }
+    public class ClassSpiritLink25Effect : ClassSpiritLinkEffect { }
 }

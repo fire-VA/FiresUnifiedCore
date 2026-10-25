@@ -40,6 +40,7 @@ namespace FiresCore.Possession
                 PossessionClient.RegisterRpcs();
                 FiresCore.Summon.SummonServer.RegisterRpcs();
                 PossessionEngineBridge.InstallEarly();
+                FiresPossession.FlightModel.UpAt = FiresCore.World.GravityUp.At;   // halo ring: possession flight / turning in the local frame
                 if (s_instance == null) new GameObject("FiresPossession").AddComponent<PossessionRunner>();
             }
         }

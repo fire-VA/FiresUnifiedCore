@@ -178,6 +178,8 @@ namespace FiresCore.Npc.Movement
         
         /// <summary>Current animation state.</summary>
         public AnimationState CurrentAnimationState => _currentAnimationState;
+        public string AnimStateSetBy { get; private set; } = "";
+        public float AnimStateSince { get; private set; }
         
         /// <summary>
         /// Whether movement input is currently allowed.
@@ -601,7 +603,7 @@ namespace FiresCore.Npc.Movement
                 _movementAuthority.FreezeMovement(reason, 999f);
             }
             
-            // Zero velocity if not kinematic. Audit EXCEPTION (0.2.327, no vanilla path): a frozen state skips Character.UpdateMotion
+            // Zero velocity if not kinematic. Exception (no vanilla path): a frozen state skips Character.UpdateMotion
             // (CompanionPatches' UpdateMotion prefix), so vanilla UpdateWalking can't brake the body; without this it coasts.
             if (_rigidbody != null && !_rigidbody.isKinematic)
             {
@@ -668,7 +670,7 @@ namespace FiresCore.Npc.Movement
             _currentAnimationState = AnimationState.None;
             _animationStateEndTime = 0f;
             
-            // Zero physics - only if NOT kinematic (Unity 6 compatibility). Audit EXCEPTION (0.2.327): as above, the frozen state
+            // Zero physics - only if NOT kinematic (Unity 6 compatibility). Exception: as above, the frozen state
             // skips UpdateMotion, so nothing vanilla brakes the body here.
             if (_rigidbody != null && !_rigidbody.isKinematic)
             {
@@ -907,6 +909,24 @@ namespace FiresCore.Npc.Movement
             {
                 SetAnimationState(detectedState);
             }
+            CheckRunInPlace();
+        }
+
+        // A walk/run animation while the body barely moves for > 1 s is
+        // logged once per episode (Debug) with what held it
+        private float _runInPlaceSince = -1f;
+        private bool _runInPlaceLogged;
+        private void CheckRunInPlace()
+        {
+            if (_character == null) return;
+            bool moving = _currentAnimationState == AnimationState.Running || _currentAnimationState == AnimationState.Walking;
+            Vector3 v = _character.GetVelocity(); v.y = 0f;
+            if (!moving || v.magnitude >= 0.2f) { _runInPlaceSince = -1f; _runInPlaceLogged = false; return; }
+            if (_runInPlaceSince < 0f) { _runInPlaceSince = Time.time; return; }
+            if (_runInPlaceLogged || Time.time - _runInPlaceSince < 1f) return;
+            _runInPlaceLogged = true;
+            string hold = ShouldSkipAIUpdate ? $"ShouldSkipAIUpdate (frozen {IsInFrozenState}, anim blocking {IsAnimationBlocking})" : "no state-controller hold";
+            FiresCore.Logging.FiresLogger.LogDebug($"[RunInPlace] {_character.m_name}: anim {_currentAnimationState} but {v.magnitude:0.00} m/s for {Time.time - _runInPlaceSince:0.0} s; state {CurrentState}; {hold}; on ground {_character.IsOnGround()}");
         }
         
         /// <summary>
@@ -915,13 +935,55 @@ namespace FiresCore.Npc.Movement
         /// This prevents the "sliding while standing" bug where velocity is applied
         /// before the locomotion animation has actually started.
         /// </summary>
+        // Caps on the two detected blocking states (see DetectAnimationState)
+        // 2 s (a real swing is about 1-1.5 s); 1 s while CompanionAI says
+        // the owner is far and moving away (ReleaseAttackEarly): a swing that has landed no longer keeps it from following.
+        private const float StuckAttackSeconds = 2f, StuckAttackFarSeconds = 1f, StuckSlideSeconds = 1.5f;
+        /// <summary>Set every AI tick by CompanionAI (owner far and leaving).</summary>
+        public bool ReleaseAttackEarly;
+        private float _attackSince = -1f, _slideSince = -1f;
+        private bool _attackStuckLogged, _slideStuckLogged;
+
+        // What the hung attack is - its animation, how long vanilla thinks it has run, and whether the animator shows it
+        private static readonly System.Reflection.FieldInfo s_curAttack = HarmonyLib.AccessTools.Field(typeof(Humanoid), "m_currentAttack");
+        private string AttackInfo()
+        {
+            try
+            {
+                var att = _character is Humanoid h && s_curAttack != null ? s_curAttack.GetValue(h) as Attack : null;
+                if (att == null) return "m_currentAttack null (InAttack from the animator / another flag)";
+                var tr = HarmonyLib.Traverse.Create(att);
+                string anim = att.m_attackAnimation;
+                float time = tr.Field("m_time").GetValue<float>();
+                bool done = tr.Field("m_attackDone").GetValue<bool>();
+                var animr = _animator;
+                string st = animr != null ? $"animator tag {(animr.GetCurrentAnimatorStateInfo(0).IsTag("attack") ? "attack" : "other")} speed {animr.speed:0.##} culling {animr.cullingMode}" : "no animator";
+                return $"attack '{anim}' m_time {time:0.0} s, done {done}, {st}";
+            }
+            catch (Exception ex) { return "attack info failed: " + ex.Message; }
+        }
+
         private AnimationState DetectAnimationState()
         {
             if (_character == null) return AnimationState.None;
             
             // Check for attack animation
-            if (_character.InAttack())
-                return AnimationState.Attacking;
+            // InAttack() can stay true for many seconds (an attack whose
+            // end event never came: an animator that does not run, e.g. a headless peer) and froze the companion. An attack blocks movement
+            // for at most StuckAttackSeconds; past that it is reported once and no longer blocks. A new attack starts the clock again.
+            bool inAttack = _character.InAttack();
+            if (!inAttack) _attackSince = -1f;
+            else
+            {
+                if (_attackSince < 0f) _attackSince = Time.time;
+                if (Time.time - _attackSince < (ReleaseAttackEarly ? StuckAttackFarSeconds : StuckAttackSeconds)) return AnimationState.Attacking;
+                if (!_attackStuckLogged)
+                {
+                    _attackStuckLogged = true;
+                    Debug.Log($"[AnimStuck] {_character.m_name}: InAttack for {Time.time - _attackSince:0.0} s{(ReleaseAttackEarly ? " (owner far)" : "")} - no longer blocks movement; {AttackInfo()}");
+                }
+            }
+            if (!inAttack) _attackStuckLogged = false;
             
             // Check for emote/sitting via state controller
             if (CurrentState == CompanionState.Emote)
@@ -946,8 +1008,12 @@ namespace FiresCore.Npc.Movement
                 // we're in the dangerous "sliding" state - report as Standing to block movement
                 if (!isInLocomotion && horizontalSpeed > 0.3f)
                 {
-                    return AnimationState.Standing; // Block movement until animation catches up
+                    // "Until the animation catches up" - capped: an animator that never enters locomotion (headless peer) froze it
+                    if (_slideSince < 0f) _slideSince = Time.time;
+                    if (Time.time - _slideSince < StuckSlideSeconds) return AnimationState.Standing; // Block movement until animation catches up
+                    if (!_slideStuckLogged) { _slideStuckLogged = true; Debug.Log($"[AnimStuck] {_character.m_name}: moving {horizontalSpeed:0.0} m/s but the animator not in locomotion for {Time.time - _slideSince:0.0} s - no longer blocks movement"); }
                 }
+                else { _slideSince = -1f; _slideStuckLogged = false; }
                 
                 // If animator is in locomotion, use velocity to determine walk/run
                 if (isInLocomotion)
@@ -1034,6 +1100,12 @@ namespace FiresCore.Npc.Movement
         {
             AnimationState oldState = _currentAnimationState;
             _currentAnimationState = state;
+            // Log who set a stuck blocking state and since when
+            if (state != oldState)
+            {
+                AnimStateSince = Time.time;
+                try { var m = new System.Diagnostics.StackFrame(1).GetMethod(); AnimStateSetBy = m != null ? m.DeclaringType?.Name + "." + m.Name : "?"; } catch { AnimStateSetBy = "?"; }
+            }
             
             if (duration > 0f)
                 _animationStateEndTime = Time.time + duration;

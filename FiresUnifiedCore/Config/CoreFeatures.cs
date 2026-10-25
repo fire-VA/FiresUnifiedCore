@@ -17,7 +17,7 @@ namespace FiresCore.Config
     }
 
     /// <summary>
-    /// 0.2.387 (Fire 10-09, Tools\CORE_CONFIG_GATING_PLAN.md): Core features that exist for other mods. ONE declaration per
+    /// Core features that exist for other mods. ONE declaration per
     /// feature lists its owner mods; any owner installed = live. An inert feature has no config keys (OwnerGatedConfig), no
     /// patches (FiresOwnedFeature classes are skipped) and so no logs. One toggle per feature however many owners are installed.
     /// Liveness is final only once every plugin has loaded (<see cref="Resolve"/>, one frame after the chainloader's Awakes):
@@ -27,7 +27,8 @@ namespace FiresCore.Config
     {
         public const string Swimming = "Swimming", Movement = "Movement", Climbing = "Climbing", Crawling = "Crawling",
             Loot = "Loot", Building = "Building", Progression = "Progression", LocationalCombat = "LocationalCombat",
-            Companions = "Companions", GroupHud = "GroupHud", GroundRings = "GroundRings", Vault = "Vault";
+            Companions = "Companions", GroupHud = "GroupHud", GroundRings = "GroundRings", Vault = "Vault",
+            Archetypes = "Archetypes", Balrond = "Balrond", NpcBrain = "NpcBrain";
 
         private static readonly Dictionary<string, string[]> s_owners = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
@@ -43,6 +44,9 @@ namespace FiresCore.Config
             { GroupHud, OwnerGatedConfig.Owners.GROUPHUD },
             { GroundRings, OwnerGatedConfig.Owners.GROUNDRINGS },
             { Vault, OwnerGatedConfig.Owners.VAULT },
+            { Archetypes, OwnerGatedConfig.Owners.CLASSES },   // class abilities: RPGClasses, and companions (Companions, RPGmaker) use archetypes too
+            { Balrond, OwnerGatedConfig.Owners.BALROND },
+            { NpcBrain, OwnerGatedConfig.Owners.NPCBRAIN },
         };
 
         private static Dictionary<string, bool> s_live;

@@ -42,6 +42,7 @@ namespace FiresCore.Npc.Core
             
             // Try to find the actual interactable point on this object
             Vector3 interactablePoint = FindInteractablePoint(target);
+            if (TryGetPathReachPoint(target, interactablePoint, approachFrom, standDistance, out var reach)) return reach;
             
             // Calculate standing position - offset from interactable toward companion
             Vector3 dirToCompanion = (approachFrom - interactablePoint).normalized;
@@ -257,6 +258,7 @@ namespace FiresCore.Npc.Core
             
             Transform containerTransform = container.transform;
             Vector3 containerPos = containerTransform.position;
+            if (TryGetPathReachPoint(container.gameObject, FindContainerInteractablePoint(container), approachFrom, standDistance, out var reach)) return reach;
             
             // Chests open toward their local forward direction
             Vector3 frontDir = containerTransform.forward;
@@ -502,6 +504,104 @@ namespace FiresCore.Npc.Core
         
         #endregion
         
+        #region Path-checked reach (Fire 10-24)
+
+        // Fire 10-24: "companions will still come out side and up against the wall because they determine that is the shortest
+        // distance to the storage chests that are upstairs". The stand point was the target point pushed straight toward the
+        // companion and dropped to the terrain from 5 m up (piece floors ignored): for a chest upstairs or a nest on a wall that is
+        // the ground outside / under it. A stand point now counts only when it is on the target's own level, sees the target
+        // (nothing solid between chest height and the target) and a walkable path from the companion ends on it.
+        private const int ReachRingSteps = 12;
+        private const float ReachMaxHeightGap = 2.2f, PathEndSlack = 1.0f, ReachCacheSeconds = 5f;
+        private static int s_standMask = -1, s_losMask = -1;
+        private static readonly List<Vector3> s_pathBuf = new List<Vector3>();
+        private static readonly RaycastHit[] s_rayHits = new RaycastHit[16];
+        private static readonly Dictionary<long, (Vector3 point, float at)> s_reachCache = new Dictionary<long, (Vector3, float)>();
+        private static readonly HashSet<long> s_reachLogged = new HashSet<long>();
+
+        private static int StandMask => s_standMask != -1 ? s_standMask : (s_standMask = LayerMask.GetMask("terrain", "Default", "static_solid", "piece", "vehicle"));
+        private static int LosMask => s_losMask != -1 ? s_losMask : (s_losMask = LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "terrain", "vehicle"));
+
+        /// <summary>The best stand point for <paramref name="target"/> reachable by a walkable path from <paramref name="from"/>
+        /// with line of sight to <paramref name="interactable"/>; false when none is (callers fall back to the old point).</summary>
+        public static bool TryGetPathReachPoint(GameObject target, Vector3 interactable, Vector3 from, float standDistance, out Vector3 point)
+        {
+            point = Vector3.zero;
+            if (target == null || Pathfinding.instance == null) return false;
+            long key = ((long)target.GetInstanceID() << 32) ^ (uint)(Mathf.RoundToInt(from.x / 2f) * 73856093 ^ Mathf.RoundToInt(from.y / 2f) * 19349663 ^ Mathf.RoundToInt(from.z / 2f) * 83492791);
+            if (s_reachCache.TryGetValue(key, out var hit) && Time.time - hit.at < ReachCacheSeconds) { point = hit.point; return true; }
+            if (s_reachCache.Count > 256) s_reachCache.Clear();
+
+            Transform root = target.transform.root;
+            var cands = new List<(Vector3 p, float straight)>();
+            foreach (float dist in new[] { standDistance, Mathf.Max(0.9f, standDistance * 0.6f) })
+                for (int i = 0; i < ReachRingSteps; i++)
+                {
+                    float a = i * Mathf.PI * 2f / ReachRingSteps;
+                    Vector3 probe = interactable + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * dist;
+                    if (!StandOn(probe, interactable.y, root, out Vector3 ground)) continue;
+                    if (interactable.y - ground.y > ReachMaxHeightGap) continue;
+                    if (!SeesTarget(ground + Vector3.up * 1.2f, interactable, root)) continue;
+                    cands.Add((ground, Vector3.Distance(from, ground)));
+                }
+            cands.Sort((x, y) => x.straight.CompareTo(y.straight));
+
+            float bestLen = float.MaxValue; int tried = 0, pathed = 0;
+            foreach (var c in cands)
+            {
+                if (tried++ >= 8 || pathed >= 3) break;
+                s_pathBuf.Clear();
+                if (!Pathfinding.instance.GetPath(from, c.p, s_pathBuf, Pathfinding.AgentType.Humanoid, cleanup: true) || s_pathBuf.Count == 0) continue;
+                Vector3 end = s_pathBuf[s_pathBuf.Count - 1];
+                Vector3 d = end - c.p;
+                if (Mathf.Abs(d.y) > PathEndSlack || new Vector2(d.x, d.z).magnitude > PathEndSlack) continue;
+                float len = 0f; Vector3 prev = from;
+                foreach (var p in s_pathBuf) { len += Vector3.Distance(prev, p); prev = p; }
+                pathed++;
+                if (len < bestLen) { bestLen = len; point = c.p; }
+            }
+            bool found = bestLen < float.MaxValue;
+            if (found) s_reachCache[key] = (point, Time.time);
+            if (s_reachLogged.Add(key))
+                FiresCore.Logging.FiresLogger.LogDebug(found
+                    ? $"[Reach] {Utils.GetPrefabName(target)}: stand at {point:F1} (path {bestLen:0.0} m; {cands.Count} candidate(s) on its level with line of sight)"
+                    : $"[Reach] {Utils.GetPrefabName(target)} at {interactable:F1}: no walkable stand point with line of sight from {from:F1} ({cands.Count} candidate(s), {tried} path(s) tried)");
+            return found;
+        }
+
+        // The highest walkable surface under the probe that is not above the target's own level (+1 m) and not the target itself.
+        private static bool StandOn(Vector3 probe, float levelY, Transform targetRoot, out Vector3 ground)
+        {
+            ground = probe;
+            Vector3 start = new Vector3(probe.x, levelY + 1f, probe.z);
+            int n = Physics.RaycastNonAlloc(start, Vector3.down, s_rayHits, ReachMaxHeightGap + 2f, StandMask, QueryTriggerInteraction.Ignore);
+            float best = float.MaxValue;
+            for (int i = 0; i < n; i++)
+            {
+                var h = s_rayHits[i];
+                if (h.collider == null || h.collider.transform.IsChildOf(targetRoot) || h.normal.y < 0.6f) continue;
+                if (h.distance < best) { best = h.distance; ground = h.point; }
+            }
+            return best < float.MaxValue;
+        }
+
+        private static bool SeesTarget(Vector3 eye, Vector3 target, Transform targetRoot)
+        {
+            Vector3 d = target - eye; float len = d.magnitude;
+            if (len < 0.05f) return true;
+            int n = Physics.RaycastNonAlloc(eye, d / len, s_rayHits, len, LosMask, QueryTriggerInteraction.Ignore);
+            for (int i = 0; i < n; i++)
+            {
+                var c = s_rayHits[i].collider;
+                if (c == null || c.transform.IsChildOf(targetRoot) || c.GetComponentInParent<Door>() != null) continue;   // doors never block (0.2.783)
+                if (c.GetComponentInParent<Character>() != null) continue;
+                return false;
+            }
+            return true;
+        }
+
+        #endregion
+
         #region Backwards Compatibility
         
         /// <summary>
@@ -513,6 +613,7 @@ namespace FiresCore.Npc.Core
                 return approachFrom;
             
             Transform targetTransform = target.transform;
+            if (TryGetPathReachPoint(target.gameObject, FindInteractablePoint(target.gameObject), approachFrom, standDistance, out var reach)) return reach;
             Vector3 frontPoint = targetTransform.position + targetTransform.forward * standDistance;
             return GetGroundPosition(frontPoint);
         }

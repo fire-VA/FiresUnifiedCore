@@ -12,6 +12,7 @@ namespace FiresCore.Compat.Balrond
     /// </summary>
     [HarmonyPatch(typeof(ZoneSystem), "SetupLocations")]
     [HarmonyAfter("balrond.astafaraios.BalrondAmazingNature")]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Balrond)]
     internal static class BalrondLocationBiomePatch
     {
         // Sourced verbatim from BalrondNature.LocationBuilder.deepNorthNames (the names Balrond

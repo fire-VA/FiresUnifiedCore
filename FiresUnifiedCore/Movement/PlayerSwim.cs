@@ -6,10 +6,10 @@ using UnityEngine;
 namespace FiresCore.Movement
 {
     /// <summary>
-    /// Player swimming (Core 0.2.298; Fire 10-05: swimming moves into Core "like crawling and climbing" with a toggle "so people can choose
-    /// to use it without galaxies"; "when a cave passes under a water plane (like the ocean) the water shouldnt be registered within the
-    /// cave, only cave water WE place should ever register a swim trigger"). Two modes since Fire's refinement (10-05 22:3x): "when we
-    /// surface we should remain boyant, but when we dive we should remain neutral ... so that diving is something purposeful".
+    /// Player swimming in Core (like crawling and climbing), with a toggle so it can be used
+    /// without Galaxies. When a cave passes under a water plane (like the ocean) that water is not registered within the
+    /// cave; only cave water we place registers a swim trigger. Two modes: surfaced the player stays
+    /// buoyant, diving is neutral, so diving is something purposeful.
     /// Setting [Swimming] Swimming = Auto | On | Off, default Auto: on when Fires Valheim Galaxies is installed. An explicit On or Off
     /// always wins; nothing here ever writes the setting.
     /// While on, for the local player:
@@ -67,7 +67,7 @@ namespace FiresCore.Movement
                 new ConfigDescription("Metres per second the player rises or sinks while Jump or Crouch is held in a dive.",
                     new AcceptableValueRange<float>(0.5f, 8f)));
             s_mode.SettingChanged += (sender, args) => s_resolvedFor = -1;
-            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Swimming, false, s_mode, s_verticalSpeed);   // 0.2.387: Galaxies only
+            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Swimming, false, s_mode, s_verticalSpeed);   // Galaxies only
         }
 
         /// <summary>True when Core drives player swimming.</summary>
@@ -153,7 +153,7 @@ namespace FiresCore.Movement
             if (rise) s_holdY = Mathf.Min(s_holdY + VerticalSpeed * dt, y + HoldLead);           // a roof stops a rise
             else if (sink) s_holdY = Mathf.Max(s_holdY - VerticalSpeed * dt, y - HoldLead);      // the body sets the pace
             if (player.IsOnGround() && s_holdY < y) s_holdY = y;                                 // the bed stops a sink
-            // Never above the float line, for THIS step only (0.2.304; overnight swim_test: a 10 s hold drifted 1.23 m). The
+            // Never above the float line, for THIS step only (a 10 s hold otherwise drifted 1.23 m). The
             // line rides the waves; clamping the stored hold to it lowered the hold at every trough and never raised it back.
             float target = Mathf.Min(s_holdY, top);
 

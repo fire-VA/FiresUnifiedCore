@@ -27,6 +27,8 @@ namespace FiresCore.Diagnostics
         {
             TryPatch(harmony, typeof(Character), "OnDestroy", null,
                 finalizer: nameof(OnDestroy_Finalizer));
+            TryPatch(harmony, typeof(Character), "Awake", null,
+                finalizer: nameof(Awake_Finalizer));
             TryPatch(harmony, typeof(MonoUpdaters), "FixedUpdate", null,
                 prefix: nameof(Sweep_Prefix));
             if (clientSide)
@@ -91,6 +93,25 @@ namespace FiresCore.Diagnostics
                         $"{__exception.GetType().Name}: {__exception.Message}");
             }
             return null;                                    // swallow: cleanup salvaged, root logged
+        }
+
+        // 1b) A Character that woke with NO ZNetView (a UI mannequin, a stripped clone) is not a world
+        //     character; vanilla's Awake throws part-way and leaves it in s_characters, where IsTamed NREs every frame.
+        //     Remove it (whether or not Awake threw) and name it once. The exception itself still propagates unchanged.
+        private static readonly AccessTools.FieldRef<Character, ZNetView> _nview = AccessTools.FieldRefAccess<Character, ZNetView>("m_nview");
+
+        private static Exception Awake_Finalizer(Character __instance, Exception __exception)
+        {
+            try
+            {
+                if (__instance != null && _nview(__instance) == null && Chars() is List<Character> list && list.Remove(__instance)
+                    && _loggedThrowers.Add("Awake|" + SafeName(__instance)))
+                    Debug.LogWarning($"[CharacterLeakGuard] '{SafeName(__instance)}' woke with no ZNetView" +
+                        (__exception != null ? $" (Awake threw {__exception.GetType().Name})" : "") +
+                        " - removed from s_characters so it can't NRE-spam LootSpawner / BaseAI. Fix the caller: strip Character from visual-only clones.");
+            }
+            catch { }
+            return __exception;
         }
 
         // 2) Sweep any already-leaked / OnDestroy-never-ran dead entries before the AI pass reads

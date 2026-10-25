@@ -128,20 +128,31 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
         /// Applies poison to a target, stacking if already poisoned.
         /// </summary>
         public static bool ApplyPoison(Character target, Character source, float duration, float damagePerTick)
+            => ApplyPoison(target, source, duration, damagePerTick, 3);
+
+        /// <summary>
+        /// rogue_virulence (2/3/4 stacks): as above with the caster's stack cap. A re-apply adds one stack up
+        /// to the higher of the live cap and <paramref name="maxStacks"/>, and refreshes the duration. Damage per tick x stacks.
+        /// </summary>
+        public static bool ApplyPoison(Character target, Character source, float duration, float damagePerTick, int maxStacks)
         {
             if (target == null) return false;
-            
+
             var seman = target.GetSEMan();
             if (seman == null) return false;
-            
+
             int existingHash = StatusEffectManager.EFFECT_POISON.GetStableHashCode();
-            
+            maxStacks = Mathf.Max(1, maxStacks);
+
             // Check for existing poison to stack
             if (seman.HaveStatusEffect(existingHash))
             {
                 var existing = seman.GetStatusEffect(existingHash) as PoisonEffect;
                 if (existing != null)
                 {
+                    existing.MaxStacks = Mathf.Max(existing.MaxStacks, maxStacks);
+                    if (duration > 0f) existing.Duration = duration;
+                    if (source != null) existing.SourceCharacter = source;
                     existing.AddStack();
                     return true;
                 }
@@ -160,10 +171,40 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
             effect.EffectIcon = icon;
             
             seman.AddStatusEffect(effect, true);
-            
+
+            // SEMan adds a clone, which keeps only serialized fields; the properties set above go back to their defaults on it.
+            // Set them on the live instance.
+            if (seman.GetStatusEffect(existingHash) is PoisonEffect live)
+            {
+                live.Duration = duration;
+                live.m_ttl = duration;
+                live.DamagePerTick = damagePerTick;
+                live.SourceCharacter = source;
+                live.MaxStacks = maxStacks;
+                live.CurrentStacks = 1;
+            }
+
             Debug.Log($"[PoisonEffect] Applied to {target.m_name}, hasIcon={icon != null}");
-            
+
             return true;
+        }
+
+        /// <summary>The target's live poison stacks, 0 when not poisoned.</summary>
+        public static int GetStacks(Character target)
+        {
+            var seman = target != null ? target.GetSEMan() : null;
+            return seman != null && seman.GetStatusEffect(StatusEffectManager.EFFECT_POISON.GetStableHashCode()) is PoisonEffect p ? p.CurrentStacks : 0;
+        }
+
+        /// <summary>rogue_plague_burst ("half their stacks"): sets the live stack count; 0 or less removes the poison. Returns the new count.</summary>
+        public static int SetStacks(Character target, int stacks)
+        {
+            var seman = target != null ? target.GetSEMan() : null;
+            int hash = StatusEffectManager.EFFECT_POISON.GetStableHashCode();
+            if (seman == null || !(seman.GetStatusEffect(hash) is PoisonEffect p)) return 0;
+            if (stacks <= 0) { seman.RemoveStatusEffect(hash, true); return 0; }
+            p.CurrentStacks = Mathf.Min(stacks, p.MaxStacks);
+            return p.CurrentStacks;
         }
         
         protected override void OnEffectRemoved()

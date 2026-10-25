@@ -16,7 +16,7 @@ namespace FiresCore.UI
     //    grows all session and every append copies it. The append is removed; one handler refreshes live buttons instead.
     // 2. BuildUi.ConfigureButtonNavigation (GridNavigationUtility over every button) runs 2-3 times per open and on every
     //    search keystroke. Every call is deferred and the rebuild runs ONCE, on the next BuildUi.Update while the menu is open,
-    //    for keyboard as well as gamepad (0.2.312: the arrow keys use it too; gamepad-only left pooled buttons with stale links).
+    //    for keyboard as well as gamepad (the arrow keys use it too; gamepad-only left pooled buttons with stale links).
     // 3. Each button's Setup checks CanBuild, which scans for a crafting station in range per piece. Within one
     //    UpdatePieceButtons the player has not moved, so the answer is cached per station name for that call.
     internal static class BuildUiSpeedups

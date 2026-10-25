@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.IdleBehaviors;
 using FiresCore.Npc.Movement;
@@ -122,11 +122,20 @@ namespace FiresCore.Npc
             fishing.Initialize(_companion, this);
             _subBehaviors.Add(fishing);
 
-            // Haul (0.2.220) - carries out CompanionController.StartHaul; never in the idle rotation
+            // Haul - carries out CompanionController.StartHaul; never in the idle rotation
             var haul = new HaulBehavior();
             haul.Initialize(_companion, this);
             _subBehaviors.Add(haul);
 
+            // companions gear up from base chests / craft their own armour
+            var gearUp = new GearUpBehavior();
+            gearUp.Initialize(_companion, this);
+            _subBehaviors.Add(gearUp);
+
+            // hunting / fishing trips: on command, or the companion's saved "every morning" plan
+            var trip = new TripBehavior();
+            trip.Initialize(_companion, this);
+            _subBehaviors.Add(trip);
             if (VerboseLogging)
                 Debug.Log($"[CompanionIdleBehavior] Initialized {_subBehaviors.Count} sub-behaviors");
         }
@@ -186,14 +195,17 @@ namespace FiresCore.Npc
                 }
             }
 
+            // A job never runs under a sit/rest/emote pose - stand up first
+            if (!ReferenceEquals(_jobPoseCheckedFor, _activeSubBehavior)) { _jobPoseCheckedFor = _activeSubBehavior; EndPoseForJob(_activeSubBehavior.BehaviorName); }   // its first tick only: the job's own emotes (kneel, ...) come later
+
             // Update the active sub-behavior
             bool isComplete = _activeSubBehavior.Update();
 
             if (isComplete)
             {
                 NoteSubBehaviorEnd(_activeSubBehavior, "done");
-                // 0.2.257: a behaviour that says "done" without its own Complete() keeps its reservations and movement authority
-                // (SmelterOperator did, [ghost]). Say so once per finish, always on, so the next one shows in the log.
+                // a behaviour that says "done" without its own Complete() keeps its reservations and movement authority
+                // (SmelterOperator once did). Say so once per finish, always on, so the next one shows in the log.
                 if (_activeSubBehavior.IsActive)
                     Debug.LogWarning($"[CompanionIdleBehavior] {_companion?.companionName} sub-behavior {_activeSubBehavior.BehaviorName} returned done while still active (its Complete() did not run)");
 
@@ -205,7 +217,7 @@ namespace FiresCore.Npc
             }
         }
 
-        // 0.2.255 (Fire's homestead test: chore vs idle vs standing time): when the running sub-behaviour started, and one always-on
+        // When the running sub-behaviour started, and one always-on
         // line when it ends, "[CompanionIdleBehavior] <name> ended sub-behavior: <behaviour> after N s (done | cancelled)".
         private float _subStartedAt = -1f;
 
@@ -375,7 +387,10 @@ namespace FiresCore.Npc
             TryStartSubBehavior<PatrolBehavior>();
         }
 
-        // 0.2.267 (HR2: "ended … after 0 s (cancelled)" with no way to tell why): every cancel names its reason on the end line.
+        // Every cancel names its reason on the end line.
+        /// <summary>Ends whatever sub-behavior runs (keep-alive: the companion is simulated elsewhere now).</summary>
+        public void StopActiveSubBehavior(string why) => CancelActiveSubBehavior(why);
+
         private void CancelActiveSubBehavior(string why = "unnamed")
         {
             if (_activeSubBehavior != null)

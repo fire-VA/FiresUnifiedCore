@@ -24,7 +24,7 @@ namespace FiresCore.Logging
         private const string MissingTypeFragment   = "Could not find type";
 
         // Checked for EVERY source, not just HarmonyX. Prefixing UnityLogSource.OnUnityLogMessageReceived did not
-        // catch it (verified 2026-09-25: filter wired at log line 25, the error still printed at line 1519 and the
+        // catch it (with the filter wired early, the error still printed later and the
         // suppression counter never announced), and "[Error : Unity Log]" does not identify the source - Core's own
         // RateLimitedLogHandler owns a ManualLogSource of that very name. This fan-out is where every source meets.
         private const string EnsureSortedFragment = "EnsureSorted called before all files have been added";
@@ -76,22 +76,22 @@ namespace FiresCore.Logging
         private const int MinTestMarkerClose = 2;
 
         private const string QuietEnabledDescription =
-            "Drop low-level log lines from mods other than this family, for mods that ship no verbose switch of their "
-            + "own. Warnings and errors still print at the default keep level. This machine only.";
+            "Off (default): Core never touches another mod's log lines; each mod logs at its own settings. On: every other mod's "
+            + "lines follow [Logging] Log Level, like this family's (Warning and Error always print). Advanced. This machine only.";
         private const string QuietKeepLevelDescription =
-            "Lines at this level and more severe are always kept. Fatal, Error, Warning, Message, Info, Debug.";
+            "Since Core 0.2.488 this is not used: with QuietOtherMods on, other mods follow [Logging] Log Level. Kept so old cfg files still load.";
         private const string QuietSourcesDescription =
             "Comma-separated BepInEx source names to quiet. Empty quiets every source that is not part of this family "
             + "and is not exempt.";
         private const string QuietExemptDescription =
             "Comma-separated source names never quieted, whatever the settings above say.";
         private const string PerModLevelDescription =
-            "Per-mod logging, independent of QuietOtherMods above. Comma-separated Name=Level pairs, where Name is the "
-            + "mod's BepInEx source name as it appears in [brackets] in the log. Lines at that level and MORE SEVERE "
-            + "are kept, the rest are dropped; None turns a mod off completely and Debug turns everything on. "
-            + "An entry here DECIDES for that mod and overrides every other rule in this section, including the "
-            + "HarmonyX probe filter - so it can turn noise back on as well as off. F5 test lines ([...Test] ...) always "
-            + "print. Example: VAInventory=Debug, FiresValcast=None, HarmonyX=Debug. Applies live; no restart. This machine only.";
+            "Per-mod logging. Comma-separated Name=Level pairs, where Name is the mod's BepInEx source name as it appears in "
+            + "[brackets] in the log. Lines at that level and MORE SEVERE are kept, the rest are dropped; None turns a mod off "
+            + "and Debug turns everything on. An entry for a Fires mod always applies. An entry for ANY OTHER mod applies only "
+            + "while QuietOtherMods is on (Core never touches other mods' logs otherwise); then it decides for that mod over "
+            + "every other rule here, including the HarmonyX probe filter. F5 test lines ([...Test] ...) always print. "
+            + "Example: FiresValcast=None, VAInventory=Debug. Applies live; no restart. Advanced. This machine only.";
 
         private static ConfigEntry<bool>     _quietEnabled;
         private static ConfigEntry<LogLevel> _quietKeepLevel;
@@ -113,6 +113,14 @@ namespace FiresCore.Logging
 
         internal static int SuppressedHarmonyMissing => _suppressedHarmonyMissing;
         internal static int QuietedOtherModLines => _quietedOtherModLines;
+
+        /// <summary>
+        /// Core never filters, drops, re-levels or re-routes ANOTHER mod's (or vanilla's) log lines
+        /// unless [Logging] QuietOtherMods is ON (default OFF). Every such rule in Core asks this first: this patch's EnsureSorted /
+        /// HarmonyX-probe drops and other-mod PerModLogLevel entries, UnityLogSuppressionPatch's categories, and RateLimitedLogHandler's
+        /// suppression and other-mod routing. Rules on Core's own family lines ([Logging] Log Level) are unaffected.
+        /// </summary>
+        internal static bool QuietOtherModsOn => _quietEnabled != null && _quietEnabled.Value;
         internal static int PerModDroppedLines => _perModDroppedLines;
         private static int _levelDroppedLines;
         internal static int LevelDroppedLines => _levelDroppedLines;
@@ -122,16 +130,33 @@ namespace FiresCore.Logging
         {
             if (config == null) return;
 
-            _quietEnabled   = config.Bind(QuietSection, QuietEnabledKey, false, QuietEnabledDescription);
-            _quietKeepLevel = config.Bind(QuietSection, QuietKeepLevelKey, LogLevel.Warning, QuietKeepLevelDescription);
-            _quietSources   = config.Bind(QuietSection, QuietSourcesKey, string.Empty, QuietSourcesDescription);
-            _quietExempt    = config.Bind(QuietSection, QuietExemptKey, DefaultExempt, QuietExemptDescription);
-            _perModLevel    = config.Bind(QuietSection, PerModLevelKey, string.Empty, PerModLevelDescription);
+            // Default OFF, and the QuietOtherMods keys sit behind Show advanced (Fires window + ConfigurationManager).
+            _quietEnabled   = config.Bind(QuietSection, QuietEnabledKey, false, Advanced(QuietEnabledDescription));
+            _quietKeepLevel = config.Bind(QuietSection, QuietKeepLevelKey, LogLevel.Warning, Advanced(QuietKeepLevelDescription));
+            _quietSources   = config.Bind(QuietSection, QuietSourcesKey, string.Empty, Advanced(QuietSourcesDescription));
+            _quietExempt    = config.Bind(QuietSection, QuietExemptKey, DefaultExempt, Advanced(QuietExemptDescription));
+            _perModLevel    = config.Bind(QuietSection, PerModLevelKey, string.Empty, Advanced(PerModLevelDescription));
 
             RebuildLists();
             _quietSources.SettingChanged += (_, __) => RebuildLists();
             _quietExempt.SettingChanged  += (_, __) => RebuildLists();
             _perModLevel.SettingChanged  += (_, __) => RebuildLists();
+        }
+
+        private static ConfigDescription Advanced(string text) =>
+            new ConfigDescription(text, null, new FiresCore.Sync.ConfigurationManagerAttributes { IsAdvanced = true });
+
+        // [Logging] Log Level as the
+        // most verbose BepInEx level another mod keeps. Warning and Error always print, as for this family.
+        private static LogLevel OtherModKeepLevel()
+        {
+            switch (FiresLogLevel.Current)
+            {
+                case FiresLogVerbosity.Error:   return LogLevel.Warning;   // warnings always print
+                case FiresLogVerbosity.Warning: return LogLevel.Warning;
+                case FiresLogVerbosity.Info:    return LogLevel.Info;
+                default:                        return LogLevel.All;       // Debug / Verbose: everything
+            }
         }
 
         private static void RebuildLists()
@@ -260,14 +285,15 @@ namespace FiresCore.Logging
             // mod has said what they want from it, so this can turn a mod's output back ON as readily as off - including
             // HarmonyX's probe warnings and vanilla's EnsureSorted spam, which the blanket rules further down would eat.
             LogLevel wanted;
-            if (_perModLevels.TryGetValue(sourceName, out wanted))
+            // Another mod's entry applies only with QuietOtherMods on; a family source's entry always does.
+            if (_perModLevels.TryGetValue(sourceName, out wanted) && (QuietOtherModsOn || IsFamilySource(sourceName)))
             {
                 if ((int)eventArgs.Level <= (int)wanted && wanted != LogLevel.None) return false;
                 _perModDroppedLines++;
                 return true;
             }
 
-            // 0.2.269 [Logging] Log Level: below Info, a family source's Message / Info / Debug lines are hidden (warnings and errors
+            // [Logging] Log Level: below Info, a family source's Message / Info / Debug lines are hidden (warnings and errors
             // always print). The load line saying so is let through while it is written.
             if (!FiresLogLevel.InfoOn && !FiresLogLevel.Announcing && (int)eventArgs.Level > (int)LogLevel.Warning
                 && IsFamilySource(sourceName))
@@ -282,6 +308,9 @@ namespace FiresCore.Logging
                 AnnounceQuietOnce();
                 return true;
             }
+
+            // The vanilla / HarmonyX drops below touch lines that are not ours, so only with QuietOtherMods on.
+            if (!QuietOtherModsOn) return false;
 
             string anySourceMessage = eventArgs.Data?.ToString();
             if (!string.IsNullOrEmpty(anySourceMessage) && Contains(anySourceMessage, EnsureSortedFragment))
@@ -314,7 +343,8 @@ namespace FiresCore.Logging
         private static bool ShouldQuietOtherMod(string sourceName, LogLevel level)
         {
             if (_quietEnabled == null || !_quietEnabled.Value) return false;
-            if ((int)level <= (int)_quietKeepLevel.Value) return false;
+            LogLevel keep = OtherModKeepLevel();   // Core's [Logging] Log Level, not QuietOtherModsKeepLevel
+            if (keep == LogLevel.All || (int)level <= (int)keep) return false;
 
             foreach (string exempt in _quietExemptList)
                 if (string.Equals(sourceName, exempt, StringComparison.OrdinalIgnoreCase)) return false;
@@ -350,7 +380,7 @@ namespace FiresCore.Logging
         private static bool IsFamilySource(string sourceName)
         {
             if (sourceName.StartsWith(FiresSourcePrefix, StringComparison.OrdinalIgnoreCase)) return true;
-            // A family mod's own sub-sources count too, e.g. VAInventory's "VAInventory.Panel" (0.2.320, [wishbone]).
+            // A family mod's own sub-sources count too, e.g. VAInventory's "VAInventory.Panel".
             foreach (string known in FamilySourceNames)
                 if (string.Equals(sourceName, known, StringComparison.OrdinalIgnoreCase)
                     || (sourceName.Length > known.Length && sourceName[known.Length] == '.' && sourceName.StartsWith(known, StringComparison.OrdinalIgnoreCase))) return true;
@@ -366,7 +396,7 @@ namespace FiresCore.Logging
         {
             if (_quietAnnounced) return;
             _quietAnnounced = true;
-            Debug.Log($"{SummaryPrefix} Quieting other mods' log lines below {_quietKeepLevel.Value}; the status box keeps the count. Set verbose, or QuietOtherMods=false, to surface them.");
+            Debug.Log($"{SummaryPrefix} Quieting other mods' log lines below [Logging] Log Level ({FiresLogLevel.Current}); the status box keeps the count. Set verbose, or QuietOtherMods=false, to surface them.");
         }
 
         private static bool Contains(string haystack, string needle)

@@ -4,8 +4,8 @@ using UnityEngine;
 namespace FiresCore.Variants
 {
     /// <summary>
-    /// Recolours effects toward a variant's FX colour (Fire 10-08: "the tint of the emission also determines the color of its
-    /// attack fx"). It's a hue shift that keeps every colour's brightness, saturation and alpha: fire stays bright, smoke stays
+    /// Recolours effects toward a variant's FX colour (the tint of the emission also determines the colour of its
+    /// attack fx). It's a hue shift that keeps every colour's brightness, saturation and alpha: fire stays bright, smoke stays
     /// grey (a grey has no hue to move), and nothing is flat-filled. Particles (start colour, colour over lifetime / by speed,
     /// their material tint through a property block), lights, trails and lines.
     /// </summary>

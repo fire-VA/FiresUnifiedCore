@@ -8,7 +8,7 @@ using UnityEngine;
 namespace FiresCore.Possession
 {
     /// <summary>
-    /// 0.2.363: admin possession of vanilla's tutorial ravens (Hugin / Munin). Those are local, client-side Raven objects, not
+    /// Admin possession of vanilla's tutorial ravens (Hugin / Munin). Those are local, client-side Raven objects, not
     /// Characters, so the admin tap that finds no creature looks for a Raven, spawns the matching networked
     /// <see cref="RavenPrefabs"/> flyer at the raven's perch, owned by the player, and possesses that through the normal
     /// flyer path. The vanilla raven is hidden (renderers, colliders, Raven behaviour off) on this client only and restored
@@ -27,7 +27,7 @@ namespace FiresCore.Possession
             public readonly List<Collider> Colliders = new List<Collider>();
             public GameObject Body;
             public PossessHandle Handle;
-            // 0.2.375: the request waits until the body's ZDO has reached the server (see TryPossess).
+            // The request waits until the body's ZDO has reached the server (see TryPossess).
             public float RequestAt;
             public PossessOptions Options;
             public Character BodyCharacter;
@@ -131,7 +131,7 @@ namespace FiresCore.Possession
             Hide(s);
             s_state = s;
             FiresLogger.LogDebug(PossessionRules.Tag + $"raven {(munin ? "Munin" : "Hugin")} possessed at ({pos.x:0.0},{pos.y:0.0},{pos.z:0.0}); vanilla raven hidden");
-            // 0.2.375: Fire: possessing Hugin/Munin on a dedicated server said the creature was gone. The body is spawned here
+            // Possessing Hugin/Munin on a dedicated server could report the creature as gone. The body is spawned here
             // and its ZDO only reaches the server with the next ZDO send, while the request RPC goes at once, so the server
             // found no ZDO. Push the ZDO now and send the request from Tick a moment later (at once when this peer is the server).
             s.Options = options;

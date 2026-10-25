@@ -6,7 +6,7 @@ using FiresCore.Npc.IdleBehaviors;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// 0.2.356: the companion pouches (Tool, Food, Ammo) as Core reads them. 0.2.361: a pouch is a row of fixed cells in the
+    /// The companion pouches (Tool, Food, Ammo) as Core reads them. A pouch is a row of fixed cells in the
     /// companion bag (CompanionGridLayout: Tool 4, Ammo 3, Food 3); the AI uses the first non-empty matching cell.
     /// Core cannot reference FiresCompanions, so the rule lives here too.
     /// KEEP IN SYNC with FiresCompanions Modules\Companions\CompanionPouches.cs: the same enum names in the same order, and the
@@ -39,7 +39,7 @@ namespace FiresCore.Npc
             }
         }
 
-        /// <summary>The stack in the companion's pouch: 0.2.361, the first non-empty POUCH cell of that kind that matches
+        /// <summary>The stack in the companion's pouch: the first non-empty POUCH cell of that kind that matches
         /// (CompanionGridLayout rows 4-6); false (item null) when the pouch row is empty.</summary>
         public static bool TryGetPouchItem(CompanionInventory inventory, PouchKind kind, out ItemDrop.ItemData item)
         {

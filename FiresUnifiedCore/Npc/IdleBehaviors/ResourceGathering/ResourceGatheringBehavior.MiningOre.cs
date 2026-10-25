@@ -16,13 +16,13 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private GameObject FindNearbyOreDeposit(Vector3 position, float radius, ICollection<string> wantedDrops, int maxToolTier)
         {
-            // 0.2.274: no pick at all no longer ends the search; a node is offered when one can be crafted from base stock.
+            // No pick at all no longer ends the search; a node is offered when one can be crafted from base stock.
             if (wantedDrops.Count == 0) return null;
 
             var colliders = Physics.OverlapSphere(position, radius);
             float closestDist = float.MaxValue;
             GameObject closest = null;
-            // 0.2.274: the nearest node beyond the best pick, offered when a pick for it can be crafted from base stock.
+            // The nearest node beyond the best pick, offered when a pick for it can be crafted from base stock.
             float beyondDist = float.MaxValue;
             GameObject beyond = null;
             int beyondTier = 0;
@@ -39,7 +39,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 var target = depositComponent.gameObject;
                 if (!processed.Add(target)) continue;
-                if (IsUnreached(target)) continue;   // 0.2.268: a run timed out short of it lately
+                if (IsUnreached(target)) continue;   // A run timed out short of it lately
 
                 if (!ResourceDataHelper.YieldsAnyOf(target, wantedDrops)) continue;
                 var deposit = ResourceDataHelper.GetResourceData(target);
@@ -52,7 +52,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         if (beyondHere < beyondDist) { beyondDist = beyondHere; beyond = target; beyondTier = deposit.MinToolTier; }
                         continue;
                     }
-                    // 0.2.268 ([lead]: say when a node is beyond the best pick it can get; the tier is the runtime prefab's).
+                    // Say when a node is beyond the best pick it can get; the tier is the runtime prefab's.
                     int id = target.GetInstanceID();
                     if (!_tierSkipSaid.TryGetValue(id, out float said) || Time.time - said >= UnreachedSkipSeconds)
                     {
@@ -214,7 +214,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 else
                 {
-                    // Normal movement - try to reach the target (0.2.271: a rock's nearest face, from just off it)
+                    // Normal movement - try to reach the target (a rock's nearest face, from just off it)
                     float dist = GatherReach();
                     if (RockUnwedge(dist)) return false;
                     if (dist > AttackRange)
@@ -335,7 +335,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 yield break;
             }
 
-            // 0.2.271: a fractured rock is struck at its nearest standing area (see StrikeMineRock5).
+            // A fractured rock is struck at its nearest standing area (see StrikeMineRock5).
             if (_targetResource.MineRock5 != null)
             {
                 StrikeMineRock5(weapon);
@@ -343,7 +343,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             Collider hitCollider = null;
-            // 0.2.271: any other rock is struck at its nearest face, not its root.
+            // Any other rock is struck at its nearest face, not its root.
             Vector3 aim = GatherAim();
             Vector3 hitPoint = aim;
             Vector3 hitDir = (hitPoint - Transform.position).normalized;
@@ -454,14 +454,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"[ResourceGathering] {Companion.companionName} playing animation: {trigger}");
         }
                 
-        // 0.2.255 (Fire's homestead test): one always-on line per node / tree / stump the companion worked,
+        // One always-on line per node / tree / stump the companion worked,
         // with its hit count, when it breaks, when the companion moves to another target, or when gathering ends.
         private GameObject _choreObject;
         private string _choreName;
         private ResourceDataHelper.ToolType _choreTool;
         private int _choreHits;
 
-        // 0.2.268 ([lead]: the runtime tier, not a guess): one line per node prefab per session at its first hit.
+        // The runtime tier, not a guess: one line per node prefab per session at its first hit.
         private static readonly HashSet<string> s_tierSaid = new HashSet<string>();
 
         private void CountChoreHit(ItemDrop.ItemData weapon)
@@ -473,7 +473,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (s_tierSaid.Add(prefab))
                     AI.ChoreBrain.ChoreDone(Companion?.companionName, _targetResource.RequiredTool == ResourceDataHelper.ToolType.Pickaxe ? "mining" : "wood",
                         $"first hit on {prefab}: it needs tool tier {_targetResource.MinToolTier}; hitting with {(weapon?.m_dropPrefab != null ? weapon.m_dropPrefab.name : weapon?.m_shared?.m_name ?? "bare hands")} (tool tier {weapon?.m_shared?.m_toolTier ?? 0})");
-                // 0.2.268: only a node already hit has a "moved on" line (HR3: the first hit on a node printed "0 hits, never reached it").
+                // Only a node already hit has a "moved on" line.
                 if (_choreObject != null && _choreHits > 0) SayChoreHits("left standing, moved on");
                 _choreHits = 0;
                 _choreObject = _targetResource.GameObject;
@@ -483,11 +483,11 @@ namespace FiresCore.Npc.IdleBehaviors
             _choreHits++;
         }
 
-        // 0.2.268 (HR3: the yard's mudpile chased every run, "never reached it"): nodes and trees a run timed out short of, per companion.
+        // Nodes and trees a run timed out short of, per companion.
         private const float UnreachedSkipSeconds = 600f;
         private readonly Dictionary<int, float> _unreachedUntil = new Dictionary<int, float>();
         private readonly Dictionary<int, float> _tierSkipSaid = new Dictionary<int, float>();
-        private readonly Dictionary<int, float> _goingForSaid = new Dictionary<int, float>();   // 0.2.274: "going for … crafted from base stock", once a minute per node
+        private readonly Dictionary<int, float> _goingForSaid = new Dictionary<int, float>();   // "going for … crafted from base stock", once a minute per node
 
         private bool IsUnreached(GameObject target) =>
             target != null && _unreachedUntil.TryGetValue(target.GetInstanceID(), out float until) && Time.time < until;
@@ -497,16 +497,16 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_choreHits > 0)
                 AI.ChoreBrain.ChoreDone(Companion?.companionName, _choreTool == ResourceDataHelper.ToolType.Pickaxe ? "mining" : "wood",
                     $"{_choreName ?? "?"}: {_choreHits} hit(s), {how}");
-            // 0.2.267 (HR2: three 31 s ResourceGathering runs after "iron ore", no hit and no line): a run that ends without one hit on
+            // A run that ends without one hit on
             // the node or tree it went for says so, with how far off it still was.
             // The no-hit line only at the end of a run (gathering done / cancelled), about the node it was going for.
             else if (!how.Contains("moved on") && _targetResource != null && _targetResource.RequiresCombat && _targetResource.GameObject != null && _character != null)
             {
                 Vector3 at = _targetResource.InteractionPosition;
-                // 0.2.271: a rock's distance is to its nearest face (its root sits inside it).
+                // A rock's distance is to its nearest face (its root sits inside it).
                 float off = IsRockTarget ? GatherReach() : Vector3.Distance(_character.transform.position, at);
                 bool pickaxe = _targetResource.RequiredTool == ResourceDataHelper.ToolType.Pickaxe;
-                // 0.2.268: a run that ended on its own (timed out) short of the node skips it for a while; a cancelled one (an order) doesn't.
+                // A run that ended on its own (timed out) short of the node skips it for a while; a cancelled one (an order) doesn't.
                 bool skip = how.Contains("gathering done");
                 if (skip) _unreachedUntil[_targetResource.GameObject.GetInstanceID()] = Time.time + UnreachedSkipSeconds;
                 AI.ChoreBrain.ChoreDone(Companion?.companionName, pickaxe ? "mining" : "wood",
@@ -519,8 +519,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _choreHits = 0;
         }
 
-        // ── 0.2.271 (Fire, on stream: "Companions get stuck in the minerock... make them do some damage or something if they cannot
-        // properly aim and connect with the minerock meshes when they break up into multiple parts"). A pickaxe target is aimed at the
+        // ── Rocks that break up into several mesh parts must stay hittable. A pickaxe target is aimed at the
         // closest point of its nearest live surface (a MineRock5's nearest standing hit area), not its root inside the rock: the walk
         // goes to a spot just off that face, reach is measured chest -> face, and the swing strikes that area. After
         // MineMissesBeforeStrike swings that couldn't reach a face, one within MineDirectStrikeReach is struck through vanilla's own hit
@@ -544,7 +543,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private float _stepBackUntil;
         private Vector3 _stepBackTo;
         private readonly HashSet<int> _wedgeSaid = new HashSet<int>();
-        private float _sideSign = 1f;   // 0.2.278: which way round the rock the next re-approach goes
+        private float _sideSign = 1f;   // Which way round the rock the next re-approach goes
 
         private Vector3 Chest => Transform.position + Vector3.up;
 
@@ -579,7 +578,7 @@ namespace FiresCore.Npc.IdleBehaviors
             away.y = 0f;
             if (away.sqrMagnitude < 0.01f) { away = -Transform.forward; away.y = 0f; }
             Vector3 stand = face + away.normalized * StandOffFace;
-            // 0.2.278: onto the navmesh, where the body can stand. A ground probe also hits static_solid, so beside a fragment it could put
+            // Onto the navmesh, where the body can stand. A ground probe also hits static_solid, so beside a fragment it could put
             // the stand point on top of the rock, where no path goes.
             if (Pathfinding.instance != null && Pathfinding.instance.FindValidPoint(out Vector3 onMesh, stand, 2f, Pathfinding.AgentType.Humanoid))
                 return onMesh;
@@ -601,8 +600,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             if (Time.time - _wedgeSince < WedgeSeconds) return false;
 
-            // 0.2.278 (HR4: "wedged … (7.5 m from the nearest face); stepping back 2.5 m" then "never reached it (10.7 m off)", and at 2.6 m
-            // a step back from a face it could nearly reach): within MineDirectStrikeReach the body stays put and the direct strike takes the
+            // Within MineDirectStrikeReach the body stays put and the direct strike takes the
             // node; farther out the way in is blocked from this side, so it walks round to another side of the rock (±70°, alternating).
             if (reach <= MineDirectStrikeReach) { _wedgeSince = -1f; return false; }
             Vector3 center = _targetResource.GameObject.transform.position;

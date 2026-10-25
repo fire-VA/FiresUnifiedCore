@@ -4,10 +4,11 @@ using HarmonyLib;
 namespace FiresCore.Classes
 {
     /// <summary>
-    /// 0.2.320 ([wishbone] 10-07): ClassSilence refuses attack starts. A player is refused staff attacks (the weapon's skill is
+    /// ClassSilence refuses attack starts. A player is refused staff attacks (the weapon's skill is
     /// elemental or blood magic); any other character is refused every attack, which interrupts a monster's cast. Class skills
     /// are RPGClasses' own path: it checks ClassCrowdControl.IsSilenced first.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     internal static class SilenceGate
     {
         [HarmonyPatch(typeof(Humanoid), nameof(Humanoid.StartAttack))]

@@ -116,8 +116,8 @@ namespace FiresCore.Npc.Combat
                 _entries[i].IsValid = false;
             _activeEntryCount = 0;
 
-            // The loaded characters within the scan radius (0.2.210, R80 group_spacing: "0 threat(s)" every 10 s while a Greydwarf
-            // Elite hit Vafire 3x: an unmasked 64-collider overlap filled up with the base's pieces and terrain before any character).
+            // The loaded characters within the scan radius (an unmasked collider overlap fills up with pieces and terrain
+            // before any character).
             float radiusSq = scanRadius * scanRadius;
             foreach (Character character in Character.GetAllCharacters())
             {
@@ -359,17 +359,14 @@ namespace FiresCore.Npc.Combat
         private bool IsValidEnemy(Character character, Player player)
         {
             if (character == null || character.IsDead()) return false;
-            // A creature that hasn't noticed anyone is wildlife, not a threat (0.2.210, R81 companion_test corner: with the 0.2.209
-            // scan seeing every character, a boar nearby pulled FiresBot's companions into "COMBAT ENTRY … Target: $enemy_boar" and
-            // they stalled 9-12 s at the corner, one 65 m behind). The alert flag is synced, so this holds off the owner too.
+            // A creature that hasn't noticed anyone is wildlife, not a threat (otherwise a nearby boar pulls companions into
+            // combat and stalls them). The alert flag is synced, so this holds off the owner too.
             if (!character.IsPlayer() && !character.IsTamed())   // a PvP party's companions are judged by the party rule below
             {
                 BaseAI ai = character.GetBaseAI();
                 if (ai != null && !ai.IsAlerted()) return false;
             }
-            // The owner's enemies by the one party rule (0.2.208): monsters as before, AND in PvP the other party's players and
-            // companions. It skipped every player and tame, so in companion_test's pvp / threeway fights the group had no threats, no
-            // directive targets and no GroupTactics slots (R79: not one "[GroupTactics]" line).
+            // The owner's enemies by the one party rule: monsters, AND in PvP the other party's players and companions.
             if (player == null) return !character.IsPlayer() && !character.IsTamed();
             return Archetypes.ClassTargeting.IsEnemyTarget(player, character);
         }

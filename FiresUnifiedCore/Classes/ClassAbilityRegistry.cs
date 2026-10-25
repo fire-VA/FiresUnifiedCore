@@ -361,7 +361,7 @@ namespace FiresCore.Classes
                     100, ArchetypeClass.Monk, AbilityCategory.Ultimate, "#FFD700"),
             };
 
-            // ===== DRUID / NECROMANCER (scaffolding: the Starter signature + the evasion; the rest is [wishbone]'s tree) =====
+            // ===== DRUID / NECROMANCER (scaffolding: the Starter signature + the evasion) =====
             s_abilitiesByArchetype[ArchetypeClass.Druid] = new List<ClassAbility>
             {
                 new ClassAbility("druid_wildshape", "Wildshape",

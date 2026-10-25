@@ -16,6 +16,7 @@ namespace FiresCore.Npc.Archetypes
     /// MonsterAI.UpdateTarget postfix that restores the target after the AI's own selection. A newer taunt replaces
     /// an older one, and the taunt ends early if the taunter dies or leaves range.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class CompanionTauntEffect : StatusEffect
     {
         /// <summary>The character who applied the taunt.</summary>
@@ -36,7 +37,7 @@ namespace FiresCore.Npc.Archetypes
         private float _lastCheck;
 
         // Set when the taunt breaks early. Vanilla's IsDone is m_ttl > 0 && m_time > m_ttl, so the old "m_ttl = 0" made a
-        // broken taunt last forever, and Stop never cleared ActiveTaunts (class_test R37: Taunted still on after its 2 s).
+        // broken taunt last forever, and Stop never cleared ActiveTaunts.
         private bool _broken;
 
         public override bool IsDone() => _broken || base.IsDone();
@@ -276,6 +277,7 @@ namespace FiresCore.Npc.Archetypes
     /// Patching only BaseAI won't affect MonsterAI instances due to virtual dispatch.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public static class TauntAIPatches
     {
         private static FieldInfo _monsterAI_targetCreatureField;
@@ -311,7 +313,7 @@ namespace FiresCore.Npc.Archetypes
         {
             Initialize();
             
-            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // no taunt anywhere, nothing to override (this ran per AI call)
             var character = __instance.m_character;
             if (character == null) return;
             
@@ -356,7 +358,7 @@ namespace FiresCore.Npc.Archetypes
         [HarmonyPostfix]
         public static void MonsterAI_GetTargetCreature_Postfix(MonsterAI __instance, ref Character __result)
         {
-            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // no taunt anywhere, nothing to override (this ran per AI call)
             var character = __instance.m_character;
             if (character == null) return;
             
@@ -381,7 +383,7 @@ namespace FiresCore.Npc.Archetypes
         [HarmonyPostfix]
         public static void BaseAI_FindEnemy_Postfix(BaseAI __instance, ref Character __result)
         {
-            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // no taunt anywhere, nothing to override (this ran per AI call)
             var character = __instance.m_character;
             if (character == null) return;
             
@@ -409,7 +411,7 @@ namespace FiresCore.Npc.Archetypes
             // If already has target, don't interfere
             if (__result) return;
             
-            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // no taunt anywhere, nothing to override (this ran per AI call)
             var character = __instance.m_character;
             if (character == null) return;
             
@@ -432,7 +434,7 @@ namespace FiresCore.Npc.Archetypes
             // Skip if this is a MonsterAI - it has its own patch
             if (__instance is MonsterAI) return;
             
-            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // no taunt anywhere, nothing to override (this ran per AI call)
             var character = __instance.m_character;
             if (character == null) return;
             
@@ -455,7 +457,7 @@ namespace FiresCore.Npc.Archetypes
         {
             Initialize();
             
-            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // 0.2.305: no taunt anywhere, nothing to override (this ran per AI call)
+            if (CompanionTauntEffect.ActiveTaunts.Count == 0) return;   // no taunt anywhere, nothing to override (this ran per AI call)
             var character = __instance.m_character;
             if (character == null) return;
             
@@ -488,6 +490,7 @@ namespace FiresCore.Npc.Archetypes
     /// re-apply taunt to ALL enemies within range, including newly spawned enemies
     /// or enemies that enter the area after the initial taunt.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class CompanionTauntingEffect : StatusEffect
     {
         /// <summary>Duration of the taunt ability.</summary>
@@ -619,7 +622,7 @@ namespace FiresCore.Npc.Archetypes
                 return true;
             }
             
-            // Apply new taunt, on the enemy's owner (0.2.201: its AI runs there)
+            // Apply new taunt, on the enemy's owner (its AI runs there)
             TauntRouting.Taunt(m_character, enemy, duration);
             Combat.VikHavnBridge.Taunt(m_character, enemy, duration);
             return true;
@@ -689,11 +692,13 @@ namespace FiresCore.Npc.Archetypes
     /// Manager for taunt-related operations.
     /// Handles applying taunt to enemies and tracking active taunts.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public static class TauntManager
     {
         private const int FallbackIconSize = 64;
 
         private static bool _effectsRegistered = false;
+        private static ObjectDB _registeredOn;
         private static CompanionTauntEffect _tauntEffectPrefab;
         private static CompanionTauntingEffect _tauntingEffectPrefab;
         
@@ -705,8 +710,9 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         public static void RegisterEffects()
         {
-            if (_effectsRegistered) return;
+            if (_effectsRegistered && _registeredOn == ObjectDB.instance) return;   // a NEW ObjectDB gets them again
             if (ObjectDB.instance == null) return;
+            _effectsRegistered = false; _registeredOn = ObjectDB.instance;
             
             // Create and register the Taunted effect (applied to enemies)
             _tauntEffectPrefab = ScriptableObject.CreateInstance<CompanionTauntEffect>();
@@ -787,7 +793,7 @@ namespace FiresCore.Npc.Archetypes
             var seman = enemy.GetSEMan();
             if (seman == null) return false;
             
-            // Apply the taunt on the enemy's owner (0.2.201: its AI runs there; a newer taunt replaces an older one)
+            // Apply the taunt on the enemy's owner (its AI runs there; a newer taunt replaces an older one)
             TauntRouting.Taunt(taunter, enemy, duration);
             Combat.VikHavnBridge.Taunt(taunter, enemy, duration);
 
@@ -902,6 +908,7 @@ namespace FiresCore.Npc.Archetypes
     /// fires the sledgehammer secondary's effects with negligible damage to draw aggro, and applies the taunt effect to
     /// nearby enemies.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class TauntShockwaveHelper : MonoBehaviour
     {
         private Character _character;
@@ -1470,7 +1477,7 @@ namespace FiresCore.Npc.Archetypes
             var seman = enemy.GetSEMan();
             if (seman == null) return false;
             
-            // On the enemy's owner (0.2.201: its AI runs there; a newer taunt replaces an older one)
+            // On the enemy's owner (its AI runs there; a newer taunt replaces an older one)
             TauntRouting.Taunt(taunter, enemy, duration);
             Combat.VikHavnBridge.Taunt(taunter, enemy, duration);
             return true;
@@ -1508,12 +1515,13 @@ namespace FiresCore.Npc.Archetypes
     }
 
     /// <summary>
-    /// Puts a taunt on the enemy where its AI runs (0.2.201). The taunt is a status effect plus the ActiveTaunts registry that
+    /// Puts a taunt on the enemy where its AI runs. The taunt is a status effect plus the ActiveTaunts registry that
     /// TauntAIPatches reads inside MonsterAI, and MonsterAI only thinks on the enemy's ZDO owner (a dedicated server simulating it,
     /// or another player's client). Applied here when this peer owns the enemy; otherwise one routed RPC to the owner, which
     /// applies it there. "[Taunt]" lines on both ends prove the hand-over.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public static class TauntRouting
     {
         private const string TauntRpc = "FC_Taunt";
@@ -1562,6 +1570,8 @@ namespace FiresCore.Npc.Archetypes
             Debug.Log($"[Taunt] {taunter.m_name} taunted {enemy.m_name} for {duration:0.#} s (sent to its owner {owner})");
         }
 
+        private const float MaxNetworkTauntSeconds = 30f;
+        private const float MaxNetworkTauntRange = 40f;
         private static void RPC_Taunt(long sender, ZDOID enemyId, ZDOID taunterId, float duration)
         {
             if (ZNetScene.instance == null) return;
@@ -1572,6 +1582,13 @@ namespace FiresCore.Npc.Archetypes
             if (enemy == null || taunter == null || enemy.IsDead())
             {
                 Debug.Log($"[Taunt] taunt from peer {sender} dropped: {(enemy == null ? "enemy not loaded here" : taunter == null ? "taunter not loaded here" : "enemy dead")}");
+                return;
+            }
+            // A taunt can be forwarded by the enemy's previous owner, so the sender is not checked; the taunt itself must be sane.
+            duration = Mathf.Clamp(duration, 0f, MaxNetworkTauntSeconds);
+            if (taunter == enemy || Vector3.Distance(taunter.transform.position, enemy.transform.position) > MaxNetworkTauntRange)
+            {
+                RpcGuard.Refuse("RPC_Taunt", sender, "taunter is the enemy or too far from it");
                 return;
             }
             if (enemy.m_nview == null || !enemy.m_nview.IsOwner())
@@ -1590,7 +1607,7 @@ namespace FiresCore.Npc.Archetypes
             SEMan seman = enemy.GetSEMan();
             if (seman == null) return;
             int hash = EffectName.GetStableHashCode();
-            // Already held by this taunter: its effect keeps the AI on it (a refresh, as before 0.2.201).
+            // Already held by this taunter: its effect keeps the AI on it (a refresh).
             if (seman.GetStatusEffect(hash) is CompanionTauntEffect held && held.Taunter == taunter)
             {
                 held.m_ttl = Mathf.Max(held.m_ttl, held.m_time + duration);

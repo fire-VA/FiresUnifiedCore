@@ -797,7 +797,7 @@ namespace FiresCore.Npc.Archetypes
         }
 
         /// <summary>
-        /// Druid / Necromancer (10-07): pair entries only, so each pairs with the other nine on the Class pill. No
+        /// Druid / Necromancer: pair entries only, so each pairs with the other nine on the Class pill. No
         /// special ability or bonuses yet ("hybrid ultimates come later", Tools\CLASSES_DRUID_NECROMANCER.md).
         /// </summary>
         private static void RegisterPossessionClassPairs()

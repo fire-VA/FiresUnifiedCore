@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections;
 using FiresCore.Npc.Core;
 
@@ -39,7 +39,11 @@ namespace FiresCore.Npc.Combat
         private const float PostDodgeShootWindow = 3f;
 
         // Standard dodge cooldown - throttled to prevent spam rolling
-        private const float DodgeCooldown = 3.0f;
+        private const float DodgeCooldown = 1.5f;   // matches FiresTestBot's DodgeCooldownSeconds
+        // React ONCE on the foe's wind-up (rising edge of InAttack), every other one a roll - FiresTestBot.Duel's React()
+        private Character _windUpFoe;
+        private bool _foeWasAttacking;
+        private int _windUps;
 
    // Strafe state
         private bool _isStrafing;
@@ -286,8 +290,7 @@ private float _strafeTimer;
         }
 
         // Positioning (strafe, step in, step back) used to take Animation priority every 0.2 s, above the companion's own combat
-        // moves, so a kiting healer or a strafing fighter never got back to attacking (R61: the bot's companions "CompanionAI
-        // (Combat) DENIED - CompanionDodge (Animation)" through a whole pack fight, 0 hits). Only an URGENT step away (the target
+        // moves, so a kiting healer or a strafing fighter never got back to attacking. Only an URGENT step away (the target
         // swinging within DangerRange) keeps Animation priority, at most once per UrgentMoveCooldown; everything else competes at
         // Combat priority, so combat decides.
         private const float UrgentMoveCooldown = 2f;
@@ -515,7 +518,16 @@ FaceTarget(target);
             // Check for incoming attack - consider dodging
             if (distToTarget < _context.DodgeThreatRange)
             {
-                if (target.InAttack())
+                bool foeAttacking = target.InAttack();
+                bool windUp = foeAttacking && !(_windUpFoe == target && _foeWasAttacking);
+                _windUpFoe = target; _foeWasAttacking = foeAttacking;
+                if (windUp && distToTarget <= 3.5f && (++_windUps % 2) == 1 && CanDodge(false))
+                {
+                    ExecuteDodge(target);   // the bot's rhythm - every other wind-up within 3.5 m is rolled
+                    _combatExperience?.OnDodgeAttempt(true);
+                    return;
+                }
+                if (foeAttacking && windUp)
                 {
                     // Base dodge chance + level bonus, modified by threat analysis
                     float effectiveDodgeChance = (_context.DodgeChance + levelDodgeBonus) * dodgeChanceModifier;
@@ -642,8 +654,7 @@ FaceTarget(target);
         /// Execute a melee dodge - always to the SIDE.
         /// Uses CombatExperience for optimal direction at higher levels.
         /// </summary>
-        // The archetype's dodge count (ArchetypeStatistics.SuccessfulDodges): never fed before, so companion_test's skills step
-        // read 0 dodges for every fighter (R58).
+        // The archetype's dodge count (ArchetypeStatistics.SuccessfulDodges).
         // Who the next dodge is from, for its log line (set by the dodge entry points).
         private string _dodgeFrom = "a threat";
 
@@ -657,6 +668,7 @@ FaceTarget(target);
         {
             _dodgeFrom = threat != null ? threat.m_name : "a threat";
             if (_isDodging) return;
+            CombatLoopStats.NoteDodge(_context?.Character);
             if (!CanDodge(false)) return;
 
             if (_context != null && !_context.TryLockAnimation("dodge", DodgeAnimationDuration, CombatContext.AnimationPriority.Dodge))

@@ -9,8 +9,8 @@ using UnityEngine.Rendering;
 namespace FiresCore.Movement
 {
     /// <summary>
-    /// First person while crawling (Core 0.2.303, Fire 10-06: "When crawling in caves the camera should be put into first person
-    /// mode and moved down to the height of the head to prevent the clipping issues we see"). Local player only.
+    /// First person while crawling: in caves the camera goes to first person
+    /// and down to head height to prevent clipping. Local player only.
     /// While Core holds the player in a crawl (Crawl.Active) or a low-ceiling crouch (Headroom.Holding), the camera eases from
     /// wherever vanilla (and Headroom's guard) put it to the head (Character.GetHeadPoint, the head bone), and the body's meshes cast shadows only,
     /// so the view isn't filled with the inside of the head. Standing up eases it back to the player's own mode and distance.
@@ -42,7 +42,7 @@ namespace FiresCore.Movement
 
         public static bool Enabled => s_enabled == null || s_enabled.Value;
 
-        // 0.2.308 ([ghost] for Fire's FirstPerson territory flag): other mods ask for first person by owner, local player only.
+        // Other mods ask for first person by owner, local player only.
         // A request is FULLY forced: it ignores "First person when crawling", and scroll-zoom can't change the third-person distance
         // while it holds. Valcast camera modes / possession still win (first person resumes when they end); First Person POV in its
         // own first person also stands this down, since the player already looks from the head.
@@ -77,7 +77,7 @@ namespace FiresCore.Movement
         {
             s_enabled = config.Bind("Movement", "First person when crawling", true,
                 "While a low ceiling holds the player in a crawl or crouch, the camera moves to the head (first person) so it can't clip through the rock, and eases back on standing up. Off: the third-person camera stays (pulled in by 'Low ceilings').");
-            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Movement, false, s_enabled);   // 0.2.387: FAT only
+            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Movement, false, s_enabled);   // FAT only
         }
 
         private static FieldInfo s_povFirstPerson;

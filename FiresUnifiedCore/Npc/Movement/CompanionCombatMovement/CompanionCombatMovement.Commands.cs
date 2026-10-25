@@ -35,7 +35,7 @@ namespace FiresCore.Npc
                 _movementAuthority.FreezeMovement(reason, duration);
             }
             // No fallback - the authority system is required
-            // 0.2.327 (audit slice 3): no velocity write; the authority's freeze sends SetMoveDir(0) and UpdateWalking brakes.
+            // No velocity write; the authority's freeze sends SetMoveDir(0) and UpdateWalking brakes.
 
             _targetMoveDirection = Vector3.zero;
             _currentMoveDirection = Vector3.zero;

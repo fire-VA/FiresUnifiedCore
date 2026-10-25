@@ -22,7 +22,7 @@ namespace FiresCore.Npc.IdleBehaviors
         public override int InventoryPriority => -1;
 
         /// <summary>
-        /// In the idle rotation (0.2.255, Fire's homestead test: archery never started on its own, only by command), at its low
+        /// In the idle rotation (otherwise archery only starts by command), at its low
         /// priority, so productive work still wins.
         /// </summary>
         public override bool AvailableForIdleRotation => true;
@@ -127,7 +127,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
-            // Real arrows (0.2.244): every practice shot uses one; the target hands back the hits.
+            // Real arrows: every practice shot uses one; the target hands back the hits.
             if (AI.ArcheryBrain.ArrowsFor(_inventory?.GetStorageInventory(), TrainingBow(), target) == null)
             {
                 if (CompanionIdleBehavior.VerboseLogging)
@@ -240,7 +240,7 @@ namespace FiresCore.Npc.IdleBehaviors
             base.Cancel();
         }
 
-        // 0.2.278: a finished session lets go of the bow pose and the movement lock as a cancelled one does.
+        // A finished session lets go of the bow pose and the movement lock as a cancelled one does.
         protected override void Complete()
         {
             ResetBowAnimation();
@@ -267,7 +267,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private bool UpdateFindingTarget()
         {
-            // The one practice plan with the bot (0.2.244, ArcheryBrain): the nearest target, a clear reachable spot in front of it,
+            // The one practice plan with the bot (ArcheryBrain): the nearest target, a clear reachable spot in front of it,
             // the arrows, and no more shots than arrows carried.
             string why = AI.ArcheryBrain.Plan(_character, _inventory?.GetStorageInventory(), TrainingBow(), SearchCenter,
                 GetEffectiveSearchRadius(TargetDetectionRange), IsReachable, out _plan);
@@ -465,7 +465,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     if (CompanionIdleBehavior.VerboseLogging)
                         Debug.Log($"[BowTraining] {Companion.companionName} finished training - {_shotsFired} shots fired, arrows retrieved");
                     
-                    // 0.2.278 (HR4: "BowTraining returned done while still active (its Complete() did not run)"): the idle loop
+                    // The idle loop
                     // ends a behaviour as soon as it returns true, so the Complete phase's own Complete() never ran.
                     SetPhase(TrainingPhase.Complete);
                     Complete();
@@ -565,7 +565,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"[BowTraining] {Companion.companionName} fired practice shot {_shotsFired + 1}/{_totalShots} (stamina cost: {staminaCost:F1})");
         }
         
-        // A real arrow out of storage on the arc that reaches the bullseye (0.2.244, ArcheryBrain.Shoot: the arrow's own projectile and
+        // A real arrow out of storage on the arc that reaches the bullseye (ArcheryBrain.Shoot: the arrow's own projectile and
         // gravity, the bow's speed; the target counts it for its return). The old practice shot spent no arrow, yet the target handed
         // arrows back for it.
         private void SpawnPracticeArrow()
@@ -905,7 +905,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            // Vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
             _character?.SetLookDir(dir.normalized);
         }
         

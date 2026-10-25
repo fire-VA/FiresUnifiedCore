@@ -15,7 +15,7 @@ namespace FiresCore.Pieces
     // A source answers for the tables it owns and names their rows; the first registered source that owns the open
     // table is the one asked. Row tag ids are TagIdBase + the source's own key, a private id space that cannot collide
     // with vanilla's enum indices and stays stable while the menu is open. Moved here from FAP's
-    // VABuildUiCategoryTags on 2026-09-27 so FAP's hammer and FAT's Chaos Hammer share one implementation.
+    // VABuildUiCategoryTags so FAP's hammer and FAT's Chaos Hammer share one implementation.
     public static class BuildMenuTabs
     {
         public const int TagIdBase = 100000;
@@ -120,7 +120,30 @@ namespace FiresCore.Pieces
 
         // Runs right after vanilla rebuilds m_availableTags and right before BuildUi reads 0..TagCount by index, so the
         // vanilla count captured here is exactly the boundary the index lookups below need.
+        // A re-entrant Refresh (a
+        // source's CollectTabs reaching UpdateAvailableTags again) is refused and named once, instead of recursing.
+        private static bool s_refreshing;
+        private static bool s_loggedReentry;
+
         private static void Refresh(ByUsagePieceList list, PieceTable table)
+        {
+            if (s_refreshing)
+            {
+                BuildMenuPages.Trace("BuildMenuTabs.Refresh RE-ENTERED (refused)", $"table '{(table != null ? table.name : "none")}'");
+                if (!s_loggedReentry) { s_loggedReentry = true; Logging.FiresLogger.LogWarning("[BuildMenuTabs] Refresh re-entered from inside a source's CollectTabs; the inner call was skipped."); }
+                return;
+            }
+            s_refreshing = true;
+            BuildMenuPages.Trace("BuildMenuTabs.Refresh begin", $"table '{(table != null ? table.name : "none")}' rows-before {s_rows.Count}");
+            try { RefreshInner(list, table); }
+            finally
+            {
+                s_refreshing = false;
+                BuildMenuPages.Trace("BuildMenuTabs.Refresh end", $"vanilla tags {s_vanillaCount}, rows {s_rows.Count}, source {(s_current != null ? s_current.GetType().Name : "none")}");
+            }
+        }
+
+        private static void RefreshInner(ByUsagePieceList list, PieceTable table)
         {
             s_rows.Clear();
             s_current = null;
@@ -132,6 +155,7 @@ namespace FiresCore.Pieces
             }
             s_vanillaNames.Clear();
             for (int i = 0; i < s_vanillaCount; i++) s_vanillaNames.Add(Localize(list.GetTagDisplayName(i)));
+            BuildMenuPages.Trace("BuildMenuTabs.Refresh vanilla names done", $"{s_vanillaCount}");
             foreach (var source in s_sources)
             {
                 bool owns;
@@ -140,11 +164,26 @@ namespace FiresCore.Pieces
                 if (!owns) continue;
                 s_current = source;
                 s_collect.Clear();
+                BuildMenuPages.Trace("BuildMenuTabs.Refresh CollectTabs begin", source.GetType().FullName);
                 try { source.CollectTabs(table, s_collect); }
                 catch (Exception ex) { Warn(source, "CollectTabs", ex); s_collect.Clear(); }
+                BuildMenuPages.Trace("BuildMenuTabs.Refresh CollectTabs end", $"{s_collect.Count} row(s)");
                 s_rows.AddRange(s_collect);
+                AppendRealRows(list);
                 return;
             }
+        }
+
+        // Jotunn's GetTagDisplayName prefix reads m_availableTags[index] with no bounds check, so the
+        // VIRTUAL rows (a TagCount postfix + index prefixes past the list's end) threw ArgumentOutOfRange and the hammer menu would not
+        // open whenever Jotunn had custom categories. The rows are now REAL entries, their tag ids appended to m_availableTags, so every
+        // other mod's index lookup lands inside the list (vanilla TagCount == m_availableTags.Count). Ids >= TagIdBase are ours.
+        private static void AppendRealRows(ByUsagePieceList list)
+        {
+            var tags = s_availableTags != null && list != null ? s_availableTags(list) : null;
+            if (tags == null) return;
+            foreach (var row in s_rows) tags.Add(TagIdFor(row.Key));
+            Logging.FiresLogger.LogDebug($"[BuildMenuTabs] rows {s_rows.Count} at index {s_vanillaCount}.. (tags before: {s_vanillaCount} incl. other mods)");
         }
 
         private static int VanillaTagCount(ByUsagePieceList list)
@@ -156,7 +195,9 @@ namespace FiresCore.Pieces
             }
             if (s_availableTags == null || list == null) return -1;
             var tags = s_availableTags(list);
-            return tags != null ? tags.Count : -1;
+            if (tags == null) return -1;
+            tags.RemoveAll(id => id >= TagIdBase);   // Our rows from a previous Refresh (vanilla clears the list, but never twice)
+            return tags.Count;
         }
 
         public static string Localize(string text)
@@ -188,19 +229,30 @@ namespace FiresCore.Pieces
                 Logging.FiresLogger.LogWarning($"[BuildMenuTabs] {key} threw ({ex.GetType().Name}: {ex.Message}); its tabs are skipped.");
         }
 
+        // After Jotunn's own postfix (it appends its custom-category tags here), so the count includes them and our rows follow.
         [HarmonyPatch(typeof(ByUsagePieceList), nameof(ByUsagePieceList.UpdateAvailableTags))]
         private static class ByUsagePieceList_UpdateAvailableTags_Patch
         {
+            [HarmonyAfter("com.jotunn.jotunn")]
+            [HarmonyPriority(Priority.Last)]
             private static void Postfix(ByUsagePieceList __instance, PieceTable pieceTable) => Refresh(__instance, pieceTable);
         }
 
         // Getters are named as methods ("get_X") so Tools\Verify-HarmonyTargets.ps1 can resolve them statically.
         private const string GetterPrefix = "get_";
 
-        [HarmonyPatch(typeof(ByUsagePieceList), GetterPrefix + nameof(ByUsagePieceList.TagCount))]
-        private static class ByUsagePieceList_TagCount_Patch
+        // No TagCount postfix any more - the rows are real m_availableTags entries, so vanilla's count already includes them.
+
+        // Vanilla GetTagById(id) indexes m_usageTags[id]; one of OUR ids (>= TagIdBase) would throw there, so it answers None.
+        [HarmonyPatch(typeof(ByUsagePieceList), nameof(ByUsagePieceList.GetTagById))]
+        private static class ByUsagePieceList_GetTagById_Patch
         {
-            private static void Postfix(ref int __result) => __result += s_rows.Count;
+            private static bool Prefix(int id, ref Piece.UsageTagFlags __result)
+            {
+                if (id < TagIdBase) return true;
+                __result = (Piece.UsageTagFlags)0;
+                return false;
+            }
         }
 
         [HarmonyPatch(typeof(ByUsagePieceList), nameof(ByUsagePieceList.GetTagDisplayName))]

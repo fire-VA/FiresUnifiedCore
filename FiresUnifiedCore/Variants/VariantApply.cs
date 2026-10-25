@@ -90,7 +90,7 @@ namespace FiresCore.Variants
                 {
                     block.SetColor(EmissionId, def.Emission);
                     // Vanilla emission maps are coloured (the Moder's is cyan); the shader multiplies map x colour, so a red
-                    // glow on them came out near black ([worldgen], mockup v2). A greyscale copy lets any colour show true.
+                    // glow on them came out near black. A greyscale copy lets any colour show true.
                     Texture map = mat.HasProperty(EmissionMapId) ? mat.GetTexture(EmissionMapId) : null;
                     Texture grey = map != null ? Greyscale(map) : null;
                     if (grey != null) block.SetTexture(EmissionMapId, grey);
@@ -139,7 +139,7 @@ namespace FiresCore.Variants
         /// </summary>
         private static Texture2D Greyscale(Texture source)
         {
-            // [generator] 0.2.328 integration: a headless dedicated server draws nothing, so no GPU blit/readback there.
+            // A headless dedicated server draws nothing, so no GPU blit/readback there.
             if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null) return null;
             int key = source.GetInstanceID();
             if (GreyMaps.TryGetValue(key, out Texture2D cached)) return cached;

@@ -3,7 +3,7 @@
 namespace FiresCore.Npc.Archetypes
 {
     /// <summary>
-    /// How many hits and heals each class effect has landed on this peer since the last reset. class_test casts once and
+    /// How many hits and heals each class effect has landed on this peer since the last reset. A test casts once and
     /// reads the count to prove an effect lands once per tick, not once per peer (the ownership rule in AbilityRPCManager).
     /// </summary>
     public static class ClassEffectLedger

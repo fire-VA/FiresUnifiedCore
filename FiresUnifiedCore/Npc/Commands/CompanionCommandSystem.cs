@@ -203,7 +203,8 @@ namespace FiresCore.Npc.Commands
 
         private void ProcessCommandInput()
         {
-            if (FiresCore.Input.FiresInputBlock.IsCapturing) return; // typing in a Fires field — don't fire command hotkeys
+            if (FiresCore.Input.FiresInputBlock.IsTyping()) return;   // never while typing in any text field, chat, console
+            // // typing in a Fires field — don't fire command hotkeys
             // Check for modifier + mouse button (ping command)
             bool shiftHeld = UnityEngine.Input.GetKey(modifierKey) || UnityEngine.Input.GetKey(KeyCode.RightShift);
             bool altHeld = UnityEngine.Input.GetKey(KeyCode.LeftAlt) || UnityEngine.Input.GetKey(KeyCode.RightAlt);
@@ -2021,7 +2022,7 @@ namespace FiresCore.Npc.Commands
 
             // Deposit items
             int deposited = 0;
-            var itemsToDeposit = new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storageInv)); // 0.2.362: storage rows only
+            var itemsToDeposit = new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storageInv)); // storage rows only
 
             foreach (var item in itemsToDeposit)
             {

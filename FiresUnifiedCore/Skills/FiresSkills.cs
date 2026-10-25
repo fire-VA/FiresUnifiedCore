@@ -72,7 +72,44 @@ namespace FiresCore.SkillSystem
         public static void RaiseFiresSkill(this Player player, Skills.SkillType type, float amount = 1f) => player?.GetSkills()?.RaiseSkill(type, amount);
         public static float GetFiresSkillLevel(this Player player, Skills.SkillType type) => player != null ? player.GetSkills().GetSkillLevel(type) : 0f;
         /// <summary>Skill level as a 0..1 factor (level/100) — the standard vanilla "skill factor" effectiveness scales on.</summary>
-        public static float GetFiresSkillFactor(this Player player, Skills.SkillType type) => player != null ? Mathf.Clamp01(player.GetSkills().GetSkillLevel(type) / 100f) : 0f;
+        /// <remarks>Unchanged to level 100 (level/100), then it keeps growing on SoftCap.Soft(level, 100) - 150 -> 1.41,
+        /// 200 -> 1.69 - for Fires skills, which can level to [FiresRPGClasses.Progression] "Fires skill max level" (default 200).</remarks>
+        public static float GetFiresSkillFactor(this Player player, Skills.SkillType type) =>
+            player != null ? Mathf.Max(0f, FiresCore.Curves.SoftCap.Soft(player.GetSkills().GetSkillLevel(type), 100f) / 100f) : 0f;
+
+        // Vanilla's Skill.Raise stops at 100; a FIRES skill levels to the configured max instead (same requirement curve).
+        [HarmonyPatch(typeof(Skills.Skill), nameof(Skills.Skill.Raise))]
+        private static class FiresSkillRaisePatch
+        {
+            private static bool Prefix(Skills.Skill __instance, float factor, ref bool __result)
+            {
+                if (__instance?.m_info == null || !FiresSkillRegistry.TryGet(__instance.m_info.m_skill, out _)) return true;
+                float max = FiresCore.Classes.ProgressionSettings.SkillMaxLevel;
+                __result = false;
+                if (__instance.m_level >= max) return false;
+                __instance.m_accumulator += __instance.m_info.m_increseStep * factor * Game.m_skillGainRate;
+                float need = Mathf.Pow(Mathf.Floor(__instance.m_level + 1f), 1.5f) * 0.5f + 0.5f;
+                if (__instance.m_accumulator < need) return false;
+                __instance.m_level = Mathf.Clamp(__instance.m_level + 1f, 0f, max);
+                __instance.m_accumulator = 0f;
+                __result = true;
+                return false;
+            }
+        }
+
+        // The skills screen's progress bar for a Fires skill past 100 (vanilla shows 0 at 100+).
+        [HarmonyPatch(typeof(Skills.Skill), nameof(Skills.Skill.GetLevelPercentage))]
+        private static class FiresSkillPercentPatch
+        {
+            private static bool Prefix(Skills.Skill __instance, ref float __result)
+            {
+                if (__instance?.m_info == null || __instance.m_level < 100f || !FiresSkillRegistry.TryGet(__instance.m_info.m_skill, out _)) return true;
+                float max = FiresCore.Classes.ProgressionSettings.SkillMaxLevel;
+                float need = Mathf.Pow(Mathf.Floor(__instance.m_level + 1f), 1.5f) * 0.5f + 0.5f;
+                __result = __instance.m_level >= max ? 0f : Mathf.Clamp01(__instance.m_accumulator / need);
+                return false;
+            }
+        }
 
         internal static Skills.SkillDef MakeDef(FiresSkill skill) =>
             new Skills.SkillDef { m_skill = skill.SkillType, m_icon = skill.Icon, m_description = skill.Description, m_increseStep = 1f };
@@ -139,7 +176,7 @@ namespace FiresCore.SkillSystem
                 if (!FiresSkillRegistry.TryGetByInternalName(name.ToLowerInvariant(), out var type)) return true;
                 FiresSkillRegistry.TryGet(type, out var firesSkill);
                 var skill = __instance.GetSkill(type);   // creates via our GetSkillDef seam if absent
-                skill.m_level = Mathf.Clamp(skill.m_level + value, 0f, 100f);
+                skill.m_level = Mathf.Clamp(skill.m_level + value, 0f, FiresCore.Classes.ProgressionSettings.SkillMaxLevel);   // Fires skill max level
                 skill.m_accumulator = 0f;
                 __instance.m_player?.Message(MessageHud.MessageType.TopLeft, $"Skill increased {firesSkill.Name}: {(int)skill.m_level}", 0, skill.m_info.m_icon);
                 Console.instance?.Print($"Skill {firesSkill.Name} = {skill.m_level}");

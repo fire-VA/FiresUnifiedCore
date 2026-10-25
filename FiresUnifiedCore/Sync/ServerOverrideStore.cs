@@ -125,7 +125,10 @@ namespace FiresCore.Sync
             if (ZNet.instance.IsServer())
                 StoreAsServer(_clone(entry), replyTo: null);
             else
+            {
+                FiresLogger.LogInfo($"[{_label}] sending '{_keyOf(entry)}' to the server");
                 SendToServer(UpsertRpc, _serialize(new List<T> { entry }));
+            }
         }
 
         public void Remove(string key)
@@ -148,6 +151,8 @@ namespace FiresCore.Sync
         {
             if (ZNet.instance == null || ZNet.instance.IsServer())
                 return;
+            if (ZRoutedRpc.instance == null || sender != ZRoutedRpc.instance.GetServerPeerID())
+                return;   // the override list comes from the server only
             if (!TryDeserialize(package.ReadString(), out List<T> entries))
                 return;
             ReplaceAll(entries);
@@ -161,6 +166,7 @@ namespace FiresCore.Sync
                 return;
             if (!TryDeserialize(package.ReadString(), out List<T> entries) || entries.Count != 1)
             {
+                FiresLogger.LogWarning($"[{_label}] refused an edit from {Who(sender)}: unreadable");
                 Reply(sender, false, "The edit was unreadable.");
                 return;
             }
@@ -185,7 +191,10 @@ namespace FiresCore.Sync
                 return false;
             if (AdminSyncing.IsAdmin(sender))
                 return true;
-            Reply(sender, false, "Edits are admin-only on this server.");
+            // A refusal is logged on the server and names the id that did not match.
+            string host = HostOf(sender);
+            FiresLogger.LogWarning($"[{_label}] refused an edit from {Who(sender)}: host '{host}' is not in adminlist.txt (admin list match: false)");
+            Reply(sender, false, $"Edits are admin-only on this server (id {host} not in adminlist.txt).");
             return false;
         }
 
@@ -199,6 +208,7 @@ namespace FiresCore.Sync
             string key = _keyOf(entry);
             _entries[key] = entry;
             CommitAsServer();
+            FiresLogger.LogInfo($"[{_label}] saved '{key}' from {(replyTo.HasValue ? Who(replyTo.Value) : "the host")}, {_entries.Count} override(s) -> {FilePath}");
             Answer(replyTo, true, $"Saved '{key}' for everyone.");
         }
 
@@ -211,6 +221,7 @@ namespace FiresCore.Sync
             }
             _entries.Remove(key);
             CommitAsServer();
+            FiresLogger.LogInfo($"[{_label}] removed '{key}' by {(replyTo.HasValue ? Who(replyTo.Value) : "the host")}, {_entries.Count} override(s) -> {FilePath}");
             Answer(replyTo, true, _describeRemoval(entry));
         }
 
@@ -219,7 +230,9 @@ namespace FiresCore.Sync
             try { SaveToDisk(); }
             catch (Exception ex) { FiresLogger.LogError($"[{_label}] could not save {_fileName}, the change is live but not persisted: {ex.Message}"); }
             _applyLocally();
-            SafeRoutedRpc.InvokeSafe(SetRpc, PackText(_serialize(_entries.Values.ToList())));
+            // Everybody. The untargeted overload routes to GetServerPeerID(), which on the server is itself, so
+            // a new set reached clients only at their next login. RPC_Set ignores it on the server.
+            SafeRoutedRpc.InvokeSafe(ZRoutedRpc.Everybody, SetRpc, PackText(_serialize(_entries.Values.ToList())));
             Changed?.Invoke();
         }
 
@@ -231,6 +244,19 @@ namespace FiresCore.Sync
                 SubmitResult?.Invoke(ok, message);
             if (!ok)
                 FiresLogger.LogWarning($"[{_label}] {message}");
+        }
+
+        // The sender as the log names it (player name + peer id) and its socket host (the id adminlist.txt holds).
+        private static string HostOf(long sender)
+        {
+            var peer = ZNet.instance != null ? ZNet.instance.GetPeer(sender) : null;
+            try { return peer?.m_rpc?.GetSocket()?.GetHostName() ?? "?"; } catch { return "?"; }
+        }
+
+        private static string Who(long sender)
+        {
+            var peer = ZNet.instance != null ? ZNet.instance.GetPeer(sender) : null;
+            return peer != null ? $"{peer.m_playerName} (peer {sender})" : $"peer {sender}";
         }
 
         private void Reply(long target, bool ok, string message)
@@ -344,7 +370,7 @@ namespace FiresCore.Sync
                     continue;
                 }
                 _applyLocally();
-                SafeRoutedRpc.InvokeSafe(SetRpc, PackText(_serialize(_entries.Values.ToList())));
+                SafeRoutedRpc.InvokeSafe(ZRoutedRpc.Everybody, SetRpc, PackText(_serialize(_entries.Values.ToList())));
                 Changed?.Invoke();
             }
         }

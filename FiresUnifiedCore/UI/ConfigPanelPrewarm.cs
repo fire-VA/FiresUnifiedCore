@@ -7,12 +7,12 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// The window's first open cost ~0.9 s at the end of that frame (R6, [perf], 2026-09-28: 949 ms in
+    /// The window's first open cost ~0.9 s at the end of that frame (measured: 949 ms in
     /// PostLateUpdate.FinishFrameRendering, main thread blocked 547 ms, IMGUI itself 79 ms). IMGUI draws with a dynamic font
     /// that rasterises each glyph at each size and style the first time it is drawn, growing and re-uploading its atlas as
     /// it goes; the window draws about 2,500 entries' text at a dozen sizes. So the window asks for every glyph it can
     /// show, at every size and style its skin uses, once per session, while Valheim's loading screen still covers the
-    /// world join ([perf]: a 0.9 s frame after the fade can land while the player is already moving), falling back to
+    /// world join (a 0.9 s frame after the fade can land while the player is already moving), falling back to
     /// 3 s after the first spawn if the screen was never seen up. The atlas then grows in one step and the first open
     /// only draws. Both this and each open log how many font atlas rebuilds they caused.
     /// </summary>
@@ -23,16 +23,20 @@ namespace FiresCore.UI
         private const char FirstPrintable = ' ', LastPrintable = '~';
         private static readonly FontStyle[] s_prewarmStyles = { FontStyle.Normal, FontStyle.Bold };
 
-        // R7 ([perf]): with the glyphs prewarmed the cold open was still ~500 ms after IMGUI, render-side and cold-only: the
+        // With the glyphs prewarmed the cold open was still ~500 ms after IMGUI, render-side and cold-only: the
         // first use of the window's and the conflicts popup's textures, materials and GUI shaders. So behind the loading
         // screen the whole window and the popup are also drawn for HiddenDrawRepaints frames at 1/255 opacity (IMGUI
         // windows keep the GUI.color they were called with), Layout and Repaint only, so nothing can be clicked.
-        private const int HiddenDrawRepaints = 2;
+        // An empty brown box (with a grip at the screen's corner) showed after the loading-terrain text: the hidden draw's
+        // window background and resize grip are NOT covered by the 1/255 tint, and IMGUI draws over the loading screen, so the empty
+        // config window showed for the 2 frames. The
+        // hidden WINDOW draw is off; the font-atlas prewarm (invisible) stays. A cold first open costs a little more instead.
+        private const int HiddenDrawRepaints = 0;
         private const float HiddenAlpha = 1f / 255f;
         private int _hiddenDrawsLeft;
         private double _hiddenGuiMs;
 
-        // Fire (R43/R44): the prewarm flashed the window over the loading screen. IMGUI draws after every uGUI canvas, so the
+        // The prewarm flashed the window over the loading screen. IMGUI draws after every uGUI canvas, so the
         // loading screen hides nothing, and the windows' contents run at the end of this OnGUI, after HiddenDraw has put
         // GUI.color back. So each window body applies the tint itself while this pass is hidden (OnGUI clears the flag).
         private bool _hiddenPass;
@@ -42,7 +46,7 @@ namespace FiresCore.UI
             if (_hiddenPass) GUI.color = new Color(1f, 1f, 1f, HiddenAlpha);
         }
 
-        // The loading screen first comes up inside the main scene's activation frame (R39: 5.8 s of every object's Awake and
+        // The loading screen first comes up inside the main scene's activation frame (measured: 5.8 s of every object's Awake and
         // Start), so the prewarm waits a couple of covered frames instead of adding its ~0.4 s to that one.
         private const int CoveredFramesBeforePrewarm = 2;
         private int _coveredSinceFrame = -1;
@@ -116,7 +120,7 @@ namespace FiresCore.UI
                     "ConfigPanel prewarm ({6}): {0} glyphs x sizes [{1}] x normal/bold of '{2}' in {3:0} ms, {4} font atlas rebuild(s){5}.",
                     glyphs.Length, string.Join(",", sizes), fontName ?? "no dynamic font", clock.Elapsed.TotalMilliseconds,
                     s_fontRebuilds - rebuildsBefore, atlas != null ? $", atlas {atlas.width}x{atlas.height}" : "", when));
-                if (covered) _hiddenDrawsLeft = HiddenDrawRepaints;
+                if (covered && HiddenDrawRepaints > 0) _hiddenDrawsLeft = HiddenDrawRepaints;   // 0 = no hidden window draw
             }
             catch (Exception ex) { FiresConfigUI.Log.LogWarning("ConfigPanel prewarm failed: " + ex.Message); }
         }

@@ -15,6 +15,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// When the tank would die, they instead survive with 1 HP.
     /// 5 minute cooldown after triggering.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class UnyieldingEffect : CompanionStatusEffectBase
     {
         private const float CooldownSeconds = 300f;
@@ -124,6 +125,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Lay on Hands Effect (Paladin L75) - Full heal with long cooldown.
     /// This is applied briefly to trigger the heal, then removed.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class LayOnHandsEffect : CompanionStatusEffectBase
     {
         public Character HealTarget { get; set; }
@@ -178,6 +180,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Death Wish Effect (Berserker L75) - Massive damage boost when near death.
     /// +100% damage when below 10% HP, but cannot be healed.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class DeathWishEffect : CompanionStatusEffectBase
     {
         private const float HealthThreshold = 0.10f; // 10% HP
@@ -248,16 +251,17 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     }
 
     /// <summary>
-    /// Death Wish's "cannot be healed" (Fire, popup 2026-09-28 20:4x): while it is active no heal lands on its carrier, player
+    /// Death Wish's "cannot be healed": while it is active no heal lands on its carrier, player
     /// or companion. Every Character.Heal ends in RPC_Heal on the character's owner, the peer where the effect runs.
     /// </summary>
     [HarmonyLib.HarmonyPatch(typeof(Character), "RPC_Heal")]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     internal static class DeathWishBlocksHealing
     {
         private static readonly int s_deathWish = StatusEffectManager.EFFECT_DEATH_WISH.GetStableHashCode();
         private static readonly int s_wounded = StatusEffectManager.EFFECT_CLASS_WOUNDED.GetStableHashCode();
 
-        // Also the yaml's Wounded (0.2.338, [wishbone]): a Wounded carrier receives half of every heal.
+        // Also the yaml's Wounded: a Wounded carrier receives half of every heal.
         private static bool Prefix(Character __instance, ref float hp)
         {
             SEMan seman = __instance != null ? __instance.GetSEMan() : null;
@@ -276,6 +280,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Death Mark Effect (Rogue L75) - Marks enemy for bonus damage from all sources.
     /// Applied to ENEMY targets, increases all damage they take by 30%.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class DeathMarkEffect : CompanionStatusEffectBase
     {
         public const float DAMAGE_INCREASE = 1.30f; // +30% damage taken
@@ -337,6 +342,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Rain of Arrows Effect (Ranger L75) - Creates an AoE damage zone.
     /// Deals damage over time to enemies in the area.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class RainOfArrowsEffect : CompanionStatusEffectBase
     {
         private const float DefaultTargetDistance = 8f;
@@ -406,7 +412,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
+                if (!IsFoe(character)) continue; // enemies only; a player when both have PvP on
 
                 float dist = Vector3.Distance(TargetPosition, character.transform.position);
                 if (dist <= Radius)
@@ -475,6 +481,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Meteor Effect (Mage L75) - Calls down a massive AoE attack.
     /// High damage, long cooldown, impressive VFX.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class MeteorEffect : CompanionStatusEffectBase
     {
         private const float DefaultTargetDistance = 10f;
@@ -547,7 +554,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             {
                 if (character == null || character.IsDead()) continue;
                 if (m_character != null && character == m_character) continue;
-                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
+                if (!IsFoe(character)) continue; // enemies only; a player when both have PvP on
                 
                 float dist = Vector3.Distance(TargetPosition, character.transform.position);
                 if (dist <= Radius)
@@ -593,6 +600,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Divine Hymn Effect (Healer L75) - Channel powerful group heal.
     /// Heals all allies in range rapidly while channeling.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class DivineHymnEffect : CompanionStatusEffectBase
     {
         public float HealPerTick { get; set; } = 20f;
@@ -648,7 +656,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             // Get skill system for XP tracking
             var skillSystem = m_character.GetComponent<ArchetypeSkillSystem>();
             
-            // Heal the caster's party in range (Fire: heals only the party). The owner used to be healed twice per tick:
+            // Heal the caster's party in range (only the party). The owner used to be healed twice per tick:
             // once in its own block and again here as a non-enemy.
             foreach (var character in Character.GetAllCharacters())
             {
@@ -698,6 +706,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Chi Explosion Effect (Monk L75) - Releases all chi in a devastating AoE.
     /// Instant burst damage around the monk.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class ChiExplosionEffect : CompanionStatusEffectBase
     {
         private const float MaxDistanceFalloff = 0.3f;
@@ -739,7 +748,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 if (!Authoritative) break;
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
+                if (!IsFoe(character)) continue; // enemies only; a player when both have PvP on
                 
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist <= Radius)

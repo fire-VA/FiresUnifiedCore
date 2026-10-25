@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -90,7 +90,8 @@ namespace FiresCore.Npc.Core
         /// </summary>
         public static void Initialize()
         {
-            if (_initialized) return;
+            // On a direct world hop (no Game.Logout) a list holding destroyed containers is rebuilt instead of kept
+            if (_initialized) { bool dead = false; foreach (var c in _allContainers) if (c == null) { dead = true; break; } if (!dead) return; _initialized = false; }
             
             _allContainers.Clear();
             

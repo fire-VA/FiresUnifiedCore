@@ -15,7 +15,7 @@ namespace FiresCore.Possession
         private static Character s_target;
         private static bool s_on;
         private static WaterVolume s_water;
-        // 0.2.327 ([ghost]'s drop 7, Fire): while the possessed creature flies (PossessionEngine.CameraFree), keys steer it and the
+        // While the possessed creature flies (PossessionEngine.CameraFree), keys steer it and the
         // mouse orbits this camera (yaw + clamped pitch) around it; otherwise the camera trails the heading as before.
         private static bool s_wasFree;
         private static float s_orbitYaw, s_orbitPitch;

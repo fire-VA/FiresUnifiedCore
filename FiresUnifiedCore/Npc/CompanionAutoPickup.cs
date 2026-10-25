@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -9,6 +9,7 @@ namespace FiresCore.Npc
     /// honoring m_autoPickup, weight and space, pulling items in before taking them, claiming ownership first, and
     /// saying so when the inventory is full.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public class CompanionAutoPickup : MonoBehaviour
     {
         #region Settings
@@ -42,7 +43,6 @@ namespace FiresCore.Npc
         
         private CompanionController _companion;
         private CompanionInventory _inventory;
-        private Character _character;
         private ZNetView _nview;
         
         private bool _inventoryFullMessageShown;
@@ -70,9 +70,34 @@ namespace FiresCore.Npc
         private HashSet<string> _loggedTypeFilterItems = new HashSet<string>();
         private HashSet<string> _loggedCapacityItems = new HashSet<string>();
         private float _lastLogClearTime = 0f;
-        // 0.2.364: drops refused for a full storage are left alone until the next clear (no magnet, no retry each frame).
+        // Drops refused for a full storage are left alone until the next clear (no magnet, no retry each frame).
         private readonly HashSet<int> _refusedDrops = new HashSet<int>();
         private const float LogClearInterval = 60f; // Clear logged items every 60 seconds
+        // At most one ownership request per drop every 10 s, to prevent a pickup loop.
+        // The cause was an owner ping-pong between two pickers when one couldn't add the item; the drop is left alone between asks.
+        private readonly Dictionary<int, float> _ownRequests = new Dictionary<int, float>();
+        private const float OwnRequestBackoff = 10f;
+
+        private const float VerboseScanInterval = 5f, VerboseScanRadiusMultiplier = 2f;
+        private const float PickupReachDistance = 0.3f;        // closer than this the item is taken; farther it is pulled in
+        private const float MagnetSpeed = 15f;                 // metres per second
+        private const float FlyingUpSpeed = 4f;                // an item rising faster than this is never pulled
+        private const float MaxPullHeightAboveItem = 3f;       // never pull toward a point higher than this above the item
+        private const float MaxItemHeightAboveCenter = 1.5f;   // never pull an item already above the companion's head
+        private const float MagnetLogInterval = 2f, GateLogInterval = 10f;
+        private const float InventoryFullMessageCooldown = 30f;
+        private const float MinPickupRadius = 0.5f, MaxPickupRadius = 10f;
+        private const int SummaryMaxLength = 100, SummaryTruncateAt = 97;
+
+        private void RequestOwnPaced(ItemDrop itemDrop)
+        {
+            int id = itemDrop.GetInstanceID();
+            if (_ownRequests.TryGetValue(id, out float last) && Time.time - last < OwnRequestBackoff) return;
+            if (_ownRequests.ContainsKey(id))
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAutoPickup] {_companion?.companionName} still can't pick up {itemDrop.name} after an ownership request; asking again (every {OwnRequestBackoff:0} s)");
+            _ownRequests[id] = Time.time;
+            itemDrop.RequestOwn();
+        }
         
         #endregion
         
@@ -82,7 +107,6 @@ namespace FiresCore.Npc
         {
             _companion = GetComponent<CompanionController>();
             _inventory = GetComponent<CompanionInventory>();
-            _character = GetComponent<Character>();
             _nview = GetComponent<ZNetView>();
             
             // Same mask as Player uses
@@ -136,15 +160,16 @@ namespace FiresCore.Npc
                 _loggedTypeFilterItems.Clear();
                 _loggedCapacityItems.Clear();
                 _refusedDrops.Clear();
+                _ownRequests.Clear();
             }
             
             // Periodic scan logging
-            if (VerboseLogging && Time.time - _lastScanTime > 5f)
+            if (VerboseLogging && Time.time - _lastScanTime > VerboseScanInterval)
             {
                 _lastScanTime = Time.time;
                 
                 // Also do a non-layer-filtered scan to see ALL nearby items
-                var allColliders = Physics.OverlapSphere(center, pickupRadius * 2f);
+                var allColliders = Physics.OverlapSphere(center, pickupRadius * VerboseScanRadiusMultiplier);
                 int itemCount = 0;
                 foreach (var overlap in allColliders)
                 {
@@ -161,7 +186,7 @@ namespace FiresCore.Npc
                 
                 if (itemCount > 0)
                 {
-                    Debug.Log($"[CompanionAutoPickup] {_companion?.companionName} found {itemCount} ItemDrops within {pickupRadius * 2f}m (layer mask = {_autoPickupMask})");
+                    Debug.Log($"[CompanionAutoPickup] {_companion?.companionName} found {itemCount} ItemDrops within {pickupRadius * VerboseScanRadiusMultiplier}m (layer mask = {_autoPickupMask})");
                 }
             }
             
@@ -187,25 +212,22 @@ namespace FiresCore.Npc
                 if (itemDrop == null) continue;
                 if (_refusedDrops.Contains(itemDrop.GetInstanceID())) continue;
 
-                // 0.2.366: items the player dropped from their own inventory are for the companion.
+                // Items the player dropped from their own inventory are for the companion.
                 // Vanilla clears m_autoPickup on those (OnPlayerDrop); our postfix also stamps the ZDO.
                 bool playerDropped = IsPlayerDropped(itemDrop);
                 if (!itemDrop.m_autoPickup && !playerDropped) continue;
                 
                 // Don't pickup placed pieces
                 if (itemDrop.IsPiece()) continue;
+                if (FiresCore.Storage.HopperChest.LeaveForHopper(itemDrop, _companion?.companionName ?? "?")) continue;   // a hopper's item
                 
                 // Check if item's ZNetView is valid
                 ZNetView itemNview = itemDrop.GetComponent<ZNetView>();
                 if (itemNview == null || !itemNview.IsValid()) continue;
                 
-                // Check if we can pickup (handles timing, etc.)
-                if (!itemDrop.CanPickup())
-                {
-                    // Request ownership so we can pick it up next frame
-                    itemDrop.RequestOwn();
-                    continue;
-                }
+                // Ownership is asked for only after the yield, type, capacity and weight checks pass,
+                // so a full companion never pulls a drop away from a player (or another picker) it can't take.
+                bool needOwn = !itemDrop.CanPickup();
                 
                 // Check if stuck in tar
                 if (itemDrop.InTar()) continue;
@@ -214,7 +236,7 @@ namespace FiresCore.Npc
                 // If the local player is within their own pickup radius of the item,
                 // OR is closer to the item than we are, leave it for them.  Otherwise
                 // both magnets pull the item back and forth between us and the owner.
-                // Vanilla CanPickup() above already enforces the 0.5 s just-dropped delay.
+                // Vanilla CanPickup() (needOwn) still enforces the 0.5 s just-dropped delay: no pickup until it passes.
                 if (playerDropped)
                     LogPickupGate(itemDrop, true);
                 else if (ShouldYieldToPlayer(itemDrop.transform.position, center))
@@ -279,13 +301,15 @@ namespace FiresCore.Npc
                     continue;
                 }
                 
+                if (needOwn) { RequestOwnPaced(itemDrop); continue; }
+
                 // Calculate distance
                 float distance = Vector3.Distance(itemDrop.transform.position, center);
                 
                 if (distance <= pickupRadius)
                 {
                     // Close enough - do the pickup
-                    if (distance < 0.3f)
+                    if (distance < PickupReachDistance)
                     {
                         // Actually pick up the item
                         PerformPickup(itemDrop, itemData, floatingDummy);
@@ -293,10 +317,7 @@ namespace FiresCore.Npc
                     else
                     {
                         // "Magnet" effect - move item toward companion
-                        Vector3 direction = Vector3.Normalize(center - itemDrop.transform.position);
-                        Vector3 movement = direction * 15f * dt;
-                        
-                        itemDrop.transform.position += movement;
+                        if (!MagnetStep(itemDrop, center, dt, out Vector3 movement)) continue;
                         
                         // Also move the floating dummy if present
                         if (floatingDummy != null)
@@ -319,6 +340,49 @@ namespace FiresCore.Npc
             FallbackPickupScan(center, dt);
         }
         
+        // Loot could fly up out of a shield bubble: the magnet moved a
+        // physics item's transform straight at a point 1 m up inside the companion's own collider; an item that is not picked up there can
+        // be pushed out by physics at speed. Now each step zeroes the item's velocity, never pulls an item that is already above the
+        // companion's head, and logs the pulled item (Debug, per item per 2 s) and any pulled item seen flying up (> 4 m/s up).
+        private readonly Dictionary<int, float> _magnetSaid = new Dictionary<int, float>();
+        private bool MagnetStep(ItemDrop itemDrop, Vector3 center, float dt, out Vector3 movement)
+        {
+            movement = Vector3.zero;
+            var rb = itemDrop.GetComponent<Rigidbody>();
+            Vector3 velocity = rb != null ? rb.linearVelocity : Vector3.zero;
+            int id = itemDrop.GetInstanceID();
+            var itemView = itemDrop.GetComponent<ZNetView>();
+            string owner = itemView != null && itemView.IsValid() ? (itemView.IsOwner() ? "here" : itemView.GetZDO().GetOwner().ToString()) : "?";
+            if (velocity.y > FlyingUpSpeed)
+                FiresCore.Logging.FiresLogger.LogWarning($"[LootMagnet] {_companion?.companionName}: {itemDrop.m_itemData?.m_shared?.m_name ?? itemDrop.name} is flying up ({velocity.y:0.0} m/s) at ({itemDrop.transform.position.x:0.0}, {itemDrop.transform.position.y:0.0}, {itemDrop.transform.position.z:0.0}), owner {owner}; not pulled, velocity zeroed");
+            // A pull toward a target high above sends loot straight up - never pull toward a point > 3 m above the item
+            if (center.y - itemDrop.transform.position.y > MaxPullHeightAboveItem)
+            {
+                if (!_magnetSaid.TryGetValue(-id, out float lastTooHighLog) || Time.time - lastTooHighLog > MagnetLogInterval)
+                {
+                    _magnetSaid[-id] = Time.time;
+                    FiresCore.Logging.FiresLogger.LogWarning($"[LootMagnet] {_companion?.companionName}: pull target ({center.x:0.0}, {center.y:0.0}, {center.z:0.0}) is {center.y - itemDrop.transform.position.y:0.0} m above {itemDrop.m_itemData?.m_shared?.m_name ?? itemDrop.name} at y {itemDrop.transform.position.y:0.0} (companion on ground {(_companion != null && _companion.GetComponent<Character>() is Character cc ? cc.IsOnGround().ToString() : "?")}); not pulled");
+                }
+                if (rb != null && !rb.isKinematic) rb.linearVelocity = Vector3.zero;
+                return false;
+            }
+            if (itemDrop.transform.position.y > center.y + MaxItemHeightAboveCenter || velocity.y > FlyingUpSpeed)
+            {
+                if (rb != null && !rb.isKinematic) rb.linearVelocity = Vector3.zero;
+                return false;
+            }
+            Vector3 direction = Vector3.Normalize(center - itemDrop.transform.position);
+            movement = direction * MagnetSpeed * dt;
+            itemDrop.transform.position += movement;
+            if (rb != null && !rb.isKinematic) rb.linearVelocity = Vector3.zero;
+            if (!_magnetSaid.TryGetValue(id, out float lastPullLog) || Time.time - lastPullLog > MagnetLogInterval)
+            {
+                _magnetSaid[id] = Time.time;
+                FiresCore.Logging.FiresLogger.LogDebug($"[LootMagnet] {_companion?.companionName} pulls {itemDrop.m_itemData?.m_shared?.m_name ?? itemDrop.name}: {Vector3.Distance(itemDrop.transform.position, center):0.0} m, item y {itemDrop.transform.position.y:0.0} vs center {center.y:0.0}, velocity {velocity.magnitude:0.0} (up {velocity.y:0.0}), owner {owner}");
+            }
+            return true;
+        }
+
         /// <summary>
         /// Fallback pickup scan that doesn't rely on layer mask.
         /// Catches items that might be on unexpected layers.
@@ -345,15 +409,12 @@ namespace FiresCore.Npc
                 bool playerDropped = IsPlayerDropped(itemDrop);
                 if (!itemDrop.m_autoPickup && !playerDropped) continue;
                 if (itemDrop.IsPiece()) continue;
+                if (FiresCore.Storage.HopperChest.LeaveForHopper(itemDrop, _companion?.companionName ?? "?")) continue;   // a hopper's item
                 
                 ZNetView itemNview = itemDrop.GetComponent<ZNetView>();
                 if (itemNview == null || !itemNview.IsValid()) continue;
                 
-                if (!itemDrop.CanPickup())
-                {
-                    itemDrop.RequestOwn();
-                    continue;
-                }
+                bool needOwn = !itemDrop.CanPickup();   // asked for after the checks below
                 
                 if (itemDrop.InTar()) continue;
 
@@ -372,6 +433,7 @@ namespace FiresCore.Npc
                 if (itemData == null) continue;
                 
                 if (!ShouldPickupItemType(itemData)) continue;
+                if (CompanionPickupGate.Blocked(itemDrop.transform.position, _companion != null ? _companion.ownerPlayerId : 0L, _companion?.companionName, itemData.m_shared.m_name)) continue;
                 
                 Inventory inv = _inventory.GetStorageInventory();
                 if (inv == null) continue;
@@ -383,11 +445,13 @@ namespace FiresCore.Npc
                 float itemWeight = itemData.GetWeight();
                 if (currentWeight + itemWeight > maxWeight) continue;
                 
+                if (needOwn) { RequestOwnPaced(itemDrop); continue; }
+
                 float distance = Vector3.Distance(itemDrop.transform.position, center);
                 
                 if (distance <= pickupRadius)
                 {
-                    if (distance < 0.3f)
+                    if (distance < PickupReachDistance)
                     {
                         if (VerboseLogging)
                             Debug.Log($"[CompanionAutoPickup] FALLBACK picking up {itemData.m_shared.m_name} (layer {itemLayer})");
@@ -395,23 +459,12 @@ namespace FiresCore.Npc
                     }
                     else
                     {
-                        Vector3 direction = Vector3.Normalize(center - itemDrop.transform.position);
-                        Vector3 movement = direction * 15f * dt;
-                        itemDrop.transform.position += movement;
+                        if (!MagnetStep(itemDrop, center, dt, out Vector3 movement)) continue;
                     }
                 }
             }
         }
 
-        /// <summary>
-        /// Returns true when the local player is close enough to this item drop that
-        /// our own auto-pickup magnet would tug-of-war with theirs.  In that case the
-        /// companion should yield — the player's pickup wins.
-        ///
-        /// Yield conditions:
-        ///   * player is within their own pickup radius of the item, OR
-        ///   * player is closer to the item than we are.
-        /// </summary>
         internal const string PlayerDroppedZdoKey = "fires_player_dropped";
         private static readonly Dictionary<string, float> _gateLogTimes = new Dictionary<string, float>();
 
@@ -429,7 +482,7 @@ namespace FiresCore.Npc
         {
             string name = itemDrop?.m_itemData?.m_shared?.m_name ?? itemDrop?.name ?? "unknown";
             string key = (allowed ? "a:" : "s:") + name;
-            if (_gateLogTimes.TryGetValue(key, out float last) && Time.time - last < 10f) return;
+            if (_gateLogTimes.TryGetValue(key, out float last) && Time.time - last < GateLogInterval) return;
             _gateLogTimes[key] = Time.time;
             if (allowed)
                 FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPickup] player-dropped {name}: allowed");
@@ -437,6 +490,15 @@ namespace FiresCore.Npc
                 FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPickup] {name} near the player: skipped (guard)");
         }
 
+        /// <summary>
+        /// Returns true when the local player is close enough to this item drop that
+        /// our own auto-pickup magnet would tug-of-war with theirs.  In that case the
+        /// companion should yield — the player's pickup wins.
+        ///
+        /// Yield conditions:
+        ///   * player is within their own pickup radius of the item, OR
+        ///   * player is closer to the item than we are.
+        /// </summary>
         private bool ShouldYieldToPlayer(Vector3 itemPos, Vector3 selfCenter)
         {
             // Vanilla Player.AutoPickup uses a ~2m radius.  Use slightly more so
@@ -474,7 +536,7 @@ namespace FiresCore.Npc
                 // Store stack count before pickup
                 int stack = itemData.m_stack;
                 
-                // 0.2.365: storage rows only (CompanionGridLayout). Refuse up front when storage cannot take the whole stack,
+                // Storage rows only (CompanionGridLayout). Refuse up front when storage cannot take the whole stack,
                 // so the drop stays on the ground (and is remembered as refused) instead of a partial add.
                 bool companionBag = CompanionGridLayout.IsCompanionBag(inv);
                 if (companionBag && !inv.CanAddItem(itemData, stack))
@@ -484,7 +546,7 @@ namespace FiresCore.Npc
                     return;
                 }
 
-                // 0.2.364 (item loss): add a COPY, count what landed, destroy the drop only when all of it did.
+                // To prevent item loss: add a COPY, count what landed, destroy the drop only when all of it did.
                 // TakeDropVerified is the only place that destroys the drop; it logs "picked up ... -> storage" / "pickup refused".
                 int taken = FiresCore.Npc.IdleBehaviors.ChestHelper.TakeDropVerified(itemDrop, inv, _companion?.companionName ?? "companion");
                 if (taken <= 0)
@@ -494,7 +556,7 @@ namespace FiresCore.Npc
                 }
                 stack = taken;
 
-                // 0.2.365: anything of this item that landed outside the storage rows moves into a free storage cell.
+                // Anything of this item that landed outside the storage rows moves into a free storage cell.
                 if (companionBag)
                 {
                     foreach (var it in inv.GetAllItems())
@@ -616,7 +678,7 @@ namespace FiresCore.Npc
                     $"{companionName}'s inventory is full!");
                 
                 _inventoryFullMessageShown = true;
-                _inventoryFullMessageCooldown = Time.time + 30f; // Don't spam - wait 30 seconds
+                _inventoryFullMessageCooldown = Time.time + InventoryFullMessageCooldown; // Don't spam
             }
         }
         
@@ -655,8 +717,8 @@ namespace FiresCore.Npc
                     
                 // Create a brief summary
                 string summary = string.Join(", ", result.Select(kvp => $"{kvp.Key} x{kvp.Value}"));
-                if (summary.Length > 100)
-                    summary = summary.Substring(0, 97) + "...";
+                if (summary.Length > SummaryMaxLength)
+                    summary = summary.Substring(0, SummaryTruncateAt) + "...";
                     
                 Debug.Log($"[CompanionAutoPickup] {_companion?.companionName} collected {totalItems} items: {summary}");
             }
@@ -686,7 +748,7 @@ namespace FiresCore.Npc
         /// </summary>
         public void SetPickupRadius(float radius)
         {
-            pickupRadius = Mathf.Clamp(radius, 0.5f, 10f);
+            pickupRadius = Mathf.Clamp(radius, MinPickupRadius, MaxPickupRadius);
         }
         
         /// <summary>
@@ -701,10 +763,11 @@ namespace FiresCore.Npc
     }
 
     /// <summary>
-    /// 0.2.366: vanilla Humanoid.DropItem calls ItemDrop.OnPlayerDrop only when IsPlayer(); it just clears the local,
+    /// Vanilla Humanoid.DropItem calls ItemDrop.OnPlayerDrop only when IsPlayer(); it just clears the local,
     /// unsynced m_autoPickup. Stamp the drop's ZDO so companions (on any peer) can tell a deliberate player drop.
     /// </summary>
     [HarmonyLib.HarmonyPatch(typeof(ItemDrop), nameof(ItemDrop.OnPlayerDrop))]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionPlayerDropStampPatch
     {
         private static void Postfix(ItemDrop __instance)

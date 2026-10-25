@@ -6,8 +6,8 @@ using UnityEngine;
 namespace FiresCore.Movement
 {
     /// <summary>
-    /// Low ceilings (Core 0.2.295, Fire 10-05: "when a character starts walking into a cave area that is too short for them to stand in,
-    /// the camera will clip outside of the cave"). Two parts, local player only:
+    /// Low ceilings: when a character walks into a cave area too short to stand in,
+    /// the camera would clip outside of the cave. Two parts, local player only:
     /// - Headroom: a sphere cast up from the feet each physics step (and a step ahead in the walking direction). Under a ceiling too low
     ///   to stand, the player is held in vanilla's crouch (the same SetCrouch the crouch key uses; no sneak stamina drain or skill while
     ///   it is held), and the crouch can't be released until there is room again. That lowers the head and the eye, so the camera's pivot.
@@ -23,7 +23,6 @@ namespace FiresCore.Movement
         private static int s_mask;
         private static bool s_forced;
         private static float s_roomSince = -1f;
-        private static float s_nextCameraLog;
 
         /// <summary>Room above the eye (m) needed to stand: the head plus a margin.</summary>
         private const float StandMargin = 0.35f;
@@ -33,6 +32,19 @@ namespace FiresCore.Movement
         private const float LookAhead = 0.6f;
         /// <summary>The camera's guard sphere: at least this radius (m), and the camera's near clip plus this.</summary>
         private const float CameraMinRadius = 0.15f, CameraClipMargin = 0.05f;
+        /// <summary>Seconds between repeats of the same rate-limited Debug line.</summary>
+        private const float LogIntervalSeconds = 2f;
+        /// <summary>Eye height (m) assumed before the player's eye is known / standing.</summary>
+        private const float DefaultEyeHeight = 1.6f, MinStandingEyeHeight = 1.2f;
+        /// <summary>Extra reach (m) of the ceiling probe past the release height.</summary>
+        private const float CeilingProbeSlack = 0.5f;
+        /// <summary>Margin (m) above crouched height under which a crawl starts.</summary>
+        private const float CrawlMargin = 0.05f;
+        /// <summary>A surface counts as a ceiling only when its normal's y is below this (facing down).</summary>
+        private const float CeilingMaxNormalY = -0.5f;
+        /// <summary>Ceiling probe sphere: radius and start height above the feet (m).</summary>
+        private const float CeilingProbeRadius = 0.25f, CeilingProbeStart = 0.3f;
+        private const float MinCameraDistance = 0.05f, DefaultNearClip = 0.1f, GuardSettleEpsilon = 0.01f;
 
         private static int Mask => s_mask != 0 ? s_mask : (s_mask = LayerMask.GetMask("Default", "static_solid", "terrain", "piece", "vehicle"));
 
@@ -47,14 +59,14 @@ namespace FiresCore.Movement
             s_cameraGuard = config.Bind("Camera", "Camera collision", CameraCollisionMode.Auto,
                 "Camera collision. On = the camera is pulled in when something blocks the view (vanilla) plus a smooth guard under roofs and in caves. " +
                 "Off = the camera stays at the distance you set with the mouse wheel. Auto = On when Fires Admin Terrain is installed, Off otherwise.");
-            // 0.2.369: 0.2.367 saved this key as true/false; keep the player's explicit choice (false -> Off, true -> Auto).
+            // Older versions saved this key as true/false; keep the player's explicit choice (false -> Off, true -> Auto).
             if (legacy == "false") { s_cameraGuard.Value = CameraCollisionMode.Off; FiresCore.Logging.FiresLogger.LogDebug("[Camera] migrated Camera collision = false -> Off"); }
             else if (legacy == "true") { s_cameraGuard.Value = CameraCollisionMode.Auto; FiresCore.Logging.FiresLogger.LogDebug("[Camera] migrated Camera collision = true -> Auto"); }
             s_cameraGuard.SettingChanged += (sender, args) => { s_guardResolved = false; s_guardDist = -1f; s_guardOn = false; };
-            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Movement, false, s_enabled, s_cameraGuard);   // 0.2.387: FAT only
+            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Movement, false, s_enabled, s_cameraGuard);   // FAT only
         }
 
-        /// <summary>0.2.369: the raw value of a 0.2.367 bool "Camera collision" line in the cfg file ("true"/"false"), else null.</summary>
+        /// <summary>The raw value of a legacy bool "Camera collision" line in the cfg file ("true"/"false"), else null.</summary>
         private static string ReadLegacyCameraCollision(ConfigFile config)
         {
             try
@@ -76,7 +88,7 @@ namespace FiresCore.Movement
             return null;
         }
 
-        /// <summary>0.2.368 (Fire): the camera guard's default follows FAT; an explicit On / Off always wins.</summary>
+        /// <summary>The camera guard's default follows FAT; an explicit On / Off always wins.</summary>
         public enum CameraCollisionMode { Auto, On, Off }
 
         private const string FatGuid = "com.Fire.FiresAdminTerrain";
@@ -105,11 +117,11 @@ namespace FiresCore.Movement
 
         private static float s_nextPullLog;
 
-        /// <summary>0.2.368: one rate-limited Debug line whenever a Core camera pull-in engages.</summary>
+        /// <summary>One rate-limited Debug line whenever a Core camera pull-in engages.</summary>
         internal static void LogPullIn(string source)
         {
             if (Time.time < s_nextPullLog) return;
-            s_nextPullLog = Time.time + 2f;
+            s_nextPullLog = Time.time + LogIntervalSeconds;
             CameraCollisionMode mode = s_cameraGuard != null ? s_cameraGuard.Value : CameraCollisionMode.Auto;
             FiresCore.Logging.FiresLogger.LogDebug($"[Camera] pull-in by {source} (toggle {mode} -> {(CameraGuardEnabled ? "active" : "off")})");
         }
@@ -117,7 +129,7 @@ namespace FiresCore.Movement
         private static void GuardLog(string line)
         {
             if (Time.time < s_nextGuardLog) return;
-            s_nextGuardLog = Time.time + 2f;
+            s_nextGuardLog = Time.time + LogIntervalSeconds;
             FiresCore.Logging.FiresLogger.LogDebug(line);
         }
 
@@ -126,27 +138,26 @@ namespace FiresCore.Movement
         {
             float best = float.PositiveInfinity;
             Vector3 feet = player.transform.position;
-            Probe(feet, reach, ref best);
+            ProbeCeiling(feet, reach, ref best);
             Vector3 move = player.GetMoveDir();
             move.y = 0f;
-            if (move.sqrMagnitude > 0.01f) Probe(feet + move.normalized * LookAhead, reach, ref best);
+            if (move.sqrMagnitude > 0.01f) ProbeCeiling(feet + move.normalized * LookAhead, reach, ref best);
             return best;
         }
 
-        private static void Probe(Vector3 feet, float reach, ref float best)
+        private static void ProbeCeiling(Vector3 feet, float reach, ref float best)
         {
-            // 0.2.307: SphereCast ignores what the sphere starts inside; the old 0.3 m sphere at 0.5 m already reached 0.8 m, so a
+            // SphereCast ignores what the sphere starts inside; the old 0.3 m sphere at 0.5 m already reached 0.8 m, so a
             // 0.63 m roof read "no ceiling". A 0.25 m sphere at 0.3 m sees ceilings from 0.55 m up.
-            const float radius = 0.25f, start = 0.3f;
-            // 0.2.369 (Fire: a tree forced a crouch): only a solid overhead surface counts. Every hit is read; trees, logs, tree
+            // Only a solid overhead surface counts. Every hit is read; trees, logs, tree
             // destructibles and vegetation are skipped, and the surface must face down (a roof / cave underside, normal.y < -0.5).
-            RaycastHit[] hits = Physics.SphereCastAll(feet + Vector3.up * start, radius, Vector3.up, reach, Mask, QueryTriggerInteraction.Ignore);
+            RaycastHit[] hits = Physics.SphereCastAll(feet + Vector3.up * CeilingProbeStart, CeilingProbeRadius, Vector3.up, reach, Mask, QueryTriggerInteraction.Ignore);
             for (int i = 0; i < hits.Length; i++)
             {
                 RaycastHit hit = hits[i];
                 if (!IsCeiling(hit)) continue;
-                float h = start + hit.distance + radius;
-                if (h < best) { best = h; s_lastCeiling = hit.collider; }
+                float height = CeilingProbeStart + hit.distance + CeilingProbeRadius;
+                if (height < best) { best = height; s_lastCeiling = hit.collider; }
             }
         }
 
@@ -158,7 +169,7 @@ namespace FiresCore.Movement
         {
             Collider c = hit.collider;
             if (c == null || hit.distance <= 0f) return false;   // distance 0 = the sphere started inside it (a trunk beside the player)
-            if (hit.normal.y >= -0.5f) return false;              // not facing down: a wall, a trunk's side, a branch's top
+            if (hit.normal.y >= CeilingMaxNormalY) return false;              // not facing down: a wall, a trunk's side, a branch's top
             if (c.attachedRigidbody != null && c.attachedRigidbody.GetComponent<Character>() != null) return false;
             if (s_vegLayer == -2) { s_vegLayer = LayerMask.NameToLayer("vegetation"); s_treeLayer = LayerMask.NameToLayer("tree"); }
             int layer = c.gameObject.layer;
@@ -183,15 +194,27 @@ namespace FiresCore.Movement
                 Release(player, null);
                 return;
             }
-            float eyeHeight = player.m_eye != null ? player.m_eye.position.y - player.transform.position.y : 1.6f;
-            if (s_forced) eyeHeight = Mathf.Max(eyeHeight, StandingEyeHeight);   // crouched now: judge against the standing eye
-            else if (!player.IsCrouching() && !player.m_crouchToggled) StandingEyeHeight = Mathf.Max(1.2f, eyeHeight);
-            float need = StandingEyeHeight + StandMargin;
-            float ceiling = CeilingOver(player, need + ReleaseExtra + 0.5f);
+            float eyeHeight = player.m_eye != null ? player.m_eye.position.y - player.transform.position.y : DefaultEyeHeight;
+            if (s_forced) eyeHeight = Mathf.Max(eyeHeight, s_standingEyeHeight);   // crouched now: judge against the standing eye
+            else if (!player.IsCrouching() && !player.m_crouchToggled) s_standingEyeHeight = Mathf.Max(MinStandingEyeHeight, eyeHeight);
+            // The threshold is the
+            // real standing capsule + a small margin, not the eye height + 0.35 (the eye sits high in the capsule; a doorway made a crouch)
+            float need = Crawl.StandingCapsule(player) + CapsuleMargin;
+            float ceiling = CeilingOver(player, need + ReleaseExtra + CeilingProbeSlack);
+            // Only under a cave or
+            // dungeon ceiling - a vanilla interior, or a terrain / FAT voxel roof - never under a build piece or anything else in the overworld
+            if (!float.IsPositiveInfinity(ceiling) && !IsCaveCeiling(player, s_lastCeiling))
+            {
+                string why = $"ceiling {ceiling:0.00} m by {CeilingName()}: not a cave or dungeon (cave mechanics only)";
+                if (why != s_notCaveSaid) { s_notCaveSaid = why; FiresCore.Logging.FiresLogger.LogDebug($"[Headroom] {why}; no forced crouch (needs {need:0.00} m to stand)"); }
+                Release(player, null);
+                return;
+            }
+            s_notCaveSaid = null;
 
             // Lower than a crouched body: crawl, when crawling is on (Crawl.Enabled); crouched room is the standing capsule x CrouchShare.
-            float crawlBelow = Crawl.StandingCapsule(player) * Crawl.CrouchShare + 0.05f;
-            // 0.2.387 (bug: caves forced a crouch without FAT): the low-ceiling crouch is FAT's (Movement). Without FAT this runs only
+            float crawlBelow = Crawl.StandingCapsule(player) * Crawl.CrouchShare + CrawlMargin;
+            // The low-ceiling crouch is FAT's (Movement). Without FAT this runs only
             // for a crawl (Crawling, live with RPGClasses), i.e. only where the ceiling is too low even to crouch.
             if (!FiresCore.Config.CoreFeatures.IsLive(FiresCore.Config.CoreFeatures.Movement)
                 && !Crawl.Active && !(Crawl.Enabled && ceiling < crawlBelow))
@@ -238,7 +261,19 @@ namespace FiresCore.Movement
             Release(player, float.IsPositiveInfinity(ceiling) ? "no ceiling in reach" : $"ceiling {ceiling:0.00} m");
         }
 
-        private static float StandingEyeHeight = 1.6f;
+        private static float s_standingEyeHeight = DefaultEyeHeight;
+        private const float CapsuleMargin = 0.1f;
+        private static string s_notCaveSaid;
+
+        /// <summary>A cave or dungeon roof - inside a vanilla interior (dungeons, crypts), or terrain / a FAT voxel chunk overhead; never a
+        /// build piece (crouch, crawl and the camera guard are cave mechanics only).</summary>
+        internal static bool IsCaveCeiling(Player player, Collider roof)
+        {
+            if (player != null && player.InInterior()) return true;
+            if (roof == null) return false;
+            if (roof.GetComponentInParent<Piece>() != null) return false;
+            return roof.name.StartsWith("VoxelChunk") || roof.GetComponentInParent<Heightmap>() != null;
+        }
 
         private static float s_crawlRoomSince = -1f;
 
@@ -285,7 +320,7 @@ namespace FiresCore.Movement
 
         private static float s_nextVanillaLog;
 
-        // 0.2.369 (Fire): Camera collision Off = the camera stays at the wheel-set distance, vanilla's occlusion pull-in included.
+        // Camera collision Off = the camera stays at the wheel-set distance, vanilla's occlusion pull-in included.
         // 1.0: private void GameCamera.CollideRay2(Vector3 eyePos, Vector3 offsetedEyePos, ref Vector3 end) shortens 'end' (the
         // m_distance point). Vanilla runs as usual; when the toggle resolves Off the postfix puts 'end' back to the un-collided point.
         // The player's own zoom (m_distance, its minimum and 0 = first person) is already in 'end', so it is kept.
@@ -297,13 +332,13 @@ namespace FiresCore.Movement
             private static void Postfix(ref Vector3 end, Vector3 __state)
             {
                 if ((end - __state).sqrMagnitude < 0.0001f) return;
-                // 0.2.387 (bug): Auto without FAT resolved the guard off and that also suppressed vanilla's own pull-in. Only an
+                // Auto without FAT resolved the guard off and that also suppressed vanilla's own pull-in. Only an
                 // explicit Off suppresses vanilla; Auto never does.
                 CameraCollisionMode mode = s_cameraGuard != null ? s_cameraGuard.Value : CameraCollisionMode.Auto;
                 bool suppress = mode == CameraCollisionMode.Off;
                 if (suppress) end = __state;
                 if (Time.time < s_nextVanillaLog) return;
-                s_nextVanillaLog = Time.time + 2f;
+                s_nextVanillaLog = Time.time + LogIntervalSeconds;
                 FiresCore.Logging.FiresLogger.LogDebug(suppress ? "[Camera] vanilla pull-in suppressed (toggle Off)" : $"[Camera] pull-in by vanilla occlusion (toggle {mode})");
             }
         }
@@ -316,25 +351,27 @@ namespace FiresCore.Movement
             {
                 try
                 {
-                    // 0.2.367: off = vanilla camera untouched; on = acts only under a roof, eased, never closer than vanilla's minimum.
+                    // Off = vanilla camera untouched; on = acts only under a roof, eased, never closer than vanilla's minimum.
                     if (!CameraGuardEnabled) { s_guardDist = -1f; s_guardOn = false; return; }
                     Player player = Player.m_localPlayer;
                     if (player == null || player.m_eye == null || player.InIntro()) { s_guardDist = -1f; return; }
                     Vector3 eye = player.m_eye.position;
-                    Vector3 d = pos - eye;
-                    float dist = d.magnitude;
-                    if (dist < 0.05f) { s_guardDist = -1f; return; }
-                    Vector3 dir = d / dist;
+                    Vector3 eyeToCamera = pos - eye;
+                    float dist = eyeToCamera.magnitude;
+                    if (dist < MinCameraDistance) { s_guardDist = -1f; return; }
+                    Vector3 dir = eyeToCamera / dist;
                     Camera camera = __instance.m_camera != null ? __instance.m_camera : Camera.main;
-                    float radius = Mathf.Max(CameraMinRadius, (camera != null ? camera.nearClipPlane : 0.1f) + CameraClipMargin);
+                    float radius = Mathf.Max(CameraMinRadius, (camera != null ? camera.nearClipPlane : DefaultNearClip) + CameraClipMargin);
                     int mask = __instance.m_blockCameraMask.value != 0 ? __instance.m_blockCameraMask.value : Mask;
 
                     float roof = float.PositiveInfinity;
-                    if (Physics.Raycast(eye, Vector3.up, out RaycastHit up, RoofReach, mask, QueryTriggerInteraction.Ignore)) roof = up.distance;
-                    bool underRoof = s_forced || !float.IsPositiveInfinity(roof);
+                    Collider roofCollider = null;
+                    if (Physics.Raycast(eye, Vector3.up, out RaycastHit roofHit, RoofReach, mask, QueryTriggerInteraction.Ignore)) { roof = roofHit.distance; roofCollider = roofHit.collider; }
+                    // The camera guard is a cave mechanic too - not under a build piece or other overworld roof
+                    bool underRoof = s_forced || (!float.IsPositiveInfinity(roof) && IsCaveCeiling(Player.m_localPlayer, roofCollider));
 
                     float target = dist;   // vanilla's answer unless the guard pulls in
-                    if (underRoof && !Physics.CheckSphere(eye, radius * 0.5f, mask, QueryTriggerInteraction.Ignore)
+                    if (underRoof && !Physics.CheckSphere(eye, radius * 0.5f /* eye already inside a solid */, mask, QueryTriggerInteraction.Ignore)
                         && Physics.SphereCast(eye, radius, dir, out RaycastHit hit, dist, mask, QueryTriggerInteraction.Ignore)
                         && !(hit.collider != null && hit.collider.attachedRigidbody != null && hit.collider.attachedRigidbody.GetComponent<Character>() != null))
                     {
@@ -344,13 +381,13 @@ namespace FiresCore.Movement
 
                     if (s_guardDist < 0f)
                     {
-                        if (target >= dist - 0.01f) return;   // idle and nothing to do: vanilla stands
+                        if (target >= dist - GuardSettleEpsilon) return;   // idle and nothing to do: vanilla stands
                         s_guardDist = dist; s_guardVel = 0f;
                     }
                     s_guardDist = Mathf.SmoothDamp(s_guardDist, target, ref s_guardVel, GuardSmooth);
                     if (s_guardDist > dist) s_guardDist = dist;   // never further out than vanilla
-                    bool engaged = target < dist - 0.01f;
-                    if (!engaged && s_guardDist >= dist - 0.01f)
+                    bool engaged = target < dist - GuardSettleEpsilon;
+                    if (!engaged && s_guardDist >= dist - GuardSettleEpsilon)
                     {
                         s_guardDist = -1f;
                         if (s_guardOn) { s_guardOn = false; GuardLog("[Headroom] camera guard off"); }

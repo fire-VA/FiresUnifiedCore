@@ -6,7 +6,7 @@ using UnityEngine;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Companion idle behavior: real fishing on the one fishing brain (Core 0.2.243, <see cref="FishingBrain"/>, the bot's too). Plan
+    /// Companion idle behavior: real fishing on the one fishing brain (<see cref="FishingBrain"/>, the bot's too). Plan
     /// a dry stand at the water's edge near home with deep water in reach (toward fish that take a carried bait), walk there, take out
     /// the rod, throw the rod's own projectile with one bait at the planned point (the game drops a FishingFloat where it lands), then
     /// each tick do what the brain advises: wait, hook and reel (hold the line in) on a bite, hold while a hooked fish runs, recast when
@@ -32,7 +32,7 @@ namespace FiresCore.Npc.IdleBehaviors
         #region Constants
 
         private const float ScanRadius = 30f;
-        /// <summary>0.2.268: how long a companion leaves fishing alone after a plan found no fish / water / shore near home.</summary>
+        /// <summary>How long a companion leaves fishing alone after a plan found no fish / water / shore near home.</summary>
         private const float NoFishCooldown = 300f;
         private float _noFishUntil;
         private const float CommandedRadius = 14f;
@@ -150,7 +150,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     return FishPhase.Complete;
                 case FishPhase.MovingToShore:
                 {
-                    // 0.2.258 (R37: three stalled walks to the water's edge at a shelved pond): the stand wasn't reached; cast from where
+                    // The stand wasn't reached (a shelf or step can block the walk to the edge); cast from where
                     // it stands when deep water lies within a cast, else give up as before.
                     var storage = GetStorageInventory();
                     FishingBrain.FishPlan fromHere = null;
@@ -209,7 +209,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             if (!CompanionBehaviorToggles.IsFishingEnabled(Companion)) return false;
-            // 0.2.268 (HR3: "Fishing after 0 s (done)" over and over at a pond with no fish): after a plan found no fish / water /
+            // Without this a companion retries fishing over and over at a pond with no fish: after a plan found no fish / water /
             // shore near home, this companion leaves fishing alone for NoFishCooldown (a commanded spot above still goes).
             if (Time.time < _noFishUntil) return false;
             if (!CanStartBase()) return false;
@@ -250,7 +250,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 SetPhase(FishPhase.Complete);
                 return false;
             }
-            // 0.2.258: the stand, how it was chosen and its reach, the cast distance (always on).
+            // The stand, how it was chosen and its reach, the cast distance (always on).
             Debug.Log($"[Fishing] {Companion?.companionName} plans: {_plan}");
             SetPhase(FishPhase.MovingToShore);
             MoveToPosition(_plan.Stand);

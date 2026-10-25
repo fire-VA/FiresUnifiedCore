@@ -15,6 +15,7 @@ namespace FiresCore.Compat.Balrond
     /// it necessarily matches whatever Balrond passes. A second prefix covers the (unused-by-Balrond,
     /// but possible) StatusEffect-object overload for completeness.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Balrond)]
     internal static class BalrondMistSicknessPatch
     {
         private const string MistSicknessName = "SE_MistSickness";

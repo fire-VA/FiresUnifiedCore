@@ -111,6 +111,26 @@ namespace FiresCore.Materials
             return texture;
         }
 
+        // A cubemap from Core's shader bundle; null when absent. Add-only.
+        private static readonly Dictionary<string, Cubemap> s_cubemaps = new Dictionary<string, Cubemap>(StringComparer.Ordinal);
+        public static Cubemap GetCubemap(string textureName)
+        {
+            if (string.IsNullOrEmpty(textureName)) return null;
+            if (s_cubemaps.TryGetValue(textureName, out var cube) && cube != null) return cube;
+            if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null) return null;
+            var bundle = CoreBundle();
+            cube = bundle != null && s_coreTextures.Contains(textureName) ? bundle.LoadAsset<Cubemap>(textureName) : null;
+            if (cube == null)
+            {
+                if (s_reportedMissing.Add("cube:" + textureName))
+                    FiresLogger.LogWarning($"{LogTag} cubemap '{textureName}' is not in Core's shader bundle.");
+                return null;
+            }
+            s_cubemaps[textureName] = cube;
+            FiresLogger.LogInfo($"{LogTag} cubemap '{textureName}' ({cube.width}) is live from {CoreSource}.");
+            return cube;
+        }
+
         private static Shader FromCoreBundle(string shaderName)
         {
             var bundle = CoreBundle();

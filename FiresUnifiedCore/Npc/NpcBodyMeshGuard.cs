@@ -30,6 +30,21 @@ namespace FiresCore.Npc
         private static readonly HashSet<string> _healed = new HashSet<string>();
         private static readonly HashSet<string> _queued = new HashSet<string>();
 
+        // [Companions] Rebuild body skin on reject (default off): one skin rebuild per renderer + mesh before blacklisting.
+        private static BepInEx.Configuration.ConfigEntry<bool> s_rebuild;
+        private static readonly HashSet<(int Renderer, int Mesh)> _rebuilt = new HashSet<(int, int)>();
+        internal static bool RebuildOnReject => s_rebuild != null && s_rebuild.Value;
+
+        public static void Bind(BepInEx.Configuration.ConfigFile config)
+        {
+            // Default ON (a fix ships on); a model switch now rebuilds up front, this stays the safety net for any other reject
+            s_rebuild = config.Bind("Companions", "Rebuild body skin on reject", true,
+                "When Unity refuses to draw an NPC body after its model changes (male/female switch on a look re-apply), first rebuild that renderer's skinning once (off a frame, mesh re-set, on again) before giving up on the mesh. Off: the old guard (swap meshes, blacklist).");
+        }
+
+        /// <summary>True the first time for this renderer + mesh (a rebuild is due); false once it was tried.</summary>
+        internal static bool TryMarkRebuild(SkinnedMeshRenderer smr, Mesh mesh) => _rebuilt.Add((smr.GetInstanceID(), mesh.GetInstanceID()));
+
         public static void EnsureInstalled()
         {
             if (_installed) return;

@@ -43,6 +43,38 @@ namespace FiresCore.Npc.Patrol
         public const float DefaultArrivalRadius = 3.5f;
         public const float DefaultLookAhead = 5f;
 
+        /// <summary>Add-only: per-node data parallel to <see cref="Points"/> (index i = node i).
+        /// Shorter than Points (or empty, as on every older route) = defaults for the missing nodes. Serialized as "point=" lines.</summary>
+        public readonly List<PatrolPointData> PointData = new List<PatrolPointData>();
+
+        /// <summary>The node's data, or null (= defaults: no wait, no emote, speed x1, face the next node).</summary>
+        public PatrolPointData DataAt(int index) => index >= 0 && index < PointData.Count ? PointData[index] : null;
+
+        /// <summary>The node's data, created (with defaults, padding earlier nodes) when missing. For editors.</summary>
+        public PatrolPointData EnsureDataAt(int index)
+        {
+            while (PointData.Count <= index) PointData.Add(new PatrolPointData());
+            return PointData[index];
+        }
+
+        /// <summary>A node was inserted at <paramref name="newIndex"/>: insert default data there so later data stays on its node.</summary>
+        public void ShiftPointDataForInsert(int newIndex)
+        {
+            if (newIndex < PointData.Count) PointData.Insert(Mathf.Max(0, newIndex), new PatrolPointData());
+        }
+
+        /// <summary>The node at <paramref name="removedIndex"/> was deleted: drop its data.</summary>
+        public void ShiftPointDataForDelete(int removedIndex)
+        {
+            if (removedIndex >= 0 && removedIndex < PointData.Count) PointData.RemoveAt(removedIndex);
+        }
+
+        /// <summary>Drops data past the last node. Call after any node-count change.</summary>
+        public void ClampPointData(int count)
+        {
+            if (PointData.Count > count) PointData.RemoveRange(count, PointData.Count - count);
+        }
+
         public void DetectLoop()
         {
             IsLoop = Points.Count >= 3 &&
@@ -91,6 +123,7 @@ namespace FiresCore.Npc.Patrol
             copy.Points.AddRange(Points);
             foreach (var preset in Presets) copy.Presets.Add(preset.Clone());
             foreach (var i in MustHit) copy.MustHit.Add(i);
+            foreach (var d in PointData) copy.PointData.Add(d?.Clone() ?? new PatrolPointData());
             return copy;
         }
 
@@ -104,6 +137,23 @@ namespace FiresCore.Npc.Patrol
                     return Presets[i];
             return null;
         }
+    }
+
+    /// <summary>what an NPC does at one route node (add-only). Defaults = today's behaviour.</summary>
+    public class PatrolPointData
+    {
+        /// <summary>Seconds to stand at the node (0 = walk through).</summary>
+        public float Wait;
+        /// <summary>A PlayerAnimationCatalog key played on arrival (null/empty = none).</summary>
+        public string Emote;
+        /// <summary>Speed multiple toward this node (1 = unchanged), clamped 0.2..3 by the walker.</summary>
+        public float SpeedMul = 1f;
+        /// <summary>World yaw in degrees to face while waiting; NaN = face the next node (default).</summary>
+        public float Facing = float.NaN;
+
+        public bool IsDefault => Wait <= 0f && string.IsNullOrEmpty(Emote) && Mathf.Abs(SpeedMul - 1f) < 0.001f && float.IsNaN(Facing);
+
+        public PatrolPointData Clone() => new PatrolPointData { Wait = Wait, Emote = Emote, SpeedMul = SpeedMul, Facing = Facing };
     }
 
     /// <summary>Curve shape of a <see cref="Section"/>'s speed envelope over its span.</summary>

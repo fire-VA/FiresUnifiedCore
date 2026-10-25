@@ -36,6 +36,8 @@ namespace FiresCore.UI
             Close();
             _box = box;
             Build();
+            // HUD pieces hide under every registered mod screen; the env-box editor is one too
+            FiresCore.Bridge.ModUiRegistry.Register("FiresEnvBoxPanel", () => IsOpen, Close, () => _canvasGo);
         }
 
         private static void Build()
@@ -351,6 +353,7 @@ namespace FiresCore.UI
             FiresCore.Input.FiresInputBlock.Release(PanelToken);
             if (_blocked) { InputBlock.Block(false); _blocked = false; }
             if (_canvasGo != null) { UnityEngine.Object.Destroy(_canvasGo); _canvasGo = null; }
+            FiresCore.Bridge.ModUiRegistry.Unregister("FiresEnvBoxPanel");
         }
 
         // Keep the cursor freed while open and close on Esc (mirrors EntryDoorPanel). Client-only patch.
@@ -360,7 +363,8 @@ namespace FiresCore.UI
             [HarmonyPostfix]
             private static void Postfix()
             {
-                if (!IsOpen) return;
+                // Direct world hop without ZNet.Shutdown: the canvas died with the old world but the input blocks are still held; release them
+                if (!IsOpen) { if (_blocked) { try { Close(); } catch { } } return; }
                 if (UnityEngine.Input.GetKeyDown(KeyCode.Escape)) { Close(); return; }
                 if (Cursor.lockState != CursorLockMode.None) Cursor.lockState = CursorLockMode.None;
                 if (!Cursor.visible) Cursor.visible = true;

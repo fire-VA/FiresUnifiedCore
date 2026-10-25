@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using FiresCore.Npc.Movement;
 using FiresCore.Npc.Core;
 
@@ -177,6 +177,7 @@ namespace FiresCore.Npc
         private void SetMoveDirSafe(Vector3 moveDir)
         {
             if (_character == null) return;
+            moveDir = OwnerLineDeflect(moveDir);
             
             // Don't call SetMoveDir if rigidbody is kinematic
             if (_rigidbody != null && _rigidbody.isKinematic) return;
@@ -247,7 +248,7 @@ namespace FiresCore.Npc
                 return;
             }
 
-            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            // Vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
             _character?.SetLookDir(dir.normalized);
         }
 
@@ -259,7 +260,7 @@ namespace FiresCore.Npc
             float targetDistance = GetDistanceToCurrentTarget();
             bool isStrafeIntent = _currentIntent == MovementIntent.CombatStrafe;
             
-            // 0.2.327 (audit slice 3): slow down by walking (vanilla SetWalk), never by clamping the rigidbody's velocity.
+            // Slow down by walking (vanilla SetWalk), never by clamping the rigidbody's velocity.
             if (_movementModeController.WantsSlowWalk((MovementModeController.MovementMode)(int)mode, targetDistance, isStrafeIntent))
                 SetWalkRunSafe(true, false);
         }
@@ -281,6 +282,42 @@ namespace FiresCore.Npc
         }
 
         #endregion
+
+        // Support companions get no flank slot, so this also keeps them off the line: every companion, any role, standing in its owner's line of attack (within OwnerLineMetres of
+        // the segment owner -> the foe nearest the owner, 10-90 % along it) steps sideways off it: the move gets a sideways part, a standing
+        // companion a short sidestep. "[OwnerLine]" Debug once per episode with the positions.
+        private const float OwnerLineMetres = 1.2f, OwnerLineFoeRange = 25f;
+        private bool _ownerLineLogged;
+        private Vector3 OwnerLineDeflect(Vector3 moveDir)
+        {
+            Player owner = _companion != null ? _companion.GetOwner() : null;
+            if (owner == null || _character == null || owner.IsDead()) return moveDir;
+            Vector3 o = owner.transform.position, me = _character.transform.position;
+            Character foe = null; float best = OwnerLineFoeRange * OwnerLineFoeRange;
+            foreach (Character c in Character.GetAllCharacters())
+            {
+                if (c == null || c.IsDead() || c == _character || c.IsPlayer() || c.GetComponent<CompanionController>() != null || !BaseAI.IsEnemy(owner, c)) continue;
+                float d = (c.transform.position - o).sqrMagnitude;
+                if (d < best) { best = d; foe = c; }
+            }
+            if (foe == null) { _ownerLineLogged = false; return moveDir; }
+            Vector3 seg = foe.transform.position - o; seg.y = 0f;
+            float len = seg.magnitude; if (len < 2f) return moveDir;
+            Vector3 dir = seg / len, rel = me - o; rel.y = 0f;
+            float along = Vector3.Dot(rel, dir);
+            if (along < len * 0.1f || along > len * 0.9f) { _ownerLineLogged = false; return moveDir; }
+            Vector3 side = rel - dir * along;
+            if (side.magnitude >= OwnerLineMetres) { _ownerLineLogged = false; return moveDir; }
+            Vector3 away = side.sqrMagnitude > 0.01f ? side.normalized : Vector3.Cross(Vector3.up, dir);
+            if (!_ownerLineLogged)
+            {
+                _ownerLineLogged = true;
+                FiresCore.Logging.FiresLogger.LogDebug($"[OwnerLine] {_companion.companionName}: in {owner.GetPlayerName()}'s line to {foe.m_name} ({side.magnitude:0.0} m off it, {along:0.0}/{len:0.0} m along; me ({me.x:0.0}, {me.z:0.0}), owner ({o.x:0.0}, {o.z:0.0}), foe ({foe.transform.position.x:0.0}, {foe.transform.position.z:0.0})); stepping {(moveDir.sqrMagnitude > 0.01f ? "sideways while moving" : "aside")}");
+            }
+            if (moveDir.sqrMagnitude < 0.01f) return away;
+            Vector3 flat = new Vector3(moveDir.x, 0f, moveDir.z);
+            return (flat.normalized + away * 1.2f).normalized * moveDir.magnitude;
+        }
 
         #region Movement Behavior (Non-Combat)
 
@@ -341,7 +378,7 @@ namespace FiresCore.Npc
                     if (actualHorizontalSpeed < 0.15f && !animatorInLocomotion)
                     {
                         SetWalkRunSafe(false, false);
-                        // 0.2.327 (audit slice 3): no velocity kill; SetMoveDirSafe(0) above lets vanilla UpdateWalking brake.
+                        // No velocity kill; SetMoveDirSafe(0) above lets vanilla UpdateWalking brake.
                     }
                     else
                     {

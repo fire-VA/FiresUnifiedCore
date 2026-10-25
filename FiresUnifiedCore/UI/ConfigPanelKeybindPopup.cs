@@ -34,15 +34,55 @@ namespace FiresCore.UI
             if (s_keybindPopupShownThisSession) return;
             if (!FiresConfigUI.WarnKeybindConflicts) return;
             if (KeybindConflictStore.RemindLaterThisSession) return;
+            if (NeverShowConflictPopup) return;   // the player chose "Don't show again"
+
+            // Never over an FDT test's shots.
+            if (FdtTestRunning()) { FiresConfigUI.Log.LogDebug("[Keybinds] conflict popup skipped: an FDT test is running"); return; }
 
             var unresolved = UnresolvedConflicts();
             if (unresolved.Count == 0) return;
 
             s_keybindPopupShownThisSession = true;
+            FiresConfigUI.Log.LogDebug($"[Keybinds] conflict popup shown: {unresolved.Count} real conflict(s), FDT test running {FdtTestRunning()} (runner flag {(s_fdtRunning != null ? "found" : "not found")})");
             _keybindPopupConflicts.Clear();
             _keybindPopupConflicts.AddRange(unresolved);
             _keybindPopupScroll = Vector2.zero;
             _keybindPopupOpen = true;
+        }
+
+        // FiresDebugginTools' test runner busy flag (FiresTests.Running, internal), by reflection; false without FDT.
+        private static System.Reflection.PropertyInfo s_fdtRunning;
+        private static bool s_fdtLooked;
+        private static object s_fdtTests;   // FDT TestScreen.s_running (Dictionary<string, float>), read-only
+        private static bool FdtTestRunning()
+        {
+            if (!s_fdtLooked)
+            {
+                s_fdtLooked = true;
+                foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    if (asm.GetName().Name != "FiresDebugginTools") continue;
+                    var t = asm.GetType("FiresDebugginTools.Utilities.FiresTests");
+                    s_fdtRunning = t?.GetProperty("Running", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                    var screen = asm.GetType("FiresDebugginTools.Utilities.TestScreen");
+                    s_fdtTests = screen?.GetField("s_running", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)?.GetValue(null);
+                    break;
+                }
+            }
+            try { if (s_fdtRunning != null && s_fdtRunning.GetValue(null, null) is bool b && b) return true; } catch { }
+            // The popup could open during a golden test: FiresTests.Running is only the fires_test_all runner;
+            // single tests register in TestScreen.s_running. Any tag there = a test is running.
+            try { return s_fdtTests is System.Collections.ICollection c && c.Count > 0; } catch { return false; }
+        }
+
+        private static Texture2D s_solid;
+        private static Texture2D Solid { get { if (s_solid == null) { s_solid = new Texture2D(1, 1) { hideFlags = HideFlags.DontSave }; s_solid.SetPixel(0, 0, Color.white); s_solid.Apply(); } return s_solid; } }
+
+        private const string NeverShowKey = "FiresConfig.ConflictPopup.NeverShow";
+        private static bool NeverShowConflictPopup
+        {
+            get { try { return PlayerPrefs.GetInt(NeverShowKey, 0) == 1; } catch { return false; } }
+            set { try { PlayerPrefs.SetInt(NeverShowKey, value ? 1 : 0); PlayerPrefs.Save(); } catch { } }
         }
 
         private void CloseKeybindPopup()
@@ -59,8 +99,28 @@ namespace FiresCore.UI
             float height = Mathf.Min(Px(KeybindPopupHeightBase), Screen.height * KeybindPopupScreenShare);
             var rect = new Rect((Screen.width - width) / 2f, (Screen.height - height) / 2f, width, height);
 
-            GUI.Window(KeybindPopupWindowId, rect, DrawKeybindPopupBody, GUIContent.none, ConfigSkin.Window);
+            // The popup was see-through over the mod rows: a full-screen modal window (IMGUI windows draw above
+            // all non-window GUI, so a scrim outside it would sit UNDER the config window): dim scrim, opaque plate, then the body.
+            _keybindPopupRect = rect;
+            GUI.Window(KeybindPopupWindowId, new Rect(0f, 0f, Screen.width, Screen.height), DrawKeybindPopupModal, GUIContent.none, GUIStyle.none);
             GUI.BringWindowToFront(KeybindPopupWindowId);
+        }
+
+        private Rect _keybindPopupRect;
+
+        private void DrawKeybindPopupModal(int id)
+        {
+            var prevColor = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.6f);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Solid);      // scrim over everything, eats clicks
+            GUI.color = new Color(0.075f, 0.065f, 0.06f, 1f);                              // opaque plate (the kit's Panel tone)
+            GUI.DrawTexture(_keybindPopupRect, Solid);
+            GUI.color = prevColor;
+            GUI.Box(_keybindPopupRect, GUIContent.none, ConfigSkin.Window);               // the usual frame on top of the plate
+            var inner = new Rect(_keybindPopupRect.x + Px(12f), _keybindPopupRect.y + Px(10f), _keybindPopupRect.width - Px(24f), _keybindPopupRect.height - Px(20f));
+            GUILayout.BeginArea(inner);
+            DrawKeybindPopupBody(id);
+            GUILayout.EndArea();
         }
 
         private void DrawKeybindPopupBody(int id)
@@ -96,6 +156,15 @@ namespace FiresCore.UI
                 CloseKeybindPopup();
             }
             FiresRoundedSkin.MarkHint("Say nothing more this session. Nothing is remembered.");
+
+            // "Don't show again" for players who want to keep ignoring conflicts: per player (PlayerPrefs),
+            // this popup never opens by itself again; the Conflicts view in the config window still lists them
+            if (GUILayout.Button("Don't show again", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(KeybindPopupFooterButtonWidthBase + 20f))))
+            {
+                NeverShowConflictPopup = true;
+                CloseKeybindPopup();
+            }
+            FiresRoundedSkin.MarkHint("Never open this popup by itself again. The Conflicts view still lists them.");
 
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Close", ConfigSkin.ButtonSmall, ScaledLayout.Width(Px(60f)))) CloseKeybindPopup();

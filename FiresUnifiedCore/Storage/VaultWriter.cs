@@ -7,7 +7,7 @@ using UnityEngine;
 namespace FiresCore.Storage
 {
     // Vault writes that need not hold the main thread: a join's identity upsert opened the shared LiteDB file, ensured four
-    // indexes and searched it on the server's main thread, 141 ms of R20's join frame. One background thread runs the
+    // indexes and searched it on the server's main thread, 141 ms of a join frame. One background thread runs the
     // writes in the order they were queued (LiteDB's Shared connection serializes them against the main thread's own vault
     // work). Drained before the vault is pointed at another world's file, when a world shuts down, and at quit, so a write
     // never lands in the wrong world or gets lost.

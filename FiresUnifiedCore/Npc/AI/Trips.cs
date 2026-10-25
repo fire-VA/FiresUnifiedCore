@@ -4,7 +4,7 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// Trips of the one brain's bodies (Core 0.2.220, [seasons]' autoplay planner and the haul job): a trip is one outing from home
+    /// Trips of the one brain's bodies (the autoplay planner and the haul job): a trip is one outing from home
     /// and back (leave, turn home, deposit). Whoever runs the loop raises Started when the body leaves and Ended when it is done, and
     /// anything that cares (the stream, the drill judges, the party regroup) listens instead of guessing from positions. Per client,
     /// main thread only; nothing is networked.

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 using FiresCore.Npc.Core;
@@ -21,18 +21,18 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private const float BeehiveDetectionRange   = 30f;
         private const float CropDetectionRange      = 30f;
-        private const float PlantingDetectionRange  = AI.ChoreBrain.PlantSearchRadius;   // one radius with the bot's base chores (0.2.241)
+        private const float PlantingDetectionRange  = AI.ChoreBrain.PlantSearchRadius;   // one radius with the bot's base chores
         private const float InteractionDistance      = 2.5f;
         private const float ArrivalDistance          = 2.5f;
         private const float MovementTimeout          = 30f;
         private const float MaxFarmTime             = 300f;
-        private const float PlantSpacing             = 1f;
+        private const float PlantSpacing             = 0.5f;   // search-grid step; each spot is then held to the crop's own grow space (FarmingDataHelper.GrowSpaceFree)
         private const float CraftingStationRadius   = 30f;
         private const float FacingLeaseDuration      = 0.4f;
 
         // ── Cultivator ────────────────────────────────────────────────────────
 
-        // Valheim prefab name for the Cultivator item. Its cost and station are the game's recipe (ChoreBrain.CraftFromStock, 0.2.242).
+        // Valheim prefab name for the Cultivator item. Its cost and station are the game's recipe (ChoreBrain.CraftFromStock).
         private const string CultivatorPrefab = "Cultivator";
 
         private float ChestSearchRadius => CompanionSettings.ChestSearchRadius;
@@ -72,6 +72,10 @@ namespace FiresCore.Npc.IdleBehaviors
             // Deposit to chest when inventory is getting full
             MovingToChest,
             Depositing,
+
+            // Tending the bed (farming build 2)
+            MovingToTend,
+            Tending,
 
             Complete
         }
@@ -165,7 +169,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 return true;
             }
-            // 0.2.352 (round 24: a farm order on a placed Beehive fell back to a move): why a commanded start was refused.
+            // Why a commanded start was refused.
             if (_commandedTarget != null || Companion.ShouldBeFollowing)
                 FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion.companionName} CanStart: commanded target '{(_commandedTarget != null ? _commandedTarget.name : "none")}' "
                     + $"valid {(_commandedTarget != null && IsValidFarmingTarget(_commandedTarget))}, following {Companion.ShouldBeFollowing}"
@@ -177,7 +181,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             Vector3 home = IdleBehavior.HomePosition;
 
-            // Harvesting never requires a cultivator. The same finders (and wards) the harvest itself uses (0.2.241), so a companion
+            // Harvesting never requires a cultivator. The same finders (and wards) the harvest itself uses, so a companion
             // never starts for a crop it may not pick.
             System.Func<Vector3, bool> wards = position => ChestHelper.WardsAllow(position, Companion);
             if (AI.ChoreBrain.HivesToHarvest(home, BeehiveDetectionRange, home, wards).Count > 0)
@@ -256,6 +260,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 FarmPhase.CollectingDrops         => UpdateCollectingDrops(),
                 FarmPhase.MovingToChest           => UpdateMovingToChest(),
                 FarmPhase.Depositing              => UpdateDepositing(),
+                FarmPhase.MovingToTend            => UpdateMovingToTend(),
+                FarmPhase.Tending                 => UpdateTending(),
                 FarmPhase.Complete                => true,
                 _                                 => false
             };
@@ -284,6 +290,8 @@ namespace FiresCore.Npc.IdleBehaviors
             FarmPhase.CollectingDrops         => "Collecting items",
             FarmPhase.MovingToChest           => "Walking to storage",
             FarmPhase.Depositing              => "Storing harvest",
+            FarmPhase.MovingToTend            => "Walking to a struggling plant",
+            FarmPhase.Tending                 => "Tending a plant",
             _                                 => "Farming"
         };
 
@@ -310,7 +318,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool IsValidFarmingTarget(GameObject obj)
         {
             if (obj == null) return false;
-            if (obj.GetComponent<Beehive>() != null || obj.GetComponentInParent<Beehive>() != null || obj.GetComponentInChildren<Beehive>(true) != null) return true; // 0.2.354: 1.0's placed hive has it on a child
+            if (obj.GetComponent<Beehive>() != null || obj.GetComponentInParent<Beehive>() != null || obj.GetComponentInChildren<Beehive>(true) != null) return true; // 1.0's placed hive has it on a child
             if (obj.GetComponent<Pickable>() != null || obj.GetComponentInParent<Pickable>() != null || obj.GetComponentInChildren<Pickable>(true) != null) return true;
             // Cultivated soil — recognised by name on the underlying piece/terrain.
             string objectName = obj.name?.ToLowerInvariant() ?? "";
@@ -369,7 +377,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             Vector3 home = IdleBehavior?.HomePosition ?? Transform.position;
 
-            // One set of farming rules with the bot's base chores (0.2.239): ChoreBrain.HivesToHarvest / CropsToHarvest (this
+            // One set of farming rules with the bot's base chores: ChoreBrain.HivesToHarvest / CropsToHarvest (this
             // companion's wards, nearest first); reachability stays this behaviour's own.
             System.Func<Vector3, bool> wards = position => ChestHelper.WardsAllow(position, Companion);
 
@@ -398,6 +406,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 TryMoveToPosition(_targetPosition);
                 return true;
             }
+
+            // Priority 3: tend the bed - fix unhealthy plants this companion knows how to (FarmingBehavior.Care)
+            if (TryStartTending(home)) return true;
 
             // Priority 3: planting (requires seeds that grow here + cultivator)
             if (!HasAnySeeds()) return false;
@@ -428,7 +439,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var storage = _inventory?.GetStorageInventory();
             if (storage == null) return false;
 
-            // One planting choice with the bot's base chores (0.2.239): ChoreBrain.ChoosePlanting (least-planted sapling first, seed
+            // One planting choice with the bot's base chores: ChoreBrain.ChoosePlanting (least-planted sapling first, seed
             // cost covered, the nearest valid spot).
             if (!AI.ChoreBrain.ChoosePlanting(storage, _plantSpots, Transform.position,
                     sapling => _plantedCountBySapling.TryGetValue(sapling, out int planted) ? planted : 0, out var crop, out Vector3 pos))
@@ -453,23 +464,26 @@ namespace FiresCore.Npc.IdleBehaviors
             return true;
         }
 
-        // One seed rule with the bot's base chores (0.2.241): ChoreBrain.IsSeedFor.
+        // One seed rule with the bot's base chores: ChoreBrain.IsSeedFor.
         private bool IsSeedForPlantSpots(ItemDrop.ItemData item) => AI.ChoreBrain.IsSeedFor(item, _plantSpots);
 
         private bool HasAnySeeds()
             => StorageHas(FarmingDataHelper.CanBePlanted) || FindChestWith(FarmingDataHelper.CanBePlanted) != null;
 
         private void RefreshPlantSpots(Vector3 home)
-            => _plantSpots = FarmingDataHelper.FindPlantablePositions(home, PlantingDetectionRange, PlantSpacing);
+        {
+            _plantSpots = FarmingDataHelper.FindPlantablePositions(home, PlantingDetectionRange, PlantSpacing);
+            _plantSpots.RemoveAll(p => _badSpots.Contains(Cell(p)) || _rejectedSpots.Contains(FineCell(p)));
+        }
 
         // ── Cultivator helpers ────────────────────────────────────────────────
 
-        // One cultivator rule with the bot's base chores (0.2.241): ChoreBrain.IsCultivator.
+        // One cultivator rule with the bot's base chores: ChoreBrain.IsCultivator.
         private static bool IsCultivator(ItemDrop.ItemData item) => AI.ChoreBrain.IsCultivator(item);
 
         private bool HasCultivator() => StorageHas(IsCultivator);
 
-        // The one craft-from-stock rule with the bot (0.2.242, ChoreBrain.CraftFromStock): the game's Cultivator recipe, at a station of
+        // The one craft-from-stock rule with the bot (ChoreBrain.CraftFromStock): the game's Cultivator recipe, at a station of
         // its kind and level near home (roof and fire checked), paid from storage plus the nearby chests, the whole cost covered.
         // "" with plan when it can be made; otherwise the coded reason ("stock: Bronze 2/5 …", "nostation: …", "roof: …").
         private string CultivatorCraft(out AI.ChoreBrain.StockCraft plan)
@@ -490,7 +504,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private void SetPhase(FarmPhase phase)
         {
-            // 0.2.350 (round 23 chore_farm overshoot 7.2 m, Beehive facing 52 deg): every phase change at Debug, with where it stands.
+            // Every phase change at Debug, with where it stands.
             if (_currentPhase != phase)
                 FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} phase {_currentPhase} -> {phase} (after {Time.time - _phaseStartTime:0.0} s) at {Transform.position:F1}, target {_targetPosition:F1}");
             _currentPhase   = phase;
@@ -561,17 +575,17 @@ namespace FiresCore.Npc.IdleBehaviors
         private int CountItems(Inventory inv, string prefabName)
         {
             int count = 0;
-            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // 0.2.362: storage rows only
+            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // Storage rows only
                 if (item?.m_dropPrefab?.name == prefabName) count += item.m_stack;
             return count;
         }
 
-        // 0.2.322: vanilla Inventory.RemoveItem(item, amount), so the inventory's Changed (save, UI) fires. The raw m_stack
+        // Vanilla Inventory.RemoveItem(item, amount), so the inventory's Changed (save, UI) fires. The raw m_stack
         // write skipped it.
         private void RemoveItems(Inventory inv, string prefabName, int amount)
         {
             int remaining = amount;
-            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(inv))) // 0.2.362: storage rows only
+            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(inv))) // Storage rows only
             {
                 if (remaining <= 0) break;
                 if (item?.m_dropPrefab?.name != prefabName) continue;
@@ -597,7 +611,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            // Vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
             var character = Companion != null ? Companion.GetComponent<Character>() : null;
             if (character != null) character.SetLookDir(dir.normalized);
         }

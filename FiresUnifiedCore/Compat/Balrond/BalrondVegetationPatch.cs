@@ -12,6 +12,7 @@ namespace FiresCore.Compat.Balrond
     /// </summary>
     [HarmonyPatch(typeof(ZoneSystem), "SetupLocations")]
     [HarmonyAfter("expand_world_data", "balrond.astafaraios.BalrondAmazingNature")]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Balrond)]
     internal static class BalrondVegetationPatch
     {
         private static readonly HashSet<int> _processed = new HashSet<int>();

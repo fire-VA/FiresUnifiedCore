@@ -886,10 +886,13 @@ namespace FiresCore.Npc.Core
             Container nearest = null;
             float nearestDist = float.MaxValue;
             Vector3 myPos = _companion.transform.position;
-            
+            // chest tags apply to this nearest-chest fallback too (a refused chest is never used).
+            var tagItem = ObjectDB.instance?.GetItemPrefab(prefabName)?.GetComponent<ItemDrop>()?.m_itemData;
+
             foreach (var chest in _resources.NearbyChests)
             {
                 if (chest == null) continue;
+                if (tagItem != null && FiresCore.Storage.ChestTags.Match(chest, tagItem, out _) == false) continue;
                 
                 var inv = chest.GetInventory();
                 if (inv == null) continue;

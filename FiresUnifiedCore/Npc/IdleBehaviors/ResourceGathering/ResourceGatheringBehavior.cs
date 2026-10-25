@@ -72,7 +72,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             FindingResource,
             MovingToChestForTool,      // Walk to chest to get required tool
-            FetchingCraftStock,        // 0.2.274: walk to base chests and take what a tool (or its Bronze) costs
+            FetchingCraftStock,        // Walk to base chests and take what a tool (or its Bronze) costs
             RetrievingToolFromChest,   // Open chest and pull tool
             MovingToWorkbench,         // Walk to workbench to craft a tool
             CraftingTool,              // Stand at workbench and craft
@@ -172,7 +172,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _commandedTarget = target;
         }
         
-        // 0.2.257 ([ghost]): the autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
+        // The autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
         // the next CanStart read it as a player command and skipped the gather toggle and the full-bag gate.
         private GameObject _autoPick;
 
@@ -331,7 +331,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     var resourceData = ResourceDataHelper.GetResourceData(oreDeposit);
                     if (resourceData != null && resourceData.IsValid)
                     {
-                        // 0.2.274: or a tool for it can be crafted from base stock (FindNearbyOreDeposit only offers such a node then).
+                        // Or a tool for it can be crafted from base stock (FindNearbyOreDeposit only offers such a node then).
                         if (!resourceData.RequiresCombat || HasToolForResource(resourceData)
                             || CanCraftToolFromStock(resourceData.RequiredTool, resourceData.MinToolTier))
                         {
@@ -722,7 +722,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            // Vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
             _character?.SetLookDir(dir.normalized);
         }
         

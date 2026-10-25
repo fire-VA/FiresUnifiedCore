@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using System.Collections.Generic;
 using FiresCore.Npc.Combat;
@@ -321,7 +321,7 @@ if (characterInParent == null)
             // Wild companions need to defend themselves against hostile creatures
             if (_companion == null) return;
             if (_nview == null || !_nview.IsValid()) return;
-            if (_companion.IsPossessed) return;   // 0.2.292: a player is driving it; its own attacks come from them
+            if (_companion.IsPossessed) return;   // a player is driving it; its own attacks come from them
             if (_companion.isDefeated) return;
 
             _equipmentData?.UpdateFoodTimers();
@@ -478,6 +478,7 @@ if (characterInParent == null)
 
         private void UpdateCombat()
         {
+            CombatLoopStats.Tick(_character);   // closes a fight's [CombatLoop] summary 5 s after its last swing
             // Throttled equipment checks - don't run every frame
             if (Time.time - _lastEquipmentChangeCheckTime >= EquipmentCheckInterval)
             {
@@ -802,7 +803,7 @@ if (characterInParent == null)
             ItemDrop.ItemData chosen = null;
             bool chosenIsRanged = false;
 
-            foreach (var item in _inventory.GetStorageItems()) // 0.2.361: storage rows only (worn/pouch live in the bag now)
+            foreach (var item in _inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag)
             {
                 if (!IsCombatWeapon(item)) continue;
                 if (IsGatheringToolItem(item)) continue;

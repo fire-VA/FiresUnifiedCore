@@ -2,8 +2,8 @@ using UnityEngine;
 
 namespace FiresCore.Npc.AI
 {
-    /// <summary>What a sensed thing is to a body on its way somewhere (Fire, 2026-09-29: "register what is around them for objects
-    /// in order to properly avoid them. Or find them if they're going to harvest them").</summary>
+    /// <summary>What a sensed thing is to a body on its way somewhere: something to avoid, or to
+    /// find when it is to be harvested.</summary>
     public enum ObstacleKind { Obstacle, Harvest, Piece, Creature }
 
     /// <summary>One frame's steering answer. No strings, so a caller can ask every frame and log only when it changes.</summary>
@@ -87,7 +87,7 @@ namespace FiresCore.Npc.AI
         {
             var result = new SteerResult();
             if (self == null) return result;
-            Vector3 want = new Vector3(desired.x, 0f, desired.z);
+            Vector3 want = FiresCore.World.GravityUp.Flat(desired, self.transform.position);
             if (want.sqrMagnitude < 0.0001f) return result;
             want.Normalize();
             Vector3 feet = self.transform.position;
@@ -102,7 +102,7 @@ namespace FiresCore.Npc.AI
                 // Order 0, +20, -20, +40, -40 ...: ties keep the smaller turn.
                 int k = (i + 1) / 2;
                 float turn = (i % 2 == 1 ? 1f : -1f) * k * (2f * FanDegrees / (FanSteps - 1));
-                Vector3 dir = Quaternion.AngleAxis(turn, Vector3.up) * want;
+                Vector3 dir = Quaternion.AngleAxis(turn, FiresCore.World.GravityUp.At(self.transform.position)) * want;
                 float clearance = Clearance(self, feet, dir, targetRoot, out Collider hitCollider);
                 clearance = Mathf.Min(clearance, RememberedClearance(feet, dir, now));
                 if (i == 0 && clearance < Reach)
@@ -136,13 +136,13 @@ namespace FiresCore.Npc.AI
             hitCollider = null;
             float free = Reach;
             RaycastHit hit;
-            if (Physics.SphereCast(feet + Vector3.up * KneeHeight, CastRadius, dir, out hit, Reach, Perception.ObstacleMask, QueryTriggerInteraction.Ignore)
+            if (Physics.SphereCast(feet + FiresCore.World.GravityUp.At(feet) * KneeHeight, CastRadius, dir, out hit, Reach, Perception.ObstacleMask, QueryTriggerInteraction.Ignore)
                 && !Ignored(self, hit.collider, target) && hit.collider.bounds.max.y - feet.y > Perception.StepHeight && hit.distance < free)
             {
                 free = hit.distance;
                 hitCollider = hit.collider;
             }
-            if (Physics.SphereCast(feet + Vector3.up * ChestHeight, CastRadius, dir, out hit, Reach, ChestMask, QueryTriggerInteraction.Ignore)
+            if (Physics.SphereCast(feet + FiresCore.World.GravityUp.At(feet) * ChestHeight, CastRadius, dir, out hit, Reach, ChestMask, QueryTriggerInteraction.Ignore)
                 && !Ignored(self, hit.collider, target) && hit.distance < free)
             {
                 free = hit.distance;
@@ -168,10 +168,10 @@ namespace FiresCore.Npc.AI
             {
                 Collider c = s_remembered[i].Collider;
                 if (c == null || s_remembered[i].Until < now) continue;
-                // Concave meshes answer ClosestPoint with the query point (R69): their bounds instead.
-                Vector3 knee = feet + Vector3.up * KneeHeight;
+                // Concave meshes answer ClosestPoint with the query point: their bounds instead.
+                Vector3 knee = feet + FiresCore.World.GravityUp.At(feet) * KneeHeight;
                 Vector3 closest = !(c is MeshCollider mesh) || mesh.convex ? c.ClosestPoint(knee) : c.bounds.ClosestPoint(knee);
-                Vector3 flat = new Vector3(closest.x - feet.x, 0f, closest.z - feet.z);
+                Vector3 flat = FiresCore.World.GravityUp.Flat(closest - feet, feet);
                 float distance = flat.magnitude;
                 if (distance > RememberedReach || distance < 0.001f) continue;
                 if (Vector3.Angle(dir, flat) <= RememberedCone && distance < free) free = distance;
@@ -206,7 +206,7 @@ namespace FiresCore.Npc.AI
             point = Vector3.zero;
             if (self == null) return false;
             Vector3 feet = self.transform.position;
-            Vector3 toGoal = new Vector3(goal.x - feet.x, 0f, goal.z - feet.z);
+            Vector3 toGoal = FiresCore.World.GravityUp.Flat(goal - feet, feet);   // halo ring: in the ring plane
             if (toGoal.sqrMagnitude < 0.01f) return false;
             Vector3 ahead = toGoal.normalized;
             float now = Time.time;
@@ -217,14 +217,14 @@ namespace FiresCore.Npc.AI
                 Collider c = s_remembered[i].Collider;
                 if (c == null || s_remembered[i].Until < now) continue;
                 Vector3 centre = c.bounds.center;
-                Vector3 flat = new Vector3(centre.x - feet.x, 0f, centre.z - feet.z);
+                Vector3 flat = FiresCore.World.GravityUp.Flat(centre - feet, feet);
                 if (Vector3.Dot(flat, ahead) <= 0f) continue;
                 float d = flat.magnitude;
                 if (d < nearest) { nearest = d; blocker = c; }
             }
             if (blocker == null) return false;
             Bounds b = blocker.bounds;
-            Vector3 side = Vector3.Cross(Vector3.up, ahead);
+            Vector3 side = Vector3.Cross(FiresCore.World.GravityUp.At(self.transform.position), ahead);
             float half = Mathf.Max(b.extents.x, b.extents.z) + DetourMargin;
             Vector3 centreFlat = new Vector3(b.center.x, feet.y, b.center.z);
             Vector3 right = centreFlat + side * half;
@@ -239,11 +239,11 @@ namespace FiresCore.Npc.AI
         // How far a body could go from feet toward p before something (not the ground) is in the way, capped at the distance.
         private static float Room(Vector3 feet, Vector3 p)
         {
-            Vector3 to = new Vector3(p.x - feet.x, 0f, p.z - feet.z);
+            Vector3 to = FiresCore.World.GravityUp.Flat(p - feet, feet);
             float length = to.magnitude;
             if (length < 0.01f) return 0f;
             RaycastHit hit;
-            return Physics.SphereCast(feet + Vector3.up * KneeHeight, CastRadius, to / length, out hit, length, Perception.ObstacleMask, QueryTriggerInteraction.Ignore)
+            return Physics.SphereCast(feet + FiresCore.World.GravityUp.At(feet) * KneeHeight, CastRadius, to / length, out hit, length, Perception.ObstacleMask, QueryTriggerInteraction.Ignore)
                 ? hit.distance : length;
         }
     }

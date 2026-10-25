@@ -60,7 +60,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
+                if (!IsFoe(character)) continue; // enemies only; a player when both have PvP on
                 
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist <= TauntRadius)
@@ -179,9 +179,12 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
         {
             hitData.m_damage.Modify(DamageBonus);
-            // Add spirit damage
+            // holy = blunt + half of it again as spirit, so it lands on spirit-immune foes
             float totalDamage = hitData.m_damage.GetTotalDamage();
-            hitData.m_damage.m_spirit += totalDamage * 0.2f;
+            float holy = totalDamage * 0.2f;
+            hitData.m_damage.m_blunt += holy;
+            hitData.m_damage.m_spirit += holy * 0.5f;
+            FiresCore.Logging.FiresLogger.LogDebug($"[AvatarOfLightEffect] holy on hit: +{holy:0.0} blunt, +{holy * 0.5f:0.0} spirit (20% of {totalDamage:0.0})");
         }
         
         public override void OnDamaged(HitData hit, Character attacker)
@@ -221,7 +224,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist > AuraRadius) continue;
                 
-                // Fire: heal the caster's party, damage enemies (it used to heal any player or tame and hit anything else)
+                // heal the caster's party, damage enemies (it used to heal any player or tame and hit anything else)
                 if (IsParty(character))
                 {
                     if (character.GetHealthPercentage() < 1f)
@@ -232,12 +235,14 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
                 }
                 else if (IsFoe(character))
                 {
-                    // Damage enemies (spirit damage)
+                    // Damage enemies: holy (blunt + half of it again as spirit)
                     var hitData = new HitData();
                     hitData.m_point = character.transform.position;
                     hitData.m_dir = (character.transform.position - pos).normalized;
                     hitData.m_attacker = m_character.GetZDOID();
-                    hitData.m_damage.m_spirit = AuraDamagePerSecond;
+                    hitData.m_damage.m_blunt = AuraDamagePerSecond;
+                    hitData.m_damage.m_spirit = AuraDamagePerSecond * 0.5f;
+                    FiresCore.Logging.FiresLogger.LogDebug($"[AvatarOfLightEffect] holy aura on {character.m_name}: {AuraDamagePerSecond:0.0} blunt + {AuraDamagePerSecond * 0.5f:0.0} spirit");
 
                     character.Damage(hitData);
                     NoteHit(character, AuraDamagePerSecond, false);

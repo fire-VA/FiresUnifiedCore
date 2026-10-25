@@ -1097,7 +1097,7 @@ ShieldBlockPowerPerLevel = 0f;
             {
                 hit.m_damage.Modify(_archetypeCritDamageMultiplier);
                 LastCritHit = hit;
-                // ArchetypeStatistics.CriticalHits was never fed (R58 skills: crits 0 for every fighter).
+                // ArchetypeStatistics.CriticalHits was never fed (crits stayed 0 for every fighter).
                 var archetype = _companion != null ? _companion.GetArchetypeController() : null;
                 if (archetype != null) archetype.OnCriticalHit();
             }

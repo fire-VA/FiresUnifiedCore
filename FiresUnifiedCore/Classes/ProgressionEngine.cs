@@ -11,7 +11,10 @@ namespace FiresCore.Classes
     public static class ProgressionEngine
     {
         public const int FirstLevel = 1;
+        // The shipped default only (C# inlines consts into callers); the cap in force is MaxLevel.
         public const int MaxCharacterLevel = 100;
+        /// <summary>The configured character level cap ([FiresRPGClasses.Progression] "Max character level", synced).</summary>
+        public static int MaxLevel => ProgressionSettings.MaxLevel;
 
         /// <summary>Levels at which an extra skill point is awarded.</summary>
         public const int ExtraSkillPointLevelInterval = 10;
@@ -34,7 +37,7 @@ namespace FiresCore.Classes
         /// </summary>
         public static int EarnedSkillPoints(int level, int valorLevel, ProgressionRates rates)
         {
-            int clampedLevel = Mathf.Clamp(level, FirstLevel, MaxCharacterLevel);
+            int clampedLevel = Mathf.Clamp(level, FirstLevel, MaxLevel);
             int levelsGained = clampedLevel - FirstLevel;
 
             int points = levelsGained * rates.SkillPointsPerLevel;
@@ -49,11 +52,12 @@ namespace FiresCore.Classes
         /// </summary>
         public static int EarnedAttributePoints(int level, int valorLevel, ProgressionRates rates)
         {
-            int clampedLevel = Mathf.Clamp(level, FirstLevel, MaxCharacterLevel);
+            int clampedLevel = Mathf.Clamp(level, FirstLevel, MaxLevel);
 
             int fromLevels = Mathf.FloorToInt(clampedLevel * rates.AttributePointsPerLevel);
             int fromValor = Mathf.FloorToInt(Mathf.Max(0, valorLevel) * rates.AttributePointsPerValorLevel);
-            return Mathf.Min(fromLevels + fromValor, rates.AttributePointsMaximum);
+            // A maximum of 0 = unlimited (the new default).
+            return rates.AttributePointsMaximum <= 0 ? fromLevels + fromValor : Mathf.Min(fromLevels + fromValor, rates.AttributePointsMaximum);
         }
 
         /// <summary>
@@ -89,7 +93,7 @@ namespace FiresCore.Classes
             return slots == 0 ? 0 : slots + FirstPassiveSlotCount - 1;
         }
 
-        public static int MaxPassiveSlots => PassiveSlots(MaxCharacterLevel, PassiveSlotValorLevels[PassiveSlotValorLevels.Length - 1]);
+        public static int MaxPassiveSlots => PassiveSlots(MaxLevel, PassiveSlotValorLevels[PassiveSlotValorLevels.Length - 1]);
 
         #endregion
 
@@ -101,15 +105,26 @@ namespace FiresCore.Classes
         /// </summary>
         public static long XpForNextLevel(int level, ProgressionRates rates)
         {
-            if (level >= MaxCharacterLevel)
-                return Mathf.RoundToInt(XpForLevelStep(MaxCharacterLevel, rates) * rates.ValorLevelXpMultiplier);
+            if (level >= MaxLevel)
+                return Mathf.RoundToInt(XpForLevelStep(MaxLevel, rates) * rates.ValorLevelXpMultiplier);
 
             return XpForLevelStep(level, rates);
         }
 
         /// <summary>XP for one Valor level: the cap's last step times the Valor multiplier.</summary>
         public static long XpForValorLevel(ProgressionRates rates) =>
-            Mathf.RoundToInt(XpForLevelStep(MaxCharacterLevel, rates) * rates.ValorLevelXpMultiplier);
+            Mathf.RoundToInt(XpForLevelStep(MaxLevel, rates) * rates.ValorLevelXpMultiplier);
+
+        /// <summary>XP for the Valor level after <paramref name="valorLevel"/>: the first one times (1 + growth x valorLevel).</summary>
+        public static long XpForValorLevel(int valorLevel, ProgressionRates rates) =>
+            (long)Math.Round(XpForValorLevel(rates) * (1.0 + ProgressionSettings.ParagonGrowth * Math.Max(0, valorLevel)));
+
+        /// <summary>XP to the next level OR Valor level for a character at (level, valorLevel).</summary>
+        public static long XpForNextLevel(int level, int valorLevel, ProgressionRates rates) =>
+            level >= MaxLevel ? XpForValorLevel(valorLevel, rates) : XpForLevelStep(level, rates);
+
+        /// <summary>Paragon points earned = Valor levels x "Paragon points per Valor level".</summary>
+        public static int EarnedParagonPoints(int valorLevel) => Math.Max(0, valorLevel) * Math.Max(0, ProgressionSettings.ParagonPerValor);
 
         /// <summary>
         /// The shipped first-pass curve: the hours a level is meant to take, times the XP per hour
@@ -117,7 +132,7 @@ namespace FiresCore.Classes
         /// </summary>
         private static long XpForLevelStep(int level, ProgressionRates rates)
         {
-            int nextLevel = Mathf.Clamp(level + 1, FirstLevel + 1, MaxCharacterLevel);
+            int nextLevel = Mathf.Clamp(level + 1, FirstLevel + 1, MaxLevel);
             return (long)Math.Round(BaselineHoursForLevel(nextLevel) * rates.ExpectedXpPerHour);
         }
 
@@ -129,7 +144,7 @@ namespace FiresCore.Classes
         public static float BaselineHoursToLevel(int level)
         {
             float hours = 0f;
-            for (int step = FirstLevel + 1; step <= Mathf.Min(level, MaxCharacterLevel); step++)
+            for (int step = FirstLevel + 1; step <= Mathf.Min(level, MaxLevel); step++)
                 hours += BaselineHoursForLevel(step);
             return hours;
         }
@@ -146,7 +161,7 @@ namespace FiresCore.Classes
             int levelsGained = 0;
             int valorGained = 0;
 
-            while (level < MaxCharacterLevel && amount > 0)
+            while (level < MaxLevel && amount > 0)
             {
                 long needed = XpForNextLevel(level, rates) - xp;
                 if (amount < needed)
@@ -161,11 +176,11 @@ namespace FiresCore.Classes
                 levelsGained++;
             }
 
-            long perValorLevel = XpForValorLevel(rates);
-            if (perValorLevel <= 0) return new ProgressionGain(levelsGained, valorGained);
+            if (XpForValorLevel(rates) <= 0) return new ProgressionGain(levelsGained, valorGained);
 
             valorXp += amount;
-            while (valorXp >= perValorLevel)
+            // Each Valor level costs a little more than the last ("Paragon cost growth", linear).
+            for (long perValorLevel = XpForValorLevel(valorLevel, rates); valorXp >= perValorLevel; perValorLevel = XpForValorLevel(valorLevel, rates))
             {
                 valorXp -= perValorLevel;
                 valorLevel++;
@@ -185,16 +200,16 @@ namespace FiresCore.Classes
         /// </summary>
         public static PacePreview Preview(ProgressionRates rates, int totalTreeCost)
         {
-            int pointsAtCap = EarnedSkillPoints(MaxCharacterLevel, 0, rates);
+            int pointsAtCap = EarnedSkillPoints(MaxLevel, 0, rates);
             float xpScale = rates.XpMultiplier <= 0f ? 1f : rates.XpMultiplier;
-            float hoursToCap = BaselineHoursToLevel(MaxCharacterLevel) / xpScale;
+            float hoursToCap = BaselineHoursToLevel(MaxLevel) / xpScale;
 
             int remaining = Mathf.Max(0, totalTreeCost - pointsAtCap);
             int valorToFill = rates.SkillPointsPerValorLevel <= 0
                 ? 0
                 : Mathf.CeilToInt(remaining / (float)rates.SkillPointsPerValorLevel);
 
-            float hoursPerValorLevel = BaselineHoursForLevel(MaxCharacterLevel) * rates.ValorLevelXpMultiplier / xpScale;
+            float hoursPerValorLevel = BaselineHoursForLevel(MaxLevel) * rates.ValorLevelXpMultiplier / xpScale;
 
             return new PacePreview(
                 pointsAtCap,

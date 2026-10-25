@@ -10,7 +10,7 @@ namespace FiresCore.IO
 {
     /// <summary>
     /// Asset bundles without the resident archive (MEMORY_LEADS #1, lever A). Every FAP and embedded bundle we ship is one LZMA
-    /// block, and Unity keeps a loaded LZMA bundle's whole archive in memory (re-packed) until it is unloaded. R63's bundletest
+    /// block, and Unity keeps a loaded LZMA bundle's whole archive in memory (re-packed) until it is unloaded. A bundle test
     /// measured 127 such archives = 3.24 GB of Unity memory per process, and freeing them late did not lower commit. A chunked
     /// LZ4 copy loaded from a file is read from disk on demand instead. BundleCache keeps such a copy per source under
     /// BepInEx\cache\FiresBundles: the first launch loads the source as before and writes the copy in the background (one at a

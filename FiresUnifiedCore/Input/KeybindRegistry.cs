@@ -22,7 +22,7 @@ namespace FiresCore.Input
         private const string UnknownGuid = "unknown";
         private const string UnknownModName = "Mod";
 
-        // 0.2.339 (the F1 window opened over "141 conflicts", most of them modes that never run beside normal play): a mod whose
+        // A mod whose
         // keys only act in one mode gets that mode, so they stop "clashing" with gameplay keys. Matched by the mod's display name.
         private static BindingContext ContextForMod(string modName)
         {

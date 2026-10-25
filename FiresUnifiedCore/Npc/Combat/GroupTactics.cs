@@ -4,8 +4,8 @@ using UnityEngine;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Where each companion stands round the foe it fights (Core 0.2.204; Fire, R77: "companions need to be aware of eachother and
-    /// their owner and fight accordingly, not stacking on top of eachother fighting to get position on an enemy").
+    /// Where each companion stands round the foe it fights: companions stay aware of each other and their owner instead of
+    /// stacking on top of each other fighting for position on an enemy.
     ///
     /// Slots are angles round the foe, measured from the foe's side that faces the owner:
     /// - a tank takes the front (between the foe and the owner, just off the owner's line);
@@ -18,15 +18,20 @@ namespace FiresCore.Npc.Combat
     /// </summary>
     public static class GroupTactics
     {
-        public const float OwnerLineDegrees = 25f, SlotStepDegrees = 30f, SlotTakenDegrees = 20f;
+        public const float OwnerLineDegrees = 40f, SlotStepDegrees = 45f   /* smaller steps left a slot too close to the owner line */, SlotTakenDegrees = 20f;
         public const float StackMetres = 1f, StackSeconds = 2f;
         private const float RingSlack = 2f;
+        private const float OtherOwnerReach = 6f;   // extra metres past the ring where another owner's incoming companion already counts
+        private const float SlotHoldSeconds = 3f;
+        private const float TankFrontLean = 0.5f;   // per-degree travel penalty pulling tanks toward the front
+        private const int StackTrackerCap = 256;
 
         private sealed class Claim
         {
             public Character Foe;
             public float Offset;
             public string Logged;
+            public float Since;
         }
 
         private static readonly Dictionary<CompanionController, Claim> s_claims = new Dictionary<CompanionController, Claim>();
@@ -49,7 +54,7 @@ namespace FiresCore.Npc.Combat
 
             // Taken by others: any character (not the foe, not this group) standing on the ring: another owner's companion, a player,
             // the foe's own pack.
-            s_taken.Clear();
+            s_taken.Clear(); s_takenOther.Clear();
             foreach (Character other in Character.GetAllCharacters())
             {
                 if (other == null || other == foe || other.IsDead()) continue;
@@ -58,8 +63,13 @@ namespace FiresCore.Npc.Combat
                 if (owner != null && other == owner) continue;   // the owner is the reference, not a blocker
                 Vector3 d = other.transform.position - foeAt;
                 d.y = 0f;
-                if (d.magnitude > ring + RingSlack) continue;
-                s_taken.Add(Mathf.DeltaAngle(baseYaw, Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg));
+                // Another peer's director picks independently and claims aren't shared: another owner's companion still walking in (up to OtherOwnerReach m
+                // past the ring) already counts, at the angle it is coming from, and in its own list the hold can't override
+                bool otherOwner = cc != null && owner != null && cc.GetOwner() != owner;
+                if (d.magnitude > ring + RingSlack + (otherOwner ? OtherOwnerReach : 0f)) continue;
+                float ang = Mathf.DeltaAngle(baseYaw, Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg);
+                s_taken.Add(ang);
+                if (otherOwner) s_takenOther.Add(ang);
             }
 
             // Tanks first, then the others; each keeps its claim while free, else the nearest free slot to where it stands.
@@ -78,21 +88,24 @@ namespace FiresCore.Npc.Combat
 
                 BuildCandidates(tank);
                 float chosen = float.NaN;
-                if (s_claims.TryGetValue(c, out Claim claim) && claim.Foe == foe && s_candidates.Contains(claim.Offset) && Free(claim.Offset))
+                // Without a hold a fighter's slot can flip back and forth in seconds: a claim is kept for at least
+                // SlotHoldSeconds even when someone passes through it; after that, while it stays free
+                if (s_claims.TryGetValue(c, out Claim claim) && claim.Foe == foe && s_candidates.Contains(claim.Offset) && (Free(claim.Offset) || (Time.time - claim.Since < SlotHoldSeconds && FreeOfOther(claim.Offset))))
                     chosen = claim.Offset;
                 if (float.IsNaN(chosen))
                 {
-                    float best = float.MaxValue;
+                    float bestTravel = float.MaxValue;
                     foreach (float o in s_candidates)
                     {
                         if (!Free(o)) continue;
-                        float travel = Mathf.Abs(Mathf.DeltaAngle(mine, o)) + (tank ? Mathf.Abs(o) * 0.5f : 0f);   // tanks lean to the front
-                        if (travel < best) { best = travel; chosen = o; }
+                        float travel = Mathf.Abs(Mathf.DeltaAngle(mine, o)) + (tank ? Mathf.Abs(o) * TankFrontLean : 0f);   // tanks lean to the front
+                        if (travel < bestTravel) { bestTravel = travel; chosen = o; }
                     }
                 }
                 if (float.IsNaN(chosen)) chosen = mine;   // every slot taken: hold where it is (no pushing in)
                 s_taken.Add(chosen);
-                if (claim == null || claim.Foe != foe) s_claims[c] = claim = new Claim { Foe = foe };
+                if (claim == null || claim.Foe != foe) s_claims[c] = claim = new Claim { Foe = foe, Since = Time.time };
+                if (!Mathf.Approximately(claim.Offset, chosen)) claim.Since = Time.time;
                 claim.Offset = chosen;
                 yaws[c] = Mathf.Repeat(baseYaw + chosen, 360f);
 
@@ -115,6 +128,13 @@ namespace FiresCore.Npc.Combat
             {
                 if (o >= OwnerLineDegrees) { s_candidates.Add(o); if (o < 179.9f) s_candidates.Add(-o); }
             }
+        }
+
+        private static readonly List<float> s_takenOther = new List<float>();
+        private static bool FreeOfOther(float offset)
+        {
+            foreach (float t in s_takenOther) if (Mathf.Abs(Mathf.DeltaAngle(t, offset)) < SlotTakenDegrees) return false;
+            return true;
         }
 
         private static bool Free(float offset)
@@ -157,7 +177,7 @@ namespace FiresCore.Npc.Combat
                     Debug.Log($"[GroupTactics] STACK {a.companionName} + {b.companionName} within " +
                               $"{Vector3.Distance(ba.transform.position, bb.transform.position):0.0} m on {fa.m_name} for {now - since:0.0} s");
             }
-            if (s_closeSince.Count > 256) { s_closeSince.Clear(); s_stackLogged.Clear(); }
+            if (s_closeSince.Count > StackTrackerCap) { s_closeSince.Clear(); s_stackLogged.Clear(); }
         }
     }
 }

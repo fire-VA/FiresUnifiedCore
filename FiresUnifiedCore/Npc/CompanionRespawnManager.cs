@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -648,6 +648,7 @@ if (prefab == null)
                   zdo.Set("companion_eyeColor", new Vector3(savedData.EyeColorR, savedData.EyeColorG, savedData.EyeColorB));
                   if (savedData.HasBeardColor) zdo.Set(CompanionAppearanceService.BeardColorKey, new Vector3(savedData.BeardColorR, savedData.BeardColorG, savedData.BeardColorB));
                   zdo.Set(ZDOVars.s_modelIndex, savedData.ModelIndex);
+                  if (!string.IsNullOrEmpty(savedData.FccModel)) { zdo.Set("fcc_model", savedData.FccModel); Debug.Log("[Companions] respawn carried fcc_model '" + savedData.FccModel + "'"); }
                   
                   if (VerboseLogging)
                   {
@@ -700,7 +701,7 @@ if (prefab == null)
                     }
                 }
 
-                // 0.2.362: legacy vault equipment placed synchronously right after the bag load (idempotent)
+                // Legacy vault equipment placed synchronously right after the bag load (idempotent)
                 inventory.CommitLegacyVaultEquipment("respawn restore");
 
    // Apply visual equipment
@@ -1227,6 +1228,7 @@ if (prefab == null)
                    zdo.Set("companion_eyeColor", new Vector3(savedData.EyeColorR, savedData.EyeColorG, savedData.EyeColorB));
                    if (savedData.HasBeardColor) zdo.Set(CompanionAppearanceService.BeardColorKey, new Vector3(savedData.BeardColorR, savedData.BeardColorG, savedData.BeardColorB));
                    zdo.Set(ZDOVars.s_modelIndex, savedData.ModelIndex);
+                   if (!string.IsNullOrEmpty(savedData.FccModel)) { zdo.Set("fcc_model", savedData.FccModel); Debug.Log("[Companions] respawn carried fcc_model '" + savedData.FccModel + "'"); }
                    
                    if (VerboseLogging)
                    {
@@ -1275,7 +1277,7 @@ if (prefab == null)
    }
           }
 
-            // 0.2.362: legacy vault equipment placed synchronously right after the bag load (idempotent)
+            // Legacy vault equipment placed synchronously right after the bag load (idempotent)
             inventory.CommitLegacyVaultEquipment("respawn restore");
 
    // Apply visual equipment

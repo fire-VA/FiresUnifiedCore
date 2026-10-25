@@ -11,8 +11,8 @@ using UnityEngine;
 namespace FiresCore.Compat
 {
     // The second half of HDValheimTextures' freeze: its ZNetScene.Awake postfix walks every prefab once per process and
-    // re-textures it, 15.3 s in one frame at world load (R35: part of a 26.9 s stall, ~20 s "Not Responding", as the
-    // connection starts). Fire (15:47 popups, [perf] 16:1x): spread it too.
+    // re-textures it, 15.3 s in one frame at world load (part of a 26.9 s stall, ~20 s "Not Responding", as the
+    // connection starts). This spreads it too.
     //
     // HdTexturesLoadSpread's ZNetScene.Awake prefix calls Schedule, which sets their Mod.ZnetSceneTexturesReplaced, so their
     // postfix only clears its processed-material list and returns. From the next frame (every mod's ZNetScene.Awake postfix
@@ -21,13 +21,13 @@ namespace FiresCore.Compat
     // HD sets textures on the prefabs' SHARED materials in place, so an object spawned before its prefab comes up still
     // turns HD when it does. The exceptions are MaterialOverrides that make new material instances or swap meshes, so
     // those prefabs go first, in OverrideBudgetMs slices while a ZNetScene.CreateDestroyObjects prefix holds off creating
-    // any object (R36: all at once was 6.1 s). Leaving the world midway hands the pass back to HD for the next world.
+    // any object (all at once was 6.1 s). Leaving the world midway hands the pass back to HD for the next world.
     internal static class HdTexturesWorldSpread
     {
         private const string Tag = "[HD textures] ";
         private const double LoadingBudgetMs = 100.0;
         private const double PlayingBudgetMs = 20.0;
-        // R36: the 152 override prefabs in one frame took 6.1 s, past Windows' 5 s "Not Responding". They now go in slices of
+        // The 152 override prefabs in one frame took 6.1 s, past Windows' 5 s "Not Responding". They now go in slices of
         // this size while ZNetScene holds off creating objects, so nothing can spawn with the old material or mesh meanwhile.
         private const double OverrideBudgetMs = 1000.0;
         private const float OverrideHoldCapSeconds = 30f;
@@ -88,7 +88,7 @@ namespace FiresCore.Compat
             if (mod == null || s_work != null || (bool)s_sceneReplaced.GetValue(mod)) return;
             s_sceneReplaced.SetValue(mod, true);
             // Held from this frame, not from the pass's first step: ZNetScene.Update may run before the runner in the next one
-            // ([generator]'s review).
+            //.
             s_holding = true;
             s_hold.Restart();
             s_started = true;
@@ -225,7 +225,7 @@ namespace FiresCore.Compat
             return names;
         }
 
-        // [perf] R39: one prefab took 1,024 ms in a single step. Its child renderers now split across frames when the budget
+        // One prefab once took 1,024 ms in a single step. Its child renderers now split across frames when the budget
         // runs out, and the prefab whose work took longest (frames between its slices not counted) is named at the finish.
         private static IEnumerator DoPrefab(object replacer, GameObject prefab, Stopwatch frame, Func<double> budgetMs)
         {

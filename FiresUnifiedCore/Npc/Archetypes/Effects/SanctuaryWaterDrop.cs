@@ -38,6 +38,8 @@ namespace FiresCore.Npc.Archetypes.Effects
         private float _radius;
         private float _ringDuration;
         private long _casterPlayerId;
+        private Vector3 _up = Vector3.up;   // halo ring: the local up at the target (world up off the ring)
+        private bool _ring => _up != Vector3.up;
 
         /// <summary>
         /// Plays the whole sequence on this client. Call it from the ability's per-client path (each peer runs the
@@ -61,8 +63,14 @@ namespace FiresCore.Npc.Archetypes.Effects
 
         private IEnumerator RunSequence()
         {
-            Vector3 groundedTarget = _target;
-            groundedTarget.y = GroundHeightSampler.Sample(_target, _target.y);
+            Vector3 groundedTarget;
+            if (FiresCore.World.GravityUp.InField(_target, out _))
+                groundedTarget = GroundHeightSampler.SamplePoint(_target, out _up);   // halo ring: along the local up
+            else
+            {
+                groundedTarget = _target;
+                groundedTarget.y = GroundHeightSampler.Sample(_target, _target.y);
+            }
 
             AbilityFXManager.SpawnLocalEffect(AbilityFXManager.FX_SANCTUARY, _casterPosition, Quaternion.identity, CastGlowScale);
             AbilityFXManager.SpawnLocalSound(AbilityFXManager.SFX_HEAL_START, _casterPosition);
@@ -124,10 +132,10 @@ namespace FiresCore.Npc.Archetypes.Effects
             }
         }
 
-        private static void MoveColumn(GameObject column, Vector3 groundedTarget, float heightFraction, float scale)
+        private void MoveColumn(GameObject column, Vector3 groundedTarget, float heightFraction, float scale)
         {
             if (column == null) return;
-            column.transform.position = groundedTarget + Vector3.up * ColumnHeightMeters * heightFraction;
+            column.transform.position = groundedTarget + _up * ColumnHeightMeters * heightFraction;
             column.transform.localScale = Vector3.one * scale;
         }
 
@@ -150,8 +158,18 @@ namespace FiresCore.Npc.Archetypes.Effects
             while (remaining > 0f)
             {
                 Vector2 offset = Random.insideUnitCircle * _radius;
-                Vector3 motePosition = groundedTarget + new Vector3(offset.x, MoteHeightMeters, offset.y);
-                motePosition.y = GroundHeightSampler.Sample(motePosition, groundedTarget.y) + MoteHeightMeters;
+                Vector3 motePosition;
+                if (!_ring)
+                {
+                    motePosition = groundedTarget + new Vector3(offset.x, MoteHeightMeters, offset.y);
+                    motePosition.y = GroundHeightSampler.Sample(motePosition, groundedTarget.y) + MoteHeightMeters;
+                }
+                else
+                {
+                    // halo ring: the disc lies in the tangent plane, each mote sampled along -up
+                    Vector3 p = groundedTarget + Quaternion.FromToRotation(Vector3.up, _up) * new Vector3(offset.x, MoteHeightMeters, offset.y);
+                    motePosition = GroundHeightSampler.SamplePoint(p, out Vector3 moteUp) + moteUp * MoteHeightMeters;
+                }
                 Tinted(AbilityFXManager.SpawnLocalEffect(AbilityFXManager.FX_HEALING_MOTES, motePosition, Quaternion.identity, MoteScale),
                     HealGreen);
 

@@ -4,7 +4,7 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// Only the rows near the body's scroll view are drawn ([perf], 2026-09-28: the window's first open cost 2 s).
+    /// Only the rows near the body's scroll view are drawn (the window's first open used to cost 2 s).
     /// A mod holds up to hundreds of settings, and every IMGUI event laid out every one of them, wrapped description
     /// and all, so the first open measured and generated text for all of them at once. A row far from the view is
     /// laid out as space of its last measured height (an estimate until it has been drawn once). Which rows are drawn

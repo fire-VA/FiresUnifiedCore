@@ -65,7 +65,7 @@ namespace FiresCore.Terrain
                 + $"{HeightmapOverrideLimits.MinAbs()} m from its generated height.");
         }
 
-        // 0.2.266 (a user's log: all three "was never transpiled" at Error level): a warning that says why, once per method. Nothing
+        // A warning that says why, once per method. Nothing
         // breaks either way: the method stays vanilla, so terrain keeps vanilla's +/-8 m limit from its generated height there.
         private static bool ReportMethod(string method)
         {

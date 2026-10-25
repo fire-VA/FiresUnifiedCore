@@ -6,7 +6,7 @@ using UnityEngine;
 namespace FiresCore.Building
 {
     /// <summary>
-    /// 0.2.312c (Fire 10-06): vanilla's placement rotation (Player.m_placeRotation, 22.5 degree steps from world north) is a world
+    /// Vanilla's placement rotation (Player.m_placeRotation, 22.5 degree steps from world north) is a world
     /// heading kept across piece changes, so a freshly picked piece may face back at the player and Infinity Hammer's forward/back/
     /// left/right moves (along the piece's own axes) then feel reversed. With "[Building] New piece faces away from you" on (default
     /// OFF: builders keep vanilla), each time the build tool is taken out and each time a DIFFERENT piece is picked, the rotation is
@@ -29,7 +29,7 @@ namespace FiresCore.Building
                 "When the build tool is taken out and whenever a different piece is picked, the piece is turned to face the way the camera "
                 + "looks, so forward/back/left/right moves (e.g. Infinity Hammer's arrow keys) go away/toward/left/right. Rotating it yourself "
                 + "is kept while you stay on the same piece. Off: vanilla (the last rotation is kept for every piece).");
-            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Building, false, s_enabled);   // 0.2.387: FAP only
+            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Building, false, s_enabled);   // FAP only
         }
 
         [HarmonyPatch(typeof(Player), "SetupPlacementGhost")]

@@ -19,7 +19,7 @@ namespace FiresCore.Possession
         private static float s_pendingSince;
         private static bool s_granted;
         private static ZDOID s_currentId;
-        // 0.2.322: when the current possession began, on KeyTaps' clock (Time.unscaledTime). A G tap releases only if it was
+        // When the current possession began, on KeyTaps' clock (Time.unscaledTime). A G tap releases only if it was
         // pressed after this, so the press that started it (or one made during the grant handshake) can't also end it.
         private static float s_beganUnscaled;
 
@@ -38,7 +38,7 @@ namespace FiresCore.Possession
                 Refuse(h, "the possession engine is not linked in this Core build");
                 return h;
             }
-            // 0.2.321: refused here, before any grant: a grant + release round trip would clear the key another mod set.
+            // Refused here, before any grant: a grant + release round trip would clear the key another mod set.
             string busy = PossessionEngineBridge.Busy();
             if (busy != null)
             {
@@ -94,7 +94,7 @@ namespace FiresCore.Possession
         internal static void Update()
         {
             Player local = Player.m_localPlayer;
-            // 0.2.321: the possess key's single tap, read every frame before any early return (KeyTaps, G shared with the guild screen).
+            // The possess key's single tap, read every frame before any early return (KeyTaps, G shared with the guild screen).
             bool possessTap = PossessionRules.PossessTapped();
             if (s_pending != null) UpdatePending();
             RavenPossession.Tick();
@@ -120,7 +120,7 @@ namespace FiresCore.Possession
             {
                 Character target = PossessionRules.PickUnderCrosshair(PossessionRules.AdminMaxRange.Value, out string pickWhy);
                 FiresLogger.LogDebug(PossessionRules.Tag + "admin pick: " + (target != null ? target.m_name : "nothing") + " (" + pickWhy + ")");
-                // 0.2.363: no creature -> a vanilla tutorial raven, possessed through a RavenPrefabs flyer body.
+                // No creature -> a vanilla tutorial raven, possessed through a RavenPrefabs flyer body.
                 if (target == null && RavenPossession.Allowed)
                 {
                     Raven raven = RavenPossession.PickRaven(PossessionRules.AdminMaxRange.Value, out string ravenWhy);
@@ -178,7 +178,7 @@ namespace FiresCore.Possession
 
         internal static void EndLocal(PossessHandle h, PossessEndReason reason, bool notifyServer) => EndLocal(h, reason, notifyServer, null);
 
-        /// <summary><paramref name="cause"/> names what ended it in the log line (0.2.322: "Released" alone didn't say G tap or Escape).</summary>
+        /// <summary><paramref name="cause"/> names what ended it in the log line ("Released" alone didn't say G tap or Escape).</summary>
         internal static void EndLocal(PossessHandle h, PossessEndReason reason, bool notifyServer, string cause)
         {
             if (h == null || h.Ended) return;
@@ -246,21 +246,39 @@ namespace FiresCore.Possession
                 var h = PossessionApi.Current;
                 if (h == null || h.Ended || h.FormHealthMax <= 0f || __instance != h.Creature || hit == null) return true;
                 float dmg = hit.GetTotalDamage();
+                float poolBefore = h.FormHealth;
                 h.FormHealth -= dmg;
+                // The raw hit on the form, who dealt it and the pool before it.
+                FiresLogger.LogDebug(PossessionRules.Tag + $"form hit {dmg:0.0} (blunt {hit.m_damage.m_blunt:0.0} slash {hit.m_damage.m_slash:0.0} pierce {hit.m_damage.m_pierce:0.0} "
+                    + $"plain {hit.m_damage.m_damage:0.0} elemental {hit.m_damage.m_fire + hit.m_damage.m_frost + hit.m_damage.m_lightning + hit.m_damage.m_poison + hit.m_damage.m_spirit:0.0}) "
+                    + $"by {AttackerName(hit)}; pool {poolBefore:0.0} -> {Mathf.Max(0f, h.FormHealth):0.0} of {h.FormHealthMax:0.0}");
                 if (h.FormHealth > 0f) return false;
                 float overflow = -h.FormHealth;
                 h.FormHealth = 0f;
-                FiresLogger.LogDebug(PossessionRules.Tag + "form pool empty; overflow " + overflow.ToString("0.0") + " to the player");
                 Player p = h.Player;
                 EndLocal(h, PossessEndReason.Death);
-                if (p != null && overflow > 0f)
+                // The leftover reaches the player as a normal hit of the same damage types, so armour
+                // and resistances apply, and at most the form's max health. Before, the whole overkill went through as true damage (one-shots).
+                float carried = Mathf.Min(overflow, h.FormHealthMax);
+                FiresLogger.LogDebug(PossessionRules.Tag + $"form pool empty; overflow {overflow:0.0}, {carried:0.0} carried to the player as a normal hit (cap {h.FormHealthMax:0.0}, armour applies)");
+                if (p != null && carried > 0f && dmg > 0f)
                 {
-                    var spill = new HitData { m_point = p.transform.position, m_attacker = hit.m_attacker };
-                    spill.m_damage.m_damage = overflow;
+                    HitData spill = hit.Clone();
+                    spill.m_damage.Modify(carried / dmg);
+                    spill.m_point = p.transform.position;
+                    spill.m_dir = (p.transform.position - __instance.transform.position).normalized;
+                    spill.m_pushForce = 0f;
                     p.Damage(spill);
                 }
                 return false;
             }
+        }
+
+        private static string AttackerName(HitData hit)
+        {
+            Character who = hit.GetAttacker();
+            if (who == null) return hit.m_attacker.IsNone() ? "no attacker" : "an unloaded attacker";
+            return (who is Player pl ? pl.GetPlayerName() : who.m_name) + $" ({who.GetLevel() - 1}*{(who.IsTamed() ? ", tamed" : "")})";
         }
 
         // ── damage scaling ─────────────────────────────────────────────────────────────────────────────────────────────

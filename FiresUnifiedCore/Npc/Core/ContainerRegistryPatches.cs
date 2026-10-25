@@ -10,6 +10,7 @@ namespace FiresCore.Npc.Core
     /// These patches ensure ContainerRegistry always has an up-to-date list of all
     /// containers without needing to scan with Physics.OverlapSphere.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.NpcBrain)]
     public static class ContainerRegistryPatches
     {
         /// <summary>

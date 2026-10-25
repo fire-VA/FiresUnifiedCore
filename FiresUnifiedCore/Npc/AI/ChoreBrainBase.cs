@@ -9,8 +9,8 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// Base upkeep for any body (Core 0.2.234; Fire 23:0x: "a primary fix needs to be the 'one brain' thing we talked about earlier with
-    /// companions/bots because we have SO MANY working chores for companions and the bots suck at working around base"). The chores a
+    /// Base upkeep for any body (one brain for companions and bots, so the bots get the companions' working chores).
+    /// The chores a
     /// base-watching companion rotates through (CompanionIdleBehavior's sub-behaviours), handed out one <see cref="TaskOrder"/> at a time
     /// for any <see cref="ITaskBody"/> (the FDT bot's player body, a companion), on the Core helpers the companions use (ChestHelper,
     /// FarmingDataHelper, PieceDataHelper). In companion priority: fires, smelters / kilns, loose drops, crops and hives, replanting,
@@ -39,11 +39,11 @@ namespace FiresCore.Npc.AI
             Deposit = 64,
             /// <summary>Worn carried gear at a station (<see cref="NextRepair"/>).</summary>
             RepairGear = 128,
-            /// <summary>Cooking stations over a lit fire: done food off, raw food on (CompanionCookingBehavior; 0.2.235).</summary>
+            /// <summary>Cooking stations over a lit fire: done food off, raw food on (CompanionCookingBehavior).</summary>
             Cook = 256,
-            /// <summary>Worn weapons and armour upgraded at a base workbench / forge from the bag (CraftingUpgradeBehaviorV2; 0.2.235).</summary>
+            /// <summary>Worn weapons and armour upgraded at a base workbench / forge from the bag (CraftingUpgradeBehaviorV2).</summary>
             Upgrade = 512,
-            /// <summary>The owner's beds kept warm: vanilla lets a player lie down only inside a fire's Heat area (Bed.CheckFire); a fire_pit placed where its heat covers a cold bed (0.2.246).</summary>
+            /// <summary>The owner's beds kept warm: vanilla lets a player lie down only inside a fire's Heat area (Bed.CheckFire); a fire_pit placed where its heat covers a cold bed.</summary>
             BedHeat = 1024,
             All = Fuel | Smelters | Pickups | Harvest | Plant | RepairPieces | Deposit | RepairGear | Cook | Upgrade | BedHeat,
         }
@@ -138,7 +138,7 @@ namespace FiresCore.Npc.AI
             return TaskOrder.Done(did.Count > 0 ? $"did: {LastBaseActions}; base: nothing else to do" : "base: nothing to do");
         }
 
-        // ---- Shared target finders (0.2.237, the target-selection consolidation): which base targets exist and qualify, one set of
+        // ---- Shared target finders: which base targets exist and qualify, one set of
         // rules for the companions' sub-behaviours and the bot's base chores. What differs per body is passed in: where to search, who
         // is working (InteractableOccupancyManager reservations, so a bot and a companion never take the same station), how fuel is
         // found, which wards apply ----
@@ -240,7 +240,7 @@ namespace FiresCore.Npc.AI
             return result;
         }
 
-        // ---- Shared finders, slice 2 (0.2.239): loot, farming, the smelter attention score ----
+        // ---- Shared finders, slice 2: loot, farming, the smelter attention score ----
 
         /// <summary>
         /// How much a loose item is worth picking up first (LootPickupBehaviorV2's priority): trophies 100, metals and bars 80, other
@@ -273,7 +273,7 @@ namespace FiresCore.Npc.AI
                 if (drop == null || drop.m_itemData == null) continue;
                 if (Swimming.GoalInDeepWater(drop.transform.position, out float depth))
                 {
-                    // 0.2.240 evidence: once per item per two minutes (new for the companions in 0.2.239).
+                    // Evidence: once per item per two minutes.
                     if (LogDue(drop.gameObject.GetInstanceID(), 120f))
                         Debug.Log($"[ChoreBrain] loot: {Utils.GetPrefabName(drop.gameObject)} at ({drop.transform.position.x:0}, {drop.transform.position.z:0}) " +
                                   $"skipped: in water {depth:0.0} m deep (no body wades in for it)");
@@ -316,7 +316,7 @@ namespace FiresCore.Npc.AI
             return crops;
         }
 
-        // 0.2.240 evidence (nearest-first farm targets, new for the companions in 0.2.239): once a minute per worker and kind.
+        // Evidence (nearest-first farm targets): once a minute per worker and kind.
         private static void NoteNearest(string worker, string kind, GameObject nearest, int count, Vector3 from)
         {
             if (worker == null || nearest == null || !LogDue((worker + kind).GetHashCode(), 60f)) return;
@@ -335,7 +335,7 @@ namespace FiresCore.Npc.AI
             return true;
         }
 
-        /// <summary>How far round the base (m) free cultivated ground is looked for (FarmingBehavior's PlantingDetectionRange; 0.2.241: one radius).</summary>
+        /// <summary>How far round the base (m) free cultivated ground is looked for (FarmingBehavior's PlantingDetectionRange: one radius).</summary>
         public const float PlantSearchRadius = 20f;
 
         /// <summary>A cultivator, by its prefab name (FarmingBehavior.IsCultivator: any prefab with "cultivator" in it, so modded ones count).</summary>
@@ -437,7 +437,7 @@ namespace FiresCore.Npc.AI
 
         // Whether worker may use target (InteractableOccupancyManager.CanUseInteractable: nobody else holds it, nobody stands on it;
         // a null worker or target: yes). When another worker holds it, an always-on line says so once a minute per worker and target
-        // (0.2.238: the reservation proof, for bots and companions alike since both go through the shared finders).
+        // (for bots and companions alike since both go through the shared finders).
         private static bool UsableBy(GameObject target, Character worker)
         {
             if (worker == null || target == null || InteractableOccupancyManager.CanUseInteractable(target, worker)) return true;
@@ -557,7 +557,7 @@ namespace FiresCore.Npc.AI
             return RelightStep(body, basePos, radius);
         }
 
-        // 0.2.248 ([seasons], overnight 05:05 "no burning fire within 20 m of base" while the fuel step said nothing to do): a vanilla
+        // A vanilla
         // fire with m_canTurnOff switches ITSELF off when wet (Fireplace.UpdateState: RPC_ToggleOn -> s_state 2) and stays off after
         // the rain with its fuel in it; IsBurning is false for state != 1. Such a fire, dry now and not smothered, is lit again the way
         // a player does it: the body's own interact (Fireplace.Interact with fuel in it toggles it on). One still wet is left off (vanilla
@@ -590,7 +590,7 @@ namespace FiresCore.Npc.AI
 
         /// <summary>
         /// The fires within <paramref name="radius"/> of <paramref name="center"/> the rain switched off that can be lit again now
-        /// (0.2.255, the companions' fire tending; the bot's relight pass uses the same rule): m_canTurnOff, fuel in it, switched off,
+        /// (the companions' fire tending; the bot's relight pass uses the same rule): m_canTurnOff, fuel in it, switched off,
         /// not smothered, dry now (<see cref="FireWet"/>), and free for <paramref name="worker"/> (InteractableOccupancyManager).
         /// Nearest to <paramref name="from"/> first.
         /// </summary>
@@ -611,7 +611,7 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// One always-on line per chore outcome (0.2.255, Fire's homestead test: "[Chore] &lt;who&gt;: &lt;chore&gt;: &lt;what&gt;"), the same tag
+        /// One always-on line per chore outcome ("[Chore] &lt;who&gt;: &lt;chore&gt;: &lt;what&gt;"), the same tag
         /// for every companion chore so a drill counts them per companion and chore.
         /// </summary>
         public static void ChoreDone(string who, string chore, string what) => Debug.Log($"[Chore] {who ?? "?"}: {chore}: {what}");
@@ -651,7 +651,7 @@ namespace FiresCore.Npc.AI
             Debug.Log($"[ChoreBrain] {BodyName(body)}: {line}");
         }
 
-        // ---- 1b. Warm beds ([seasons] 10-01: the overnight Coop1 got "no lit fire near the bed" every minute after "base: nothing to do") ----
+        // ---- 1b. Warm beds (vanilla refuses sleep without a lit fire near the bed) ----
 
         /// <summary>The fire placed to warm a cold bed (the game's campfire: 5 Stone, 2 Wood, no station).</summary>
         public const string BedFirePrefab = "fire_pit";
@@ -724,7 +724,7 @@ namespace FiresCore.Npc.AI
         /// 0.3 m, at least 1.4 m from it, on dry footing, free of pieces and bodies, either under open sky or under a rain-proof roof with
         /// room over the flame (Fireplace.CheckUnderTerrain) and an open side for the smoke (a closed roof lets it build up), where the
         /// owner may build (wards, no-build locations) and, for a ground-only piece, on the terrain. A fire that switches itself off in
-        /// the rain (m_canTurnOff) takes the covered spot first, one that doesn't the open sky (0.2.248). Heat goes through walls, so a
+        /// the rain (m_canTurnOff) takes the covered spot first, one that doesn't the open sky. Heat goes through walls, so a
         /// spot just outside the wall by the bed counts. Then most margin, then nearest to <paramref name="from"/>. "" with the spot, or
         /// why there is none.
         /// </summary>
@@ -734,7 +734,7 @@ namespace FiresCore.Npc.AI
             if (!HeatOf(firePrefab, out Vector3 offset, out float radius)) return $"{Utils.GetPrefabName(firePrefab)} has no heat area";
             Piece piece = firePrefab.GetComponent<Piece>();
             Fireplace fireplace = firePrefab.GetComponent<Fireplace>();
-            // 0.2.248 ([seasons]): a fire with m_canTurnOff switches itself off in the rain without a roof (Fireplace.CheckWet), so for one
+            // A fire with m_canTurnOff switches itself off in the rain without a roof (Fireplace.CheckWet), so for one
             // a rain-proof spot ranks first: under a roof (70 % cover), nothing within 0.5 m over the flame (not smothered) and an open side
             // the smoke drifts out of; open sky second. A fire that stays lit in the rain takes open sky first.
             bool rainOff = fireplace != null && fireplace.m_canTurnOff;
@@ -798,8 +798,7 @@ namespace FiresCore.Npc.AI
         {
             action = null;
             bool localSpawn = body.Character != null && body.Character == Player.m_localPlayer;
-            // 0.2.250, Fire: "on return home they cannot sleep if there's not a lit fire nearby so they have to keep the fire fueled"
-            // (overnight: 81 bed refusals, 0 sleeps). From the afternoon on, the fire that warms each bed is topped up to full, not
+            // Bodies cannot sleep without a lit fire nearby. From the afternoon on, the fire that warms each bed is topped up to full, not
             // only under the fuel step's 70 %, so it lasts the night; one switched off is relit by the fuel step's relight pass.
             if (NightComing())
                 foreach (Bed bed in SleepBeds(basePos, radius, body.OwnerPlayerId, localSpawn))
@@ -828,7 +827,7 @@ namespace FiresCore.Npc.AI
                 Fireplace near = FiresNear(bedAt, heat + 1f).FirstOrDefault(f => !f.m_blocked);
                 if (near != null && !near.IsBurning())
                 {
-                    // 0.2.248: out of fuel / switched off and dry are the fuel step's (it ran first: no fuel to hand, or the relight is on
+                    // Out of fuel / switched off and dry are the fuel step's (it ran first: no fuel to hand, or the relight is on
                     // its way); one the rain keeps switched off can't warm the bed until it stops, so a rain-proof fire is placed for it.
                     string off = FireOffReason(near);
                     if (!off.StartsWith("switched off: wet"))
@@ -893,7 +892,9 @@ namespace FiresCore.Npc.AI
             if (Vector3.Distance(body.Position, spot) > PieceReach)
                 return MoveOrder(body, bed.gameObject, spot, $"bed-heat: {where} has no heat; placing {prefab.name} at ({spot.x:0}, {spot.z:0})");
             s_moveSince.Remove(bed.gameObject);
-            Quaternion facing = Quaternion.LookRotation(Flatten(bed.transform.position - spot));
+            Quaternion facing = FiresCore.World.GravityUp.InField(spot, out Vector3 bedUp)   // halo ring: face the bed in the ring plane
+                ? Quaternion.LookRotation(FiresCore.World.GravityUp.Flat(bed.transform.position - spot, spot), bedUp)
+                : Quaternion.LookRotation(Flatten(bed.transform.position - spot));
             if (PlacePiece(prefab.name, spot, facing, bag, owner, out string reason) == null)
             {
                 BedSay(body, bed, $"bed-heat: {where}: placing {prefab.name} at ({spot.x:0}, {spot.z:0}) refused: {reason}");
@@ -985,7 +986,7 @@ namespace FiresCore.Npc.AI
             return null;
         }
 
-        // ---- One copy of the station actions (0.2.236): the companions' SmelterOperatorBehavior and the bot's base chores both call these ----
+        // ---- One copy of the station actions: the companions' SmelterOperatorBehavior and the bot's base chores both call these ----
 
         /// <summary>
         /// One unit of <paramref name="item"/> (the station's fuel) out of <paramref name="bag"/> into <paramref name="smelter"/>, the way
@@ -1045,8 +1046,8 @@ namespace FiresCore.Npc.AI
 
         /// <summary>
         /// Repair <paramref name="piece"/> to full through vanilla WearNTear.Repair, as a player's hammer does (one copy for every
-        /// body, 0.2.236). It sends RPC_Repair to the piece's owner, which writes the health and tells every peer. 0.2.322 (Fire's
-        /// vanilla-method rule): no ownership claim and no fallback write of the health key. Repair refuses a full piece and one
+        /// body). It sends RPC_Repair to the piece's owner, which writes the health and tells every peer. Vanilla method only:
+        /// no ownership claim and no fallback write of the health key. Repair refuses a full piece and one
         /// repaired under 1 s ago, and the caller retries the next pass. Wards are the caller's to check. True when it was sent.
         /// </summary>
         public static bool RepairPiece(WearNTear piece)
@@ -1121,7 +1122,7 @@ namespace FiresCore.Npc.AI
             if (!seeds && !ChestHolds(body, basePos, radius, seedHere)) return null;   // nothing to plant: no cultivator wanted either
             if (!cultivator && !ChestHolds(body, basePos, radius, IsCultivator))
             {
-                // None to carry or fetch: the bot crafts one through its planner's craft verb (FDT, [seasons]' ifstocked) on the shared
+                // None to carry or fetch: the bot crafts one through its planner's craft verb (FDT's ifstocked) on the shared
                 // CraftFromStock decision, not here (one craft path per body). The decision, once a minute, as evidence.
                 if (LogDue((BodyName(body) + "plant-craft").GetHashCode(), 60f))
                 {
@@ -1172,7 +1173,7 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// The one craft-from-stock decision for every body (0.2.242; the companions' farming, the FDT planner): can
+        /// The one craft-from-stock decision for every body (the companions' farming, the FDT planner): can
         /// <paramref name="itemPrefab"/> be made by its game recipe at a station of its kind and level within <paramref name="radius"/>
         /// of <paramref name="basePos"/> (<see cref="CraftStationRefusal"/>: level, roof, fire), paid from <paramref name="bag"/> plus the
         /// base chests <paramref name="mayUse"/> allows (null = all), with the whole cost covered (never a part, so nothing is fetched
@@ -1318,7 +1319,7 @@ namespace FiresCore.Npc.AI
             return null;
         }
 
-        // ---- Cooking stations (0.2.235; CompanionCookingBehavior's rules: stations fed directly, not through an add-food switch) ----
+        // ---- Cooking stations (CompanionCookingBehavior's rules: stations fed directly, not through an add-food switch) ----
 
         private static readonly List<CookingStation> s_cookers = new List<CookingStation>();
         private static Vector3 s_cookerScanAt;
@@ -1403,7 +1404,7 @@ namespace FiresCore.Npc.AI
             return filled;
         }
 
-        // ---- Bench upgrades (0.2.235; CraftingUpgradeBehaviorV2 on ChoreBrain.FindBestUpgrade: what the body wears, materials from its bag) ----
+        // ---- Bench upgrades (CraftingUpgradeBehaviorV2 on ChoreBrain.FindBestUpgrade: what the body wears, materials from its bag) ----
 
         private static TaskOrder UpgradeStep(ITaskBody body, Vector3 basePos, float radius, out string action)
         {
@@ -1435,7 +1436,7 @@ namespace FiresCore.Npc.AI
 
         // ---- 7. Stash the bag, 8. worn gear ----
 
-        // The companions' deposit rule (ChestHelper.SmartDeposit, 0.2.241): every item into a base chest that already holds it, so stacks
+        // The companions' deposit rule (ChestHelper.SmartDeposit): every item into a base chest that already holds it, so stacks
         // stay together; the rest into the smart-storage pick (FindBestDepositChest: chests near the matching station, then stacking,
         // then the nearest with room). A player body walks to each chest in turn: the nearest chest with work first.
         private static TaskOrder DepositStep(ITaskBody body, Vector3 basePos, float radius, out string action)

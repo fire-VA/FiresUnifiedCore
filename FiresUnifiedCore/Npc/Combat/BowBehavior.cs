@@ -769,7 +769,7 @@ Context.Animator.SetFloat("drawpercent", 0f);
         
         private void SpawnArrowProjectile(Character target, float drawPercentage)
         {
-            // 0.2.365: a shot spends 1 real arrow (Ammo pouch first, then storage; never an equip cell). No arrow, no shot.
+            // A shot spends 1 real arrow (Ammo pouch first, then storage; never an equip cell). No arrow, no shot.
             bool ammoFromPouch = false;
             var ammo = CompanionAmmo.FindShotAmmo(Context.Inventory, Context.CurrentWeapon, out ammoFromPouch);
             if (ammo == null && Context.Inventory != null && CompanionAmmo.NeedsAmmo(Context.CurrentWeapon))

@@ -5,8 +5,8 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// Companions out of water and pits the way the bot gets out (0.2.283, the lead: Fire's rule "climbing or jumping out" holds for a
-    /// companion stuck in the pond too; one brain, two bodies). Every companion move ends in Character.SetMoveDir (the movement
+    /// Companions out of water and pits the way the bot gets out (climbing or jumping out holds for a
+    /// companion stuck in a pond too; one brain, two bodies). Every companion move ends in Character.SetMoveDir (the movement
     /// authority's apply and vanilla pathfinding alike), and CompanionPatches' prefix hands the direction here first, on the owner:
     /// <list type="bullet">
     /// <item>on a face (Core's climb has the body): into the face;</item>

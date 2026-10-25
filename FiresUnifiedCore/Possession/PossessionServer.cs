@@ -21,7 +21,7 @@ namespace FiresCore.Possession
         internal const string RevokeRpc = "FiresCore_Possess_Revoke";
 
         // KeySet: this grant wrote the key (it held another value before). A key that already held the player's id was set by
-        // another engine copy (Valcast possessing the same creature); Core's release must leave it alone ([ghost] 10-07).
+        // another engine copy (Valcast possessing the same creature); Core's release must leave it alone.
         private sealed class Entry { public long PlayerId; public long Peer; public string Tag; public bool KeySet; }
 
         private static readonly Dictionary<ZDOID, Entry> s_active = new Dictionary<ZDOID, Entry>();

@@ -5,7 +5,7 @@ using UnityEngine;
 namespace FiresCore.Possession
 {
     /// <summary>
-    /// The one file that talks to [ghost]'s shared engine (Shared\FiresPossession, namespace FiresPossession, public in Core
+    /// The one file that talks to the shared engine (Shared\FiresPossession, namespace FiresPossession, public in Core
     /// through FIRES_POSSESSION_PUBLIC). Without FIRES_POSSESSION_ENGINE defined (the sources not linked yet) every
     /// possession is refused with a clear reason, so the public API above compiles and is safe to call.
     /// </summary>
@@ -20,7 +20,7 @@ namespace FiresCore.Possession
         {
             public void CameraOn(Character c) => PossessionCamera.On(c);
             public void CameraOff() => PossessionCamera.Off();
-            // 0.2.326: the engine reads "FlightPreset" each flight step (0 = Auto, resolved per creature), so admin possession honours
+            // The engine reads "FlightPreset" each flight step (0 = Auto, resolved per creature), so admin possession honours
             // [Flight] Preset too.
             public float Config(string key, float def) => key == "FlightPreset" ? (float)(int)FiresCore.Flight.FlightKeys.Preset : def;
             public bool Config(string key, bool def) => def;
@@ -36,9 +36,9 @@ namespace FiresCore.Possession
         private static bool Install() => FiresPossession.PossessionEngine.Install(global::FiresCore.FiresUnifiedCore.PluginGUID + ".possession");
 
         /// <summary>
-        /// 0.2.321: the engine's patches go in at ZNet.Start on every client, not on the first possession: the first engine
+        /// The engine's patches go in at ZNet.Start on every client, not on the first possession: the first engine
         /// copy in the process hides OTHER players' Hidden (proxied) bodies, so a Core-only client must have it installed to
-        /// see a possessor's body vanish ([ghost] 10-07). Idle cost: a static check per character update. Not on a dedicated
+        /// see a possessor's body vanish. Idle cost: a static check per character update. Not on a dedicated
         /// server (no camera, no local player).
         /// </summary>
         internal static void InstallEarly()
@@ -62,7 +62,7 @@ namespace FiresCore.Possession
             {
                 s_hooked = true;
                 Install();   // normally done at ZNet.Start already (InstallEarly); idempotent
-                FiresPossession.PossessionEngine.Ended += (creature, reason) => PossessionClient.OnEngineEnded(reason);
+                FiresPossession.PossessionEngine.Ended += (creature, reason) => { BodyCarrier.Stop(reason); PossessionClient.OnEngineEnded(reason); };
             }
             PossessOptions o = h.Options;
             var e = new FiresPossession.PossessOptions
@@ -70,9 +70,9 @@ namespace FiresCore.Possession
                 Body = o.Body == PossessBody.Hidden ? FiresPossession.BodyStyle.Hidden : FiresPossession.BodyStyle.Frozen,
                 PlayerInvulnerable = o.PlayerInvulnerable,
                 BodyUntouchable = o.BodyUntouchable,
-                ChannelLock = o.ChannelLock,
+                ChannelLock = o.ChannelLock && !o.CarryHiddenBody,   // A carried body is never pinned
                 MaxDuration = o.MaxDuration,
-                MaxRange = o.MaxRange,
+                MaxRange = o.CarryHiddenBody ? 0f : o.MaxRange,       // The body travels with the creature, no leash
                 ReturnToAnchor = o.ReturnToAnchor && !o.ConsumeTarget,
                 ConsumeTarget = o.ConsumeTarget,
                 ContinueWhile = o.ContinueWhile,
@@ -88,7 +88,9 @@ namespace FiresCore.Possession
                 Host = s_host,
             };
             s_lastAttack = -2;
-            return FiresPossession.PossessionEngine.Begin(h.Player, h.Creature, e, out why);
+            bool ok = FiresPossession.PossessionEngine.Begin(h.Player, h.Creature, e, out why);
+            if (ok && o.CarryHiddenBody && !FiresPossession.PossessionEngine.BodyHidden) BodyCarrier.Start(h.Player, h.Creature, o.SourceTag, o.BodyVanishFx, o.CarryEndAtCreature, o.BodyRiseBeforeVanish, o.BodyRiseSeconds);
+            return ok;
         }
 
         internal static void End(string reason)

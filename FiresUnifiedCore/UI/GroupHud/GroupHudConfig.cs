@@ -45,7 +45,7 @@ namespace FiresCore.UI.GroupHud
                 "Default panel Y anchored to the screen's top-right corner (negative = below the " +
                 "corner, i.e. under the minimap).");
 
-            // Only the companion hosts feed the panel; without one these keys leave the config (0.2.359).
+            // Only the companion hosts feed the panel; without one these keys leave the config.
             FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.GROUPHUD, false,
                 ShowGroupHud, MaxRowsPerColumn, Columns, DefaultPosX, DefaultPosY);
         }

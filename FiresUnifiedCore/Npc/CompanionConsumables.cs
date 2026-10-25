@@ -9,6 +9,7 @@ namespace FiresCore.Npc
     /// Companions will eat food for buffs and use healing items when low on health.
     /// Food now provides immediate health gain in addition to buffs.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public class CompanionConsumables : MonoBehaviour
     {
    [Header("Consumption Settings")]
@@ -144,7 +145,7 @@ if (_companion.isDefeated) return;
             var storageInv = _inventory.GetStorageInventory();
       if (storageInv == null) return;
 
-            // 0.2.356: the Food pouch item first when it is edible now; then the storage pass below as before.
+            // The Food pouch item first when it is edible now; then the storage pass below as before.
             if (CompanionPouchRules.TryGetPouchItem(_inventory, CompanionPouchRules.PouchKind.Food, out var pouchFood))
             {
                 if (IsFood(pouchFood) && CanEat(pouchFood))
@@ -157,7 +158,7 @@ if (_companion.isDefeated) return;
             }
 
             // Find food items in storage
-         var items = _inventory.GetStorageItems(); // 0.2.362: pouch handled above; never equip cells
+         var items = _inventory.GetCarriedItems(); // pouch handled above; never equip cells (includes Misc + bag rows, as the player eats from its bag)
           foreach (var item in items.ToList())
       {
        if (!IsFood(item)) continue;
@@ -398,7 +399,7 @@ FoodName = shared.m_name,
 
             ItemDrop.ItemData best = null;
             float bestScore = 0f;
-            foreach (var item in _inventory.GetStorageItems()) // 0.2.362: storage rows only
+            foreach (var item in _inventory.GetCarriedItems()) // storage rows plus Misc + bag rows
             {
                 if (!(ConsumeEffect(item) is SE_Stats effect) || !CanConsume(seman, effect)) continue;
                 float score = MeadScore(effect);
@@ -634,7 +635,7 @@ FoodName = shared.m_name,
             SaveToZDO();
         }
 
-        /// <summary>0.2.365: <see cref="ClearFoods()"/> with a reason, logged at Debug (fires_companion_food ... clear).</summary>
+        /// <summary><see cref="ClearFoods()"/> with a reason, logged at Debug (fires_companion_food ... clear).</summary>
         public void ClearFoods(string reason)
         {
             int had = _activeFoodEffects.Count;
@@ -725,6 +726,7 @@ public void SaveToZDO()
     /// <summary>
       /// Represents an active food effect on the companion.
      /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public class FoodEffect
         {
          public string FoodName;
@@ -740,9 +742,64 @@ public void SaveToZDO()
         #endregion
     }
 
-    /// <summary>0.2.365: "fires_companion_food &lt;name|nearest&gt; clear" (cheat command: needs devcommands), empties a
+    /// <summary>"fires_companions_wait on|off|status". ON gives every FOLLOWING companion of the local
+    /// player the same Stay order as the UI (CompanionController.CommandStay at its spot) and remembers which; OFF gives those the
+    /// Follow order back (CommandFollow). Each state is logged before and after.</summary>
+    [HarmonyLib.HarmonyPatch(typeof(Terminal), "InitTerminal")]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
+    internal static class CompanionsWaitCommand
+    {
+        private static bool s_registered;
+        private static readonly System.Collections.Generic.List<CompanionController> s_parked = new System.Collections.Generic.List<CompanionController>();
+
+        private static System.Collections.Generic.List<CompanionController> Mine()
+        {
+            var list = new System.Collections.Generic.List<CompanionController>();
+            var me = Player.m_localPlayer;
+            if (me == null) return list;
+            foreach (var c in CompanionController.AllCompanions)
+                if (c != null && c.GetOwner() == me) list.Add(c);
+            return list;
+        }
+
+        private static string State(System.Collections.Generic.List<CompanionController> list) =>
+            list.Count == 0 ? "none" : string.Join(", ", list.ConvertAll(c => $"{c.companionName} {(c.ShouldBeFollowing ? "following" : "staying")}"));
+
+        [HarmonyLib.HarmonyPostfix]
+        private static void Postfix()
+        {
+            if (s_registered) return;
+            s_registered = true;
+            new Terminal.ConsoleCommand("fires_companions_wait",
+                "[FiresUnifiedCore] fires_companions_wait on|off|status - on: your following companions get the Stay order where they stand (remembered); off: those get Follow back.",
+                args =>
+                {
+                    string mode = args.Length > 1 ? args[1].ToLowerInvariant() : "status";
+                    var mine = Mine();
+                    string before = State(mine);
+                    if (mode == "on")
+                    {
+                        foreach (var c in mine)
+                            if (c.ShouldBeFollowing) { c.CommandStay(); if (!s_parked.Contains(c)) s_parked.Add(c); }
+                    }
+                    else if (mode == "off")
+                    {
+                        var me = Player.m_localPlayer;
+                        foreach (var c in s_parked) if (c != null && me != null) c.CommandFollow(me);
+                        s_parked.Clear();
+                    }
+                    else if (mode != "status") { args.Context?.AddString("fires_companions_wait on|off|status"); return; }
+                    string line = $"[CompanionsWait] {mode}: before [{before}] -> after [{State(Mine())}]; remembered to restore: {s_parked.Count}";
+                    Debug.Log(line);
+                    args.Context?.AddString(line);
+                });
+        }
+    }
+
+    /// <summary>"fires_companion_food &lt;name|nearest&gt; clear" (cheat command: needs devcommands), empties a
     /// companion's active foods through <see cref="CompanionConsumables.ClearFoods(string)"/>.</summary>
     [HarmonyLib.HarmonyPatch(typeof(Terminal), "InitTerminal")]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionFoodCommand
     {
         private static bool s_registered;

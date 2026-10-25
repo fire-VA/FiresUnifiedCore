@@ -14,6 +14,7 @@ namespace FiresCore.Npc.Persistence
     /// so another world finds nothing. Data is kennel_owner plus kennel_data, a ZPackage of DormantNpcEntry.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class CompanionKennel
     {
         /// <summary>
@@ -253,6 +254,14 @@ namespace FiresCore.Npc.Persistence
                 var entries = CompanionKennelSerializer.Deserialize(pkg.GetArray());
                 if (entries == null || entries.Count == 0 || entries[0] == null) return;
                 var entry = entries[0];
+                // The owner stores its own companions. Another peer may only forward a companion DEATH it saw (the companion
+                // lived on its machine), and only for a real companion prefab: nobody can write or spawn into someone else's kennel.
+                bool fromOwner = sender == ZDOMan.GetSessionID() || RpcGuard.SenderIsServer(sender) || RpcGuard.SenderIsPlayer(sender, playerId)
+                              || SenderSimulatesCompanion(sender, playerId, entry.NpcId);
+                bool forwardedDeath = entry.Kind == DormancyKind.DeadPendingRespawn && IsCompanionPrefab(entry.Snapshot?.PrefabName);
+                if (!fromOwner && !forwardedDeath) { RpcGuard.Refuse("CompanionKennel_Store", sender, $"not player {playerId}, its companion's peer, or a companion death"); return; }
+                if (entry.Kind == DormancyKind.DeadPendingRespawn && !IsCompanionPrefab(entry.Snapshot?.PrefabName))
+                { RpcGuard.Refuse("CompanionKennel_Store", sender, $"'{entry.Snapshot?.PrefabName}' is not a companion prefab"); return; }
                 Store(playerId, entry);
                 Debug.Log($"[CompanionKennel] RPC_Store: stored {entry.NpcId} ({entry.Kind}) for player {playerId} from peer {sender}");
 
@@ -262,8 +271,8 @@ namespace FiresCore.Npc.Persistence
                 // deadline is absolute UTC (crash-resumable); translate it to a seconds-from-now delay.
                 if (entry.Kind == DormancyKind.DeadPendingRespawn && entry.Snapshot != null)
                 {
-                    float delay = (float)Math.Max(0.0,
-                        (new DateTime(entry.RecallDeadlineUtcTicks, DateTimeKind.Utc) - DateTime.UtcNow).TotalSeconds);
+                    float delay = (float)Math.Min(MaxForwardedRespawnDelaySeconds, Math.Max(0.0,
+                        (new DateTime(entry.RecallDeadlineUtcTicks, DateTimeKind.Utc) - DateTime.UtcNow).TotalSeconds));
                     FiresCore.Npc.CompanionRespawnManager.Instance?.ScheduleRespawn(
                         entry.NpcId, playerId, entry.Snapshot.PrefabName, delay, ZDOID.None);
                     Debug.Log($"[CompanionKennel] Scheduled server-side respawn for {entry.NpcId} in {delay:F0}s (client-forwarded death).");
@@ -275,11 +284,36 @@ namespace FiresCore.Npc.Persistence
             }
         }
 
+        private const double MaxForwardedRespawnDelaySeconds = 3600.0;
+
+        /// <summary>True for a prefab that is a companion (it carries a CompanionController).</summary>
+        // The peer that currently simulates (owns the ZDO of) this player's companion may forward its snapshot. Scans the ZDOs
+        // only when the cheap checks failed, i.e. for a forwarding peer.
+        private static bool SenderSimulatesCompanion(long sender, long playerId, string npcId)
+        {
+            if (string.IsNullOrEmpty(npcId) || ZDOMan.instance == null) return false;
+            foreach (var c in FiresCore.Npc.Vault.CompanionRestoreService.ListOwnedCompanionZdos(playerId))
+            {
+                if (c.CompanionId != npcId) continue;
+                ZDO z = ZDOMan.instance.GetZDO(c.Zdo);
+                return z != null && z.GetOwner() == sender;
+            }
+            return false;
+        }
+
+        private static bool IsCompanionPrefab(string prefabName)
+        {
+            GameObject prefab = !string.IsNullOrEmpty(prefabName) && ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(prefabName) : null;
+            return prefab != null && prefab.GetComponent<CompanionController>() != null;
+        }
+
         private static void RPC_Remove(long sender, long playerId, string npcId)
         {
             try
             {
                 if (playerId == 0L || string.IsNullOrEmpty(npcId)) return;
+                if (sender != ZDOMan.GetSessionID() && !RpcGuard.SenderIsServer(sender) && !RpcGuard.SenderIsPlayer(sender, playerId) && !SenderSimulatesCompanion(sender, playerId, npcId))
+                { RpcGuard.Refuse("CompanionKennel_Remove", sender, $"not player {playerId}"); return; }
                 if (Remove(playerId, npcId) && VerboseLogging)
                     Debug.Log($"[CompanionKennel] RPC_Remove: removed {npcId} for player {playerId} from peer {sender}");
             }

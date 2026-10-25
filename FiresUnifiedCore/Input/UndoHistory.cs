@@ -16,8 +16,8 @@ namespace FiresCore.Undo
     }
 
     /// <summary>
-    /// ONE undo history for every Fires mod (Core 0.2.296, Fire 10-05: "build our undo and redo code into core so that way all of our mods
-    /// can use it when jere's mods are not installed"; numpad 7 = undo, numpad 9 = redo, as Infinity Hammer).
+    /// ONE undo history for every Fires mod, usable when Jere's mods are not installed
+    /// (numpad 7 = undo, numpad 9 = redo, as Infinity Hammer).
     /// - With Server Devcommands installed, every step goes into ITS UndoManager (the history Infinity Hammer and World Edit Commands use),
     ///   so IH's numpad 7 / 9 and the console "undo" / "redo" step through our edits mixed with theirs. It's a soft dependency: SDC calls a
     ///   step's public Undo() / Redo() by reflection, and Core hands it the step through UndoManager's Add the same way; no SDC type is used.

@@ -27,13 +27,13 @@ namespace FiresCore.Npc.AI
         Repair,
         /// <summary>
         /// Place the piece <see cref="TaskOrder.PieceName"/> at <see cref="TaskOrder.Point"/> facing <see cref="TaskOrder.Rotation"/>,
-        /// paid from the body's bag: a player places it as a player does (Core 0.2.220, the haul's chest); a companion through
+        /// paid from the body's bag: a player places it as a player does (the haul's chest); a companion through
         /// <see cref="ChoreBrain.PlacePiece"/>. Either way it is a real piece with the body's owner as its creator.
         /// </summary>
         Build,
         /// <summary>
         /// Craft <see cref="TaskOrder.Recipe"/> at the station <see cref="TaskOrder.Target"/> (null when the recipe needs none): a
-        /// player through the crafting GUI, a companion through ResourceDataHelper.CraftTool (Core 0.2.220, the haul's pickaxe).
+        /// player through the crafting GUI, a companion through ResourceDataHelper.CraftTool (the haul's pickaxe).
         /// </summary>
         Craft,
     }
@@ -151,11 +151,10 @@ namespace FiresCore.Npc.AI
             return moved > 0 ? TaskOrder.Done($"deposited {moved}") : TaskOrder.Failed("the chest took nothing");
         }
 
-        // ---- Base upkeep (0.2.233; Fire 23:0x: "they also dont bother keeping their fires lit, or any of that, our companions once
-        // again have better work logic than the bots when it comes to what to do around base"). The companions' FireTendingBehaviorV2
+        // ---- Base upkeep. The companions' FireTendingBehaviorV2
         // rule for any body: a refillable fire near the base under half its fuel, fed from the bag or a base chest ----
 
-        /// <summary>A fire under this share of its max fuel is refuelled: the companions' proven value, one rule for every body (0.2.236; FireTendingBehaviorV2 reads it).</summary>
+        /// <summary>A fire under this share of its max fuel is refuelled: the companions' proven value, one rule for every body (FireTendingBehaviorV2 reads it).</summary>
         public const float RefuelBelow = 0.7f;
         /// <summary>The body adds fuel within this (m) of the fire, and takes it from a chest within this of the chest.</summary>
         private const float BaseUseDistance = 2.5f;
@@ -226,8 +225,8 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// 0.2.233's form of <see cref="NextBaseChore(ITaskBody, Vector3, float, BaseChores, out string)"/>: every base chore, with
-        /// <paramref name="repair"/> false leaving out the two repairs. Kept for callers built on 0.2.233.
+        /// The older form of <see cref="NextBaseChore(ITaskBody, Vector3, float, BaseChores, out string)"/>: every base chore, with
+        /// <paramref name="repair"/> false leaving out the two repairs. Kept for existing callers.
         /// </summary>
         public static TaskOrder NextBaseChore(ITaskBody body, Vector3 basePos, float radius = 30f, bool repair = true) =>
             NextBaseChore(body, basePos, radius, repair ? BaseChores.All : BaseChores.All & ~(BaseChores.RepairGear | BaseChores.RepairPieces), out _);
@@ -310,7 +309,7 @@ namespace FiresCore.Npc.AI
             public string Reason;
             /// <summary>Metres along the navmesh path when it was checked, else -1.</summary>
             public float PathLength;
-            /// <summary>Where the path ends: the node's interaction point, or a stand point on its reach ring when that is what the path reached (0.2.228).</summary>
+            /// <summary>Where the path ends: the node's interaction point, or a stand point on its reach ring when that is what the path reached.</summary>
             public Vector3 Stand;
         }
 
@@ -325,7 +324,7 @@ namespace FiresCore.Npc.AI
         /// Every gatherable node within <paramref name="range"/> of <paramref name="at"/> that drops one of <paramref name="wanted"/> (any
         /// node when it is empty; up to <paramref name="max"/>, nearest first) with a verdict: usable or the reason not (wards, the tool
         /// carried is missing or too weak, no navmesh path or a path over twice the straight line). Nodes that don't drop what is
-        /// wanted are left out, not listed, so they never use up <paramref name="max"/> (0.2.223). <see cref="FindGatherTarget"/> takes the first usable one,
+        /// wanted are left out, not listed, so they never use up <paramref name="max"/>. <see cref="FindGatherTarget"/> takes the first usable one,
         /// so a planner asking this and a body gathering agree. With <paramref name="log"/>, one "[ChoreBrain] candidate" line each.
         /// The list is reused: copy it to keep it.
         /// </summary>
@@ -344,8 +343,8 @@ namespace FiresCore.Npc.AI
             foreach (var data in found)
             {
                 if (s_candidates.Count >= max) break;
-                // Asked for something: a node that doesn't drop it isn't a candidate at all, so it can't fill the list (0.2.223, [seasons],
-                // R90 run 6: the 16 nearest nodes were stones and dandelions, "doesn't drop Wood", and the beech forest never made the list).
+                // Asked for something: a node that doesn't drop it isn't a candidate at all, so it can't fill the list
+                // (otherwise nearby stones and dandelions could crowd out a forest further off).
                 if (filterDrops && !ResourceDataHelper.YieldsAnyOf(data.GameObject, wanted)) continue;
                 string reason = null;
                 if (!ChestHelper.WardsAllow(data.InteractionPosition, ownerId)) reason = "wards";
@@ -384,7 +383,7 @@ namespace FiresCore.Npc.AI
             return s_candidates;
         }
 
-        // ---- The path to a node: its centre, else a stand point on its reach ring (0.2.228) ----
+        // ---- The path to a node: its centre, else a stand point on its reach ring ----
 
         /// <summary>Stand points tried on a node's reach ring when the path to its centre fails (nearest the body first).</summary>
         private const int RingTries = 3;
@@ -397,8 +396,7 @@ namespace FiresCore.Npc.AI
         /// A navmesh path from <paramref name="at"/> that ends within reach of <paramref name="data"/>: to its centre (vanilla snaps the
         /// goal onto the navmesh), else to one of <see cref="RingTries"/> stand points on its reach ring, nearest the body first. A
         /// trunk's centre lies in the hole its collider cuts in the navmesh, and vanilla's snap can land it on an island there or on
-        /// ground 6-12 m off; either read "no path" (or a false "ok") for a tree in open ground (R90 run 10, Coop2: "Beech1 5 m no
-        /// path, Beech1 16 m no path … Beech1 27 m ok"). A path counts only when its end is within the node's reach.
+        /// ground 6-12 m off; either read "no path" (or a false "ok") for a tree in open ground. A path counts only when its end is within the node's reach.
         /// </summary>
         public static bool PathToNode(Vector3 at, ResourceDataHelper.ResourceData data, out float length, out Vector3 stand)
         {
@@ -460,8 +458,23 @@ namespace FiresCore.Npc.AI
 
         /// <summary>
         /// Where to stand to work <paramref name="node"/>: the stand point <see cref="GatherCandidates"/> found when the path to its
-        /// centre failed (0.2.228), else its interaction point. Walk to this, not the trunk centre.
+        /// centre failed, else its interaction point. Walk to this, not the trunk centre.
         /// </summary>
+        // The nearest point of a node's solid colliders to "from" (false when it has none: use its interaction point)
+        private static bool NearestSurface(GameObject go, Vector3 from, out Vector3 point)
+        {
+            point = Vector3.zero; float best = float.MaxValue;
+            foreach (var c in go.GetComponentsInChildren<Collider>())
+            {
+                if (c == null || !c.enabled || c.isTrigger) continue;
+                if (c is MeshCollider mc && !mc.convex) continue;   // ClosestPoint needs a convex mesh
+                Vector3 p = c.ClosestPoint(from);
+                float d = (p - from).sqrMagnitude;
+                if (d < best) { best = d; point = p; }
+            }
+            return best < float.MaxValue;
+        }
+
         public static Vector3 StandPoint(ResourceDataHelper.ResourceData node)
         {
             if (node == null) return Vector3.zero;
@@ -478,24 +491,29 @@ namespace FiresCore.Npc.AI
             if (target == null || target.GameObject == null || !target.GameObject.activeInHierarchy) return TaskOrder.Done("gone");
 
             float reach = Mathf.Max(1.5f, target.InteractionRadius);
-            if (Vector3.Distance(body.Position, target.InteractionPosition) > reach)
-                return new TaskOrder { Kind = TaskKind.Move, Point = StandPoint(target), Target = target.GameObject };
+            // A log's root is its middle, inside
+            // its own collider, so the body never got within reach of it. Reach and the walk go to the nearest point of its surface.
+            bool hasSurface = NearestSurface(target.GameObject, body.Position, out Vector3 surface);
+            if (hasSurface ? Vector3.Distance(body.Position, surface) > reach : Vector3.Distance(body.Position, target.InteractionPosition) > reach)
+                return new TaskOrder { Kind = TaskKind.Move, Point = hasSurface && !s_stand.ContainsKey(target.GameObject) ? surface : StandPoint(target), Target = target.GameObject };
 
             if (target.IsPickable)
                 return new TaskOrder { Kind = TaskKind.Interact, Target = target.GameObject, Point = target.InteractionPosition };
 
-            // Through TaskBodyHands: a companion's hand and equipment aren't the vanilla ones (0.2.220).
+            // Through TaskBodyHands: a companion's hand and equipment aren't the vanilla ones.
             ItemDrop.ItemData held = TaskBodyHands.Held(body);
             ItemDrop.ItemData tool = BestTool(TaskBodyHands.Carried(body), target.RequiredTool, target.MinToolTier);
             if (tool == null) return TaskOrder.Failed($"no {target.RequiredTool} of tier {target.MinToolTier}");
             if (held != tool) return new TaskOrder { Kind = TaskKind.Equip, Item = tool, Target = target.GameObject };
 
             // Aim at the middle of the thing, not its root at the ground.
-            Vector3 aim = target.GameObject.transform.position + Vector3.up * 1f;
+            Vector3 aim = hasSurface && (surface - target.GameObject.transform.position).sqrMagnitude > 1f
+                ? surface + Vector3.up * 0.3f   // a long log - the part next to us
+                : target.GameObject.transform.position + Vector3.up * 1f;
             return new TaskOrder { Kind = TaskKind.Swing, Point = aim, Target = target.GameObject, Item = tool };
         }
 
-        // ---- Repair + re-equip (Fire, 2026-09-29: "we need to make sure the bot repairs and re-equips its armor when it breaks") ----
+        // ---- Repair + re-equip (worn armour is repaired and put back on) ----
 
         /// <summary>Repair what has worn below this share of its durability (a broken item is at 0).</summary>
         public const float DefaultRepairThreshold = 0.5f;
@@ -587,8 +605,7 @@ namespace FiresCore.Npc.AI
         /// <summary>
         /// Why no station within <paramref name="range"/> can repair <paramref name="item"/>: the nearest station of the right kind and
         /// what is wrong with it ("$piece_workbench at 6 m has no roof", "… is exposed (cover 40 %)", "… needs a fire", "… is level 1,
-        /// needs 2"), or that there is none of that kind in range. R61: "needs $piece_workbench within 40 m" with a workbench at the
-        /// drill base, and nothing said why it didn't count.
+        /// needs 2"), or that there is none of that kind in range, so a station that is present but unusable says why.
         /// </summary>
         public static string WhyNoRepairStation(Vector3 at, float range, ItemDrop.ItemData item)
         {
@@ -685,7 +702,7 @@ namespace FiresCore.Npc.AI
                 CraftingStation station = FindRepairStation(body.Position, radius, item);
                 if (station == null)
                 {
-                    // Skip it and repair the rest (R61: one forge item failed the whole plan and no workbench item got repaired).
+                    // Skip it and repair the rest (one failed item must not fail the whole plan).
                     string why = WhyNoRepairStation(body.Position, radius, item);
                     NoteSkipped(self, item, why);
                     skipped++;
@@ -919,7 +936,7 @@ namespace FiresCore.Npc.AI
             return !station.m_craftRequireFire || EffectArea.IsPointPlus025InsideBurningArea(station.transform.position);
         }
 
-        // ---- Building + crafting for any body (Core 0.2.220, Tools\COMPANION_HAUL.md §2 / §2a) ----
+        // ---- Building + crafting for any body ----
 
         private static readonly List<IPlaced> s_placed = new List<IPlaced>();
         private static readonly List<CraftingStation> s_stations = new List<CraftingStation>();
@@ -948,6 +965,9 @@ namespace FiresCore.Npc.AI
                     CompanionInventory.RemoveFromStorage(pay, req.m_resItem.m_itemData.m_shared.m_name, req.m_amount);
 
             TerrainModifier.SetTriggerOnPlaced(true);
+            // halo ring ([ghost] for [generator]): a companion-placed piece stands upright to the ring (its up turned onto the local up,
+            // yaw kept); off a ring rot is used as given
+            if (FiresCore.World.GravityUp.InField(pos, out Vector3 placeUp)) rot = Quaternion.FromToRotation(rot * Vector3.up, placeUp) * rot;
             GameObject placed = UnityEngine.Object.Instantiate(prefab, pos, rot);
             TerrainModifier.SetTriggerOnPlaced(false);
             Piece made = placed.GetComponent<Piece>();

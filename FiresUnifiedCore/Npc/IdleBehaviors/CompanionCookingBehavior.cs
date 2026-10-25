@@ -13,6 +13,7 @@ namespace FiresCore.Npc.IdleBehaviors
     /// food and refilling freed slots until nothing is left, and deposits the results through
     /// SmartStorageOrganizer before reporting back.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public class CompanionCookingBehavior : WorkBehaviorBase<CompanionCookingBehavior.CookPhase>
     {
         public override string BehaviorName => "CompanionCooking";
@@ -406,10 +407,10 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // phase handlers
 
-        // 0.2.336 (companion_storage_test cook: "piece_cookingstation(Clone): reachable False"): the pivot of a cooking station on a
+        // The pivot of a cooking station on a
         // fire sits inside solid pieces, so a navmesh path to it fails; test the spot the companion actually walks to (the
         // interaction point in front of it), as the move does.
-        // 0.2.342 (round 21: still "reachable False" with the interaction point): the navmesh path query can fail on a built floor
+        // The navmesh path query can fail on a built floor
         // even right next to the station. Vanilla MoveTo walks straight when close, so a station within 10 m with a clear line of
         // walk is reachable too. The point, the distance and both results go to Debug once per station per scan.
         private bool StationReachable(CookingStation station)
@@ -431,7 +432,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (_stations.Count == 0)
             {
-                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCooking] {Companion?.companionName} scan: no cooking stations found"); // 0.2.334: evidence at Debug
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCooking] {Companion?.companionName} scan: no cooking stations found");
                 SetPhase(CookPhase.Complete);
                 return false;
             }
@@ -503,7 +504,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
 
-            // 0.2.334 (companion_storage_test cook: "Scanning -> Complete after 0.0 s"): why, at Debug.
+            // Why, at Debug.
             {
                 var storageForLog = GetStorageInventory();
                 FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCooking] {Companion?.companionName} scan: nothing to do - {_stations.Count} station(s) "
@@ -988,7 +989,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // helpers - stations
 
-        // One set of station rules with the bot's base chores (0.2.237): ChoreBrain.CookingStationsNear (fed directly, this
+        // One set of station rules with the bot's base chores: ChoreBrain.CookingStationsNear (fed directly, this
         // companion's reservations), nearest first.
         private List<CookingStation> FindCookingStations()
         {
@@ -1118,7 +1119,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private ItemDrop.ItemData FindRawFoodForStation(CookingStation station, Inventory inv)
         {
             if (station == null || inv == null) return null;
-            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // 0.2.362: storage rows only
+            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // storage rows only
                 if (item != null && IsRawFor(station, item))
                     return item;
             return null;
@@ -1160,7 +1161,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// contains raw food <paramref name="station"/> can cook.</summary>
         private Container FindChestWithRawFood(CookingStation station)
         {
-            // 0.2.256 ([ghost]): CanStart asks here before any Start has filled the chest list, so a companion carrying no raw food never
+            // CanStart asks here before any Start has filled the chest list, so a companion carrying no raw food never
             // saw the base chests' meat. A throttled refresh (5 s / 5 m), as ChestDepositV2's CanStart does.
             if (station == null || Resources.RefreshNearbyChests() == 0) return null;
 

@@ -6,10 +6,11 @@ namespace FiresCore.Npc.Movement
 {
     /// <summary>
     /// A companion's stance, the same on every client. Crouch is the replicated "crouching" animator bool. Prone exists
-    /// only with VikHavn Combat Moveset Additions installed and is a bool on the companion's ZDO, so every client lowers
+    /// only with VikHavn Combat Moveset Additions installed (or with Core's own crawl pose, CrawlPose, when VikHavn is absent) and is a bool on the companion's ZDO, so every client lowers
     /// the capsule and swaps VikHavn's crawl clips into the crouch tree the way VikHavn poses a prone player. VikHavn only
     /// poses Players, and Core never references it: its ZDO keys and clip names are the contract.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public sealed class CompanionStance : MonoBehaviour
     {
         private static readonly int PlayerProneKey = "VikHavnCombat_Prone".GetStableHashCode();
@@ -67,16 +68,21 @@ namespace FiresCore.Npc.Movement
 
         public static bool VikHavnInstalled => Combat.VikHavnBridge.Installed;
 
-        /// <summary>A player prone under VikHavn, read from the player's own ZDO.</summary>
+        /// <summary>A prone pose exists: VikHavn's, or Core's own (CrawlPose) when VikHavn is absent.</summary>
+        private static bool PoseAvailable => VikHavnInstalled || FiresCore.Movement.CrawlPose.CrawlPose.CoreDrives;
+
+        /// <summary>A player prone under VikHavn (or under Core's crawl pose when VikHavn is absent), read from the player's own ZDO.</summary>
         public static bool IsPlayerProne(Player player)
         {
+            if (!VikHavnInstalled) return FiresCore.Movement.CrawlPose.CrawlPose.CoreDrives && FiresCore.Movement.CrawlPose.CrawlPose.IsProne(player);
             var zdo = ZdoOf(player);
-            return VikHavnInstalled && zdo != null && zdo.GetBool(PlayerProneKey);
+            return zdo != null && zdo.GetBool(PlayerProneKey);
         }
 
         /// <summary>The crawl speed a prone player's Sneak skill gives, as a fraction of crouch speed.</summary>
         public static float PlayerProneSpeedMultiplier(Player player)
         {
+            if (!VikHavnInstalled) return FiresCore.Movement.CrawlPose.CrawlPose.SpeedMultiplier(player);
             var zdo = ZdoOf(player);
             float multiplier = zdo != null ? zdo.GetFloat(PlayerProneSpeedKey) : 0f;
             return multiplier > 0f ? multiplier : DefaultProneSpeedMultiplier;
@@ -184,7 +190,10 @@ namespace FiresCore.Npc.Movement
         private void FixedUpdate()
         {
             if (_capsule == null) return;
-            float fraction = !VikHavnInstalled || !IsCrouching || !StanceEnabled ? 1f : IsProne ? ProneHeightFraction : SneakHeightFraction;
+            // Without VikHavn, Core's pose lowers only a prone body (a player's sneak keeps its height there too).
+            float fraction = !PoseAvailable || !IsCrouching ? 1f
+                : !VikHavnInstalled ? (IsProne ? FiresCore.Movement.CrawlPose.CrawlPose.ProneHeight : 1f)
+                : !StanceEnabled ? 1f : IsProne ? ProneHeightFraction : SneakHeightFraction;
             float height = _standingHeight * fraction;
             if (Mathf.Approximately(_capsule.height, height)) return;
             _capsule.height = height;
@@ -193,7 +202,7 @@ namespace FiresCore.Npc.Movement
 
         private void LateUpdate()
         {
-            if (!VikHavnInstalled || _zanim == null) return;
+            if (!PoseAvailable || _zanim == null) return;
             bool crawl = IsProne && IsCrouching && CrawlClipsAvailable();
             if (crawl) Crawling[_zanim] = this;
             else Crawling.Remove(_zanim);
@@ -202,6 +211,13 @@ namespace FiresCore.Npc.Movement
 
         private static bool CrawlClipsAvailable()
         {
+            if (!VikHavnInstalled)
+            {
+                // Core's own copy of the clips (CrawlPose loads them at the first player).
+                _crawlIdle = FiresCore.Movement.CrawlPose.CrawlPose.CrawlIdle;
+                _crawlForward = FiresCore.Movement.CrawlPose.CrawlPose.CrawlForward;
+                return _crawlIdle != null && _crawlForward != null;
+            }
             if (_crawlClipsSearched) return _crawlIdle != null && _crawlForward != null;
             _crawlClipsSearched = true;
             foreach (var clip in Resources.FindObjectsOfTypeAll<AnimationClip>())
@@ -314,6 +330,7 @@ namespace FiresCore.Npc.Movement
 
     /// <summary>Only the owner writes speed parameters; other clients read the scaled values from the companion's ZDO.</summary>
     [HarmonyPatch(typeof(ZSyncAnimation), nameof(ZSyncAnimation.SetFloat), typeof(int), typeof(float))]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionCrawlSpeedParameterPatch
     {
         [HarmonyPrefix]
@@ -329,6 +346,7 @@ namespace FiresCore.Npc.Movement
     /// companion's playback rate goes on right after, on every client.
     /// </summary>
     [HarmonyPatch(typeof(CharacterAnimEvent), nameof(CharacterAnimEvent.CustomFixedUpdate))]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionCrawlPlaybackRatePatch
     {
         [HarmonyPostfix]

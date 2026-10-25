@@ -131,7 +131,7 @@ _lastSetMoveDir = moveDir;
   }
 
         /// <summary>
-        /// 0.2.327 (audit slice 3, Fire's vanilla-method rule): no longer writes the rigidbody's velocity. Kept as a no-op for binary
+        /// No longer writes the rigidbody's velocity. Kept as a no-op for binary
         /// compatibility; callers use <see cref="WantsSlowWalk"/>.
         /// </summary>
         [System.Obsolete("Use WantsSlowWalk: speed comes from SetMoveDir / SetWalk, never a velocity write.")]

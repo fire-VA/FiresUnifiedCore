@@ -1,16 +1,12 @@
+using HarmonyLib;
 using UnityEngine;
 
 namespace FiresCore.Utilities
 {
     /// <summary>
     /// Handles scaling input for environment boxes.
-    /// Works similar to Structure Tweaks - Shift+Scroll to scale.
-    /// 
-    /// Keybinds:
-    /// - Shift + Scroll: Scale uniformly
-    /// - Ctrl + Scroll: Scale height only
-    /// - Alt + Scroll: Scale width/depth only
-    /// - Shift + Ctrl + Scroll: Fine scale (0.1m increments)
+    /// TEAM RULE: Scroll = width/depth, Shift + Scroll = height (Core RadiusWheel).
+    /// While the tool owns the wheel (admin, unlocked box hovered) the game's wheel reads 0, so the camera does not zoom.
     /// </summary>
     public class EnvironmentBoxScaler : MonoBehaviour
     {
@@ -23,6 +19,9 @@ namespace FiresCore.Utilities
 
         private EnvironmentBoxController _hoveredBox;
         private float _scrollCooldown = 0f;
+
+        // True while an admin looks at an unlocked box: ZInput.GetMouseScrollWheel then reads 0 for vanilla (camera zoom, hammer).
+        internal static bool WheelOwned;
 
         private void Awake()
         {
@@ -50,6 +49,7 @@ namespace FiresCore.Utilities
                 _scrollCooldown -= Time.deltaTime;
             }
 
+            WheelOwned = false;
             // Only process when player exists and isn't in menu
             if (Player.m_localPlayer == null) return;
             if (InventoryGui.IsVisible()) return;
@@ -65,6 +65,7 @@ namespace FiresCore.Utilities
             // unlocking it. The toggle itself enforces admin privileges.
             ProcessLockToggleInput();
 
+            WheelOwned = _hoveredBox != null && !_hoveredBox.Locked && IsLocalPlayerAdmin();
             // Process scaling input (no-op when the hovered box is locked)
             ProcessScaleInput();
 
@@ -76,7 +77,7 @@ namespace FiresCore.Utilities
         {
             if (_hoveredBox == null) return;
             if (!IsLocalPlayerAdmin()) return;
-            if (Chat.instance != null && Chat.instance.HasFocus()) return;
+            if (FiresCore.Input.FiresInputBlock.IsTyping()) return;   // Any text field, not only chat
 
             bool ctrl = UnityEngine.Input.GetKey(KeyCode.LeftControl) || UnityEngine.Input.GetKey(KeyCode.RightControl);
             bool shift = UnityEngine.Input.GetKey(KeyCode.LeftShift) || UnityEngine.Input.GetKey(KeyCode.RightShift);
@@ -129,34 +130,10 @@ namespace FiresCore.Utilities
             // accidentally scrolling near a finished box doesn't bump it.
             if (_hoveredBox.Locked) return;
 
-            float scroll = UnityEngine.Input.GetAxis("Mouse ScrollWheel");
-            if (Mathf.Abs(scroll) < 0.01f) return;
-
-            bool shift = UnityEngine.Input.GetKey(KeyCode.LeftShift) || UnityEngine.Input.GetKey(KeyCode.RightShift);
-            bool ctrl = UnityEngine.Input.GetKey(KeyCode.LeftControl) || UnityEngine.Input.GetKey(KeyCode.RightControl);
-            bool alt = UnityEngine.Input.GetKey(KeyCode.LeftAlt) || UnityEngine.Input.GetKey(KeyCode.RightAlt);
-
-            // Only scale if shift is held (matches Structure Tweaks pattern)
-            if (!shift) return;
-
-            float step = (shift && ctrl) ? FineScaleStep : ScaleStep;
-            float delta = scroll > 0 ? step : -step;
-
-            if (ctrl && !alt)
-            {
-                // Ctrl + Shift + Scroll = Height only
-                _hoveredBox.ScaleHeight(delta);
-            }
-            else if (alt && !ctrl)
-            {
-                // Alt + Shift + Scroll = Width/Depth only
-                _hoveredBox.ScaleHorizontal(delta);
-            }
-            else
-            {
-                // Shift + Scroll = Uniform scale
-                _hoveredBox.ScaleUniform(delta);
-            }
+            // Team rule: wheel = width/depth (the radius), Shift+wheel = height; no Ctrl/Alt combos.
+            if (!FiresCore.Input.RadiusWheel.Read(out float dRadius, out float dHeight)) return;
+            if (dRadius != 0f) _hoveredBox.ScaleHorizontal(dRadius * ScaleStep);
+            else _hoveredBox.ScaleHeight(dHeight * ScaleStep);
 
             // Show feedback
             Player.m_localPlayer?.Message(MessageHud.MessageType.TopLeft,
@@ -176,7 +153,7 @@ namespace FiresCore.Utilities
             if (_hoveredBox.Locked) return;
 
             // Make sure we're not typing
-            if (Chat.instance != null && Chat.instance.HasFocus()) return;
+            if (FiresCore.Input.FiresInputBlock.IsTyping()) return;   // Any text field, not only chat
 
             // Check if shift is held
             bool shift = UnityEngine.Input.GetKey(KeyCode.LeftShift) || UnityEngine.Input.GetKey(KeyCode.RightShift);
@@ -217,6 +194,16 @@ namespace FiresCore.Utilities
                 var go = new GameObject("EnvironmentBoxScaler");
                 go.AddComponent<EnvironmentBoxScaler>();
             }
+        }
+    }
+
+    // Vanilla's wheel (GameCamera zoom, hammer piece select) reads 0 while the box tool owns it.
+    [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetMouseScrollWheel))]
+    internal static class EnvironmentBoxWheelSwallow
+    {
+        private static void Postfix(ref float __result)
+        {
+            if (EnvironmentBoxScaler.WheelOwned) __result = 0f;
         }
     }
 }

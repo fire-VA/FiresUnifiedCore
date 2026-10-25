@@ -14,7 +14,7 @@ namespace FiresCore.Appearance
     ///
     /// The piece rules it mirrors, from WearNTear.UpdateWearNTear and CanHaveSnow:
     ///   * Deep North only. Accumulation sits inside `if (m_biome == DeepNorth)` (WearNTear.cs:407), so nowhere else
-    ///     in the world grows snow, and Fire declined a Mountain equivalent.
+    ///     in the world grows snow; there is deliberately no Mountain equivalent.
     ///   * Roofed means none, matching CanHaveSnow's `!m_haveRoof`.
     ///   * The rate is the environment's own snowfall, EnvMan.GetSnowBuildup() times Game.m_snowBuildupSpeed, so
     ///     gear and buildings whiten at the same speed under the same weather and a clear Deep North night adds
@@ -50,7 +50,7 @@ namespace FiresCore.Appearance
             if (visEquipment == null) return;
 
             float level = visEquipment.SnowLevel;
-            // 0.2.305 (the lead 10-06, 1.8 fps fixed-step spiral): bare gear outside the Deep North (or with the setting off)
+            // Bare gear outside the Deep North (or with the setting off)
             // has nothing to gather or shed - the same answer the full path below reaches, without IsUnderRoof's cast. Every
             // input is still read every step, so snow that starts (entering the Deep North, the setting turned on) is seen.
             if (level <= NoCover && (!Enabled || __instance.m_lastBiome != Heightmap.Biome.DeepNorth)) return;
@@ -68,7 +68,7 @@ namespace FiresCore.Appearance
             visEquipment.SnowLevel = Mathf.MoveTowards(level, target, step);
         }
 
-        // 0.2.305: the VisEquipment per character, looked up once instead of a GetComponent every physics step for every character.
+        // The VisEquipment per character, looked up once instead of a GetComponent every physics step for every character.
         // A destroyed one reads Unity-null and is looked up again; characters without one are remembered too. Destroyed keys are
         // swept once the table outgrows PruneAt.
         private const int PruneAt = 4096;

@@ -1901,6 +1901,18 @@ namespace FiresCore.Npc
         /// and track direct attacks for stationed NPCs.
         /// Stationed NPCs react to owner hits with a stumble and single retaliation.
         /// </summary>
+        // Once per attacker -> companion pair per 10 s
+        private static readonly Dictionary<(int, int), float> s_friendlySaid = new Dictionary<(int, int), float>();
+        private static void NoteFriendlyHitDropped(Character attacker, Character companion, HitData hit)
+        {
+            var key = (attacker.GetInstanceID(), companion.GetInstanceID());
+            if (s_friendlySaid.TryGetValue(key, out float at) && Time.time - at < 10f) return;
+            s_friendlySaid[key] = Time.time;
+            string who = attacker is Player p ? p.GetPlayerName() : attacker.m_name;
+            string src = hit.m_skill != Skills.SkillType.None ? hit.m_skill.ToString() : "?";
+            Debug.Log($"[FriendlyHit] dropped: {who} -> {companion.m_name} ({src}, {hit.GetTotalDamage():0.#} dmg; same party)");
+        }
+
         [HarmonyPatch(typeof(Character), "RPC_Damage")]
         [HarmonyPrefix]
         public static bool Character_RPC_Damage_Prefix(Character __instance, long sender, HitData hit)
@@ -1912,7 +1924,26 @@ namespace FiresCore.Npc
             try
             {
                 var companion = __instance.GetComponent<CompanionController>();
-                if (companion == null) return true; // Not our companion
+                if (companion == null)
+                {
+                    // A static fixture has no CompanionController, so it never heard it was hit; tell its NPC module
+                    // (defend-when-attacked) and let the damage through as before
+                    var staticModule = __instance.GetComponent<CompanionNpcModule>();
+                    if (staticModule != null) staticModule.OnDirectlyAttacked(   /* any NPC module, not only static fixtures */ hit != null ? hit.GetAttacker() : null);
+                    return true; // Not our companion
+                }
+
+                // A hit from the companion's own
+                // party never lands - before the NPC module hears "directly attacked" (that made it fight its owner). Stationed NPCs keep the
+                // owner-hit stumble below.
+                Character friendly = hit?.GetAttacker();
+                var partyModule = __instance.GetComponent<CompanionNpcModule>();
+                if (friendly != null && friendly != __instance && (partyModule == null || !partyModule.IsStationedAsNpc)
+                    && FiresCore.Npc.Archetypes.ClassTargeting.IsPartyMember(__instance, friendly))
+                {
+                    NoteFriendlyHitDropped(friendly, __instance, hit);
+                    return false;
+                }
 
                 // Companions that spawned in Ashlands keep fire immunity after taming. Vanilla's own immunity
                 // (base m_damageModifiers.m_fire) zeroes the fire in the resistance pass and keeps Burning off.
@@ -1926,9 +1957,11 @@ namespace FiresCore.Npc
                 // IMPORTANT: Notify NpcModule that this NPC was directly attacked
                 // This allows stationed NPCs to enter alert/combat state
                 var npcModule = __instance.GetComponent<CompanionNpcModule>();
+                // Every NPC module hears the hit, stationed or not
+                if (npcModule != null && !npcModule.IsStationedAsNpc) npcModule.OnDirectlyAttacked(hit != null ? hit.GetAttacker() : null);
                 if (npcModule != null && npcModule.IsStationedAsNpc)
                 {
-                    npcModule.OnDirectlyAttacked();
+                    npcModule.OnDirectlyAttacked(hit != null ? hit.GetAttacker() : null);   // passes the attacker so it can fight back
 
                     // Owner-hit reaction (stumble instead of taking damage) is ONLY for player-owned
                     // companion-style stationed NPCs. Static NPCs are ownerless and MUST stay killable so they
@@ -1972,7 +2005,7 @@ namespace FiresCore.Npc
         {
             try
             {
-                // 0.2.322 (Fire's vanilla-method rule): vanilla Character.Stagger, as a hit does. It turns the body to face
+                // Vanilla Character.Stagger, as a hit does. It turns the body to face
                 // the attacker and plays the stagger on the owner (RPC_Stagger), with no hand-made push or rotation.
                 Vector3 push = character.transform.position - attacker.transform.position;
                 push.y = 0f;
@@ -2132,6 +2165,19 @@ namespace FiresCore.Npc
         {
             if (companion == null || player == null) return;
 
+            // Like a vanilla chest, the player who opens a companion takes ownership of its ZDO, so every take / put on its bag is an
+            // owner write. A non-owner's bag edit was overwritten by the real owner's copy, and a reload then put the item back (dupe).
+            if (player == Player.m_localPlayer)
+            {
+                var cnv = companion.GetComponent<ZNetView>();
+                if (cnv != null && cnv.IsValid() && !cnv.IsOwner())
+                {
+                    long was = cnv.GetZDO().GetOwner();
+                    cnv.ClaimOwnership();
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionInventory] {companion.companionName}: opened by {player.GetPlayerName()}: ZDO ownership claimed (was peer {was}), so bag edits are owner writes");
+                }
+            }
+
             try
             {
                 // CRITICAL: Enter UIInteraction state in the state controller
@@ -2148,7 +2194,7 @@ namespace FiresCore.Npc
                     stateController.TryEnterState(CompanionStateController.CompanionState.UIInteraction, 999f, "PlayerInteraction");
                 }
 
-                // 0.2.327 (audit slice 3, M5): no velocity write here. Entering the UIInteraction (frozen) state zeroes it once
+                // No velocity write here. Entering the UIInteraction (frozen) state zeroes it once
                 // (CompanionStateController), and the authority's freeze sends SetMoveDir(0).
 
                 // Cancel any active idle behaviors (this also enters UIInteraction state)
@@ -2367,7 +2413,7 @@ namespace FiresCore.Npc
             {
                 try
                 {
-                    // A stealthed character shows no bar or name except to its own party (Fire, 2026-09-28).
+                    // A stealthed character shows no bar or name except to its own party.
                     if (Archetypes.StatusEffects.Rogue.StealthSync.HidesHudFor(c)) return false;
 
                     // PERF: Use cached lookup
@@ -2579,7 +2625,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup - avoids GetComponent on every Character every frame
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true; // Not a companion, allow normal execution
-                if (companion.IsPossessed) return true; // 0.2.292: its driver's move (FiresValcast possession) always lands
+                if (companion.IsPossessed) return true; // its driver's move (FiresValcast possession) always lands
 
                 // Check if rigidbody is kinematic (Unity 6 compatibility)
                 var rigidbody = GetCachedRigidbody(__instance);
@@ -2637,7 +2683,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true;
-                if (companion.IsPossessed) return true; // 0.2.292: its driver's motion, unbent (no exit / taming-guard steering)
+                if (companion.IsPossessed) return true; // its driver's motion, unbent (no exit / taming-guard steering)
 
                 var rigidbody = GetCachedRigidbody(__instance);
                 if (rigidbody != null && rigidbody.isKinematic)
@@ -2651,11 +2697,11 @@ namespace FiresCore.Npc
                     return false;
                 }
 
-                // 0.2.283: out of water and pits the bot's way (Swimming.ExitFor, Climb.Plan), whoever moves the companion: the move it
+                // Out of water and pits the bot's way (Swimming.ExitFor, Climb.Plan), whoever moves the companion: the move it
                 // was given (authority or vanilla pathfinding, both via SetMoveDir) is bent here, on the owner, before the motion runs.
                 Vector3 move = __instance.m_moveDir;
                 CompanionExits.Steer(__instance, companion.companionName, ref move);
-                // 0.2.286 (Fire, RIDEj: companions walked over and aggroed the lox being tamed): keep 10 m off a creature a player is taming.
+                // Keep 10 m off a creature a player is taming, so companions do not aggro it.
                 TamingGuard.KeepAway(__instance, companion.GetOwner(), companion.companionName, ref move);
                 __instance.m_moveDir = move;
 
@@ -2681,7 +2727,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true;
-                if (companion.IsPossessed) return true; // 0.2.292: a driven body syncs as vanilla does
+                if (companion.IsPossessed) return true; // a driven body syncs as vanilla does
 
                 var rigidbody = GetCachedRigidbody(__instance);
                 if (rigidbody != null && rigidbody.isKinematic)
@@ -3176,6 +3222,16 @@ namespace FiresCore.Npc
             return false;
         }
 
+        // A portal teleport (and whether that portal allows all items) for the companions' portal rule
+        [HarmonyPatch(typeof(TeleportWorld), nameof(TeleportWorld.Teleport))]
+        [HarmonyPrefix]
+        public static void TeleportWorld_Teleport_Prefix(TeleportWorld __instance, Player player)
+        {
+            if (player == null || player != Player.m_localPlayer || __instance == null) return;
+            CompanionController.s_lastPortalTime = Time.time;
+            CompanionController.s_lastPortalAllowAll = __instance.m_allowAllItems;
+        }
+
         [HarmonyPatch(typeof(Player), nameof(Player.TeleportTo))]
         [HarmonyPrefix]
         public static void Player_TeleportTo_Prefix(Player __instance)
@@ -3212,7 +3268,7 @@ namespace FiresCore.Npc
                     Vector3 src = _teleportSourcePos;
                     float horizontalDistance = Vector2.Distance(new Vector2(src.x, src.z), new Vector2(pos.x, pos.z));
                     float dy  = Mathf.Abs(src.y - pos.y);
-                    // 0.2.367 teleport-with-player: followers this machine owns come along as soon as the player has
+                    // Teleport-with-player: followers this machine owns come along as soon as the player has
                     // arrived (no leash snap, no OwnerTooFastToSnap wait). Stay companions are skipped inside.
                     float jump = Vector3.Distance(src, pos);
                     if (jump > 50f)

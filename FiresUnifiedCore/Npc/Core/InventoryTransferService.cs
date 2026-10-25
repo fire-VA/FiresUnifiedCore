@@ -325,7 +325,7 @@ namespace FiresCore.Npc.Core
             {
                 if (totalDeposited >= maxAmount) break;
                 if (!IsPrefab(item, prefabName)) continue;
-                // 0.2.361: a companion bag deposits from its STORAGE rows only (worn gear and pouch stacks stay)
+                // a companion bag deposits from its STORAGE rows only (worn gear and pouch stacks stay)
                 if (companionBag && !CompanionGridLayout.IsStorage(item.m_gridPos)) continue;
                 if (item.m_equipped) continue;
 

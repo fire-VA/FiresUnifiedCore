@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.Combat;
 
@@ -11,11 +11,42 @@ namespace FiresCore.Npc.AI
     {
         #region Target Detection
 
+        private float _defendSkipLogAt;
+        private void DefendSkip(string why)
+        {
+            if (Time.time < _defendSkipLogAt) return; _defendSkipLogAt = Time.time + 10f;
+            FiresCore.Logging.FiresLogger.LogInfo($"[CompanionAI] {m_character?.m_name} hit, not defending: {why}");
+        }
+
         private void UpdateTargetDetection(float dt)
         {
             if (Time.time - _lastTargetScanTime < TargetScanInterval)
                 return;
             _lastTargetScanTime = Time.time;
+            if (FollowRecallActive && !(_npcModule != null && _npcModule.WasDirectlyAttacked)) return;   // catching up to a far owner
+            if (BeingInteracted())   // a player is using this companion: no new fight, and an unforced one is dropped
+            {
+                if (_targetCreature != null && !(_npcModule != null && _npcModule.WasDirectlyAttacked)) { ClearTarget(); if (_currentState == AIState.Combat) SetState(AIState.Following); }
+                return;
+            }
+
+            // A STATIONED NPC holds a stay command, which is an absolute-priority command, so
+            // the first gate below cleared every target and returned before the fight-back block ever ran. Hit by someone (a player,
+            // a companion or a creature), it now takes that attacker as its target first, whatever command it holds; the leash / home rules
+            // still bring it back afterwards. Every early return while it was just hit is logged once (why it did not fight).
+            bool hitNow = _npcModule != null && _npcModule.WasDirectlyAttacked;   // any NPC (stationed or not)
+            if (hitNow)
+            {
+                var foe = _npcModule.LastAttacker;
+                if (foe == null) { DefendSkip("hit, but the attacker is unknown (no HitData attacker)"); }
+                else if (foe.IsDead() || foe == m_character) { DefendSkip("attacker dead or itself"); }
+                else if (Vector3.Distance(transform.position, foe.transform.position) > Mathf.Max(aggroRange, 10f)) { DefendSkip($"attacker {foe.m_name} out of range ({Vector3.Distance(transform.position, foe.transform.position):0.0} m)"); }
+                else
+                {
+                    if (_targetCreature != foe) { SetTarget(foe); FiresCore.Logging.FiresLogger.LogInfo($"[CompanionAI] {m_character?.m_name} fights back against {foe.m_name} (hit; it holds {(_stateController != null && _stateController.HasAbsolutePriorityCommand ? "a stay/priority command" : "no command")})"); }
+                    return;
+                }
+            }
 
             // A player command means nothing else: skip the threat scan entirely, since re-acquiring a target every scan
             // only for the combat state to clear it again had the two systems fighting every frame.
@@ -60,6 +91,16 @@ namespace FiresCore.Npc.AI
                     }
                     return;
                 }
+                // The alert fired but the normal search never
+                // takes a PLAYER as a target, so a stationed / static NPC hit by a player just stood there. While the alert lasts it
+                // targets whoever hit it (alive, within its aggro range).
+                var hitter = _npcModule.LastAttacker;
+                if (hitter != null && !hitter.IsDead() && hitter != m_character && _targetCreature != hitter
+                    && Vector3.Distance(transform.position, hitter.transform.position) <= Mathf.Max(aggroRange, 10f))
+                {
+                    SetTarget(hitter);
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] {m_character?.m_name} fights back against {hitter.m_name} (directly attacked)");
+                }
             }
             
             bool isStaying = !_shouldFollow && _hasHomePositionSet;
@@ -86,13 +127,13 @@ namespace FiresCore.Npc.AI
 
             // A target that stopped being one (PvP turned off for both owners, it joined the party, it was tamed) is dropped
             // here: only new candidates were validated, and a live current target only lost to a far better score, so after
-            // companion_test's pvp step Fire's companions kept chasing the bot's healer through the pve fight (R60).
+            // a pvp step companions kept chasing a healer through the pve fight.
             if (_targetCreature != null && !_targetCreature.IsDead() && !StillHostile(_targetCreature))
             {
-                Debug.Log($"[CompanionAI] {m_character?.m_name} dropped target {_targetCreature.m_name}: no longer hostile (PvP off, party or tame)");
+                NoteRefused(_targetCreature, "dropped target");
                 ClearTarget();
             }
-            // 0.2.286: a target someone started taming is dropped too (unless it hurt this companion or its owner lately).
+            // A target someone started taming is dropped too (unless it hurt this companion or its owner lately).
             else if (_targetCreature != null && !_targetCreature.IsDead() && TamingGuard.LeaveAlone(m_character, OwnerBody(), _targetCreature, out string tameWhy))
             {
                 TamingGuard.Note(m_character, m_character != null ? m_character.m_name : "?", _targetCreature, tameWhy + "; dropped as a target");
@@ -140,7 +181,7 @@ namespace FiresCore.Npc.AI
             _tempCharacterList.Clear();
 
             // Assist: the foe the owner (a player or the bot) hit in the last AssistSeconds is ours too, unless something is hitting
-            // us right now (R67 pve: the bot fought the pack and its companions engaged nothing).
+            // us right now.
             if (!isStaying && ownerCharacter is Player ownerPlayer && OwnerAssist.Recent(ownerPlayer, AssistSeconds, out Character ownerFoe)
                 && ownerFoe != _targetCreature && IsValidTarget(ownerFoe)
                 && Vector3.Distance(transform.position, ownerFoe.transform.position) <= effectiveAggroRange * 2f
@@ -237,7 +278,7 @@ namespace FiresCore.Npc.AI
             {
                 if (!IsValidTarget(character))
                     continue;
-                // Only what it sees or hears (Perception: the same senses the FDT bot uses; Fire 2026-09-29 "a proper vision cone").
+                // Only what it sees or hears (Perception: the same senses the FDT bot uses; a proper vision cone).
                 if (!Perceives(character))
                     continue;
 
@@ -274,15 +315,28 @@ namespace FiresCore.Npc.AI
         // Only the relationship is re-checked for a CURRENT target (the hunting, proximity and line-of-sight gates of
         // IsValidTarget are for picking one): a player, tame or companion stays a target while it is a hostile PvP target, or, for
         // a wild companion, a player it is an enemy of. Monsters always stay.
+        // The drop/refuse line at Debug, once per (companion, target) per 30 s.
+        private Character _refusedNoted;
+        private float _refusedNotedAt = -999f;
+
+        private void NoteRefused(Character target, string what)
+        {
+            if (target == _refusedNoted && Time.time - _refusedNotedAt < 30f) return;
+            _refusedNoted = target; _refusedNotedAt = Time.time;
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] {m_character?.m_name} {what} {target.m_name}: not hostile (PvP off, party or tame)");
+        }
+
         private bool StillHostile(Character target)
         {
+            // whoever just hit a stationed / static NPC stays its target for the alert window (fight back)
+            if (_npcModule != null && _npcModule.WasDirectlyAttacked && target == _npcModule.LastAttacker) return true;
             bool owned = target.IsPlayer() || target.IsTamed() || target.GetComponent<CompanionController>() != null;
             if (!owned) return true;
             if (IsHostilePvpTarget(target)) return true;
             return target.IsPlayer() && _companion != null && !_companion.isTamed && IsEnemy(target);
         }
 
-        // 0.2.286: the companion's owner body (the follow target, else the controller's owner) for TamingGuard's defend rule.
+        // The companion's owner body (the follow target, else the controller's owner) for TamingGuard's defend rule.
         private Character OwnerBody()
         {
             if (_followTarget != null) return _followTarget.GetComponent<Character>();
@@ -318,7 +372,7 @@ namespace FiresCore.Npc.AI
                 return false;
             if (!IsEnemy(target))
                 return false;
-            // 0.2.286 (Fire, RIDEj: "the companions are ruining the lox test, they keep walking over and aggroing it"): never a creature a
+            // Never a creature a
             // player is taming, unless it hurt this companion or its owner lately (TamingGuard).
             if (TamingGuard.LeaveAlone(m_character, OwnerBody(), target, out string tameWhy))
             {
@@ -406,8 +460,8 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// The owner-AFK stand-down, only when nothing threatens us. R45: an owner standing still (the bot in its duel, both
-        /// owners in the pve step) made every companion pick a target and drop it the same tick ("relaxing - player idle"), so
+        /// The owner-AFK stand-down, only when nothing threatens us. An owner standing still (e.g. in a duel)
+        /// made every companion pick a target and drop it the same tick ("relaxing - player idle"), so
         /// an owner who stood and fought fought alone. Not while this companion was hit lately, while the target is a PvP
         /// enemy, is after this companion or a party member, or is inside the owner's defense bubble.
         /// </summary>
@@ -425,12 +479,12 @@ namespace FiresCore.Npc.AI
                 var aiTarget = target.GetBaseAI()?.GetTargetCreature();
                 if (aiTarget != null && (aiTarget == m_character || FiresCore.Npc.Archetypes.ClassTargeting.IsPartyMember(m_character, aiTarget)))
                     return false;
-                // R46: the engage decision took a monster after any nearby player as a threat and this didn't, so the companion
+                // The engage decision took a monster after any nearby player as a threat and this didn't, so the companion
                 // engaged and stood down every tick. A target it would engage is one it keeps.
                 if (IsThreatToOwnerOrSelf(target, ownerPos, ownerCharacter)) return false;
             }
 
-            // The lead / Fire: a guard standing still while monsters fight nearby keeps its companions in the fight.
+            // A guard standing still while monsters fight nearby keeps its companions in the fight.
             foreach (Character other in Character.GetAllCharacters())
             {
                 if (other == null || other == m_character || other.IsDead() || IsPassiveCreature(other)) continue;
@@ -490,7 +544,7 @@ namespace FiresCore.Npc.AI
             // Adjacent — no realistic obstruction possible.
             if (Vector3.Distance(transform.position, target.transform.position) < 2f) return true;
 
-            // One brain with the FDT bot (LineOfFire, Fire: "they need to understand line of sight"): a bow / crossbow traces its
+            // One brain with the FDT bot (LineOfFire): a bow / crossbow traces its
             // real arrow; anything else the straight line from the eye. Solids and friendly characters block; enemies don't.
             string blocker;
             bool clear;
@@ -576,6 +630,21 @@ namespace FiresCore.Npc.AI
 
         private void SetTarget(Character target)
         {
+            // Allies could flip between target and dropped every tick: every path that picks a
+            // target (assist, the scan, the combat-movement priority target, ForceTarget's callers) now refuses what the per-tick drop
+            // below would drop at once - a player, tame or companion that isn't a hostile PvP target - so they can't pick-drop-repick
+            // each other every tick. Nothing changes for real foes: the drop already removed these, forced or not.
+            if (target != null && !target.IsDead() && !StillHostile(target))
+            {
+                NoteRefused(target, "refused target");
+                return;
+            }
+            string block = target != null && target != _targetCreature ? ReengageBlock(target) : null;
+            if (block != null)
+            {
+                if (Time.time >= _reengageLogAt) { _reengageLogAt = Time.time + 5f; FiresCore.Logging.FiresLogger.LogDebug($"[FollowLeash] {m_character?.m_name}: not engaging {target.m_name}: {block}"); }
+                return;
+            }
             _targetCreature = target;
             _lastTargetSwitchTime = Time.time;
             _timeSinceTargetSeen = 0f;

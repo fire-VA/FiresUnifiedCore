@@ -68,6 +68,13 @@ namespace FiresCore.Net
             public long Bytes;
         }
 
+        // Client side: what this client asked the server for (key -> hash + offered size); chunks for anything else are dropped.
+        private static readonly Dictionary<string, KeyValuePair<string, long>> _wanted =
+            new Dictionary<string, KeyValuePair<string, long>>(StringComparer.OrdinalIgnoreCase);
+
+        private static bool FromServer(long sender) =>
+            ZNet.instance != null && !ZNet.instance.IsServer() && ZRoutedRpc.instance != null && sender == ZRoutedRpc.instance.GetServerPeerID();
+
         private static readonly Dictionary<string, CacheEntry> _entries =
             new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, Incoming> _incoming =
@@ -270,10 +277,10 @@ namespace FiresCore.Net
         }
 
         // Client side: the server says what it has; reply only if we lack it. The local copy is hashed off the main thread
-        // (a 377 MB bake held each client's RPC handler for about 3 s at every join, R22), so the answer comes a moment later.
+        // (a 377 MB bake held each client's RPC handler for about 3 s at every join), so the answer comes a moment later.
         private static void RPC_Offer(long sender, ZPackage pkg)
         {
-            if (ZNet.instance != null && ZNet.instance.IsServer()) return;
+            if (!FromServer(sender)) return;
 
             string key = pkg.ReadString();
             string serverHash = pkg.ReadString();
@@ -309,6 +316,7 @@ namespace FiresCore.Net
             FiresLogger.LogWarning($"{LogPrefix} {displayName}: this client does not have the server's copy " +
                                    $"({size / (1024 * 1024)} MB). Requesting it — this happens once; later joins are instant.");
 
+            _wanted[key] = new KeyValuePair<string, long>(serverHash, size);
             var want = new ZPackage();
             want.Write(key);
             want.Write(serverHash);
@@ -386,7 +394,11 @@ namespace FiresCore.Net
             int total = pkg.ReadInt();
             int count = pkg.ReadInt();
             byte[] data = pkg.ReadByteArray();
+            if (!FromServer(sender)) return;
             if (!_entries.TryGetValue(key, out var entry)) return;
+            if (!_wanted.TryGetValue(key, out var asked) || !string.Equals(asked.Key, hash, StringComparison.OrdinalIgnoreCase)) return;   // not requested
+            long maxChunks = asked.Value / Math.Max(1, ChunkBytes) + 2;
+            if (data == null || count < 0 || count > data.Length || total <= 0 || total > maxChunks || index < 0 || index >= total) { CloseIncoming(key); return; }
 
             try
             {
@@ -406,7 +418,8 @@ namespace FiresCore.Net
                     _incoming[key] = state;
                 }
 
-                state.Stream.Write(data, 0, Math.Min(count, data.Length));
+                if (state.Bytes + count > asked.Value) { FiresLogger.LogWarning($"{LogPrefix} {entry.DisplayName}: more data than the offered size: dropped"); CloseIncoming(key); _wanted.Remove(key); return; }
+                state.Stream.Write(data, 0, count);
                 state.Received++;
                 state.Bytes += count;
                 if (state.Received < state.TotalChunks) return;
@@ -419,6 +432,7 @@ namespace FiresCore.Net
                 File.Move(state.TempPath, verifyPath);
                 state.TempPath = verifyPath;
                 _incoming.Remove(key);
+                _wanted.Remove(key);
 
                 var host = FiresUnifiedCore.Instance;
                 if (host != null) host.StartCoroutine(Install(entry, state, hash));
@@ -491,7 +505,7 @@ namespace FiresCore.Net
 
         // The file's SHA-256 without holding the main thread: remembered by full path, length and write time, so a re-offer,
         // a rejoin or a later join costs nothing; the first hash of each file's content runs on a worker while the caller
-        // yields. A 377 MB bake hashed inline at every join stalled the server and each client about 3 s (R22).
+        // yields. A 377 MB bake hashed inline at every join stalled the server and each client about 3 s.
         private static IEnumerator HashAsync(string path, Action<string> done)
         {
             string full;

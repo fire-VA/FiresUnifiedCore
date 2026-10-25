@@ -3,8 +3,8 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// 0.2.378: one check for "this process has no screen" (a dedicated / batchmode / -nographics server). UI hosts
-    /// return before creating anything when it is true, so no panel's Update ever runs on a headless dedi (0.2.376's
+    /// One check for "this process has no screen" (a dedicated / batchmode / -nographics server). UI hosts
+    /// return before creating anything when it is true, so no panel's Update ever runs on a headless dedi (an earlier
     /// dedi crash came from ConfigPanel.Update polling a hotkey there). Mods with UI can call it the same way.
     /// </summary>
     public static class HeadlessGuard

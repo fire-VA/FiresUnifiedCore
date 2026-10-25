@@ -9,6 +9,7 @@ namespace FiresCore.Npc.Combat
     /// code, so gear, status effects, skills, attributes and the archetype each apply once and in vanilla's order. All
     /// patch Character's own methods (or SEMan and HitData, gated to companions); Player's overrides never call them.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionStatHooks
     {
         // Vanilla Player.GetRunSpeedFactor: (1 + run skill x 0.25) x (1 + equipment movement modifier x 1.5).

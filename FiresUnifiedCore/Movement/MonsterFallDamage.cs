@@ -39,7 +39,7 @@ namespace FiresCore.Movement
                 "SERVER. Non-player characters (monsters, tames, NPCs) take the same fall damage players do: none up to 4 m, rising to 100 at 20 m. "
                 + "Auto: off (no feature mod asks for it yet). On / Off: always.");
             configSync?.AddConfigEntry(s_mode);
-            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Movement, true, s_mode);   // 0.2.387: FAT only
+            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Movement, true, s_mode);   // FAT only
             s_mode.SettingChanged += (sender, args) => s_resolvedFor = -1;
         }
 

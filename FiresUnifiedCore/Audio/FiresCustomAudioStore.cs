@@ -20,7 +20,7 @@ namespace FiresCore.Audio
 
         public static bool Loaded { get; private set; }
 
-        // 0.2.373: .wav and .ogg load too (AudioType from the extension), and RPGmaker can reload after a server sync.
+        // .wav and .ogg load too (AudioType from the extension), and RPGmaker can reload after a server sync.
         private static readonly string[] Extensions = { ".mp3", ".wav", ".ogg" };
 
         /// <summary>Raised on the main thread after <see cref="ReloadCoroutine"/> or <see cref="LoadFileCoroutine"/> finishes.</summary>

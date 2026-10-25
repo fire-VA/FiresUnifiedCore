@@ -3,8 +3,7 @@ using UnityEngine;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// The cold survival rule for every body (Core 0.2.250; overnight 06:57 Coop1 died "to Freezing (damage) … health before it 1" at
-    /// (590, 245) on a walk for LeatherScraps). Vanilla's own rule (Player.UpdateEnvStatusEffects): Freezing while the environment
+    /// The cold survival rule for every body. Vanilla's own rule (Player.UpdateEnvStatusEffects): Freezing while the environment
     /// freezes (EnvMan.IsFreezing: the Mountains, the Deep North) and the body is neither near a fire's heat nor in shelter; Cold
     /// while it is cold (night, rain) away from a fire, or freezing by a fire with no shelter; frost resistance (even slight) or a
     /// warm cozy area cancels both. Freezing eats health. So: warm up at a lit fire in reach, else get back toward home out of the

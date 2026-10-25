@@ -8,7 +8,7 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// 0.2.372: Core brain for pillion riding. On the local player's client, every 0.5 s: when the player rides a
+    /// Core brain for pillion riding. On the local player's client, every 0.5 s: when the player rides a
     /// Sadle mount with no pillion, asks the mount mod (PillionApi.TryBoard) to seat the nearest following companion
     /// within 12 m. Backstop: a pillion whose owner no longer rides its mount is asked to Leave, and Core unseats it
     /// itself 2 s later if the provider did not. Ticked from CompanionController.Update.
@@ -22,7 +22,7 @@ namespace FiresCore.Npc
         private const float SetDownSide = 1.5f;
 
         private static float _nextTick;
-        // 0.2.374: Fire: auto-boarding stays, behind a synced toggle (default ON). Backstop still runs when off.
+        // Auto-boarding sits behind a synced toggle (default ON). Backstop still runs when off.
         private static ConfigEntry<bool> s_autoBoard;
         internal static bool AutoBoard => s_autoBoard == null || s_autoBoard.Value;
 
@@ -31,7 +31,7 @@ namespace FiresCore.Npc
             s_autoBoard = config.Bind("Companions", "Pillion auto-board", true,
                 "SERVER. When the owner rides a saddled mount, the nearest following companion within 12 m climbs on behind them.");
             configSync?.AddConfigEntry(s_autoBoard);
-            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Companions, true, s_autoBoard);   // 0.2.387: Companions or RPGmaker
+            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.Companions, true, s_autoBoard);   // Companions or RPGmaker
             FiresLogger.LogDebug($"[Pillion] auto-board {(s_autoBoard.Value ? "on" : "off")}");
             s_autoBoard.SettingChanged += (_, __) => FiresLogger.LogDebug($"[Pillion] auto-board {(s_autoBoard.Value ? "on" : "off")} (changed)");
         }

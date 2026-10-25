@@ -79,7 +79,7 @@ namespace FiresCore.UI
 
             GUILayout.Space(4f);
             GUILayout.Label($"Type {descriptor.Type.Name}   ·   Default {descriptor.Default ?? "none"}", ConfigSkin.Hint);
-            if (descriptor.IsLocked) GUILayout.Label("<color=#9AA0A6>Locked by the server.</color>", ConfigSkin.Hint);
+            if (descriptor.IsLocked) GUILayout.Label("<color=#9AA0A6>" + descriptor.Tags.LockText("Locked by the server") + ".</color>", ConfigSkin.Hint);   // the mod's own reason when it gives one
 
             GUILayout.FlexibleSpace();
             GUILayout.BeginHorizontal();

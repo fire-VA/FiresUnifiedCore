@@ -157,7 +157,7 @@ namespace FiresCore.Combat
 
         /// <summary>
         /// Where on the victim the SHOT went. Vanilla reports a hit on the character's single capsule collider, a capsule radius
-        /// from any bone ([fgn], R46: every located hit 0.45-0.55 m from its "nearest" segment, so the centre segments won and a
+        /// from any bone (every located hit was 0.45-0.55 m from its "nearest" segment, so the centre segments won and a
         /// head shot read Chest). So the shot is followed from that surface point through the body, and the part is the bone
         /// segment it passes closest to. A zero direction falls back to the point-only Locate.
         /// </summary>
@@ -170,7 +170,7 @@ namespace FiresCore.Combat
             if (animator != null && animator.isHuman)
             {
                 // First contact: an arrow stops at the first part it meets. Walk the shot from the entry point and take the first
-                // part within its own thickness (R71 pvp bow_head: shooting 18-32 deg upward, the whole-shot nearest segment was the
+                // part within its own thickness (shooting 18-32 deg upward, the whole-shot nearest segment was the
                 // head 0.5 m further up the line, 5/6 "Head" where the victim's side saw 1/6).
                 Vector3 unit = direction.normalized;
                 float length = Vector3.Distance(point, shotEnd);
@@ -302,7 +302,7 @@ namespace FiresCore.Combat
             return Vector3.Distance(point, a + ab * t);
         }
 
-        // [visual] (R46 bow_legs 0/8): vanilla Utils.GetBoneTransform finds a child NAMED like the enum, and the player skeleton is
+        // Vanilla Utils.GetBoneTransform finds a child NAMED like the enum, and the player skeleton is
         // Mixamo-named (LeftUpLeg, LeftLeg, LeftArm, LeftForeArm, Spine1...), so every limb and Chest came back null and each hit read
         // Chest/Torso. The humanoid avatar map knows them; the name lookup stays for rigs without one.
         private static Transform Bone(Animator animator, HumanBodyBones bone)

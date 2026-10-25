@@ -138,10 +138,10 @@ namespace FiresCore.Npc.IdleBehaviors
                 return CreatePickableItemData(pickableItem);
             }
 
-            // 0.2.268 ([lead], HR3): a build piece (anything with a Piece: walls, decorations, a player's stone or wood work) is never a
+            // A build piece (anything with a Piece: walls, decorations, a player's stone or wood work) is never a
             // tree, log or deposit to chop or mine, in players' bases too. Real nodes (MineRock, MineRock5, Destructible, TreeBase, TreeLog)
-            // carry no Piece, even when a builder placed them (the homestead's iron mudpile stays a target).
-            // 0.2.367 ([lead]): FAP's Nature tab makes vanilla trees placeable, so a Piece alone doesn't mean "player-built". A
+            // carry no Piece, even when a builder placed them (a placed iron mudpile stays a target).
+            // FAP's Nature tab makes vanilla trees placeable, so a Piece alone doesn't mean "player-built". A
             // real TreeBase/TreeLog is gatherable unless a PLAYER placed it (the piece has a creator: decor someone built).
             var asPiece = obj.GetComponentInParent<Piece>();
             if (asPiece != null)
@@ -213,7 +213,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private static float s_nextDecorLog;
 
-        /// <summary>0.2.367: "[Tools] &lt;tree&gt;: refused: player-placed decor by &lt;creator&gt;" (Debug, at most every 5 s).</summary>
+        /// <summary>"[Tools] &lt;tree&gt;: refused: player-placed decor by &lt;creator&gt;" (Debug, at most every 5 s).</summary>
         private static void LogPlacedDecor(GameObject obj, long creator)
         {
             if (Time.time < s_nextDecorLog) return;
@@ -221,7 +221,7 @@ namespace FiresCore.Npc.IdleBehaviors
             FiresCore.Logging.FiresLogger.LogDebug($"[Tools] {Utils.GetPrefabName(obj)}: refused: player-placed decor by {creator}");
         }
 
-        /// <summary>0.2.367: why <see cref="GetResourceData"/> refused an object (for logs): "no object", "a build piece",
+        /// <summary>Why <see cref="GetResourceData"/> refused an object (for logs): "no object", "a build piece",
         /// "a berry bush", "no TreeBase/TreeLog/MineRock/Destructible", or "ok".</summary>
         public static string WhyNotGatherable(GameObject obj)
         {
@@ -694,8 +694,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private const float LogDamageMultiplier = 0.5f;        // Logs take ~2 hits
         private const float RockDamageMultiplier = 0.4f;       // Rocks take multiple hits
         
-        // ── 0.2.271 (Fire, watching the stream: "Companions get stuck in the minerock... make them do some damage or something if they
-        // cannot properly aim and connect with the minerock meshes when they break up into multiple parts"). One aim for every body
+        // ── Companions must be able to hit rocks that break up into several mesh parts. One aim for every body
         // that mines (companions here; FDT's bot can call the same): a rock is aimed at the closest point of its nearest live surface,
         // never its root, which sits inside a fractured rock.
 

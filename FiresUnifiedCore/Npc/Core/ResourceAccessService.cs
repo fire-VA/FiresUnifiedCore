@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -184,7 +184,7 @@ namespace FiresCore.Npc.Core
             var storage = StorageInventory;
             if (storage == null) return false;
 
-            foreach (var item in CompanionInventory.StorageItemsOf(storage)) // 0.2.362: storage rows only
+            foreach (var item in CompanionInventory.StorageItemsOf(storage)) // storage rows only
             {
                 if (item == null) continue;
                 string dropName = item.m_dropPrefab?.name ?? "";
@@ -216,7 +216,7 @@ namespace FiresCore.Npc.Core
             if (storage == null) return 0;
             
             int count = 0;
-            foreach (var item in CompanionInventory.StorageItemsOf(storage)) // 0.2.362: storage rows only
+            foreach (var item in CompanionInventory.StorageItemsOf(storage)) // storage rows only
             {
                 if (item == null) continue;
                 string dropName = item.m_dropPrefab?.name ?? "";
@@ -386,6 +386,8 @@ namespace FiresCore.Npc.Core
             {
                 Debug.Log($"[{BehaviorName}] {result.Message}");
             }
+            // Every deposit, item counts
+            if (result.ItemsDeposited > 0) FiresCore.Logging.FiresLogger.LogDebug($"[Deposit] {BehaviorName}: {result.ItemsDeposited} item(s) into chests near ({CurrentPosition.x:0}, {CurrentPosition.z:0}): {result.Message}");
             
             return result.ItemsDeposited;
         }

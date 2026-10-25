@@ -159,7 +159,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// every frame don't trigger a full A* query on each tick.
         /// Falls back to true when <see cref="Pathfinding.instance"/> is unavailable.
         /// </summary>
-        /// <summary>The strict navmesh path test, without IsReachable's close-and-clear fallback (0.2.350): for callers that
+        /// <summary>The strict navmesh path test, without IsReachable's close-and-clear fallback: for callers that
         /// must know a point is off the navmesh (patrol's bridge snap).</summary>
         protected bool IsNavmeshReachable(Vector3 targetPos)
         {
@@ -184,8 +184,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 Pathfinding.AgentType.Humanoid,
                 cleanup: true);
 
-            // 0.2.343 (companion_storage cook: the navmesh path query failed on a built floor right beside the station, and the same
-            // would hit haul / smelter / storage jobs in any player base): a target within 10 m with a clear line is reachable too;
+            // (The navmesh path query can fail on a built floor right beside a station, which
+            // hits haul / smelter / storage jobs in any player base): a target within 10 m with a clear line is reachable too;
             // vanilla MoveTo walks straight there when close. Logged at Debug when this fallback decides.
             if (!ok)
             {
@@ -681,7 +681,6 @@ namespace FiresCore.Npc.IdleBehaviors
                 combatMovement?.ClearCommandPriority();
                 
                 // Also notify state controller: a run that ended with a FailureReason is a failed command, never "Success"
-                // (R67 gather: "couldn't reach the tree in 23 s", then "CompleteCommand … Success" with the bag unchanged).
                 var stateController = Companion?.GetComponent<Movement.CompanionStateController>();
                 if (FailureReason != null) stateController?.FailCommand(FailureReason);
                 else stateController?.CompleteCommand();

@@ -16,7 +16,7 @@ namespace FiresCore.Compat
 {
     // HDValheimTextures 1.26.0 (Badgers.HDValheimTextures) loads its ~3,000 replacement textures (Textures.dat 11.4 GB +
     // OverrideTextures.dat 7.3 GB) inside ONE coroutine step at the main menu: 52.9 s with the game "Not Responding"
-    // (LoginDiag, 2026-09-28 M1; Tools\HDVALHEIMTEXTURES_LOAD.md). Fire (15:47): spread it, for every player.
+    // (Tools\HDVALHEIMTEXTURES_LOAD.md). This spreads it over frames, for every player.
     //
     // Their ObjectDB.CopyOtherDB postfix starts the load only while their Mod.TexturesLoaded is false, so a prefix on the
     // same vanilla method sets that flag first and runs their steps in their order from here: HUD on, GetCustomTextures,
@@ -24,8 +24,8 @@ namespace FiresCore.Compat
     // frame), then their armor and menu-scene replacement, HUD off. None of their methods is patched. If a world starts
     // before the load is done, a ZNetScene.Awake prefix finishes the rest at once, ahead of their ZNetScene pass, which is
     // what they do today. Arms only for exactly 1.26.0 with every member below found; anything else leaves the mod alone.
-    // Nothing on a dedicated server, and one log line and nothing else when HDValheimTextures is not loaded (Fire, 16:02).
-    // HdTexturesLoadScreen covers the menu while it runs (Fire, 16:00). HdTexturesWorldSpread does the same for HD's
+    // Nothing on a dedicated server, and one log line and nothing else when HDValheimTextures is not loaded.
+    // HdTexturesLoadScreen covers the menu while it runs. HdTexturesWorldSpread does the same for HD's
     // one-time ZNetScene pass at the first world load. 'fires_hdtex' reports the state and samples materials, to prove
     // the textures landed.
     internal static class HdTexturesLoadSpread
@@ -35,7 +35,7 @@ namespace FiresCore.Compat
         private const string HdVersion = "1.26.0";
         private const string OffArgument = "-fireshdspread-off";
         private const string Ns = "NS_HDValheimTextures.";
-        // R35 (25 ms): one HD texture often takes longer than the budget, so each paid a whole menu frame on top and the menu ran
+        // At a 25 ms budget one HD texture often took longer than the budget, so each paid a whole menu frame on top and the menu ran
         // at ~11 fps. Behind the loading screen a few frames a second are plenty; a larger slice cuts that per-frame cost.
         private const double FrameBudgetMs = 200.0;
         private const string MainBundle = "main";
@@ -90,7 +90,7 @@ namespace FiresCore.Compat
         }
 
         // Progress for the loading screen: entries done so far, of how many, and for how long. Done counts every entry HD was
-        // handed, loaded or not: HD skips textures whose sides are not powers of two (R35: 3,086 entries, 3,051 loaded).
+        // handed, loaded or not: HD skips textures whose sides are not powers of two (e.g. 3,086 entries, 3,051 loaded).
         internal static int Done => s_processed;
         internal static int Total { get; private set; }
         internal static double ElapsedSeconds => s_clock.Elapsed.TotalSeconds;
@@ -215,10 +215,10 @@ namespace FiresCore.Compat
                    ?? HdTexturesSize.Resolve(hd.GetType(Ns + "BundleTools.CBDirectoryItem"), s_bundleStreamType);
         }
 
-        // '-fireshdspread-off' ([generator], R36: no baseline for the 2,560 missing): HD loads and replaces exactly as it
+        // '-fireshdspread-off' (a baseline for the missing count): HD loads and replaces exactly as it
         // always has, and Core only logs HD's own missing count once its ZNetScene pass is over (HD's own line is below the
-        // rig's log level). R37: AutoJoin joined before HD's own load had run, so the world had a part of its textures and the
-        // count meant nothing ([generator]); Loading now also covers HD's own load, from CopyOtherDB to its LoadTextures' end.
+        // rig's log level). AutoJoin could join before HD's own load had run, so the world had a part of its textures and the
+        // count meant nothing; Loading now also covers HD's own load, from CopyOtherDB to its LoadTextures' end.
         private static void ArmBaseline(string version)
         {
             try
@@ -295,7 +295,7 @@ namespace FiresCore.Compat
 
         // Their Player.Awake prefix clears GotBodyTexture so their VisEquipment.UpdateBaseModel postfix re-textures the new
         // player's body. For the menu's preview character built while the load runs, that would log textures that simply are
-        // not loaded yet as missing ([generator]'s review), so it waits: their final ReplaceMenuSceneTextures does the preview
+        // not loaded yet as missing, so it waits: their final ReplaceMenuSceneTextures does the preview
         // with the full set and sets the flag, exactly as when the preview came after their one-frame load.
         private static void Player_Awake_Postfix()
         {
@@ -389,7 +389,7 @@ namespace FiresCore.Compat
                         bool ours = false;
                         bool done = LoadOne($"{bundle} bundle texture {HdTexturesSize.NameOf(item)}", () =>
                         {
-                            // A resize that fails costs only the resize: HD's loader still gets the entry ([generator]'s review).
+                            // A resize that fails costs only the resize: HD's loader still gets the entry.
                             try { ours = HdTexturesSize.Drop > 0 && HdTexturesSize.TryLoad(item, stream, textures); }
                             catch (Exception ex)
                             {

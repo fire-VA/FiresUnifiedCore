@@ -6,7 +6,7 @@ using UnityEngine;
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// Keeps a companion's haul going (Core 0.2.220; added by <see cref="CompanionController.StartHaul"/>): starts HaulBehavior as a
+    /// Keeps a companion's haul going (added by <see cref="CompanionController.StartHaul"/>): starts HaulBehavior as a
     /// command, starts it again once a fight has been over for <see cref="CalmSeconds"/>, stops the haul when a player order takes
     /// over, and when the haul ends puts a companion that was following back on follow. Runs on the companion's ZDO owner only.
     /// </summary>
@@ -42,10 +42,12 @@ namespace FiresCore.Npc
 
             if (_idle.ActiveSubBehavior == haul && haul.IsActive) { _calmSince = -1f; return; }
             if (haul.CancelledFromOutside) { Job.Stop("another order took over"); End(); return; }
-            if (_companion.IsInCombat) { _calmSince = -1f; return; }
+            // Log why the runner is waiting (e.g. a fight), so a stalled haul is never silent
+            if (_companion.IsInCombat) { _calmSince = -1f; Wait("in combat" + (_companion.GetCharacter() is Character ch && ch.GetComponent<MonsterAI>()?.GetTargetCreature() is Character tc ? " with " + tc.m_name : "")); return; }
 
             if (_calmSince < 0f) _calmSince = Time.time;
-            if (Time.time - _calmSince < CalmSeconds || Time.time < _nextTry) return;
+            if (Time.time - _calmSince < CalmSeconds) { Wait($"calm for {Time.time - _calmSince:0.0}/{CalmSeconds:0} s"); return; }
+            if (Time.time < _nextTry) { Wait($"retry in {_nextTry - Time.time:0} s"); return; }
             _nextTry = Time.time + RetrySeconds;
             haul.Job = Job;
             haul.StartedByRunner = true;
@@ -53,6 +55,17 @@ namespace FiresCore.Npc
             haul.StartedByRunner = false;
             if (!started)
                 Debug.LogWarning($"[Haul] {_companion.companionName} couldn't start the haul behaviour; trying again in {RetrySeconds:0} s");
+            else FiresCore.Logging.FiresLogger.LogDebug($"[Haul] {_companion.companionName} haul behaviour started");
+        }
+
+        // Why the haul isn't running yet - Debug, once per reason change and at most every 10 s
+        private string _waitWhy; private float _waitAt = -100f;
+        private void Wait(string why)
+        {
+            string kind = why.Split('(', ' ')[0] + (why.StartsWith("in combat") ? why : "");
+            if (kind == _waitWhy && Time.time - _waitAt < 10f) return;
+            _waitWhy = kind; _waitAt = Time.time;
+            FiresCore.Logging.FiresLogger.LogDebug($"[Haul] {_companion.companionName} waiting: {why}");
         }
 
         private void End()
@@ -60,7 +73,7 @@ namespace FiresCore.Npc
             if (WasFollowing && _companion != null)
             {
                 Player owner = Player.GetAllPlayers().FirstOrDefault(p => p != null && p.GetPlayerID() == _companion.ownerPlayerId);
-                if (owner != null) _companion.CommandFollow(owner);
+                if (owner != null) _companion.HaulRuntimeFollow(owner);   // Runtime only, membership untouched
             }
             Destroy(this);
         }

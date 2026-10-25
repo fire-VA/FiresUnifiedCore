@@ -7,7 +7,7 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// The co-op party between two bodies driven by the one brain (Core 0.2.219, COOP_BOTS §7.2 / LONGFORM_COOP_STREAM): the regroup
+    /// The co-op party between two bodies driven by the one brain: the regroup
     /// before heading home (wait up to 60 s for the partner to come within 15 m, meeting halfway) and the leash on trips. Each body
     /// runs it for itself with the other as its partner; nothing is networked, both read the same positions.
     /// </summary>
@@ -110,7 +110,7 @@ namespace FiresCore.Npc.AI
     }
 
     /// <summary>
-    /// The party's home: one named base point per world (Core 0.2.219, LONGFORM_COOP_STREAM "RETURN to base"), persisted on each body's
+    /// The party's home: one named base point per world, persisted on each body's
     /// client like ResourceMemory (BepInEx\config\FiresCore\WorldMemory\&lt;world&gt;_&lt;seed&gt;.base.json), and the long walk home:
     /// <see cref="NextLeg"/> hands the walker legs of at most <see cref="LegMetres"/> m, so each navmesh ask stays inside tiles that are
     /// built around it (vanilla bakes 32 m tiles lazily round the start and the goal).

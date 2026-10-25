@@ -25,7 +25,7 @@ namespace FiresCore.Services
         private static object _liveSfxGroup;
         private static object _liveGuiGroup;
 
-        /// <summary>0.2.351: "[Audio] Route mod sounds to the game mixer" (default on). Off = mod / NPC sources keep their own
+        /// <summary>"[Audio] Route mod sounds to the game mixer" (default on). Off = mod / NPC sources keep their own
         /// serialized mixer group (the stream-silence A/B).</summary>
         public static BepInEx.Configuration.ConfigEntry<bool> EnabledEntry;
         private static bool Enabled => EnabledEntry == null || EnabledEntry.Value;
@@ -46,7 +46,7 @@ namespace FiresCore.Services
             _pBypassReverb = _tAudioSource.GetProperty("bypassReverbZones");
         }
 
-        // A dedicated server plays nothing, and the first harvest walks every ZNetScene prefab's AudioSources ([worldgen], R51:
+        // A dedicated server plays nothing, and the first harvest walks every ZNetScene prefab's AudioSources (measured
         // 34 ms inside a join frame). Every entry point returns at once there.
         private static void HarvestSfxGroup()
         {

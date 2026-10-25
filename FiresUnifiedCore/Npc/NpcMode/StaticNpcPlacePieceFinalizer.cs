@@ -12,6 +12,7 @@ namespace FiresCore.Npc.NpcMode
     /// swallowed, since placement genuinely fails; the log points at the bundle field to fix.
     /// </summary>
     [HarmonyPatch(typeof(Player), nameof(Player.PlacePiece))]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class StaticNpcPlacePieceFinalizer
     {
         private const string NullInstantiateMarker = "The Object you want to instantiate is null";

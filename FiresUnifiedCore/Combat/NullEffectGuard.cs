@@ -5,7 +5,7 @@ using UnityEngine;
 namespace FiresCore.Combat
 {
     /// <summary>
-    /// 0.2.367: "ArgumentException: The Object you want to instantiate is null" from Attack.Update -> EffectList.Create
+    /// "ArgumentException: The Object you want to instantiate is null" from Attack.Update -> EffectList.Create
     /// (258x in one session). An EffectList entry with a null m_prefab makes vanilla Instantiate throw every time the
     /// attack plays. This drops the null entries from the list once, and names the attacker (prefab + attack animation)
     /// in one Debug line per list so the culprit can be fixed at the source.

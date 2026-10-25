@@ -65,6 +65,9 @@ namespace FiresCore.Npc.Archetypes.Effects
                     if (aiming) return false;
                     if (allied) return false;
                     return IsHostileTo(viewer, casterPlayerId);
+
+                case GroundRingKind.Invalid:
+                    return viewerIsCaster;   // a placement marker, the caster's own
             }
 
             Debug.LogError($"[GroundRingVisibility] No visibility rule for ring kind {kind}");

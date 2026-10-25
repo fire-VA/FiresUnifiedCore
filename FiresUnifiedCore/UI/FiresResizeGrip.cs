@@ -10,7 +10,7 @@ namespace FiresCore.UI
     /// </summary>
     public static class FiresResizeGrip
     {
-        // 0.2.372: added (resize corners rendered as a plain square).
+        // Rounded resize corner (it otherwise rendered as a plain square).
         private static readonly string[] VanillaNames = { "resize_handle", "ResizeHandle", "resize_grip", "ResizeGrip", "grip", "corner_grip" };
         private static Sprite _sprite;
         private static bool _resolved;

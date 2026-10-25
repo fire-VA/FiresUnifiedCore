@@ -153,7 +153,7 @@ namespace FiresCore.Npc.Archetypes
         
         /// <summary>Gets the companion's current level for ability unlock checks.</summary>
         // Progression starts at level 0, but the Starter abilities unlock at 1: a new companion could use none of its kit until
-        // it levelled once (R59: "Healer … Level:0", 0 casts). Unlocks read level 1 at least.
+        // it levelled once. Unlocks read level 1 at least.
         private int CompanionLevel => Mathf.Max(1, _progression != null ? _progression.Level : 1);
         
         private void Awake()
@@ -300,7 +300,7 @@ namespace FiresCore.Npc.Archetypes
         }
         
         /// <summary>
-        /// Test hook (0.2.204, [ghost]'s synergy step): casts <paramref name="ability"/> ("Fortify", "BerserkRage", "LayOnHands", …: the
+        /// Test hook: casts <paramref name="ability"/> ("Fortify", "BerserkRage", "LayOnHands", …: the
         /// name after "Use") now, through its real Use method: the effect RPC, the skill XP, the chat line and the synergy report
         /// (OnAbilityUsed). The AI's own gates (unlock level, the decision cooldowns) are skipped so a test can cast on demand. A
         /// targeted ability takes the AI's target (an enemy), or for a heal the owner / the most hurt party member. Owner peer only.

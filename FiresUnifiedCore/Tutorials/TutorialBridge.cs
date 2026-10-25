@@ -11,7 +11,7 @@ using UnityEngine;
 namespace FiresCore.Tutorials
 {
     /// <summary>
-    /// The one tutorial menu for every Fires mod (Fire 10-05; [ghost]'s FiresTutorial manager, shared source linked into Core and
+    /// The one tutorial menu for every Fires mod (the FiresTutorial manager, shared source linked into Core and
     /// into mods that must also run alone, all its types internal). A mod hands Core its chapters as FiresTutorial's JSON plus
     /// callbacks keyed "chapterId/stepId" - only System types cross, so a mod with its own compiled copy (Valcast) calls this by
     /// reflection with no reference to Core: <c>Type.GetType("FiresCore.Tutorials.TutorialBridge, FiresUnifiedCore")</c>.

@@ -145,7 +145,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 LogVerbose($"CanStart: TRUE - found fire needing {fireplace.m_fuelItem.gameObject.name}, have fuel available");
                 return true;
             }
-            // 0.2.255: a fire the rain switched off (fuel still in it) is lit again (the bot's relight rule, ChoreBrain.FiresToRelight).
+            // A fire the rain switched off (fuel still in it) is lit again (the bot's relight rule, ChoreBrain.FiresToRelight).
             if (FindFireToRelight() != null) return true;
             
             var cookingStation = FindNearbyCookingStation();
@@ -565,7 +565,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private bool CompleteAndNotify()
         {
-            // 0.2.255: the outcome, always on.
+            // The outcome, always on.
             if (_fuelAdded > 0 && _targetFireplace != null)
             {
                 var view = _targetFireplace.GetComponent<ZNetView>();
@@ -610,7 +610,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private Container FindChestWithFuel(string fuelName)
         {
-            // 0.2.256 ([ghost]): CanStart asks here before any Start has filled the chest list, so a companion carrying no fuel never saw
+            // CanStart asks here before any Start has filled the chest list, so a companion carrying no fuel never saw
             // the base chests' wood. A throttled refresh (5 s / 5 m), as ChestDepositV2's CanStart does.
             Resources.RefreshNearbyChests();
             foreach (var chest in Resources.NearbyChests)
@@ -628,7 +628,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var chestInv = chest.GetInventory();
             var storage = GetStorageInventory();
             if (chestInv == null || storage == null) return 0;
-            // 0.2.322: the shared withdraw (InventoryTransferService.PullItem: claims the chest for the companion that owns this
+            // The shared withdraw (InventoryTransferService.PullItem: claims the chest for the companion that owns this
             // storage, since an unowned chest reverts the edit, then moves stacks with ChestHelper.MoveItem) in place of a
             // Clone + AddItem + RemoveOneItem per unit.
             int pulled = AI.ChoreBrain.Withdraw(chest, storage, _fuelItemName, amount, 0L);
@@ -646,7 +646,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             if (GetStorageInventory() == null) return false;
 
-            // One copy with the bot's base chores (0.2.236): ChoreBrain.AddFuel takes one unit out of the storage this body carries
+            // One copy with the bot's base chores: ChoreBrain.AddFuel takes one unit out of the storage this body carries
             // (CompanionTaskBody.Inventory) and sends RPC_AddFuel to the fire's owner, claiming an unowned fire first.
             int added = AI.ChoreBrain.AddFuel(new AI.CompanionTaskBody(Companion), _targetFireplace, 1, out string why);
             if (added <= 0) return false;
@@ -656,7 +656,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return true;
         }
         
-        // One rule with the bot's base chores (0.2.237): ChoreBrain.FireWantsFuel (refillable, finite, under ChoreBrain.RefuelBelow).
+        // One rule with the bot's base chores: ChoreBrain.FireWantsFuel (refillable, finite, under ChoreBrain.RefuelBelow).
         private bool NeedsFuel(Fireplace fireplace) => AI.ChoreBrain.FireWantsFuel(fireplace);
         
         private void NotifyNoFuelAvailable()
@@ -673,7 +673,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Fire Finding
         
-        // One set of fire rules with the bot's base chores (0.2.237): ChoreBrain.FiresToFuel (FireWantsFuel, this companion's
+        // One set of fire rules with the bot's base chores: ChoreBrain.FiresToFuel (FireWantsFuel, this companion's
         // reservations, fuel it can get from storage or a nearby chest), nearest on the ground plane first.
         private bool _relight;
 
@@ -768,7 +768,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 if (CompanionCookingBehavior.IsRawFor(_targetCookingStation, item))
                 {
-                    // Vanilla CookItem takes it from user.GetInventory(), which IS this storage since audit slice 5. Return
+                    // Vanilla CookItem takes it from user.GetInventory(), which IS this storage. Return
                     // right after: the item list just changed under this foreach.
                     if (_targetCookingStation.UseItem(Humanoid, item))
                         LogVerbose($"Added {item.m_shared.m_name} to cooking station");

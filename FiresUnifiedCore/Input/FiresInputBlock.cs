@@ -23,7 +23,7 @@ namespace FiresCore.Input
         public static string LogTag = "FiresCore";
 
         public static event Action<bool> CapturingChanged;
-        // 0.2.376: Fire, team-wide: typing in ANY text field blocks every mod hotkey. The one shared check:
+        // Team-wide rule: typing in ANY text field blocks every mod hotkey. The one shared check:
         // FiresInputBlock.IsTyping(). Every mod gates its hotkeys on it; BepInEx KeyboardShortcut reads are gated on it below.
         private static int _typingFrame = -1;
         private static bool _typingCached;
@@ -38,7 +38,7 @@ namespace FiresCore.Input
         /// "input field", "imgui", "fires panel"); null when not typing.</summary>
         public static bool IsTyping(out string source)
         {
-            // 0.2.377: the EBMIsolated dedi crashed natively at load on 0.2.376. A headless server never types, and must
+            // A dedicated server once crashed natively at load here. A headless server never types, and must
             // never JIT FindTypingSource (TMP / UI / IMGUI / EventSystem refs), so it returns before touching any of it.
             // Off the main thread the last main-thread answer is returned (Unity APIs are main-thread only).
             if (Headless) { source = null; return false; }
@@ -143,19 +143,82 @@ namespace FiresCore.Input
             try { FiresCore.Logging.FiresLogger.LogInfo($"[{LogTag}] ZInput hotkey read SUPPRESSED while capturing (gate working)"); } catch { }
         }
 
+        // A mod whose own combo just fired (e.g. Valcast Alt+V) swallows the vanilla button on that
+        // key, since vanilla reads its keys without modifiers. Every vanilla ZInput button bound to the key reads not-down / not-up for
+        // the rest of this frame and the next. Add-only API.
+        private static readonly Dictionary<string, int> s_consumedKeys = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);   // display name -> last frame
+        private static readonly Dictionary<string, int> s_consumedButtons = new Dictionary<string, int>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, string> s_boundCache = new Dictionary<string, string>(StringComparer.Ordinal);
+        private static float s_boundCacheUntil;
+
+        public static void ConsumeThisFrame(KeyCode key) => SwallowVanillaKey(key, 1);
+
+        /// <summary>Vanilla buttons bound to key read not-down/not-up for this frame plus frames more (min 1).</summary>
+        public static void SwallowVanillaKey(KeyCode key, int frames = 1)
+        {
+            if (key == KeyCode.None) return;
+            string name;
+            try { name = ZInput.KeyCodeToDisplayName(key); } catch { return; }
+            if (!string.IsNullOrEmpty(name)) s_consumedKeys[name] = Time.frameCount + Mathf.Max(1, frames);
+        }
+
+        /// <summary>By vanilla button name (e.g. "AutoPickup"), same frames as ConsumeThisFrame(KeyCode).</summary>
+        public static void ConsumeThisFrame(string vanillaButton)
+        {
+            if (!string.IsNullOrEmpty(vanillaButton)) s_consumedButtons[vanillaButton] = Time.frameCount + 1;
+        }
+
+        internal static bool IsConsumed(string button)
+        {
+            int f = Time.frameCount;
+            if (s_consumedButtons.Count > 0 && s_consumedButtons.TryGetValue(button, out int bf) && f <= bf) return true;
+            if (s_consumedKeys.Count == 0) return false;
+            bool any = false;
+            foreach (var v in s_consumedKeys.Values) if (f <= v) { any = true; break; }
+            if (!any) { s_consumedKeys.Clear(); return false; }
+            if (ZInput.instance == null) return false;
+            if (Time.unscaledTime > s_boundCacheUntil) { s_boundCache.Clear(); s_boundCacheUntil = Time.unscaledTime + 2f; }
+            if (!s_boundCache.TryGetValue(button, out string bound))
+            {
+                try { bound = ZInput.instance.GetBoundKeyString(button, true) ?? ""; } catch { bound = ""; }
+                s_boundCache[button] = bound;
+            }
+            return bound.Length > 0 && s_consumedKeys.TryGetValue(bound, out int kf) && f <= kf;
+        }
+
         public static void Acquire(object token)
         {
             if (token == null || !_tokens.Add(token)) return;
             Recompute();
         }
 
+        /// <summary>Add-only: like <see cref="Acquire(object)"/>, with the window that holds it. The gate stays held while
+        /// <paramref name="owner"/> is alive, enabled and active, and is freed when it is destroyed, disabled or deactivated - so a
+        /// window needs no ModUiRegistry entry to keep its block. Pass the panel's MonoBehaviour (or its GameObject).</summary>
+        public static void Acquire(object token, UnityEngine.Object owner)
+        {
+            if (token == null) return;
+            if (owner != null) _owners[token] = owner; else _owners.Remove(token);
+            Acquire(token);
+        }
+        private static readonly Dictionary<object, UnityEngine.Object> _owners = new Dictionary<object, UnityEngine.Object>();
+
+        // the Unity object that decides whether a token is still in use: the token itself, or the owner it was acquired with
+        private static bool OwnerOf(object t, out UnityEngine.Object owner)
+        {
+            if (t is UnityEngine.Object u) { owner = u; return true; }
+            return _owners.TryGetValue(t, out owner);
+        }
+
         public static void Release(object token)
         {
-            if (token == null || !_tokens.Remove(token)) return;
+            if (token == null) return;
+            _owners.Remove(token);
+            if (!_tokens.Remove(token)) return;
             Recompute();
         }
 
-        // 0.2.312: tokens whose owning window is gone (see FiresInputBlockDriver.LateUpdate).
+        // Tokens whose owning window is gone (see FiresInputBlockDriver.LateUpdate).
         internal static void PruneStaleTokens()
         {
             if (_tokens.Count == 0) return;
@@ -163,7 +226,7 @@ namespace FiresCore.Input
             foreach (object t in _tokens)
             {
                 string why = null;
-                if (t is UnityEngine.Object u)
+                if (OwnerOf(t, out UnityEngine.Object u))   // The token itself, or the owner it was acquired with
                 {
                     if (u == null) why = "destroyed";
                     else if (u is Behaviour b && !b.isActiveAndEnabled) why = "disabled";
@@ -172,11 +235,35 @@ namespace FiresCore.Input
                 }
                 if (why == null) continue;
                 (stale ?? (stale = new List<object>())).Add(t);
-                try { FiresCore.Logging.FiresLogger.LogDebug($"[{LogTag}] text-capture gate: released a stale token from {t.GetType().FullName} ({why})"); } catch { }
+                // Info, once per freed token (it is removed right after), with the owner's name
+                try { FiresCore.Logging.FiresLogger.LogInfo($"[{LogTag}] text-capture gate: released a token from {OwnerName(t)} ({why})"); } catch { }
             }
             if (stale == null) return;
-            foreach (object t in stale) _tokens.Remove(t);
+            foreach (object t in stale) { _tokens.Remove(t); _owners.Remove(t); }
             Recompute();
+        }
+
+        // "<type> '<object name>'" for a Unity owner, the type otherwise
+        private static string OwnerName(object t)
+        {
+            try { if (t != null && OwnerOf(t, out UnityEngine.Object u) && u != null) return $"{u.GetType().FullName} '{u.name}'"; } catch { }
+            return t?.GetType().FullName ?? "null";
+        }
+
+        /// <summary>Frees only the tokens with no Unity owner (neither a Unity object nor acquired with one: Core cannot tell
+        /// whether their window is still up); live owners keep the gate. Returns how many were freed; each is logged once.</summary>
+        internal static int ReleaseUnverifiable(float heldSeconds)
+        {
+            List<object> gone = null;
+            foreach (object t in _tokens) if (!OwnerOf(t, out _)) (gone ?? (gone = new List<object>())).Add(t);
+            if (gone == null) return 0;
+            foreach (object t in gone)
+            {
+                _tokens.Remove(t);
+                try { FiresCore.Logging.FiresLogger.LogInfo($"[{LogTag}] text-capture gate: released a token from {OwnerName(t)} (not a Unity object; held {heldSeconds:0} s with no text field focused and no Fires screen open)"); } catch { }
+            }
+            Recompute();
+            return gone.Count;
         }
 
         internal static string TokenOwners()
@@ -189,7 +276,7 @@ namespace FiresCore.Input
         public static void ReleaseAll()
         {
             if (_tokens.Count == 0) return;
-            _tokens.Clear();
+            _tokens.Clear(); _owners.Clear();
             Recompute();
         }
 
@@ -233,7 +320,7 @@ namespace FiresCore.Input
     // jumped while typing in a Fires field.
     public static class FiresInputBlockClientGates
     {
-        // 0.2.312 (Fire 10-06: "Up Arrow in chat still doesn't recall"): the keys a text field itself needs always pass the gate,
+        // The keys a text field itself needs always pass the gate,
         // whatever is focused: vanilla's chat/console history (Terminal.UpdateInput reads ZInput.GetButtonDown("ChatUp"/"ChatDown")),
         // and close/submit. Read through __args, so no parameter name is assumed.
         private static readonly HashSet<string> s_passButtons = new HashSet<string>(StringComparer.Ordinal) { "ChatUp", "ChatDown", "JoyDPadUp", "JoyDPadDown" };
@@ -247,8 +334,9 @@ namespace FiresCore.Input
 
         private static bool Gate(object[] __args, ref bool __result)
         {
-            // 0.2.326: while flying, the vanilla buttons on the flight keys (V/C/X by default) are held back (FlightKeys).
-            if (__args != null && __args.Length > 0 && __args[0] is string button && FiresCore.Flight.FlightKeys.ConsumesVanillaButton(button))
+            // While flying, the vanilla buttons on the flight keys (V/C/X by default) are held back (FlightKeys).
+            if (__args != null && __args.Length > 0 && __args[0] is string button
+                && (FiresCore.Flight.FlightKeys.ConsumesVanillaButton(button) || FiresInputBlock.IsConsumed(button)))   // ConsumeThisFrame
             {
                 __result = false;
                 return false;
@@ -297,7 +385,7 @@ namespace FiresCore.Input
         private static bool _loggedKs;
         private static bool KsGate(ref bool __result)
         {
-            // 0.2.376: any typing (console, chat, any field), not only Fires capture.
+            // Any typing (console, chat, any field), not only Fires capture.
             if (!FiresInputBlock.IsTyping()) return true;
             if (!_loggedKs) { _loggedKs = true; try { FiresCore.Logging.FiresLogger.LogInfo($"[{FiresInputBlock.LogTag}] BepInEx KeyboardShortcut hotkey SUPPRESSED while typing (gate working)"); } catch { } }
             __result = false;
@@ -307,13 +395,38 @@ namespace FiresCore.Input
         [HarmonyPatch(typeof(BepInEx.Configuration.KeyboardShortcut), nameof(BepInEx.Configuration.KeyboardShortcut.IsDown))]
         private static class KeyboardShortcutIsDownGate { private static bool Prefix(ref bool __result) => KsGate(ref __result); }
 
+        // A BepInEx shortcut WITH modifiers that fires
+        // swallows the vanilla button on its main key (vanilla ignores modifiers, so Alt+V also toggled auto-pickup). Bare keys untouched.
+        [HarmonyPatch(typeof(BepInEx.Configuration.KeyboardShortcut), nameof(BepInEx.Configuration.KeyboardShortcut.IsDown))]
+        private static class KeyboardShortcutIsDownSwallow
+        {
+            private static void Postfix(BepInEx.Configuration.KeyboardShortcut __instance, bool __result)
+            {
+                if (!__result) return;
+                bool mods = false; foreach (var _ in __instance.Modifiers) { mods = true; break; }
+                if (!mods) return;
+                // Valcast's own shortcuts are skipped.
+                try
+                {
+                    var st = new System.Diagnostics.StackTrace(1, false);   // the caller sits a frame or two above (Harmony's replacement in between)
+                    for (int i = 0; i < st.FrameCount && i < 5; i++)
+                    {
+                        string asm = st.GetFrame(i)?.GetMethod()?.DeclaringType?.Assembly.GetName().Name;
+                        if (asm != null && asm.IndexOf("Valcast", StringComparison.OrdinalIgnoreCase) >= 0) return;
+                    }
+                }
+                catch { }
+                FiresInputBlock.ConsumeThisFrame(__instance.MainKey);
+            }
+        }
+
         [HarmonyPatch(typeof(BepInEx.Configuration.KeyboardShortcut), nameof(BepInEx.Configuration.KeyboardShortcut.IsUp))]
         private static class KeyboardShortcutIsUpGate { private static bool Prefix(ref bool __result) => KsGate(ref __result); }
 
         [HarmonyPatch(typeof(BepInEx.Configuration.KeyboardShortcut), nameof(BepInEx.Configuration.KeyboardShortcut.IsPressed))]
         private static class KeyboardShortcutIsPressedGate { private static bool Prefix(ref bool __result) => KsGate(ref __result); }
 
-        // 0.2.370: remember the TMP field that was last activated or selected (the 1.0 build menu's FILTER is focused this way
+        // Remember the TMP field that was last activated or selected (the 1.0 build menu's FILTER is focused this way
         // without always becoming the EventSystem selection), so FiresInputBlockDriver can hold the gate while it is focused.
         private static float s_nextTrackLog;
         private static void Track(TMPro.TMP_InputField field)
@@ -355,7 +468,7 @@ namespace FiresCore.Input
             else FiresInputBlock.Release(AutoToken);
         }
 
-        // 0.2.370 (Fire: typing in the 1.0 build menu's FILTER field still fired keybinds): vanilla's BuildUi search field can be
+        // Vanilla's BuildUi search field can be
         // focused without becoming the EventSystem's selected object, so the last TMP field that was activated or selected is
         // tracked too (TmpFocusTracker below) and counts while it reports isFocused.
         internal static TMPro.TMP_InputField s_lastActivated;
@@ -370,7 +483,7 @@ namespace FiresCore.Input
             if (go == null) return false;
 
             // A field hidden with its panel (inactive, or the component disabled) can stay the selected object with isFocused
-            // still true; it is not taking keys, so it must not hold the gate (the lead, 10-06: only this AutoToken; window-wide
+            // still true; it is not taking keys, so it must not hold the gate (only this AutoToken; window-wide
             // tokens other UIs hold are theirs to release).
             if (!go.activeInHierarchy) return false;
             bool focused;
@@ -385,7 +498,7 @@ namespace FiresCore.Input
             // them (the reported "typing in the vanilla console affects inputs" bug). Skip anything under them.
             if (go.GetComponentInParent<Terminal>() != null) return false;
             if (go.GetComponentInParent<TextInput>() != null) return false;
-            // 0.2.312: and by identity. Chat's and the console's input field need not sit under their Terminal component.
+            // And by identity. Chat's and the console's input field need not sit under their Terminal component.
             if (IsTerminalField(Chat.instance, go) || IsTerminalField(global::Console.instance, go)) return false;
             return true;
         }
@@ -402,7 +515,7 @@ namespace FiresCore.Input
             return true;
         }
 
-        // ── 0.2.312: stale tokens ────────────────────────────────────────────────────────────────────────────────────────
+        // ── stale tokens ────────────────────────────────────────────────────────────────────────────────────────
         // A window that holds a token and is destroyed or switched off without releasing it would keep every hotkey dead.
         // Once a second: a token that is a UnityEngine.Object (most windows pass `this`) and is destroyed, disabled or inactive is
         // released, with a Debug line naming its type. A token that is a plain object (a static key) can't be judged and stays: a
@@ -421,7 +534,25 @@ namespace FiresCore.Input
             if (_heldNoFieldSince < 0f) _heldNoFieldSince = Time.unscaledTime;
             if (_heldLogged || Time.unscaledTime - _heldNoFieldSince < 30f) return;
             _heldLogged = true;
-            try { FiresCore.Logging.FiresLogger.LogDebug($"[{FiresInputBlock.LogTag}] text-capture gate held {Time.unscaledTime - _heldNoFieldSince:0} s with no text field focused, by: {FiresInputBlock.TokenOwners()}"); } catch { }
+            string owners = FiresInputBlock.TokenOwners();
+            // 30 s with no
+            // field focused AND no Fires screen open (ModUiRegistry) AND no modal input block = nobody can be using the gate on purpose
+            // (a minigame / lobby / config window is an open screen or a modal): it is RELEASED, naming who held it.
+            bool screenOpen = false;
+            try { screenOpen = FiresCore.Bridge.ModUiRegistry.IsAnyOpen() || FiresCore.UI.InputBlock.IsBlocked; } catch { }
+            if (!screenOpen)
+            {
+                // This used to free EVERY token, so a live
+                // window holding the gate without a ModUiRegistry entry (LoreBooks editor, MiniGames, DungeonMaster presets, ...) leaked
+                // input after 30 s. A token whose owner is a live, enabled, active Unity object is KEPT (its window is still there; a dead,
+                // disabled or inactive owner is already freed by PruneStaleTokens every second). Only tokens Core cannot check (not a Unity
+                // object) are freed here, each named once.
+                int freed = FiresInputBlock.ReleaseUnverifiable(Time.unscaledTime - _heldNoFieldSince);
+                if (freed == 0) try { FiresCore.Logging.FiresLogger.LogDebug($"[{FiresInputBlock.LogTag}] text-capture gate held {Time.unscaledTime - _heldNoFieldSince:0} s with no text field focused, by live owner(s): {owners} (kept)"); } catch { }
+                _heldNoFieldSince = -1f; _heldLogged = false;
+                return;
+            }
+            try { FiresCore.Logging.FiresLogger.LogDebug($"[{FiresInputBlock.LogTag}] text-capture gate held {Time.unscaledTime - _heldNoFieldSince:0} s with no text field focused, by: {owners} (a Fires screen is open: kept)"); } catch { }
         }
     }
 }

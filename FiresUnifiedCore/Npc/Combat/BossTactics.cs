@@ -4,8 +4,8 @@ using UnityEngine;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// What to do when a boss starts one of its big attacks (Fire 2026-09-29: boss fights the bot and its companions survive;
-    /// [seasons] Tools\BOSS_DRILL.md). Keyed by the boss's attack item prefab (Eikthyr_charge, gd_king_stomp …) read from the
+    /// What to do when a boss starts one of its big attacks, so the bot and its companions survive boss fights. Keyed by the
+    /// boss's attack item prefab (Eikthyr_charge, gd_king_stomp …) read from the
     /// attack in progress; each maps to a way out: step sideways, leave the forward cone, leave the radius. CombatAdvisor turns
     /// the answer into a move (and a dodge roll where it fits) and logs "dodge: &lt;attack&gt; → &lt;response&gt;". The rows come from
     /// the ObjectDB export; the first boss runs print the attack names really seen, and new rows are one line each.

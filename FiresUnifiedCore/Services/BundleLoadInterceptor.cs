@@ -9,7 +9,7 @@ namespace FiresCore.Services
 {
     // Redirects AssetBundle.LoadFromMemory(bytes) to LoadFromFile(path) when the bytes came from a recent
     // File.ReadAllBytes(path), skipping the managed read and native copy that the common mod pattern pays for.
-    // Only Fires-family mods (0.2.269: other mods' loads pass through untouched) that load bundles after Core's patches attach benefit. Arrays are tracked in a
+    // Only Fires-family mods (other mods' loads pass through untouched) that load bundles after Core's patches attach benefit. Arrays are tracked in a
     // ConditionalWeakTable, and any LoadFromFile failure falls back to the original call.
     public static class BundleLoadInterceptor
     {
@@ -75,7 +75,7 @@ namespace FiresCore.Services
             catch { return false; }
         }
 
-        // 0.2.269: only a Fires-family mod's own LoadFromMemory is redirected. Another mod's bytes may not be the file's any more
+        // Only a Fires-family mod's own LoadFromMemory is redirected. Another mod's bytes may not be the file's any more
         // (patched or decrypted in place after the read), and its bundle loading is not ours to change. The first frame outside
         // this interceptor, Harmony's patched copy of LoadFromMemory and UnityEngine's AssetBundle module names the caller; any
         // failure answers no (the original call runs).

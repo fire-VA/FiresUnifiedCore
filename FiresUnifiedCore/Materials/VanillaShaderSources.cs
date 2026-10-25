@@ -17,7 +17,7 @@ namespace FiresCore.Materials
         private static List<GameObject> s_vanillaPrefabs;
         private static List<GameObject> s_vanillaClutter;
         private static Dictionary<string, Shader> s_live;
-        // 0.2.273: every supported instance per name (the game's asset bundles each carry their own copy), first one first.
+        // Every supported instance per name (the game's asset bundles each carry their own copy), first one first.
         private static Dictionary<string, List<Shader>> s_allLive;
         private static readonly List<Material> s_slots = new List<Material>();
         private static readonly IReadOnlyList<Shader> s_none = new Shader[0];
@@ -82,10 +82,10 @@ namespace FiresCore.Materials
             if (!live.ContainsKey(shader.name)) live[shader.name] = shader;
         }
 
-        // ── 0.2.270 ([lead], the WildWeapons repro of "your core mod breaks all the textures in my mod"): `shaderrebind_test [item ...]`,
+        // ── `shaderrebind_test [item ...]`,
         // an F5 test of what Core's shader sweep did to other mods' items. Per item: each material's shader (name #instance), the game's
-        // instance of that name, whether the sweep moved it at load and from what, and what the 0.2.268 rule (move every same-named copy)
-        // and the 0.2.269 rule (move only the game's own shader) do with it. Then one item held and one dropped, each with its live
+        // instance of that name, whether the sweep moved it at load and from what, and what the "move every same-named copy" rule
+        // and the "move only the game's own shader" rule do with it. Then one item held and one dropped, each with its live
         // renderers listed and a screenshot in BepInEx\FiresTests. Without names it takes up to three items that aren't the game's and draw
         // with a game shader's name, those a rule tells apart first. FAIL when a listed material draws magenta (no shader / InternalErrorShader).
         private const string RebindTestCommand = "shaderrebind_test", RebindTestTag = "[ShaderRebindTest]";
@@ -99,6 +99,9 @@ namespace FiresCore.Materials
             [HarmonyPostfix]
             private static void Postfix()
             {
+#if !FIRES_TESTS
+                return;   // test-only console command, compiled when the test sources are present
+#endif
                 if (s_rebindTestRegistered) return;
                 s_rebindTestRegistered = true;
                 new Terminal.ConsoleCommand(RebindTestCommand,
@@ -111,7 +114,7 @@ namespace FiresCore.Materials
                         if (ZNet.instance == null || Player.m_localPlayer == null || ObjectDB.instance == null) { RebindTestSay($"{RebindTestTag} join a world first."); return; }
                         var names = new List<string>();
                         for (int i = 1; i < args.Length; i++) if (!string.IsNullOrWhiteSpace(args[i])) names.Add(args[i].Trim());
-                        // 0.2.276: `shaderrebind_test closeup [item ...]` - close-up screenshots of each item dropped and held.
+                        // `shaderrebind_test closeup [item ...]` - close-up screenshots of each item dropped and held.
                         if (names.Count > 0 && string.Equals(names[0], "closeup", StringComparison.OrdinalIgnoreCase))
                         {
                             names.RemoveAt(0);
@@ -120,7 +123,7 @@ namespace FiresCore.Materials
                         }
                         ZNet.instance.StartCoroutine(RunRebindTest(names));
                     },
-                    // 0.2.277 (release check): it spawns the named item, so it is a cheat - devcommands on (an admin's, on a server).
+                    // It spawns the named item, so it is a cheat - devcommands on (an admin's, on a server).
                     // Without this any player could type it and keep the item (walk into the drop, or log out mid-run).
                     isCheat: true);
             }
@@ -158,7 +161,7 @@ namespace FiresCore.Materials
 
                 // Held: the first item, equipped from the inventory as a player would.
                 step++;
-                // 0.2.275: the listed prefabs may include non-items (a tree, a piece): held and dropped use the first and last item.
+                // The listed prefabs may include non-items (a tree, a piece): held and dropped use the first and last item.
                 var heldPrefab = items.Find(prefab => prefab.GetComponent<ItemDrop>() != null);
                 if (heldPrefab != null)
                 {
@@ -201,7 +204,7 @@ namespace FiresCore.Materials
                 {
                     dropped = UnityEngine.Object.Instantiate(dropPrefab, at, Quaternion.identity);
                     var droppedItem = dropped.GetComponent<ItemDrop>();
-                    if (droppedItem != null) droppedItem.m_autoPickup = false;   // 0.2.277: the test's drop is never picked up
+                    if (droppedItem != null) droppedItem.m_autoPickup = false;   // The test's drop is never picked up
                     yield return new WaitForSeconds(RebindTestSettle);
                 }
                 if (dropPrefab == null)
@@ -253,7 +256,7 @@ namespace FiresCore.Materials
             {
                 foreach (string name in names)
                 {
-                    // 0.2.275: any prefab the game knows (an item, a tree, a piece); only items are held and dropped.
+                    // Any prefab the game knows (an item, a tree, a piece); only items are held and dropped.
                     var prefab = ObjectDB.instance.GetItemPrefab(name) ?? (ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(name) : null);
                     if (prefab != null && !picked.Contains(prefab)) picked.Add(prefab);
                 }
@@ -334,7 +337,7 @@ namespace FiresCore.Materials
             if (copies.Contains(shader))
                 return now + $"; one of the game's own copies ({copies.Count}: {ids})" + (movedFrom.Length > 0 ? "" : ", it came that way")
                     + (shader == live ? "" : "; 0.2.268 rule: moved it onto #" + live.GetInstanceID() + "; 0.2.275 rule: leaves it");
-            // 0.2.275: a bundle's copy of a Unity shader stays; any other copy moves to the first game copy it is the same shader as.
+            // A bundle's copy of a Unity shader stays; any other copy moves to the first game copy it is the same shader as.
             if (VanillaShaderRebind.IsUnityShader(shader.name))
                 return now + $"; the game's copies: {ids}; 0.2.268-0.2.274 rule: moves it onto #{live.GetInstanceID()}; "
                     + "0.2.275 rule: leaves it (Unity's own shader: its bundle's copy carries its materials' variants, the game's only Valheim's)";
@@ -350,7 +353,7 @@ namespace FiresCore.Materials
                 + (match != null ? $"moves it onto #{match.GetInstanceID()}" : $"leaves it ({firstWhy})");
         }
 
-        // 0.2.275 ([lead]: blocky leaves in today's frames, shader or texture?): the main texture's name, size, format and mip count.
+        // The main texture's name, size, format and mip count.
         private static string DescribeMainTexture(Material material)
         {
             try
@@ -365,7 +368,7 @@ namespace FiresCore.Materials
             catch (Exception ex) { return $"; _MainTex unreadable ({ex.GetType().Name})"; }
         }
 
-        // ── 0.2.276 (Fire, asked three times: a clear screenshot that WildWeapons' weapons render right on 0.2.275):
+        // ──
         // `shaderrebind_test closeup [item ...]`. Per item: the drop, frozen at chest height in front of the player, then the item held.
         // For each, the main camera is taken off GameCamera for a moment and aimed at the item (a drop at its broad face, a held item from
         // the player's right) from where it fills about 70 % of the frame, with a light beside the camera and the HUD hidden; the frame is

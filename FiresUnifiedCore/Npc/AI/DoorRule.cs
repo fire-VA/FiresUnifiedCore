@@ -5,8 +5,8 @@ namespace FiresCore.Npc.AI
 {
     /// <summary>
     /// When a closed door may be opened, finding one that blocks a route, opening it and closing it behind: one rule for the
-    /// companions (CompanionDoorHandler) and the FDT bot (PathWalker's WalkState.Door), per Fire (2026-09-29): "closed doors should
-    /// not cut their route; companions know how to open and close doors". A door is passable when it is closed (ZDO state 0), not
+    /// companions (CompanionDoorHandler) and the FDT bot (PathWalker's WalkState.Door), so closed doors
+    /// never cut a route. A door is passable when it is closed (ZDO state 0), not
     /// locked (or its key is carried) and the wards allow it. Opening is the door's own Interact (what a player's Use does), on the
     /// peer that drives the body. <see cref="CloseBehind"/> closes it again a few seconds after the body is through, unless
     /// someone stands in the doorway.
@@ -22,7 +22,7 @@ namespace FiresCore.Npc.AI
         private static float s_doorsUntil;
 
         /// <summary>
-        /// How a body uses a door (0.2.209, the lead: one brain, honest play). Null or false: the door's own Interact, what a player's Use
+        /// How a body uses a door (one brain, honest play). Null or false: the door's own Interact, what a player's Use
         /// does, with no input or animation. A driver that presses Use for its body (FDT's VerbKit.PlayerUse) sets this and returns
         /// true when it pressed it for that body.
         /// </summary>
@@ -57,6 +57,8 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>A closed door this body may open: not locked (or <paramref name="body"/> carries its key), wards allow.</summary>
+        private static readonly Dictionary<Door, float> s_blockedSaid = new Dictionary<Door, float>();
+
         public static bool IsPassable(Door door) => IsPassable(door, null);
 
         public static bool IsPassable(Door door, Humanoid body)
@@ -87,7 +89,6 @@ namespace FiresCore.Npc.AI
         /// <summary>
         /// Seconds after this peer opened or closed a door during which it counts as already toggled. Interact asks the door's owner
         /// by RPC, so the ZDO still says the old state for a round trip; a caller asking every frame would toggle it straight back
-        /// ([visual], FDT 1.1.170).
         /// </summary>
         public const float ToggleSettleSeconds = 2f;
 
@@ -147,6 +148,21 @@ namespace FiresCore.Npc.AI
         /// <paramref name="to"/>: the nearest one within <paramref name="radius"/> of <paramref name="from"/>, or standing on the
         /// straight line between them. Null when there is none.
         /// </summary>
+        // A culled door animator (no camera on it on THIS peer - the agent's owner, e.g. the bot) does not move the door leaf, so
+        // its collider stays shut here while other peers see it open. A door an agent uses is animated always on this peer; logged once per door.
+        private static readonly HashSet<Door> s_animated = new HashSet<Door>();
+        internal static void KeepAnimating(Door door, Character who)
+        {
+            if (door == null || !door || s_animated.Contains(door)) return;
+            s_animated.Add(door);
+            var anim = door.GetComponentInChildren<Animator>();
+            if (anim == null) return;
+            var before = anim.cullingMode;
+            anim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            Vector3 p = door.transform.position;
+            FiresCore.Logging.FiresLogger.LogInfo($"[NavTest] {(who != null ? who.m_name : "?")}: door '{Utils.GetPrefabName(door.gameObject)}' at ({p.x:0.0}, {p.y:0.0}, {p.z:0.0}) animator culling {before} -> AlwaysAnimate (state {(IsClosed(door) ? "closed" : "open")}, leaf {anim.transform.localEulerAngles.y:0})");
+        }
+
         public static Door DoorOnPath(Vector3 from, Vector3 to, float radius = 4f, Humanoid body = null)
         {
             Door best = null;
@@ -166,6 +182,7 @@ namespace FiresCore.Npc.AI
                     best = door;
                 }
             }
+            if (best != null) KeepAnimating(best, body);   // a door on an agent's path animates on this peer
             return best;
         }
 
@@ -175,9 +192,23 @@ namespace FiresCore.Npc.AI
         /// </summary>
         public static bool OpenFor(Humanoid body, Door door)
         {
-            if (body == null || !IsPassable(door, body)) return false;
+            if (body == null) return false;
+            if (!IsPassable(door, body))
+            {
+                // A closed door within reach this body may not open is logged once per door per 10 s
+                if (door != null && door && IsClosed(door) && Vector3.Distance(body.transform.position, door.transform.position) <= InteractDistance
+                    && (!s_blockedSaid.TryGetValue(door, out float said) || Time.time - said > 10f))
+                {
+                    s_blockedSaid[door] = Time.time;
+                    Vector3 p = door.transform.position;
+                    FiresCore.Logging.FiresLogger.LogInfo($"[NavTest] {body.m_name}: door '{Utils.GetPrefabName(door.gameObject)}' at ({p.x:0.0}, {p.y:0.0}, {p.z:0.0}) blocked ({WhyNot(door, body)})");
+                }
+                return false;
+            }
             if (Vector3.Distance(body.transform.position, door.transform.position) > InteractDistance) return false;
+            KeepAnimating(door, body);
             Use(body, door);
+            { Vector3 p = door.transform.position; FiresCore.Logging.FiresLogger.LogInfo($"[NavTest] {body.m_name}: opened door '{Utils.GetPrefabName(door.gameObject)}' at ({p.x:0.0}, {p.y:0.0}, {p.z:0.0})"); }
             s_closedAt.Remove(door);
             s_openedAt[door] = Time.time;
             return true;
@@ -279,7 +310,7 @@ namespace FiresCore.Npc.AI
                     string who = p.Body != null ? p.Body.m_name : "?";
                     if (p.Body == null || p.Door == null || !p.Door || Time.time - p.Since > PendingTimeout)
                     {
-                        // Evidence either way (0.2.202, R77 doorway: "door left open" with no line saying why).
+                        // Evidence either way, so a door left open always says why.
                         Debug.Log($"[DoorRule] {who}: door: left {p.Name} open ({(p.Body == null ? "the body is gone" : p.Door == null || !p.Door ? "the door unloaded" : $"still near it after {PendingTimeout:0} s")})");
                         s_pending.RemoveAt(i);
                         continue;
@@ -288,7 +319,7 @@ namespace FiresCore.Npc.AI
                     float distance = Vector3.Distance(here, p.At);
                     p.Nearest = Mathf.Min(p.Nearest, distance);
                     // Through the doorway: the other side and a little clear of it closes it soon, even if the walk ends near the door
-                    // (R77 nav_course doorway: the goal sat within CloseDistance, the timer never ran, the door stayed open).
+                    // (a goal within CloseDistance would otherwise never start the timer).
                     bool through = SideOf(p.Door, here) != p.Side && distance >= ThroughDistance;
                     if (!through && distance < CloseDistance) { p.Timer = AutoCloseDelay; continue; }
                     if (through) p.Timer = Mathf.Min(p.Timer, ThroughCloseDelay);
@@ -304,7 +335,7 @@ namespace FiresCore.Npc.AI
                     else
                     {
                         Close(p.Body, p.Door);
-                        // Which side and which way (0.2.209, R80 doorway: "5.8 m past it" read as a pass when the body had gone round the wall):
+                        // Which side and which way (distance alone reads a body that went round the wall as a pass):
                         // through the doorway = on the far side having come within ThroughDoorwayMetres of it.
                         string way = !through ? "on the side it was opened from"
                             : p.Nearest <= ThroughDoorwayMetres ? "on the far side, through the doorway"

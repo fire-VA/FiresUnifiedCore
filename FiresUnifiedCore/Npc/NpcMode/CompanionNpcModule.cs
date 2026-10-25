@@ -178,6 +178,156 @@ namespace FiresCore.Npc.NpcMode
         /// Call this when the NPC is directly attacked.
         /// This allows the NPC to enter alert/combat state.
         /// </summary>
+        /// <summary>Who hit this NPC last (with OnDirectlyAttacked).</summary>
+        public Character LastAttacker { get; private set; }
+
+        /// <summary>as <see cref="OnDirectlyAttacked()"/>, and remembers the attacker so the AI can fight back. Add-only.</summary>
+        private float _hitLogAt;
+        // RPGmaker tells Core from Character.Damage, which runs on the ATTACKER's machine, while the NPC's AI and
+        // defence run on its ZDO owner): a hit reported on a non-owner is forwarded to the owner (ZNetView RPC with the attacker's ZDOID).
+        private const string HitRpc = "FiresCore_NpcHitBy";
+        private bool _hitRpcRegistered;
+        private void EnsureHitRpc()
+        {
+            if (_hitRpcRegistered || _nview == null || !_nview.IsValid()) return;
+            _hitRpcRegistered = true;
+            _nview.Register<ZDOID>(HitRpc, (sender, id) =>
+            {
+                if (!_nview.IsOwner()) return;
+                var go = ZNetScene.instance != null ? ZNetScene.instance.FindInstance(id) : null;
+                var who = go != null ? go.GetComponent<Character>() : null;
+                OnDirectlyAttackedLocal(who);
+            });
+        }
+
+        public void OnDirectlyAttacked(Character attacker)
+        {
+            EnsureHitRpc();
+            if (_nview != null && _nview.IsValid() && !_nview.IsOwner())
+            {
+                var zid = attacker != null && attacker.GetComponent<ZNetView>() is ZNetView av && av.IsValid() ? av.GetZDO().m_uid : ZDOID.None;
+                _nview.InvokeRPC(HitRpc, zid);
+                FiresCore.Logging.FiresLogger.LogInfo($"[CompanionAI] {DisplayName} hit by {(attacker != null ? attacker.GetHoverName() : "unknown")}: forwarded to its owner");
+                return;
+            }
+            OnDirectlyAttackedLocal(attacker);
+        }
+
+        private void OnDirectlyAttackedLocal(Character attacker)
+        {
+            // a party member (owner, allied owners, their companions) is never its attacker - a stray hit must not turn it on them
+            if (attacker != null && !isStationedAsNpc && FiresCore.Npc.Archetypes.ClassTargeting.IsPartyMember(GetComponent<Character>(), attacker)) return;
+            if (attacker != null && attacker.gameObject != gameObject) LastAttacker = attacker;
+            // one line per hit burst - who hit it and whether its AI can answer (proof for the defend tests)
+            if (Time.time >= _hitLogAt) { _hitLogAt = Time.time + 5f; FiresCore.Logging.FiresLogger.LogInfo($"[CompanionAI] {DisplayName} hit by {(attacker != null ? attacker.GetHoverName() + (attacker is Player ? " (player)" : "") : "unknown")}: stationed {isStationedAsNpc}, static {isStaticPlacement}, CompanionAI {(_companionAI == null ? "none" : _companionAI.enabled ? "on" : "OFF")}, owner here {(_nview != null && _nview.IsValid() && _nview.IsOwner())}"); }
+            OnDirectlyAttacked();
+            TryStartDefence();
+        }
+
+        // ── Static NPC self-defence: a fixture fights back within a short leash of its anchor, adjustable
+        // in the NPC stats screen (RPGmaker writes the keys) ─────────────────────────────────────────────
+        // Body ZDO keys (add-only): "npc_defend" (bool, default false), "npc_defend_leash" (metres, default 2, 0.5..5).
+        // A static fixture with npc_defend that is hit fights its LastAttacker with whatever it holds (its own weapon, else the first
+        // weapon in its bag, else fists), never more than the leash from its anchor: at the edge it stops, faces and swings, never
+        // chases. When the alert ends or the attacker leaves leash + reach it walks back, faces its rotation and is a fixture again.
+        // Owner-side only (the ZDO owner simulates the body). The AI brains stay OFF: this drives the body directly.
+        public const string DefendKey = "npc_defend", DefendLeashKey = "npc_defend_leash";
+        private const float DefendAlertSeconds = 12f, DefendSwingCooldown = 1.1f, DefendReturnTimeout = 6f;
+        private enum DefendPhase { None, Fighting, Returning }
+        private DefendPhase _defend;
+        private Vector3 _defendAnchor; private Quaternion _defendRot; private float _defendLeash = 2f;
+        private RigidbodyConstraints _defendConstraints; private float _defendNextSwing, _defendReturnUntil;
+        private ItemDrop.ItemData _defendEquipped;
+
+        /// <summary>True while a static fixture is defending itself or walking back (EnforceStaticInertness leaves it alone).</summary>
+        public bool IsDefending => _defend != DefendPhase.None;
+
+        private float _defendWhyAt;
+        private void DefendWhy(string why)
+        {
+            if (Time.time < _defendWhyAt) return; _defendWhyAt = Time.time + 10f;
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] {(_character != null ? _character.GetHoverName() : name)} hit, not defending: {why}");
+        }
+
+        private void TryStartDefence()
+        {
+            if (!isStaticPlacement || allowIdleWandering || HasPatrolRoute() || _defend == DefendPhase.Fighting) return;
+            if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) { DefendWhy("not the owner of its body on this peer"); return; }
+            var zdo = _nview.GetZDO();
+            // Defending is ON unless the NPC stats switch turned it OFF (unset = defend), since the switch is
+            // often never set
+            if (zdo == null || !zdo.GetBool(DefendKey, true)) { DefendWhy("Defend when attacked is OFF"); return; }
+            var foe = LastAttacker;
+            if (foe == null || foe.IsDead() || _character == null || _character.IsDead()) return;
+            _defendLeash = Mathf.Clamp(zdo.GetFloat(DefendLeashKey, 2f), 0.5f, 5f);
+            if (_defend == DefendPhase.None)
+            {
+                _defendAnchor = _hasStationedPosition ? _stationedPosition : transform.position;
+                _defendRot = _hasStationedPosition ? _stationedRotation : transform.rotation;
+                if (_rigidbody != null) { _defendConstraints = _rigidbody.constraints; _rigidbody.constraints = RigidbodyConstraints.FreezeRotation; }
+                _defendEquipped = null;
+                if (_character is Humanoid h && h.GetCurrentWeapon() == h.m_unarmedWeapon?.m_itemData)
+                {
+                    var inv = h.GetInventory();
+                    if (inv != null) foreach (var it in inv.GetAllItems())
+                        if (it != null && it.IsWeapon() && h.EquipItem(it, true)) { _defendEquipped = it; break; }
+                }
+            }
+            _defend = DefendPhase.Fighting;
+            FiresCore.Logging.FiresLogger.LogInfo($"[CompanionNpcModule] '{DisplayName}' defends itself against {foe.GetHoverName()} (leash {_defendLeash:0.#} m{(_defendEquipped != null ? ", drew " + _defendEquipped.m_shared.m_name : "")})");
+        }
+
+        // Update: true while defending (the fixture hold is skipped this tick)
+        private bool DefenceTick()
+        {
+            if (_defend == DefendPhase.None) return false;
+            if (_character == null || _character.IsDead() || _nview == null || !_nview.IsValid() || !_nview.IsOwner()) { EndDefence("not simulated here / dead"); return false; }
+            var h = _character as Humanoid;
+            Vector3 self = transform.position;
+            if (_defend == DefendPhase.Fighting)
+            {
+                var foe = LastAttacker;
+                var weapon = h != null ? h.GetCurrentWeapon() : null;
+                float reach = weapon != null && weapon.m_shared.m_attack != null ? Mathf.Max(1.2f, weapon.m_shared.m_attack.m_attackRange) : 1.5f;
+                bool gone = foe == null || foe.IsDead() || Time.time - _lastDirectlyAttackedTime > DefendAlertSeconds
+                    || Flat(foe.transform.position - _defendAnchor).magnitude > _defendLeash + reach + 1f;
+                if (gone) { _defend = DefendPhase.Returning; _defendReturnUntil = Time.time + DefendReturnTimeout; FiresCore.Logging.FiresLogger.LogInfo($"[CompanionNpcModule] '{DisplayName}' stops defending; back to its anchor"); return true; }
+                Vector3 toFoe = Flat(foe.transform.position - self);
+                if (toFoe.sqrMagnitude > 0.01f) _character.SetLookDir(toFoe.normalized);
+                // where it may stand: toward the foe, clamped to the leash circle
+                Vector3 want = _defendAnchor + Vector3.ClampMagnitude(Flat(foe.transform.position - _defendAnchor), _defendLeash);
+                Vector3 step = Flat(want - self);
+                bool inReach = toFoe.magnitude <= reach;
+                _character.SetMoveDir(!inReach && step.magnitude > 0.3f ? step.normalized : Vector3.zero);
+                if (inReach && h != null && Time.time >= _defendNextSwing && !h.InAttack())
+                {
+                    _defendNextSwing = Time.time + DefendSwingCooldown;
+                    h.StartAttack(foe, false);
+                }
+                return true;
+            }
+            // Returning
+            Vector3 home = Flat(_defendAnchor - self);
+            if (home.magnitude > 0.25f && Time.time < _defendReturnUntil) { _character.SetLookDir(home.normalized); _character.SetMoveDir(home.normalized); return true; }
+            EndDefence("home");
+            return false;
+        }
+
+        private void EndDefence(string why)
+        {
+            if (_defend == DefendPhase.None) return;
+            _defend = DefendPhase.None;
+            if (_character != null) _character.SetMoveDir(Vector3.zero);
+            if (_defendEquipped != null && _character is Humanoid h && h.IsItemEquiped(_defendEquipped)) h.UnequipItem(_defendEquipped, false);
+            _defendEquipped = null;
+            transform.position = _defendAnchor; transform.rotation = _defendRot;
+            if (_rigidbody != null) { _rigidbody.position = _defendAnchor; _rigidbody.rotation = _defendRot; _rigidbody.velocity = Vector3.zero; _rigidbody.constraints = _defendConstraints; }
+            if (_character != null) _character.SetLookDir(_defendRot * Vector3.forward);
+            FiresCore.Logging.FiresLogger.LogInfo($"[CompanionNpcModule] '{DisplayName}' is a fixture again at its anchor ({why})");
+        }
+
+        private static Vector3 Flat(Vector3 v) { v.y = 0f; return v; }
+
         public void OnDirectlyAttacked()
         {
             _lastDirectlyAttackedTime = Time.time;
@@ -215,6 +365,7 @@ namespace FiresCore.Npc.NpcMode
         private void Awake()
         {
             _companion = GetComponent<CompanionController>();
+            if (GetComponent<BodyModelWatcher>() == null) gameObject.AddComponent<BodyModelWatcher>();   // npc_model_override on every peer (BodyModelSwap)
             _combatMovement = GetComponent<CompanionCombatMovement>();
             _idleBehavior = GetComponent<CompanionIdleBehavior>();
             _interactionBehavior = GetComponent<CompanionInteractionBehavior>();
@@ -228,6 +379,7 @@ namespace FiresCore.Npc.NpcMode
 
         private void Start()
         {
+            EnsureHitRpc();   // every peer registers, so the owner can receive forwarded hits
             LoadFromZDO();
             
             // Apply stationed state if loaded from ZDO
@@ -247,6 +399,9 @@ namespace FiresCore.Npc.NpcMode
             // A body a player is DRIVING (FiresValcast possession) belongs to its driver: no fixture hold, no walk home.
             if (HoldForPossession()) return;
 
+            // a fixture defending itself (npc_defend) is driven by DefenceTick until it is home again
+            if (DefenceTick()) return;
+
             // Static fixtures NEVER run AI — re-assert every tick regardless of the stationed-flag timing.
             EnforceStaticInertness();
 
@@ -265,7 +420,7 @@ namespace FiresCore.Npc.NpcMode
         /// throttle (cached refs, cheap): AI brains OFF, m_aiSkipTarget ON, so it stays an inert prop. Wander
         /// and patrol NPCs are excluded — they keep their AI. Runs on every machine (the visual is client-side).
         /// </summary>
-        // 0.2.390: the static stage hook ([lead] 10-10). RPGmaker's StaticNpcInitializer calls MarkStaticStageApplied() when its
+        // The static stage hook. RPGmaker's StaticNpcInitializer calls MarkStaticStageApplied() when its
         // ApplyBodyStage has finished, so the ai-guard knows exactly when the fixture contract was applied.
         private bool _staticStageApplied;
         private static bool s_stageHookInUse;
@@ -286,12 +441,57 @@ namespace FiresCore.Npc.NpcMode
         /// <summary>True once MarkStaticStageApplied has been called for this body.</summary>
         public bool StaticStageApplied => _staticStageApplied;
 
+        // Fire 10-24 (hand-over 56): "ole gorm here is just sliding in place it seems strafing" - a static fixture (AI off, no defend
+        // line in the log) playing a walk / strafe. This names what drives it: a move direction someone set, a body velocity, or only
+        // the animator's speed floats, with the body vs ground height. A fixture never walks, so a stray move direction is zeroed (logged).
+        private float _motionProbeNext;
+
+        // Who sets a fixture's move direction? ([fgn] 10-24: no FGN loop, and a disabled CompanionAI leaves BaseAI.Instances.) The first
+        // non-zero SetMoveDir on a static fixture with no defend / possession going, once per fixture per session, logs the caller stack.
+        private static readonly HashSet<int> s_moveDirCallerLogged = new HashSet<int>();
+        [HarmonyLib.HarmonyPatch(typeof(Character), nameof(Character.SetMoveDir))]
+        private static class Character_SetMoveDir_FixtureProbe
+        {
+            private static void Prefix(Character __instance, Vector3 dir)
+            {
+                if (__instance == null || dir.sqrMagnitude < 0.0001f || s_moveDirCallerLogged.Contains(__instance.GetInstanceID())) return;
+                var m = __instance.GetComponent<CompanionNpcModule>();
+                if (m == null || !m.isStaticPlacement || m.allowIdleWandering || m.IsDefending || m._returningFromPossession) return;
+                s_moveDirCallerLogged.Add(__instance.GetInstanceID());
+                string stack = new System.Diagnostics.StackTrace(1, false).ToString().Replace("\r", "").Replace("\n", " <- ");
+                if (stack.Length > 700) stack = stack.Substring(0, 700);
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule][fixture-motion] '{m.DisplayName}' SetMoveDir({dir.x:0.00},{dir.z:0.00}) while a fixture ({(ZNet.instance != null && ZNet.instance.IsServer() ? "server" : "client")}); caller: {stack}");
+            }
+        }
+        private static readonly int s_fwdSpeed = Animator.StringToHash("forward_speed"), s_sideSpeed = Animator.StringToHash("sidestep_speed");
+        private void ProbeFixtureMotion()
+        {
+            if (_character == null || IsDefending || _returningFromPossession) return;
+            Vector3 moveDir = _character.GetMoveDir();
+            Vector3 vel = _rigidbody != null ? _rigidbody.velocity : Vector3.zero;
+            var anim = _character.GetComponentInChildren<Animator>();
+            float fwd = 0f, side = 0f;
+            try { if (anim != null && anim.isActiveAndEnabled) { fwd = anim.GetFloat(s_fwdSpeed); side = anim.GetFloat(s_sideSpeed); } } catch { }
+            bool moving = moveDir.sqrMagnitude > 0.0001f || vel.sqrMagnitude > 0.0025f || Mathf.Abs(fwd) > 0.05f || Mathf.Abs(side) > 0.05f;
+            if (!moving) return;
+            if (moveDir.sqrMagnitude > 0.0001f) _character.SetMoveDir(Vector3.zero);
+            if (Time.time < _motionProbeNext) return;
+            _motionProbeNext = Time.time + 10f;
+            Vector3 p = transform.position;
+            float ground = ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(p, out float g) ? g : float.NaN;
+            bool owner = _nview != null && _nview.IsValid() && _nview.IsOwner();
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule][fixture-motion] '{DisplayName}' moves while a fixture: moveDir {moveDir:F2}{(moveDir.sqrMagnitude > 0.0001f ? " (zeroed)" : "")}, " +
+                $"body vel {vel:F2}, kinematic {(_rigidbody != null && _rigidbody.isKinematic)}, constraints {(_rigidbody != null ? _rigidbody.constraints.ToString() : "-")}, " +
+                $"anim forward {fwd:0.00} side {side:0.00}, y {p.y:0.00} vs ground {ground:0.00}, owner {owner}, onGround {_character.IsOnGround()}");
+        }
+
         private void EnforceStaticInertness()
         {
             if (!isStaticPlacement || allowIdleWandering || HasPatrolRoute()) return;
             if (Time.time < _staticInertNextCheck) return;
             _staticInertNextCheck = Time.time + 0.5f;
 
+            ProbeFixtureMotion();
             bool caught = false;
             if (_companionAI != null && _companionAI.enabled) { _companionAI.enabled = false; caught = true; }
             if (_monsterAI != null && _monsterAI.enabled) { _monsterAI.enabled = false; caught = true; }
@@ -300,14 +500,14 @@ namespace FiresCore.Npc.NpcMode
             // downstream re-enable (names the culprit's timing) rather than a willMove data problem.
             if (caught)
             {
-                // 0.2.301: right after a possession ends the driver's mod puts the AI back as IT saw it; the fixture's own state wins.
+                // right after a possession ends the driver's mod puts the AI back as IT saw it; the fixture's own state wins.
                 if (Time.time - _releasedAt < ReleaseGraceSeconds)
                     FiresCore.Logging.FiresLogger.LogDebug($"[CompanionNpcModule][ai-guard] '{DisplayName}': AI off again after its possession ended (the fixture's own state)");
-                // 0.2.389 (Fire's log 10-10, Sigyn/Fulla on every load): nothing re-enabled them. LoadFromZDO reads npc_static_placement
+                // Nothing re-enabled them. LoadFromZDO reads npc_static_placement
                 // at load, which arms this guard at once, while RPGmaker's StaticNpcInitializer turns the AI off only after its
                 // DelayedInit (frames + polls, seconds). Until then the AI is still on from the prefab: holding it off is the
                 // contract, not a re-enable. A re-enable after this window still warns.
-                // 0.2.390: exact, not timed. Once the body's owner mod reports its stage (MarkStaticStageApplied), a fixture whose
+                // exact, not timed. Once the body's owner mod reports its stage (MarkStaticStageApplied), a fixture whose
                 // stage hasn't been reported yet is simply not staged yet. The 15 s window remains only for builds that never call it.
                 else if (!_staticStageApplied && (s_stageHookInUse || Time.time - _loadedAt < StageGraceSeconds))
                 {
@@ -323,10 +523,10 @@ namespace FiresCore.Npc.NpcMode
         }
 
         // ── A body a player is DRIVING (FiresValcast possession, CompanionPossession) ───────────────────────────────────────
-        // 0.2.299: a static fixture's Rigidbody is frozen on every axis (FiresNPCs' StaticNpcInitializer, once at spawn), so a possessed
+        // a static fixture's Rigidbody is frozen on every axis (FiresNPCs' StaticNpcInitializer, once at spawn), so a possessed
         // fixture could not take a step; its position was unfrozen while driven.
-        // 0.2.301 (Fire 10-05, valcast_test 30/35: "possession of the npc caused it to lose all friction and slide down into the
-        // bottom of a hole"; then "when possessed npcs are returned they should return to their anchor position and go back to what
+        // Possession could leave the NPC frictionless (sliding into holes), and a released NPC should
+        // return to its anchor and resume its normal behaviour:
         // they normally do"):
         // - Driven: the WHOLE walking-NPC body a wandering Fires NPC has (FiresNPCs' willMove stage): rotation-only freeze, gravity,
         //   not kinematic, the Humanoid enabled, rotation synced, an ordinary target. Vanilla's own motion, ground contact and
@@ -341,7 +541,7 @@ namespace FiresCore.Npc.NpcMode
         private bool _gravityBefore, _kinematicBefore, _humanoidBefore, _syncRotationBefore, _aiSkipBefore, _companionAIBefore, _monsterAIBefore;
         private float _possessedReportAt, _releasedAt = -100f;
         private bool _returningFromPossession, _claimedForPossessor;
-        // 0.2.389: the ai-guard's quiet window after load, while RPGmaker's StaticNpcInitializer has not applied the static stage yet.
+        // the ai-guard's quiet window after load, while RPGmaker's StaticNpcInitializer has not applied the static stage yet.
         private float _loadedAt = -100f;
         private bool _preStageLogged;
         private const float StageGraceSeconds = 15f;
@@ -382,7 +582,7 @@ namespace FiresCore.Npc.NpcMode
                 _constraintsBeforePossession = _rigidbody.constraints;
                 _gravityBefore = _rigidbody.useGravity;
                 _kinematicBefore = _rigidbody.isKinematic;
-                _rigidbody.isKinematic = false;
+                FiresCore.Npc.KinematicSync.Set(_rigidbody, false, "NpcModule enter");
                 _rigidbody.useGravity = true;
                 _rigidbody.constraints = RigidbodyConstraints.FreezeRotation;
             }
@@ -437,7 +637,7 @@ namespace FiresCore.Npc.NpcMode
                 _rigidbody.angularVelocity = Vector3.zero;
                 _rigidbody.constraints = _constraintsBeforePossession;
                 _rigidbody.useGravity = _gravityBefore;
-                _rigidbody.isKinematic = _kinematicBefore;
+                FiresCore.Npc.KinematicSync.Set(_rigidbody, _kinematicBefore, "NpcModule restore");
             }
             if (_character != null) _character.enabled = _humanoidBefore;
         }
@@ -529,7 +729,7 @@ namespace FiresCore.Npc.NpcMode
         private void LateUpdate()
         {
             if (!isStationedAsNpc || !_hasStationedPosition || _isInPlacementMode) return;
-            if (_possessionFreed || _returningFromPossession) return;   // 0.2.299/0.2.301: its driver's look, or the walk home
+            if (_possessionFreed || _returningFromPossession) return;   // its driver's look, or the walk home
 
             // Face nearest player - works WITH Valheim's Character rotation system
             // instead of fighting it. We just set m_lookDir and let Character.UpdateBodyRotation
@@ -1011,7 +1211,7 @@ namespace FiresCore.Npc.NpcMode
                     // Mirror of the stationed-state freeze (FreezeAll constraints) - clear
                     // constraints to release the lock when the NPC starts wandering again.
                     body.constraints = RigidbodyConstraints.None;
-                    body.isKinematic = false;
+                    FiresCore.Npc.KinematicSync.Set(body, false, "NpcModule unstick");
                     body.useGravity = true;
                 }
 
@@ -1064,7 +1264,7 @@ namespace FiresCore.Npc.NpcMode
                 if (body != null)
                 {
                     body.constraints = RigidbodyConstraints.FreezeRotation;
-                    body.isKinematic = false;
+                    FiresCore.Npc.KinematicSync.Set(body, false, "NpcModule unstick 2");
                     body.useGravity = true;
                 }
 
@@ -1155,7 +1355,7 @@ namespace FiresCore.Npc.NpcMode
                 }
 
                 // Place with left-click or Use key
-                if (UnityEngine.Input.GetMouseButtonDown(0) || UnityEngine.Input.GetKeyDown(KeyCode.E))
+                if (UnityEngine.Input.GetMouseButtonDown(0) || (!FiresCore.Input.FiresInputBlock.IsTyping() && UnityEngine.Input.GetKeyDown(KeyCode.E)))
                 {
                     SetGhostMode(false);
                     StationAtCurrentPosition();
@@ -1169,13 +1369,13 @@ namespace FiresCore.Npc.NpcMode
                     placing = false;
                 }
                 // Reset rotation with R key
-                else if (UnityEngine.Input.GetKeyDown(KeyCode.R))
+                else if ((!FiresCore.Input.FiresInputBlock.IsTyping() && UnityEngine.Input.GetKeyDown(KeyCode.R)))
                 {
                     placementRotation = 0f;
                     MessageHud.instance?.ShowMessage(MessageHud.MessageType.TopLeft, "Rotation reset");
                 }
                 // Face player with F key
-                else if (UnityEngine.Input.GetKeyDown(KeyCode.F))
+                else if ((!FiresCore.Input.FiresInputBlock.IsTyping() && UnityEngine.Input.GetKeyDown(KeyCode.F)))
                 {
                     Vector3 toPlayer = (player.transform.position - transform.position);
                     toPlayer.y = 0;
@@ -1429,7 +1629,7 @@ namespace FiresCore.Npc.NpcMode
 
             isStationedAsNpc = zdo.GetBool("npc_stationed", false);
             isStaticPlacement = zdo.GetBool("npc_static_placement", false);
-            _loadedAt = Time.time;   // 0.2.389: the ai-guard's pre-stage window starts here
+            _loadedAt = Time.time;   // the ai-guard's pre-stage window starts here
             allowIdleWandering = zdo.GetBool("npc_allow_idle_wander", false);
             suppressFacePlayer = zdo.GetBool("npc_no_face_player", false);
             allowNpcInteractionsWhileFollowing = zdo.GetBool("npc_allow_while_following", false);

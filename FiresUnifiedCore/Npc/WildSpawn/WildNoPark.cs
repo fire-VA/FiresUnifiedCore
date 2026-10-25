@@ -6,8 +6,8 @@ using UnityEngine;
 namespace FiresCore.Npc.WildSpawn
 {
     /// <summary>
-    /// Keeps wild companions from loitering on doorsteps (R73/R74: the same Dverger-faction wild companion parked at the
-    /// mausoleum crypt entrance round after round, blocked the class drill and fought the test bot). A wild companion's home
+    /// Keeps wild companions from loitering on doorsteps (a wild companion parked at a dungeon entrance blocks
+    /// players and fights them). A wild companion's home
     /// (its spawn point, or its squad leader's position for a follower) within <see cref="Radius"/> m of a dungeon entrance
     /// (a loaded Teleport) or a configured spot is pushed out along the away direction to that radius. The world keeps its
     /// wild companions; they just don't settle there. SERVER-synced config: [WildSpawn] No-park spots / No-park radius.
@@ -23,13 +23,14 @@ namespace FiresCore.Npc.WildSpawn
 
         internal static void Bind(ConfigFile config, FiresCore.Sync.ConfigSync configSync)
         {
-            s_spots = config.Bind("WildSpawn", "No-park spots", "-838,-404; -760,-440; -256,0",
-                "SERVER. x,z points (';'-separated) wild companions may not make their home near (test spots, dungeon doors that aren't Teleports). Dungeon entrances (Teleports) always count.");
+            // Default is empty
+            s_spots = config.Bind("WildSpawn", "No-park spots", "",
+                "SERVER. x,z points (';'-separated) wild companions may not make their home near (e.g. dungeon doors that aren't Teleports). Dungeon entrances (Teleports) always count.");
             s_radius = config.Bind("WildSpawn", "No-park radius", 30f,
                 new ConfigDescription("SERVER. How far (m) a wild companion's home is kept from each no-park place.", new AcceptableValueRange<float>(0f, 200f)));
             configSync?.AddConfigEntry(s_spots);
             configSync?.AddConfigEntry(s_radius);
-            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.COMP, true, s_spots, s_radius);   // 0.2.359
+            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.COMP, true, s_spots, s_radius);
         }
 
         internal static float Radius => s_radius != null ? s_radius.Value : 30f;

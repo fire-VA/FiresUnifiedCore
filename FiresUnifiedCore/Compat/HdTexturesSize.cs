@@ -10,13 +10,13 @@ namespace FiresCore.Compat
 {
     internal enum HdTextureSize { Full, Half, Quarter }
 
-    // Fire (16:5x popup: "Add Full/Half/Quarter, test Half"). HDValheimTextures' ~3,000 textures are 18.7 GB, more than a
-    // 16 GB card holds (R36: 18.11 GB of textures current), so the driver backs the rest with system memory. HD has no size
+    // Full/Half/Quarter texture size. HDValheimTextures' ~3,000 textures are 18.7 GB, more than a
+    // 16 GB card holds (18.11 GB of textures were measured resident), so the driver backs the rest with system memory. HD has no size
     // option, and its textures ignore Unity's mipmap limit (created with a default MipmapLimitDescriptor, which can't be
     // switched once they're non-readable). At Half or Quarter the spread load builds each bundle texture itself from the
     // entry's stored mip chain minus its top one or two levels: a quarter or a sixteenth of the memory, and of the disk read.
-    // At Full nothing here runs and HD's own loader does every texture, exactly as before. Half is the default (Fire, 18:1x
-    // popup, after R38 Half: 27 s menu load vs 60 s, 24.5 GB private in world vs 37; R40 Full paged hard on the 31 GB rig).
+    // At Full nothing here runs and HD's own loader does every texture, exactly as before. Half is the default (measured
+    // at Half: 27 s menu load vs 60 s, 24.5 GB private in world vs 37; Full paged hard on a 31 GB machine).
     //
     // Written from the data, not from HD's code: an entry holds Unity's raw DXT5 chain for a Width x Height texture (every
     // level, largest first, each level's side halved and clamped at 1, stored in 4x4 blocks of 16 bytes). Its colour space is
@@ -45,7 +45,7 @@ namespace FiresCore.Compat
         internal static void Bind(ConfigFile config)
         {
             Size = config.Bind(Section, Key, HdTextureSize.Half, Description);
-            // Without HDValheimTextures the key leaves the config (0.2.359).
+            // Without HDValheimTextures the key leaves the config.
             FiresCore.Config.OwnerGatedConfig.Gate(Size, FiresCore.Config.OwnerGatedConfig.Owners.HD, synced: false);
         }
 

@@ -15,7 +15,7 @@ namespace FiresCore.Combat
     /// Dormant: Core ships it off; a mod turns it on with Enable (FiresRPGClasses, the tests). The server's state decides for
     /// everyone (a synced value), and a server admin can force it on or off. Patches attach the first time it turns on and stay.
     ///
-    /// Fire's rule (2026-09-28): a HEAD hit is scaled before armour (the attacker scales the raw hit); every other part after
+    /// Rule: a HEAD hit is scaled before armour (the attacker scales the raw hit); every other part after
     /// armour (the victim's owner scales vanilla's armoured damage). The part travels as FC_HitPart, sent to the victim's owner
     /// ahead of vanilla's RPC_Damage on the same route, matched to the hit by victim, attacker and point, and applied only to that
     /// same HitData object. Design and review: Tools\LOCATIONAL_HITS.md.
@@ -35,7 +35,7 @@ namespace FiresCore.Combat
         private const char ValueSeparator = '=';
         private const string ForcedOwner = "server admin (ForceOn)";
 
-        // Fire's "Moderate" table (2026-09-28): head 1.5, neck/chest 1.1, torso 1.0, arms 0.8, legs 0.7.
+        // The "Moderate" table: head 1.5, neck/chest 1.1, torso 1.0, arms 0.8, legs 0.7.
         public static readonly IReadOnlyDictionary<BodyPart, float> DefaultMultipliers = new Dictionary<BodyPart, float>
         {
             [BodyPart.Head] = 1.5f,
@@ -89,11 +89,11 @@ namespace FiresCore.Combat
         /// <summary>
         /// Raised on the VICTIM's owner when the shooter's part for a hit arrives and is matched to that hit (RPC_Damage): victim,
         /// attacker (null if not loaded here), part, point, multiplier. The one truth for victim-side consumers (feedback, armour wear
-        /// by part, UI, tests); never re-locate a hit on the victim ([fgn], R71).
+        /// by part, UI, tests); never re-locate a hit on the victim.
         /// </summary>
         public static event Action<Character, Character, BodyPart, Vector3, float> Received;
 
-        // For the log only: never GetHoverName (0.2.215, R86 dedi: a tameable's GetHoverName -> Tameable.GetName threw a NullReference
+        // For the log only: never GetHoverName (on a dedicated server a tameable's GetHoverName -> Tameable.GetName threw a NullReference
         // inside RPC_Damage and the hit was lost). The prefab's name token, or the player's name.
         private static string NameOf(Character c)
         {
@@ -111,7 +111,7 @@ namespace FiresCore.Combat
                 + "Because vanilla armour cuts small hits harder, a head hit's x1.5 before armour lands as MORE than x1.5 through armour "
                 + "(about x2.25 when the hit and the armour are close); the other parts land exactly as listed.");
             s_verbose = config.Bind("Combat", "Locational Damage Log Every Hit", false, "One log line per located hit (testing).");
-            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.LocationalCombat, false, s_override, s_verbose);   // 0.2.387: RPGClasses only (neither key is a ConfigSync entry)
+            FiresCore.Config.CoreFeatures.GateConfig(FiresCore.Config.CoreFeatures.LocationalCombat, false, s_override, s_verbose);   // RPGClasses only (neither key is a ConfigSync entry)
             s_override.SettingChanged += (_, __) => Recompute();
             HitLocator.RegisterCommand();
         }
@@ -253,19 +253,19 @@ namespace FiresCore.Combat
             s_pending.Add(pending);
         }
 
-        // Fire (popups 2026-09-28): every hit plays one of the archery target's bullseyes by body part (tiers below), with
+        // Every hit plays one of the archery target's bullseyes by body part (tiers below), with
         // its hit sound, at the hit point, only while locational damage is on, for everyone near the hit. The shooter plays it at
         // once and sends one small routed RPC; every other peer within FeedbackRange of the hit plays it too. Found through the
-        // target piece itself ([fgn], the 1.0 rip): effect prefabs aren't networked prefabs, so ZNetScene can't find them by name.
+        // target piece itself: effect prefabs aren't networked prefabs, so ZNetScene can't find them by name.
         /// <summary>This peer played a hit's feedback: the part, the point, and true when this peer is the shooter (else a nearby
         /// player). Raised only while locational damage is active and never on a headless peer.</summary>
         public static event Action<BodyPart, Vector3, bool> HitFeedbackPlayed;
 
-        // FC_HitFeedback2 (0.2.201): a package (part, point, shooter) instead of 0.2.200's (int, Vector3), under a new name so a
-        // peer still on 0.2.200 never misreads it.
+        // FC_HitFeedback2: a package (part, point, shooter) instead of the older (int, Vector3), under a new name so a
+        // peer on an older Core never misreads it.
         private const string HitFeedbackRpc = "FC_HitFeedback2";
         private const float FeedbackRange = 50f;
-        // Fire (2026-09-29 21:0x, message + popup): the tier reads at a glance - HEAD plays the target's FULL bullseye, CHEST and
+        // The tier reads at a glance - HEAD plays the target's FULL bullseye, CHEST and
         // NECK the DOUBLE one (the multicoloured burst), every other part the plain bullseye. Each one faces the shooter.
         private enum Tier { Plain, Double, Full }
         private static readonly string[] TierNames = { "plain bullseye", "double bullseye", "full bullseye" };
@@ -345,7 +345,7 @@ namespace FiresCore.Combat
                 if (archery.m_projectileHitEffects != null && archery.m_projectileHitEffects.Count > 0)
                     s_hitSound = archery.m_projectileHitEffects[0].m_effect;
             }
-            // Fire's popups (2026-09-29 18:5x, 20:4x, 21:0x): hit sparks only for a tier whose list has no renderer (an empty or
+            // Hit sparks only for a tier whose list has no renderer (an empty or
             // audio-only list would otherwise show nothing); the perfect-block ring on head hits stays unless the head burst
             // carries its own sound.
             var sparksFor = new List<string>();
@@ -454,7 +454,7 @@ namespace FiresCore.Combat
                 {
                     float before = hit.GetTotalDamage();
                     hit.m_damage.Modify(multiplier);
-                    // Always on (Fire: "prove they are actually applying the damage multipliers").
+                    // Always on, so the applied multipliers are visible in the log.
                     FiresLogger.LogInfo($"[LocationalDamage] applied Head x{multiplier:0.##} before armour on {NameOf(victim)}: {before:0.0} -> {hit.GetTotalDamage():0.0}");
                 }
                 EnsureRpc();

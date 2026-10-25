@@ -76,10 +76,15 @@ namespace FiresCore.Sync
 
         private static long packageCounter = 0;
 
+        // The assembly that made this sync, so a duplicate RPC name can name both owners.
+        internal readonly string Owner;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         public ConfigSync(string name)
         {
             Name = name;
             DisplayName = name;
+            try { Owner = Assembly.GetCallingAssembly().GetName().Name; } catch { Owner = "?"; }
             configSyncs.Add(this);
         }
 
@@ -139,7 +144,7 @@ namespace FiresCore.Sync
             return source;
         }
 
-        // The server builds it at world load, so the first joiner is served from the cache too (R24: 31.5 ms for 13 syncs).
+        // The server builds it at world load, so the first joiner is served from the cache too (31.5 ms for 13 syncs otherwise).
         internal JoinPackageSource PrebuildJoinPackage()
         {
             JoinPackage(out JoinPackageSource source);
@@ -147,7 +152,7 @@ namespace FiresCore.Sync
         }
 
         // Every joining peer gets the same full package until a synced value changes, so it is built and compressed once
-        // per change instead of at every join (20 ms of R20's join frame across the Fires mods). Only when every synced
+        // per change instead of at every join (about 20 ms of a join frame across the Fires mods). Only when every synced
         // value is immutable (a string or a value type): a list or dictionary can change in place without raising
         // SettingChanged or ValueChanged, so those syncs keep building at each join, exactly as before.
         private ZPackage JoinPackage(out JoinPackageSource source)
@@ -283,6 +288,8 @@ namespace FiresCore.Sync
                 SendAllValuesToRequestingPeer(sender);
                 return;
             }
+            // a client takes config values from the server only, never from another client
+            if (!isServer && (ZRoutedRpc.instance == null || sender != ZRoutedRpc.instance.GetServerPeerID())) return;
 
             HandleConfigSyncRPC(sender, package, true);
         }
@@ -291,7 +298,7 @@ namespace FiresCore.Sync
         {
             try
             {
-                if (!IsCallerAllowedWhenLocked()) return false;
+                if (!IsCallerAllowedWhenLocked(sender)) return false;
 
                 ExpireStaleFragmentCacheEntries();
 
@@ -319,12 +326,17 @@ namespace FiresCore.Sync
             }
         }
 
-        private bool IsCallerAllowedWhenLocked()
+        // Locked: only admins change values. Fails closed: the listen-host's own local peer is allowed, every other caller must be
+        // an admin by its connection's host name (the sender id is the real connection, RoutedSenderGuard rewrites it).
+        private bool IsCallerAllowedWhenLocked(long sender)
         {
             if (!isServer || !IsLocked) return true;
-
-            string hostName = SnatchCurrentlyHandlingRPC.currentRpc?.GetSocket()?.GetHostName();
-            return hostName == null || AdminSyncing.AdminListContains(hostName);
+            if (sender == 0L || sender == ZDOMan.GetSessionID()) return true;   // the host itself
+            ZNetPeer peer = ZNet.instance != null ? ZNet.instance.GetPeer(sender) : null;
+            string hostName = peer?.m_socket?.GetHostName();
+            bool ok = hostName != null && AdminSyncing.AdminListContains(hostName);
+            if (!ok) FiresLogger.LogWarning($"[ConfigSync] locked config change from peer {sender} ({hostName ?? "unknown"}) refused: not an admin");
+            return ok;
         }
 
         private void ExpireStaleFragmentCacheEntries()
@@ -351,6 +363,12 @@ namespace FiresCore.Sync
 
             int fragmentIndex = package.ReadInt();
             int fragmentCount = package.ReadInt();
+            // bounded: a fragment count / index out of range, or too many open reassemblies, drops the package
+            if (fragmentCount <= 0 || fragmentCount > MaxFragments || fragmentIndex < 0 || fragmentIndex >= fragmentCount || configValueCache.Count > MaxOpenReassemblies)
+            {
+                configValueCache.Remove(cacheKey);
+                return false;
+            }
             fragments[fragmentIndex] = package.ReadByteArray();
 
             if (fragments.Count < fragmentCount) return false;
@@ -361,12 +379,22 @@ namespace FiresCore.Sync
             return true;
         }
 
+        private const int MaxFragments = 1024, MaxOpenReassemblies = 64, MaxDecompressedBytes = 64 * 1024 * 1024;
+        private const int MaxConfigEntries = 65536, MaxCollectionCount = 65536;
+
         private static void DecompressPackage(ref ZPackage package, out byte flags)
         {
             using var input = new MemoryStream(package.ReadByteArray());
             using var output = new MemoryStream();
             using (var deflate = new DeflateStream(input, CompressionMode.Decompress))
-                deflate.CopyTo(output);
+            {
+                var buffer = new byte[81920]; int n;
+                while ((n = deflate.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    output.Write(buffer, 0, n);
+                    if (output.Length > MaxDecompressedBytes) throw new InvalidDataException("config sync package exceeds the size cap");
+                }
+            }
 
             package = new ZPackage(output.ToArray());
             flags = package.ReadByte();
@@ -489,12 +517,19 @@ namespace FiresCore.Sync
                 c => c);
 
             int count = package.ReadInt();
+            if (count < 0 || count > MaxConfigEntries) { FiresLogger.LogWarning($"Got {count} config entries, which is out of range; abort reading of received configs"); return new ParsedConfigs(); }
             for (int i = 0; i < count; i++)
             {
                 string section = package.ReadString();
                 string key = package.ReadString();
                 string typeName = package.ReadString();
 
+                // Only the type this entry was registered with is ever resolved: a name from the wire never picks a type.
+                if (typeName != "" && typeName != ExpectedWireType(configs, section, key))
+                {
+                    FiresLogger.LogWarning($"Got type {typeName} for {key} in section {section}, which does not match its registered type; abort reading of received configs");
+                    return new ParsedConfigs();
+                }
                 var type = Type.GetType(typeName);
                 if (typeName != "" && type == null)
                 {
@@ -525,6 +560,16 @@ namespace FiresCore.Sync
             }
 
             return parsed;
+        }
+
+        private string ExpectedWireType(Dictionary<string, OwnConfigEntryBase> configs, string section, string key)
+        {
+            if (section == InternalSection)
+            {
+                var customValue = allCustomValues.FirstOrDefault(v => v.Identifier == key);
+                return customValue == null ? null : GetZPackageTypeString(CustomValueWireType(customValue.Type));
+            }
+            return configs.TryGetValue($"{section}*{key}", out var config) ? GetZPackageTypeString(configType(config.BaseConfig)) : null;
         }
 
         private void HandleInternalEntry(ParsedConfigs parsed, string key, string typeName, object value)
@@ -660,6 +705,7 @@ namespace FiresCore.Sync
         private static object ReadDictionaryFromPackage(ZPackage package, Type dictType)
         {
             int count = package.ReadInt();
+            if (count < 0 || count > MaxCollectionCount) throw new InvalidDataException($"config sync dictionary of {count} entries is out of range");
             var pairType = typeof(KeyValuePair<,>).MakeGenericType(dictType.GenericTypeArguments);
             var instance = (IDictionary)Activator.CreateInstance(dictType);
 
@@ -677,6 +723,7 @@ namespace FiresCore.Sync
         private static object ReadCollectionFromPackage(ZPackage package, Type type, Type collectionType)
         {
             int count = package.ReadInt();
+            if (count < 0 || count > MaxCollectionCount) throw new InvalidDataException($"config sync collection of {count} entries is out of range");
             var instance = Activator.CreateInstance(type);
             var addMethod = collectionType.GetMethod("Add");
             for (int i = 0; i < count; i++)
@@ -700,7 +747,7 @@ namespace FiresCore.Sync
             IEnumerable<PackageEntry> packageEntries = null,
             bool partial = true)
         {
-            var configList = configs?.Where(c => configData(c).SynchronizedConfig).ToList()
+            var configList = configs?.Where(c => configData(c)?.SynchronizedConfig == true /* 0.2.698: an entry never added to sync has no data (was an NRE on every join) */).ToList()
                 ?? new List<ConfigEntryBase>();
             var customList = customValues?.ToList() ?? new List<CustomSyncedValueBase>();
             var entryList = packageEntries?.ToList() ?? new List<PackageEntry>();
@@ -986,7 +1033,9 @@ namespace FiresCore.Sync
     public class ConfigurationManagerAttributes
     {
         public bool? ReadOnly;
-        public bool? IsAdvanced;   // 0.2.359: OwnerGatedConfig hides absent mods' synced keys behind Show advanced
+        public bool? IsAdvanced;   // OwnerGatedConfig hides absent mods' synced keys behind Show advanced
+        public int? Order;          // Display order within a section (higher first), read by configuration managers
+        public bool? Browsable;     // False hides the key from configuration managers
         public Action<ConfigEntryBase> CustomDrawer;
     }
 
@@ -1028,17 +1077,34 @@ namespace FiresCore.Sync
         {
             ConfigSync.isServer = __instance.IsServer();
 
-            foreach (var configSync in ConfigSync.configSyncs)
+            // Each sync is
+            // registered on its own; a name that is already taken is skipped with one warning naming both owners, and the loop
+            // always finishes. One bad sync must never break ZNet.Awake.
+            var registered = new Dictionary<string, ConfigSync>(StringComparer.Ordinal);
+            foreach (var configSync in ConfigSync.configSyncs.ToList())
             {
-                ZRoutedRpc.instance.Register<ZPackage>(
-                    configSync.Name + " ConfigSync",
-                    configSync.RPC_FromOtherClientConfigSync);
-
-                if (ConfigSync.isServer)
-                    FiresLogger.LogInfo($"Registered '{configSync.Name} ConfigSync' RPC");
+                string rpcName = configSync.Name + " ConfigSync";
+                if (registered.TryGetValue(rpcName, out ConfigSync first))
+                {
+                    FiresLogger.LogWarning($"[ConfigSync] '{rpcName}' is registered twice: by {first.Owner} and by {configSync.Owner}; the second is skipped (its settings don't sync). Give one of them its own name.");
+                    continue;
+                }
+                try
+                {
+                    ZRoutedRpc.instance.Register<ZPackage>(rpcName, configSync.RPC_FromOtherClientConfigSync);
+                    registered[rpcName] = configSync;
+                    if (ConfigSync.isServer)
+                        FiresLogger.LogInfo($"Registered '{rpcName}' RPC");
+                }
+                catch (Exception ex)
+                {
+                    FiresLogger.LogWarning($"[ConfigSync] '{rpcName}' (from {configSync.Owner}) could not be registered: {ex.GetType().Name}: {ex.Message} " +
+                        $"(another mod already uses this RPC name or its hash {rpcName.GetStableHashCode()}); skipped, the rest continue.");
+                }
             }
 
-            if (ConfigSync.isServer) SendServerConfigsToJoiningPeer.PrebuildAll();
+            try { if (ConfigSync.isServer) SendServerConfigsToJoiningPeer.PrebuildAll(); }
+            catch (Exception ex) { FiresLogger.LogWarning($"[ConfigSync] PrebuildAll failed: {ex.GetType().Name}: {ex.Message}"); }
         }
     }
 
@@ -1050,10 +1116,18 @@ namespace FiresCore.Sync
         {
             if (__instance.IsServer()) return;
 
-            foreach (var configSync in ConfigSync.configSyncs)
-                peer.m_rpc.Register<ZPackage>(
-                    configSync.Name + " ConfigSync",
-                    configSync.RPC_FromServerConfigSync);
+            // Same guard on the client side (a duplicate name must not break the connection handshake).
+            var registered = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var configSync in ConfigSync.configSyncs.ToList())
+            {
+                string rpcName = configSync.Name + " ConfigSync";
+                if (!registered.Add(rpcName)) continue;   // warned once in RegisterRPCPatch
+                try { peer.m_rpc.Register<ZPackage>(rpcName, configSync.RPC_FromServerConfigSync); }
+                catch (Exception ex)
+                {
+                    FiresLogger.LogWarning($"[ConfigSync] client '{rpcName}' (from {configSync.Owner}) could not be registered: {ex.GetType().Name}: {ex.Message}; skipped.");
+                }
+            }
         }
     }
 

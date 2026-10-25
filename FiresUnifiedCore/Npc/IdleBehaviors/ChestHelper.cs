@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using FiresCore.Items;
 using System.Collections.Generic;
 using System.Linq;
@@ -187,7 +187,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         /// <summary>
         /// Why <see cref="OwnerMayWrite"/> refuses (null when it allows): "not networked", "open (in use)", "private to its maker
-        /// &lt;id&gt;", "ward". For always-on failure lines (R59 deposit: the test chest stayed empty with no line saying why).
+        /// &lt;id&gt;", "ward". For always-on failure lines.
         /// </summary>
         public static string WhyNotWritable(Container chest, long ownerPlayerId)
         {
@@ -263,7 +263,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (amount <= 0 || !destination.CanAddItem(item, amount)) return 0;
             var copy = ItemDataHelper.CloneItem(item, amount);
             int copied = copy.m_stack;
-            // 0.2.364 (item loss): count what really landed instead of trusting AddItem's bool.
+            // Item-loss fix: count what really landed instead of trusting AddItem's bool.
             string name = item.m_shared.m_name;
             int before = destination.CountItems(name, -1, false);
             destination.AddItem(copy);
@@ -271,7 +271,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return Mathf.Clamp(landed, 0, copied);
         }
 
-        /// <summary>0.2.364: takes <paramref name="drop"/> (any loose drop, player drops included) into a companion bag as a
+        /// <summary>Takes <paramref name="drop"/> (any loose drop, player drops included) into a companion bag as a
         /// copy; the world item is destroyed only when all of it landed, a partial add shrinks the drop, nothing landed leaves
         /// it untouched. Returns the units taken. The caller must own the drop (CanPickup).</summary>
         public static int TakeDropVerified(ItemDrop drop, Inventory storage, string who)
@@ -280,6 +280,7 @@ namespace FiresCore.Npc.IdleBehaviors
             drop.Load();
             var data = drop.m_itemData;
             int stack = data.m_stack;
+            if (CompanionPickupGate.Blocked(drop.transform.position, 0L, who, data.m_shared.m_name)) return 0;   // Territory no-pickup zones
             int taken = AddCopy(storage, data, stack);
             if (taken <= 0)
             {
@@ -309,7 +310,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         /// <summary>
         /// Moves up to <paramref name="amount"/> units between inventories, removing from the source exactly what arrived.
-        /// 0.2.322 (Fire's vanilla-method rule): a whole stack goes through vanilla Inventory.MoveItemToThis(from, item), the
+        /// A whole stack goes through vanilla Inventory.MoveItemToThis(from, item), the
         /// move InventoryGui makes for a stack dropped on a grid (AddItem + RemoveItem, both sides Changed). Part of a stack
         /// stays AddCopy + RemoveItem(item, n), also vanilla calls. The slot overload MoveItemToThis(from, item, n, x, y) needs
         /// non-public slot finders, and its AddItem only fires the destination's Changed when a local player exists, so a
@@ -635,7 +636,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 if (item == null) continue;
 
-                // 0.2.361: a companion bag deposits from its STORAGE rows only (never worn gear or pouch stacks)
+                // A companion bag deposits from its STORAGE rows only (never worn gear or pouch stacks)
                 if (companionBag && !CompanionGridLayout.IsStorage(item.m_gridPos)) continue;
                 if (item.m_equipped) continue;
 
@@ -655,7 +656,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     itemType == ItemDrop.ItemData.ItemType.Shield ||
                     itemType == ItemDrop.ItemData.ItemType.Bow ||
                     itemType == ItemDrop.ItemData.ItemType.Tool ||
-                    // Ammo is kit, not loot (0.2.217, R87 deposit: the fighter put its own ArrowFire x47 in the chest; ChoreBrain
+                    // Ammo is kit, not loot (otherwise a fighter deposits its own arrows; ChoreBrain
                     // deposits through this overload, which never saw the companion's bow check).
                     itemType == ItemDrop.ItemData.ItemType.Ammo)
                 {
@@ -686,7 +687,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         /// <summary>
         /// True for ammo that a bow or crossbow the companion carries fires (same m_ammoType), equipped or in its bag: the fight
-        /// swaps to the bow at range (CombatAdvisor), so its arrows stay (R64 companion_test: the fighter stashed its 24 arrows).
+        /// swaps to the bow at range (CombatAdvisor), so its arrows stay.
         /// </summary>
         public static bool IsAmmoForEquippedWeapon(CompanionInventory companionInventory, ItemDrop.ItemData item)
         {
@@ -771,13 +772,10 @@ namespace FiresCore.Npc.IdleBehaviors
             if (radius < 0) radius = CompanionSettings.ChestSearchRadius;
             
             // Use ContainerRegistry for faster lookups if available
-            if (UseContainerRegistry && ContainerRegistry.IsInitialized)
-            {
-                return ContainerRegistry.GetNearby(position, radius);
-            }
-            
-            // Fallback to Physics.OverlapSphere
-            return FindNearbyChestsPhysics(position, radius);
+            // Auto-locked chests are never used by companions (haul, chores, deposit, gear-up)
+            List<Container> found = UseContainerRegistry && ContainerRegistry.IsInitialized ? ContainerRegistry.GetNearby(position, radius) : FindNearbyChestsPhysics(position, radius);
+            found.RemoveAll(c => FiresCore.Storage.ChestTags.SkipLocked(c, "companions"));
+            return found;
         }
         
         /// <summary>
@@ -879,7 +877,7 @@ namespace FiresCore.Npc.IdleBehaviors
             string filter = itemFilter?.ToLowerInvariant();
             int totalDeposited = 0;
 
-            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(sourceInventory))) // 0.2.362: storage rows only
+            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(sourceInventory))) // Storage rows only
             {
                 if (item == null) continue;
 

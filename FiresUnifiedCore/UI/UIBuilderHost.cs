@@ -63,7 +63,7 @@ namespace FiresCore.UI
             catch { return null; }
         }
 
-        // ── More than one mod (0.2.330, [classes-ui]) ──
+        // ── More than one mod ──
         // The fields above are one global, so the last mod to set them won: FiresCompanions loads after FiresRPGmaker and
         // overwrote its bundle, and the RPGmaker globe HUD's prefab was never found again. The fields stay (mods built
         // against them write them directly), but every value seen is remembered, and the SDK looks across all of them:
@@ -90,7 +90,7 @@ namespace FiresCore.UI
             if (MarkFileAdminSynced != null && !_adminSyncMarkers.Contains(MarkFileAdminSynced)) _adminSyncMarkers.Add(MarkFileAdminSynced);
         }
 
-        /// <summary>A bundle found holding a mod's UI assets that no mod registered (a mod built before 0.2.330).</summary>
+        /// <summary>A bundle found holding a mod's UI assets that no mod registered (a mod built before Register existed).</summary>
         internal static void RememberBundle(AssetBundle bundle)
         {
             if (bundle != null && !_bundles.Contains(bundle)) _bundles.Add(bundle);

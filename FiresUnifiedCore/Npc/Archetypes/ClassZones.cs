@@ -13,7 +13,7 @@ namespace FiresCore.Npc.Archetypes
     }
 
     /// <summary>
-    /// Lingering areas where a class skill was aimed (Fire, popup 2026-09-28 21:3x: "real lingering zones"): banner, beacon,
+    /// Lingering areas where a class skill was aimed: banner, beacon,
     /// smoke, clouds, storms, wells, totems, traps. A zone runs on the CASTER's peer and, every tick, hands each character
     /// inside it that ClassTargeting allows to the skill's callback. The callback does its work through the owner-safe
     /// paths (Character.Damage / AbilityHeals.Apply / AbilityRPCManager.ApplySingleEffect), so each target is changed on its

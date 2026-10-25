@@ -22,8 +22,8 @@ namespace FiresCore.Npc.AI
     }
 
     /// <summary>
-    /// What a body carries and what it puts away, one rule (Fire, 2026-09-29: "put things away in a chest when it has too much
-    /// weight or drops things on the ground that it doesn't need"; BASE_BUILDING.md §7). Always kept: equipped items, quest items,
+    /// What a body carries and what it puts away, one rule (store in a chest when too heavy,
+    /// drop what isn't needed). Always kept: equipped items, quest items,
     /// ammo for a carried bow or crossbow, weapons / armour / tools / torches (the keep types), food, and up to keep[prefab] of
     /// anything the caller still needs (the planner's counts for the run). At <see cref="StoreAt"/> of max carry
     /// (<see cref="TripAheadAt"/> before a trip, or the caller's storeAt, 0 on a base visit), always when encumbered: junk (no
@@ -57,7 +57,7 @@ namespace FiresCore.Npc.AI
             why = null;
             if (item?.m_shared == null) { why = "no item"; return true; }
             if (item.m_equipped) { why = "equipped"; return true; }
-            // 0.2.361: a companion bag's pouch, equipment and spare cells are never hauled; only its STORAGE rows are.
+            // A companion bag's pouch, equipment and spare cells are never hauled; only its STORAGE rows are.
             if (CompanionGridLayout.IsCompanionBag(inventory) && !CompanionGridLayout.IsStorage(item.m_gridPos)) { why = "companion pouch/equipment cell"; return true; }
             if (item.m_shared.m_questItem) { why = "quest item"; return true; }
             if (IsAmmoForCarriedWeapon(inventory, item)) { why = "ammo for a carried bow/crossbow"; return true; }
@@ -184,8 +184,8 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// Whether to pick up <paramref name="amount"/> of <paramref name="item"/> (Fire, R74: "understand inventory management and
-        /// weight management"). Fits under the max carry weight: yes. Over it: only an item the caller still needs (in
+        /// Whether to pick up <paramref name="amount"/> of <paramref name="item"/>
+        /// (inventory and weight management). Fits under the max carry weight: yes. Over it: only an item the caller still needs (in
         /// <paramref name="keep"/>), and then <paramref name="makeRoom"/> says to store or drop first (<see cref="Plan"/> with
         /// storeAt 0); anything else is left lying. <paramref name="maxWeight"/> &lt;= 0 reads a player's own.
         /// </summary>

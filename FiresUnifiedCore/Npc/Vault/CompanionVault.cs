@@ -405,6 +405,7 @@ namespace FiresCore.Npc.Vault
                 saveData.BeardColorR = beardColor.r;
                 saveData.BeardColorG = beardColor.g;
                 saveData.BeardColorB = beardColor.b;
+                saveData.FccModel = zdo.GetString("fcc_model", "");   // FCC model
             }
         }
         
@@ -615,7 +616,7 @@ namespace FiresCore.Npc.Vault
                 }
             }
             
-            // 0.2.362: legacy vault equipment placed synchronously right after the bag load (idempotent)
+            // legacy vault equipment placed synchronously right after the bag load (idempotent)
             inventory.CommitLegacyVaultEquipment("vault restore");
 
             // Apply visual equipment

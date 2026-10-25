@@ -6,7 +6,7 @@ namespace FiresCore.Possession
 {
     /// <summary>
     /// [Possession] config, the general "can this be possessed" rules, the crosshair pick and the input guard.
-    /// Admin possession is OFF by default (Fire 10-07); class grants don't need it on.
+    /// Admin possession is OFF by default; class grants don't need it on.
     /// </summary>
     internal static class PossessionRules
     {
@@ -29,7 +29,7 @@ namespace FiresCore.Possession
             AdminEnabled = config.Bind("Possession", "Enable admin possession", false,
                 "SERVER. Admins can take control of the creature under the crosshair with the Possess key. The body stays where it is, untouchable. "
                 + "Class skills (Druid, Necromancer) possess through their own rules and don't need this on.");
-            // 0.2.363: a Core feature beside "Enable admin possession"; never owner-gated (stays visible without Valcast).
+            // A Core feature beside "Enable admin possession"; never owner-gated (stays visible without Valcast).
             AllowRavens = config.Bind("Possession", "Allow raven possession", true,
                 "SERVER. With admin possession on, the Possess key on vanilla's tutorial ravens (Hugin, Munin) takes control of a flying "
                 + "raven body at the perch; the vanilla raven is hidden on your client and comes back to its perch on release.");
@@ -48,14 +48,14 @@ namespace FiresCore.Possession
             configSync?.AddConfigEntry(AdminMaxRange);
             configSync?.AddConfigEntry(AllowBosses);
             configSync?.AddConfigEntry(AllowRavens);
-            // 0.2.359: Core's own admin possession uses the Possess / Release keys, the admin range and the boss rule, so those
+            // Core's own admin possession uses the Possess / Release keys, the admin range and the boss rule, so those
             // stay with "Enable admin possession"; only Valcast's attack-cycle modifier leaves the config without Valcast.
             FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.VALCAST, false, CycleModifier);
             KeyTaps.ClaimSingleTaps("possession", () => PossessKey.Value, ClaimsKey);
         }
 
         /// <summary>
-        /// 0.2.321 (Fire 10-07): admin possession owns the possess key's single taps while it can act: on (server-synced) and
+        /// Admin possession owns the possess key's single taps while it can act: on (server-synced) and
         /// this player is an admin. The guild screen's G then opens on a double tap; otherwise single G stays the guild key.
         /// </summary>
         internal static bool ClaimsKey() => AdminEnabled != null && AdminEnabled.Value && PossessKey != null && FiresCore.Sync.AdminSyncing.IsLocalAdmin();
@@ -82,7 +82,7 @@ namespace FiresCore.Possession
         internal static bool Pressed(ConfigEntry<KeyboardShortcut> key) => key != null && KeysOpen() && Chord.IsDown(key.Value);
 
         /// <summary>
-        /// The creature the admin aims at, within <paramref name="range"/> of the player. 0.2.322: Fire's hand test showed "refused:
+        /// The creature the admin aims at, within <paramref name="range"/> of the player. Aiming at a Troll used to report "refused:
         /// nothing there" on every tap while aiming at a Troll. The old ray started at the third-person camera (about 8 m behind
         /// the player) and gave up at the first non-creature collider, including the geometry between the camera and the player.
         /// Now, in order:

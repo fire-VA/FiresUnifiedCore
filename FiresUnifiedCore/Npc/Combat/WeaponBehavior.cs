@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 using HarmonyLib;
@@ -51,6 +51,9 @@ namespace FiresCore.Npc.Combat
         // COMBO SYSTEM - vanilla Attack.Start picks the chain level; this mirrors its choice for decisions.
         // Attack.cs:243 chains only when the previous attack ended at most this long ago.
         private const float VanillaChainWindow = 0.2f;
+        // FiresTestBot's rhythm (Duel.cs DuelSwingGapSeconds 0.3) and a combo step well inside vanilla's 0.2 s window
+        private const float SwingGapSeconds = 0.3f, ComboGapSeconds = 0.05f;
+        protected float _attackEndedAt = -999f;
         private static readonly AccessTools.FieldRef<Attack, int> StartedChainLevelRef =
             AccessTools.FieldRefAccess<Attack, int>("m_currentAttackCainLevel");
         protected int _maxChainLevel;
@@ -183,11 +186,11 @@ ConfigureAI();
                 _lastLoggedStaminaBlock = false;
             }
             
-            // During active combo, use minimal cooldown to allow chaining
-            // Vanilla Attack system requires < 0.2s for chain, but we check at animation end
-            float cooldownToUse = _comboActive ? 0.1f : _effectiveCooldown;
-            float timeSinceAttack = Time.time - _lastAttackTime;
-            if (timeSinceAttack < cooldownToUse) return false;
+            // During active combo, use minimal cooldown to allow chaining.
+            // The gap is measured from the REAL end of the last swing, like FiresTestBot (0.3 s), and 0.05 s while the combo can
+            // go on (vanilla chains only inside its 0.2 s window).
+            float sinceEnd = Time.time - _attackEndedAt;
+            if (sinceEnd < (_comboActive ? ComboGapSeconds : SwingGapSeconds)) return false;
       
             if (Context.CompanionAI == null) return false;
             if (Context.Character != null && (Context.Character.IsStaggering() || !Context.Character.CanMove())) return false;
@@ -220,7 +223,7 @@ ConfigureAI();
                 }
                 
                 // Apply aggression modifier - reduces attack frequency in defensive stances
-                if (situation.AggressionModifier < 1f)
+                if (situation.AggressionModifier < 1f && !_comboActive)   // never mid-combo
                 {
                     // Random chance to skip attack based on aggression
                     if (Random.value > situation.AggressionModifier)
@@ -243,10 +246,32 @@ ConfigureAI();
             return weapon != null && weapon.HaveSecondaryAttack();
         }
 
+        // One Debug line per attack pick - which attack, and the facts behind it.
+        // The secondary cooldown is per character, stamped at the PICK, so an attack that fails to start or falls back, or a
+        // rebuilt behaviour, doesn't reset it to 0.
+        private static readonly System.Collections.Generic.Dictionary<int, float> s_secondaryPickedAt = new System.Collections.Generic.Dictionary<int, float>();
+        protected bool SecondaryOffCooldown => Time.time - Mathf.Max(_lastSecondaryTime, SecondaryPickedAt) >= _secondaryCooldown;
+        private float SecondaryPickedAt => Context.Character != null && s_secondaryPickedAt.TryGetValue(Context.Character.GetInstanceID(), out float t) ? t : -999f;
+
+        protected void LogAttackPick(Character target, bool secondary)
+        {
+            if (secondary && Context.Character != null) s_secondaryPickedAt[Context.Character.GetInstanceID()] = Time.time;
+            if (target == null) return;
+            try
+            {
+                var th = target.GetComponent<Humanoid>();
+                string cls = Context.ThreatAnalyzer != null ? Context.ThreatAnalyzer.GetThreatProfile(target).Classification.ToString() : "?";
+                string weapon = AttackWeapon?.m_shared?.m_name ?? "fists";
+                FiresCore.Logging.FiresLogger.LogDebug($"[AttackPick] {Context.Character?.m_name}: {(secondary ? (AttackWeapon == null ? "KICK (unarmed secondary)" : "secondary") : "primary")} with {weapon} on {target.m_name} " +
+                    $"(target staggered {target.IsStaggering()}, blocking {(th != null && th.IsBlocking())}, class {cls}, hp {target.GetHealthPercentage():P0}, secondary cooldown left {Mathf.Max(0f, _secondaryCooldown - (Time.time - Mathf.Max(_lastSecondaryTime, SecondaryPickedAt))):0.0} s)");
+            }
+            catch { }
+        }
+
         protected virtual bool ShouldUseSecondaryAttack(Character target)
         {
             if (!_hasSecondaryAttack) return false;
-            if (Time.time - _lastSecondaryTime < _secondaryCooldown) return false;
+            if (Time.time - Mathf.Max(_lastSecondaryTime, SecondaryPickedAt) < _secondaryCooldown) return false;   // also the per-character pick stamp
 
             // Use ThreatAnalyzer for smarter secondary attack decisions
             if (Context.ThreatAnalyzer != null)
@@ -292,7 +317,7 @@ ConfigureAI();
             var targetHumanoid = target.GetComponent<Humanoid>();
             if (targetHumanoid != null && targetHumanoid.IsBlocking())
             {
-                if (Random.value < 0.4f)
+                // A blocking target always gets the secondary (it breaks the guard).
                 {
                     if (CompanionCombat.VerboseLogging)
                         Debug.Log($"[{GetType().Name}] Using secondary attack - target blocking!");
@@ -398,7 +423,7 @@ ConfigureAI();
         protected virtual void UpdateComboState()
         {
             if (!_comboActive || _isAttacking || Context.Humanoid == null) return;
-            if (Context.Humanoid.GetTimeSinceLastAttack() <= VanillaChainWindow) return;
+            if (Time.time - _attackEndedAt <= VanillaChainWindow) return;   // our own end time (vanilla's timer never runs here)
 
             _comboActive = false;
             _attackChainLevel = 0;
@@ -494,7 +519,7 @@ ConfigureAI();
                 return false;
             }
 
-            // 0.2.365: an attack that throws its item (spear throw, bombs) needs the item still in the companion's bag; a
+            // An attack that throws its item (spear throw, bombs) needs the item still in the companion's bag; a
             // spear already out is not thrown again.
             if (attackTemplate.m_consumeItem && Context.Companion != null)
             {
@@ -519,7 +544,9 @@ ConfigureAI();
             // Humanoid.StartAttack's inputs (Humanoid.cs:199): the last attack started and the time since an attack
             // animation last ended; Attack.Start continues the chain from them (Attack.cs:239-245).
             Attack previousAttack = _previousAttackInstance;
-            float timeSinceLastAttack = Context.Humanoid.GetTimeSinceLastAttack();
+            // The time since OUR last swing ended - vanilla's own timer never runs for a companion (it never calls
+            // Humanoid.StartAttack), so every swing read as a fresh chain step 0
+            float timeSinceLastAttack = Time.time - _attackEndedAt;
             bool chainedAttack = !secondaryAttack && attackTemplate.m_attackChainLevels > 1;
 
             if (!Context.TryLockAnimation(attackTemplate.m_attackAnimation, attackDuration, CombatContext.AnimationPriority.Attack))
@@ -574,7 +601,7 @@ ConfigureAI();
                 }
             }
 
-            // 0.2.365: vanilla Attack.ConsumeItem takes the thrown item out of the bag; the tracker refills a throwable's hand
+            // Vanilla Attack.ConsumeItem takes the thrown item out of the bag; the tracker refills a throwable's hand
             // cell or follows the thrown spear for retrieval.
             if (nativeStarted && attackTemplate.m_consumeItem && Context.Companion != null)
                 CompanionThrowTracker.For(Context)?.OnThrowStarted(AttackWeapon, attackTemplate);
@@ -605,7 +632,8 @@ ConfigureAI();
             // Notify StaminaManager that we attacked
             Owner?.GetComponent<StaminaManager>()?.OnAttackPerformed();
             
-            CommitToDecision(attackDuration);
+            CommitToDecision();   // 0.3 s
+            CombatLoopStats.NoteAttack(Context.Character, secondaryAttack ? 0 : _attackChainLevel + 1);
 
             if (nativeStarted)
             {
@@ -719,10 +747,11 @@ ConfigureAI();
                 }
             }
 
-            // Wait for remaining duration if we broke out early
-            if (elapsed < totalDuration)
+            // Wait only until the swing is really over (the attack instance is done), not the full AI interval
+            while (elapsed < totalDuration && _activeAttackInstance != null && !_activeAttackInstance.IsDone())
             {
-                yield return new WaitForSeconds(totalDuration - elapsed);
+                yield return new WaitForSeconds(pollInterval);
+                elapsed += pollInterval;
             }
 
             if (CompanionCombat.VerboseLogging && hitWasTriggered)
@@ -962,6 +991,7 @@ float attackAngle = Context.AttackAngle > 0 ? Context.AttackAngle : 90f;
 
         protected virtual void FinishAttack()
         {
+            _attackEndedAt = Time.time;
             _isAttacking = false;
             _nativeHitTriggered = false;
             _currentTarget = null;

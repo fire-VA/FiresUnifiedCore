@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.Core;
 using FiresCore.Npc.Events;
@@ -313,7 +313,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private List<ItemDrop> ScanForLoot(float range)
         {
-            // One set of loot rules with the bot's base chores (0.2.239): ChoreBrain.LootToTake (loose items, not floating in deep
+            // One set of loot rules with the bot's base chores: ChoreBrain.LootToTake (loose items, not floating in deep
             // water, by ChoreBrain.LootPriority then nearest); this companion's looted spots and pickup chances on top.
             Vector3 from = Transform != null ? Transform.position : SearchCenter;
             return AI.ChoreBrain.LootToTake(SearchCenter, GetEffectiveSearchRadius(range), from,
@@ -322,6 +322,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private ItemDrop GetNextItemToLoot()
         {
+            _itemsToLoot.RemoveAll(d => d == null || FiresCore.Storage.HopperChest.LeaveForHopper(d, Companion?.companionName ?? "?"));   // Hoppers win
             if (_itemsToLoot.Count == 0) return null;
             
             _itemsToLoot.Sort((a, b) =>
@@ -365,7 +366,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return OtherPickupChance;
         }
         
-        // One priority with the bot's base chores (0.2.239).
+        // One priority with the bot's base chores.
         private float GetItemPriority(ItemDrop.ItemData item) => AI.ChoreBrain.LootPriority(item);
         
         private bool TryPickupItem(ItemDrop itemDrop)

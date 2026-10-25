@@ -76,7 +76,7 @@ namespace FiresCore.Npc.Archetypes
         private static readonly HashSet<string> s_audited = new HashSet<string>();
 
         /// <summary>
-        /// Once per effect prefab, always on (Fire, R75 mage drill: a skill effect drew a hard-edged BLACK square on the ground, an
+        /// Once per effect prefab, always on (a skill effect once drew a hard-edged BLACK square on the ground, an
         /// opaque or shaderless material where a transparent decal/particle was meant): every renderer's material, its shader,
         /// whether the shader runs here, and its render queue, with a verdict. "[ClassSkill] fx X: … -> SUSPECT (…)" names the culprit.
         /// </summary>
@@ -123,7 +123,7 @@ namespace FiresCore.Npc.Archetypes
         }
 
         // Vanilla's shield-dome particles take their colour from the nearest ShieldGenerator in Start and throw when there
-        // is none (class_test R37: NullReferenceException at ShieldDomeParticleColor.Start on every peer for Divine
+        // is none (NullReferenceException at ShieldDomeParticleColor.Start for Divine
         // Protection's dome). A class effect isn't a generator's dome, so the component goes before its Start can run.
         private static void StripShieldGeneratorColoring(GameObject instance)
         {

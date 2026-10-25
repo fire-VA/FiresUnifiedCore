@@ -206,7 +206,7 @@ namespace FiresCore.Diagnostics
                     ? timing.Label.Substring(0, MaxLabelDisplayWidth)
                     : timing.Label;
                 // The column says ms/sec, so the window's total is divided by the window: at a 30 s dump interval it
-                // printed 30x the rate ([fgn], 2026-09-28: ZNet.Update 11041.76 was 368 ms/s).
+                // printed 30x the rate.
                 double perSecond = LastWindowSeconds > 0.0 ? timing.TotalMs / LastWindowSeconds : timing.TotalMs;
                 log.LogMessage(
                     $"  {label,-50}  {perSecond,10:F2}  {timing.Calls,8}  {timing.AvgMs,10:F3}  {timing.MaxMs,10:F2}");

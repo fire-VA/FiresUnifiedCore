@@ -5,7 +5,7 @@ using HarmonyLib;
 
 namespace FiresCore.Net
 {
-    // ── The server drops routed RPCs whose sender id is forged (Fire 10-08, (A)) ──
+    // ── The server drops routed RPCs whose sender id is forged ──
     // Vanilla ZRoutedRpc.RPC_RoutedRPC trusts the m_senderPeerID written inside the packet. Every handler then gets that
     // id as "who sent this", so a modified client can send any routed RPC as another player (VAngarde's VA_vgr: get
     // someone else kicked) and the server relays it to everyone under the victim's name.

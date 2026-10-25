@@ -7,7 +7,7 @@ using UnityEngine;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Carries a companion's haul out (Core 0.2.220, Tools\COMPANION_HAUL.md): it asks the companion's
+    /// Carries a companion's haul out: it asks the companion's
     /// <see cref="HaulJob"/> (FiresCore.Npc.AI.Haul, the same brain the FDT bot bodies run) for the next order and does it the
     /// companion way. Walks go through CompanionAI's pathfinding, swings reuse the gatherers' animation + delayed resource hit,
     /// pickables are picked as ResourceGatheringBehavior picks them, pieces go through ChoreBrain.PlacePiece and crafts through
@@ -85,6 +85,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (Job == null || !Job.Active) { Complete(); return true; }
             if (IsFighting())
             {
+                FiresCore.Logging.FiresLogger.LogDebug($"[Haul] {(Companion != null ? Companion.companionName : "?")} stepped aside for a fight");
                 SteppedAside = true;
                 Complete();
                 return true;
@@ -179,7 +180,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     facing.SetLookDirection(BehaviorName, dir);
                 return;
             }
-            // 0.2.327 (audit slice 3, F1): vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            // Vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
             _character?.SetLookDir(dir.normalized);
         }
 

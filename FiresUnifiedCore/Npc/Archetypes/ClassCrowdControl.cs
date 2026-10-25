@@ -7,7 +7,7 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>The effect is on its way to the target's owner.</summary>
         Applied,
 
-        /// <summary>A boss: slowed instead (Fire's rule).</summary>
+        /// <summary>A boss: slowed instead.</summary>
         Slowed,
 
         /// <summary>Not allowed (ClassTargeting: party, or a player without PvP on both sides), or nothing to apply to.</summary>
@@ -15,7 +15,7 @@ namespace FiresCore.Npc.Archetypes
     }
 
     /// <summary>
-    /// Crowd control for class skills (Fire, popup 2026-09-28 21:3x: "build them simply"). Every call goes through
+    /// Crowd control for class skills. Every call goes through
     /// AbilityRPCManager.ApplySingleEffect, so ClassTargeting decides who may be hit and the effect lands on the target's
     /// owner, holding on every peer. Bosses (vanilla Character.IsBoss) are slowed instead of stunned, knocked down or sent
     /// fleeing. The effects are in StatusEffects\Common\CrowdControlEffects.cs.
@@ -79,7 +79,7 @@ namespace FiresCore.Npc.Archetypes
             {
                 float slow = seconds > BossSlowMinimumSeconds ? seconds : BossSlowMinimumSeconds;
                 bool slowed = AbilityRPCManager.ApplySingleEffect(caster, target, bossSlowEffect ?? StatusEffectManager.EFFECT_SLOWDOWN, slow);
-                // [wishbone]'s rule (interrupts = a real stagger + the class interrupt skills) on a boss vanilla never staggers: a stun,
+                // Rule (interrupts = a real stagger + the class interrupt skills) on a boss vanilla never staggers: a stun,
                 // knockdown or silence also carries the ClassInterrupt marker, which FMO turns into a cancelled cast. A flee doesn't.
                 if (slowed && (effect == StatusEffectManager.EFFECT_CLASS_STUN || effect == StatusEffectManager.EFFECT_CLASS_KNOCKDOWN
                                || effect == StatusEffectManager.EFFECT_CLASS_SILENCE))

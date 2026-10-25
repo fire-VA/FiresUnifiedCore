@@ -1103,8 +1103,8 @@ namespace FiresCore.Npc.Combat
         {
             if (character == null) return false;
 
-            // Support casts (heals, shields) reach the caster's PARTY only, PvP on or off (Fire's rule, the same gate as
-            // AbilityHeals.Apply). R69 pve: "Vafire.healer>FiresBot 1" came from here, when every player counted as friendly.
+            // Support casts (heals, shields) reach the caster's PARTY only, PvP on or off (the same gate as
+            // AbilityHeals.Apply).
             if (Context.Character != null) return Archetypes.ClassTargeting.IsPartyMember(Context.Character, character);
 
             // Players are always potential friendly targets

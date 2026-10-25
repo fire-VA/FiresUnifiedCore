@@ -10,6 +10,7 @@ namespace FiresCore.Npc.Archetypes
     /// Group-wide bonus effects when companions' abilities combine: sequential combos within a time window, passive
     /// synergies from the archetypes present, and chain reactions where one ability enhances another.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class GroupSynergyManager : MonoBehaviour
     {
         private static GroupSynergyManager _instance;
@@ -144,7 +145,7 @@ namespace FiresCore.Npc.Archetypes
         /// <param name="abilityName">Name of the ability used.</param>
         /// <summary>
         /// Every class ability a companion casts (all ArchetypeAbilitySystem / HybridAbilityManager / taunt casts report here), on the
-        /// peer that runs its AI: the owner of its ZDO. (companion, ability name). For tests and trackers (class_test skills_drill).
+        /// peer that runs its AI: the owner of its ZDO. (companion, ability name). For tests and trackers.
         /// </summary>
         public static event System.Action<CompanionController, string> AbilityCast;
 
@@ -258,7 +259,7 @@ namespace FiresCore.Npc.Archetypes
             foreach (var combo in GetAllCombos())
             {
                 if (!CheckComboCondition(combo, newUse, recentGroupAbilities, out List<AbilityUse> partners)) continue;
-                // The cooldown is per owner's group (0.2.204): one group's combo doesn't block another's.
+                // The cooldown is per owner's group: one group's combo doesn't block another's.
                 if (IsComboOnCooldown(combo.Name, newUse.OwnerPlayerId, out float left))
                 {
                     Debug.Log($"[Synergy] {combo.Name} on cooldown for {newUse.OwnerPlayerId} ({left:0} s left)");
@@ -269,7 +270,7 @@ namespace FiresCore.Npc.Archetypes
         }
 
         // The combo's requirements each filled by a different companion of the group, the new cast included; the partners out.
-        // Each requirement slot is filled once (0.2.204: two identical requirements, Mage + Mage, could never both be filled before).
+        // Each requirement slot is filled once, so two identical requirements (Mage + Mage) can both be filled.
         private bool CheckComboCondition(ComboDefinition combo, AbilityUse newUse, List<AbilityUse> recentUses, out List<AbilityUse> partners)
         {
             partners = null;
@@ -330,7 +331,7 @@ namespace FiresCore.Npc.Archetypes
             if (triggerUse.Character == null) return;
             _comboCooldowns[CooldownKey(combo.Name, triggerUse.OwnerPlayerId)] = Time.time + ComboCooldown;
 
-            // The caster's party that this peer runs (0.2.204): effects are local status effects, so a body another peer owns would get
+            // The caster's party that this peer runs: effects are local status effects, so a body another peer owns would get
             // an entry that does nothing and never expires there.
             var allies = GetAlliesInRange(triggerUse.Character, SynergyRange);
 
@@ -432,7 +433,7 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         private void ApplyCoordinatedAssault(List<Character> allies, float duration)
         {
-            if (allies == null || allies.Count == 0) return;   // 0.2.204: allies[0] below threw on an empty list
+            if (allies == null || allies.Count == 0) return;   // allies[0] below would throw on an empty list
             foreach (var ally in allies)
             {
                 // Apply warcry + fortify combo
@@ -448,7 +449,7 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         private void ApplyHolyBastion(List<Character> allies, float duration)
         {
-            if (allies == null || allies.Count == 0) return;   // 0.2.204: allies[0] below threw on an empty list
+            if (allies == null || allies.Count == 0) return;   // allies[0] below would throw on an empty list
             foreach (var ally in allies)
             {
                 StatusEffectManager.ApplyInvulnerable(ally, HolyBastionInvulnerableSeconds);
@@ -486,7 +487,7 @@ namespace FiresCore.Npc.Archetypes
                         m_dir = (character.transform.position - source.transform.position).normalized,
                         m_skill = Skills.SkillType.ElementalMagic
                     };
-                    // Damage(), not ApplyDamage (0.2.204): it goes to the foe's owner (a dedi-simulated monster took nothing before),
+                    // Damage(), not ApplyDamage: it goes to the foe's owner (a dedi-simulated monster would take nothing otherwise),
                     // with its resistances, blocking and stagger.
                     character.Damage(hit);
                 }
@@ -501,7 +502,7 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         private void ApplyShadowDance(List<Character> allies, float duration)
         {
-            if (allies == null || allies.Count == 0) return;   // 0.2.204: allies[0] below threw on an empty list
+            if (allies == null || allies.Count == 0) return;   // allies[0] below would throw on an empty list
             foreach (var ally in allies)
             {
                 StatusEffectManager.ApplyStealth(ally, duration / 2f);
@@ -519,7 +520,7 @@ namespace FiresCore.Npc.Archetypes
             if (source == null || allies == null || allies.Count == 0) return;
             foreach (var ally in allies)
             {
-                // Purify only (0.2.204): the Hunter's Mark it also put on ALLIES is a debuff, +25 % damage taken.
+                // Purify only: the Hunter's Mark it also put on ALLIES is a debuff, +25 % damage taken.
                 StatusEffectManager.ApplyPurify(ally, duration);
             }
 
@@ -531,7 +532,7 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         private void ApplyArcaneConvergence(List<Character> allies, float duration)
         {
-            if (allies == null || allies.Count == 0) return;   // 0.2.204: allies[0] below threw on an empty list
+            if (allies == null || allies.Count == 0) return;   // allies[0] below would throw on an empty list
             foreach (var ally in allies)
             {
                 StatusEffectManager.ApplyElementalInfusion(ally, duration);
@@ -546,7 +547,7 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         private void ApplyDivineHarmony(List<Character> allies, float duration)
         {
-            if (allies == null || allies.Count == 0) return;   // 0.2.204: allies[0] below threw on an empty list
+            if (allies == null || allies.Count == 0) return;   // allies[0] below would throw on an empty list
             foreach (var ally in allies)
             {
                 AbilityHeals.Apply(null, ally, DivineHarmonyHealAmount, true);
@@ -562,10 +563,10 @@ namespace FiresCore.Npc.Archetypes
         /// </summary>
         private void ApplyChiResonance(List<Character> allies, float duration)
         {
-            if (allies == null || allies.Count == 0) return;   // 0.2.204: allies[0] below threw on an empty list
+            if (allies == null || allies.Count == 0) return;   // allies[0] below would throw on an empty list
             foreach (var ally in allies)
             {
-                // No Inner Peace on allies (0.2.204): it freezes companions and roots a player for its whole duration.
+                // No Inner Peace on allies: it freezes companions and roots a player for its whole duration.
                 AbilityHeals.Apply(null, ally, ChiResonanceHealAmount, true);
 
                 if (ally is Player player)
@@ -724,7 +725,7 @@ namespace FiresCore.Npc.Archetypes
             
             var sourcePos = source.transform.position;
             
-            // The caster's party only (its owner and that owner's companions, 0.2.204: not every non-enemy in 20 m, other players and
+            // The caster's party only (its owner and that owner's companions, not every non-enemy in 20 m, other players and
             // their companions and tames included), and only bodies this peer owns (the effects are this peer's status effects).
             long party = ClassTargeting.PartyOwner(source);
             var characters = Character.GetAllCharacters();
@@ -979,6 +980,7 @@ namespace FiresCore.Npc.Archetypes
         Utility
     }
     
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class ComboRequirement
     {
         public ArchetypeClass RequiredArchetype = ArchetypeClass.None;
@@ -987,6 +989,7 @@ namespace FiresCore.Npc.Archetypes
         public AbilityType RequiredAbilityType = AbilityType.Any;
     }
     
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class ComboDefinition
     {
         public string Name;
@@ -996,6 +999,7 @@ namespace FiresCore.Npc.Archetypes
         public float EffectDuration = 10f;
     }
     
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class SynergyBonus
     {
         public string Name;
@@ -1015,8 +1019,9 @@ namespace FiresCore.Npc.Archetypes
     
     #endregion
 
-    /// <summary>A new session starts the synergy state empty (0.2.204: recent casts, cooldowns and synergies outlived a logout).</summary>
+    /// <summary>A new session starts the synergy state empty, so recent casts, cooldowns and synergies don't outlive a logout.</summary>
     [HarmonyLib.HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     internal static class GroupSynergyManagerReset
     {
         [HarmonyLib.HarmonyPatch(typeof(Game), "Start"), HarmonyLib.HarmonyPostfix]

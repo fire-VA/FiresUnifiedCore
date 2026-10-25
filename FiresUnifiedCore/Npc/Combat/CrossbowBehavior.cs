@@ -569,7 +569,7 @@ SetPhase(CrossbowPhase.Approaching);
      private void SpawnBoltProjectile(Character target)
   {
             // Vanilla crossbows carry no projectile of their own: the bolt brings it, and adds its damage.
-            // 0.2.365: a shot spends 1 real bolt (Ammo pouch first, then storage; never an equip cell). No bolt, no shot.
+            // A shot spends 1 real bolt (Ammo pouch first, then storage; never an equip cell). No bolt, no shot.
             bool ammoFromPouch = false;
             var ammo = CompanionAmmo.FindShotAmmo(Context.Inventory, Context.CurrentWeapon, out ammoFromPouch);
             if (ammo == null && Context.Inventory != null && CompanionAmmo.NeedsAmmo(Context.CurrentWeapon))

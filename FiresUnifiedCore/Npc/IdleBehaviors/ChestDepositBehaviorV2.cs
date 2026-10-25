@@ -94,8 +94,8 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private Container _targetChest;
 
-        // The walk to a chest is at walk speed (~1.6 m/s): a flat 15 s timed out on a 25 m walk (R76 companion_test 10/12, "Phase
-        // MovingToChest timed out"). The budget is set from the distance when the walk starts: 10 s plus 1 s per metre, 15 s minimum.
+        // The walk to a chest is at walk speed (~1.6 m/s): a flat 15 s timed out on a 25 m walk.
+        // The budget is set from the distance when the walk starts: 10 s plus 1 s per metre, 15 s minimum.
         private float _moveBudget = 15f;
 
         private void SetMoveBudget(Vector3 to)
@@ -445,7 +445,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (!ChestHelper.TryClaimForWrite(_targetChest, Companion))
             {
-                // Always on (R59 deposit FAIL: the chest stayed empty and nothing said why).
+                // Always on, so a failed deposit always says why.
                 var companionView = Companion.GetComponent<ZNetView>();
                 string why = companionView == null || !companionView.IsOwner()
                     ? "this peer doesn't own the companion"
@@ -582,7 +582,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool ShouldDepositItem(ItemDrop.ItemData item)
         {
             if (item == null) return false;
-            // 0.2.361: only the companion bag's STORAGE rows are deposited (worn gear and pouch stacks stay)
+            // Only the companion bag's STORAGE rows are deposited (worn gear and pouch stacks stay)
             if (!CompanionGridLayout.IsStorage(item.m_gridPos) && CompanionGridLayout.IsCompanionBag(GetStorageInventory()))
             {
                 LogVerbose($"ShouldDepositItem: {item.m_shared?.m_name} - NO (pouch/equipment cell)");
@@ -836,7 +836,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var claimed = new List<Container>();
             // The chest this run is FOR is always in the cluster (already claimed in UpdateDepositing). The nearby search only
             // returns player-built storage (a creator on the chest's ZDO), so a chest without one - spawned by a test, or by
-            // another mod - was never deposited into: R60 "deposited 0 item(s) across 0 chest(s)" 5 m from a writable chest.
+            // another mod - was never deposited into, even with a writable chest close by.
             if (_targetChest != null) claimed.Add(_targetChest);
             int found = 0, refused = 0;
             foreach (var chest in ChestHelper.FindNearbyChests(_targetChest.transform.position, ChestClusterRange))

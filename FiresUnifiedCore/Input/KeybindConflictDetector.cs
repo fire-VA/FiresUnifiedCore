@@ -75,11 +75,19 @@ namespace FiresCore.Input
 
             var conflicts = new List<KeybindConflict>();
             DetectSameKey(candidates, conflicts);
-            DetectOverlap(candidates, conflicts);
-            DetectModifierInUse(candidates, conflicts);
+            // A key that is ALSO a modifier of other
+            // bindings, or a modifier combo beside its bare key, is not a clash in play. Only the identical full combination in
+            // overlapping contexts (SameKey) counts. The other two rules still run, for the count in the log line only.
+            var informational = new List<KeybindConflict>();
+            DetectOverlap(candidates, informational);
+            DetectModifierInUse(candidates, informational);
+            LastIgnoredCount = informational.Count;
             conflicts.Sort(Compare);
             return conflicts;
         }
+
+        /// <summary>How many modifier-only / different-combo overlaps the last Detect skipped (for the log line).</summary>
+        public static int LastIgnoredCount { get; private set; }
 
         private static int Compare(KeybindConflict a, KeybindConflict b)
         {
@@ -210,12 +218,12 @@ namespace FiresCore.Input
             return false;
         }
 
-        // 0.2.339: two keys of the SAME mod never clash (the mod decides which of its own modes is live; FiresValcast listed itself
+        // Two keys of the SAME mod never clash (the mod decides which of its own modes is live; FiresValcast listed itself
         // ten times). Valheim's own buttons have no plugin GUID and still clash with each other as before.
         private static bool Clashes(KeybindEntry a, KeybindEntry b)
             => BindingContexts.Overlap(a.Context, b.Context) && !IsHandedOff(a, b) && !SameMod(a, b) && !DeclaredShared(a, b);
 
-        // 0.2.340: mods that use one key with different gestures (a double-tap vs a hold vs a hold-while-aiming) and so never fire
+        // Mods that use one key with different gestures (a double-tap vs a hold vs a hold-while-aiming) and so never fire
         // together. Keyed by key + mod display name. A mod (or Core, for its own family) declares the group; then those mods' binds on
         // that key stop showing as conflicts. A user who rebinds one of them to another key simply leaves the group.
         private static readonly Dictionary<KeyCode, List<HashSet<string>>> s_shared = new Dictionary<KeyCode, List<HashSet<string>>>

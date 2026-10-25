@@ -8,8 +8,8 @@ using UnityEngine;
 namespace FiresCore.Flight
 {
     /// <summary>
-    /// [Flight] keys for [ghost]'s shared flight controller (FiresPossession.FlightModel), which mounts (FiresMounts) and
-    /// possessed flyers use. 0.2.326, Fire's flight presets (Tools\FLIGHT_CONTROL_PRESETS.md): "Preset" picks the key map, and
+    /// [Flight] keys for the shared flight controller (FiresPossession.FlightModel), which mounts (FiresMounts) and
+    /// possessed flyers use. Flight presets: "Preset" picks the key map, and
     /// Auto (the default) lets each flyer fly its own natural way (FlightPresets.Resolve). Movement keys are the player's own
     /// vanilla binds (the shared ReadLocal reads "Jump" and "Crouch"; no preset binds LMB / MMB / RMB, the attacks). Yaw, the two abilities and stop
     /// have their own keys here. While a flyer reads the keys, the vanilla buttons on the ability and stop keys (auto-pickup V,
@@ -41,7 +41,7 @@ namespace FiresCore.Flight
                 "While flying: the preset's second ability. The vanilla action on this key (toggle walk) is held back while you fly.");
             StopKey = config.Bind("Flight", "Stop key", KeyCode.X,
                 "While flying: stop / brake where the preset has it. The vanilla action on this key (sit) is held back while you fly.");
-            // Only Valcast and Mounts fly; without either these keys leave the config (0.2.359).
+            // Only Valcast and Mounts fly; without either these keys leave the config.
             FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.FLIGHT, false,
                 YawLeft, YawRight, PresetEntry, Ability1Key, Ability2Key, StopKey);
         }

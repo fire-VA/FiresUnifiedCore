@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
@@ -73,6 +73,46 @@ namespace FiresCore.Npc
             return clone;
         }
 
+
+        // ── NPC appearance (RPGmaker Dressing room live preview) ─────────────────────
+
+        /// <summary>
+        /// Builds a visual-only NPC: <see cref="NpcAppearance.Base"/> through <see cref="Build(PlayerAppearance)"/>, or, when
+        /// <see cref="NpcAppearance.ModelOverridePrefab"/> names a prefab, a stripped clone of it. Then the model scale (dyes: see
+        /// UIMannequinPreview.NpcRebuilt). Never a live Character (stripped like the human mannequin). Null when nothing can be built yet.
+        /// </summary>
+        public static GameObject Build(NpcAppearance appearance)
+        {
+            if (UI.PreviewStage.IsHeadless) return null;
+            if (appearance == null) return Build((PlayerAppearance)null);
+
+            GameObject clone;
+            if (string.IsNullOrEmpty(appearance.ModelOverridePrefab))
+                clone = Build(appearance.Base);
+            else
+            {
+                GameObject prefab = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(appearance.ModelOverridePrefab) : null;
+                if (prefab == null)
+                {
+                    Debug.LogWarning($"[FiresMannequinBuilder] npc model '{appearance.ModelOverridePrefab}' is not a known prefab; nothing built");
+                    return null;
+                }
+                clone = CloneStripped(prefab);
+                if (clone != null) { clone.name = "FiresMannequin"; StripCloth(clone); }
+            }
+            if (clone == null) return null;
+
+            float scale = appearance.Scale > 0.01f ? appearance.Scale : 1f;
+            if (Mathf.Abs(scale - 1f) > 0.001f)
+            {
+                Transform visual = FindRecursive(clone.transform, "Visual") ?? clone.transform;
+                visual.localScale = visual.localScale * scale;
+            }
+
+            // Dyes are not applied here: DyeJson only drives the signature; RPGmaker copies the live NPC's dye blocks in UIMannequinPreview.NpcRebuilt.
+            return clone;
+        }
+
         // ── clone + strip ────────────────────────────────────────────────────
 
         private static GameObject CloneStripped(GameObject basePrefab)
@@ -103,6 +143,13 @@ namespace FiresCore.Npc
                     try { UnityEngine.Object.DestroyImmediate(behaviour); } catch { }
                 }
             }
+
+            // The Character/Humanoid itself and its Talker go too.
+            // Left on, their Awake ran with no ZNetView, threw half-way, and left a live entry in Character.s_characters that
+            // LootSpawner/BaseAI tripped over every frame (a flood of NREs from the Leaderboard preview). Dependents first, the Character last (RequireComponent order).
+            // In [RequireComponent] order (CharacterDrop etc. before Humanoid), verified; Unity only logs a refusal.
+            int left = UI.ComponentStrip.Strip(clone, c => c is Character || c.GetType().Name == "Talker");
+            if (left > 0) Debug.LogWarning($"[FiresMannequinBuilder] {left} Character/Talker component(s) could not be stripped");
 
             // Drop the ZNetView (no networking for a portrait). VisEquipment.m_nview is rewired to a
             // ZDO-less dummy in Dress() so UpdateEquipmentVisuals reads the string item fields instead.

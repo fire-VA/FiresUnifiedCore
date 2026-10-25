@@ -13,9 +13,9 @@ namespace FiresCore.Summon
         /// <summary>Seconds; 0 = until dismissed or the owner dies.</summary>
         public float Duration;
         public SummonMode Mode = SummonMode.Follow;
-        /// <summary>Summons sharing a group share the cap (Fire: one shared cap for the class summons).</summary>
+        /// <summary>Summons sharing a group share the cap (one shared cap for the class summons).</summary>
         public string CapGroup = "rpg-summons";
-        /// <summary>The cap for this owner and group (Fire S2: 2, +1 per 15 levels, max 6). The server clamps it to 1..6.</summary>
+        /// <summary>The cap for this owner and group (default 2, +1 per 15 levels, max 6). The server clamps it to 1..6.</summary>
         public int Cap = 2;
         public string SourceTag = "";
     }
@@ -34,7 +34,7 @@ namespace FiresCore.Summon
     }
 
     /// <summary>
-    /// Core's summons (Fire 10-07, Tools\CLASSES_DRUID_NECROMANCER.md section 6 item 8). A summon is a vanilla creature spawned
+    /// Core's summons (Tools\CLASSES_DRUID_NECROMANCER.md section 6 item 8). A summon is a vanilla creature spawned
     /// tamed next to its owner (the way the Dead Raiser does it), marked with its owner's player id, a timer, a mode and a
     /// cap group. The server enforces the cap (the oldest goes first) and the timer. Summons follow their owner through
     /// portals and persist across logout (saved with the character, re-spawned at login); they despawn on the owner's death

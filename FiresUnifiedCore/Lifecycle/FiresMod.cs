@@ -46,7 +46,7 @@ namespace FiresCore.Lifecycle
         // run for Harmony patches that benignly no-op on the server side.
         protected virtual bool RunOnServer => true;
 
-        // [worldgen] R45: on an application quit Unity destroys the plugins BEFORE ZNet, so a mod that unpatched in its own
+        // On an application quit Unity destroys the plugins BEFORE ZNet, so a mod that unpatched in its own
         // OnDestroy lost its ZNet.OnDestroy (and every later teardown) hook, and whatever that hook wrote to disk never landed.
         // Application.quitting fires before that destroy pass; after it the process is ending, so the patches stay.
         protected static bool ApplicationQuitting { get; private set; }
@@ -212,7 +212,7 @@ namespace FiresCore.Lifecycle
 
                     if (hasDediSkip && IsDedicatedServerSkip(type, dediSkip)) continue;
 
-                    // 0.2.387: a class of an owned feature waits until every plugin has loaded (PatchOwnedNextFrame).
+                    // A class of an owned feature waits until every plugin has loaded (PatchOwnedNextFrame).
                     if (OwnedFeaturesOf(type) != null) { if (IsPatchClass(type)) _deferredOwned.Add(type); continue; }
 
                     try
@@ -243,7 +243,7 @@ namespace FiresCore.Lifecycle
             BeginInitPoll();
         }
 
-        // 0.2.387 (Fire 10-09, Tools\CORE_CONFIG_GATING_PLAN.md): patch classes tagged [FiresOwnedFeature] are patched only when
+        // Patch classes tagged [FiresOwnedFeature] are patched only when
         // one of their features is live. Liveness needs every plugin loaded, and BepInEx lists a plugin only just before creating
         // it, so this runs one frame after Awake (the chainloader creates every plugin within one frame).
         private readonly List<Type> _deferredOwned = new List<Type>();

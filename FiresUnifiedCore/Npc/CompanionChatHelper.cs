@@ -88,7 +88,7 @@ namespace FiresCore.Npc
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
             if (!ShouldSendMessage(companion, message)) return;
 
-            // The owner's peer speaks for the companion; everyone within range sees it (0.2.184: before, only the owner did).
+            // The owner's peer speaks for the companion; everyone within range sees it.
             var owner = companion.GetOwner();
             if (owner == null || owner != Player.m_localPlayer) return;
 

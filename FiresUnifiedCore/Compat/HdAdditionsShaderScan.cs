@@ -14,7 +14,7 @@ namespace FiresCore.Compat
 {
     // HD_Additions 1.0.0 (Norger.HDAdditionalPieces) puts its pieces' real shaders back in its ZNetScene.Awake prefix, and to
     // find them its ShaderReplacment.getMeShaders loads every Shader from EVERY loaded asset bundle (LoadAllAssets<Shader>):
-    // 648 ms inside the world-join frame ([generator], R38/R39). The same scan now runs at the menu, a few bundles a frame.
+    // 648 ms inside the world-join frame. The same scan now runs at the menu, a few bundles a frame.
     // A prefix on getMeShaders hands that result to their own CachedShaders and skips their scan, scanning then only the
     // bundles loaded since. If the world starts before the menu scan is done, their scan runs as it always has. Nothing else
     // of theirs is patched; any other version, or a missing member, leaves the mod alone.

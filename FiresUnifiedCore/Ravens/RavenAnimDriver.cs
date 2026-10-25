@@ -5,7 +5,7 @@ namespace FiresCore.Ravens
     /// <summary>
     /// Plays a raven model's own animator (vanilla raven.controller) for Hugin and Munin. The controller has no looping flight
     /// (only one-shots), so while flying it plays its "Fly" state (HuginFlyAway, 7.8 s) and jumps back to the start of a slice
-    /// whenever it passes the slice's end: a steady wing-beat (Fire 10-08: "loop a slice of vanilla's FlyAway clip"). On the
+    /// whenever it passes the slice's end: a steady wing-beat (a looped slice of vanilla's FlyAway clip). On the
     /// ground or perched it plays "Idle"; <see cref="Talk"/> plays its croak.
     /// Nothing else writes to this animator: the bird's Character and ZSyncAnimation bind to the hidden Bat animator, so no
     /// parameter the engine writes is ever missing here.
@@ -19,7 +19,7 @@ namespace FiresCore.Ravens
         /// <summary>Pets set this (they have no Character); null = judge from the height above the ground.</summary>
         public bool? FlyingOverride;
 
-        // 0.2.381: vanilla raven.controller (1.0 rip) has no "Fly" state, so nothing played and the bird slid in its entry
+        // Vanilla raven.controller (1.0 rip) has no "Fly" state, so nothing played and the bird slid in its entry
         // pose. Its Base Layer states are Idle (a blend tree), Flyin, Fly away, away, talk, teleportin, Poff, poff. The fly
         // state is resolved once per animator from these, first found wins, and every probe is logged.
         private static readonly string[] FlyCandidates = { "Fly away", "Flyin", "away", "Fly" };

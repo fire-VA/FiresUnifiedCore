@@ -34,7 +34,7 @@ namespace FiresCore.Possession
         public PossessBody Body = PossessBody.Frozen;
         public bool PlayerInvulnerable;
         /// <summary>
-        /// 0.2.321 (Fire 10-07): a Frozen body is ghost + god + debug fly while possessing (vanilla's own devcommands methods,
+        /// A Frozen body is ghost + god + debug fly while possessing (vanilla's own devcommands methods,
         /// restored exactly at the end), so the creature's attacks can't push it off its spot. Admin possession sets it. Off by
         /// default for class skills: vanilla marks a victim "cheated" when a Player in god/ghost/fly hits it, so kills made while
         /// possessing would drop cheated loot. Class skills keep PlayerInvulnerable instead.
@@ -46,7 +46,7 @@ namespace FiresCore.Possession
         public float MaxDuration;
         /// <summary>The body-to-creature leash in metres; 0 = none.</summary>
         public float MaxRange = 60f;
-        /// <summary>The creature goes back to where it was taken on release (Fire's NPC rule).</summary>
+        /// <summary>The creature goes back to where it was taken on release (NPC rule).</summary>
         public bool ReturnToAnchor = true;
         /// <summary>Wildshape: the creature is the form's body and is destroyed at the end (no return).</summary>
         public bool ConsumeTarget;
@@ -74,6 +74,32 @@ namespace FiresCore.Possession
 
         /// <summary>"core-admin", "rpg-druid", "rpg-necro", ... (logs, the server's validator lookup).</summary>
         public string SourceTag = "core-admin";
+
+        /// <summary>
+        /// For ANY creature (the humanoid-only Hidden body doesn't apply), the player's
+        /// body is hidden on every client, takes no collisions, gravity or hits, and is carried along inside the creature every frame,
+        /// so the world loads around the creature (the local player is the network reference point) and no leash is needed:
+        /// MaxRange and ChannelLock are ignored. At the end (any reason, including the creature dying: the body is never harmed)
+        /// the player is returned to where the body stood when it began - vanilla's TeleportTo, which loads that area first when it
+        /// is far - with no fall damage. Ignored when the humanoid Hidden body is in use. Add-only.
+        /// </summary>
+        public bool CarryHiddenBody;
+
+        /// <summary>A prefab name (an effect, e.g. "vfx_..."), spawned where
+        /// the body stands when it vanishes and again where it reappears. null/empty = none. Used with CarryHiddenBody. Add-only.</summary>
+        public string BodyVanishFx;
+
+        /// <summary>With CarryHiddenBody, an end where the creature is still alive (the caller's End,
+        /// duration, release) sets the body down on the ground or water under the creature instead of back at its start. When the
+        /// creature DIED the body always goes back to its start, unharmed. false (default) = always back to the start. Add-only.</summary>
+        public bool CarryEndAtCreature;
+
+        /// <summary>With
+        /// CarryHiddenBody, the body first rises this many metres (visible, no collisions, eased like ChannelHover's rise) over
+        /// <see cref="BodyRiseSeconds"/>, and only at the top plays BodyVanishFx and is hidden and carried. 0 = vanish at once. Add-only.</summary>
+        public float BodyRiseBeforeVanish;
+        /// <summary>The rise's duration in seconds (with BodyRiseBeforeVanish); 0 or less = 0.8 s. Add-only.</summary>
+        public float BodyRiseSeconds;
     }
 
     /// <summary>The live possession, for UI and callers.</summary>
@@ -111,7 +137,7 @@ namespace FiresCore.Possession
     public delegate string PossessValidator(long playerId, ZDO target, Character targetOrNull);
 
     /// <summary>
-    /// Core's creature possession (Fire 10-07). One possession per client. The engine is [ghost]'s shared
+    /// Core's creature possession. One possession per client. The engine is the shared
     /// Shared\FiresPossession sources (the same ones Valcast compiles internally); this facade adds the server grant
     /// (admin gate or a class validator, ownership and the "valcast_possessed" key in one step), the form health pool,
     /// damage scaling and the portal/logout release. Every event is static and safe to subscribe at any time.

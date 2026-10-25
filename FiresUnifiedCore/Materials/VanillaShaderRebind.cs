@@ -41,7 +41,7 @@ namespace FiresCore.Materials
         // isSupported and draws as the fallback instead of magenta.
         internal static Func<string, Shader> LiveShaderLookup;
 
-        // 0.2.273: every instance the game's own objects draw with, by shader name. Valheim 1.0's asset bundles each carry their own
+        // Every instance the game's own objects draw with, by shader name. Valheim 1.0's asset bundles each carry their own
         // copy of a shader (piece_workbench's Custom/Piece is not Wayshrine's), so one "live" instance per name is not the game's
         // whole answer. Null when unknown; only Core sets it.
         internal static Func<string, IReadOnlyList<Shader>> GameShadersLookup;
@@ -101,11 +101,11 @@ namespace FiresCore.Materials
                     var live = LiveReplacementFor(current, liveFor, notTheGames, gameCopies, unityCopies, ref liveIndexed);
                     if (live == null)
                     {
-                        // 0.2.273: a material on any of the game's own copies is the game's and stays as it is.
+                        // A material on any of the game's own copies is the game's and stays as it is.
                         if (gameCopies.Contains(current)) { onGameCopyCount++; continue; }
-                        // 0.2.275: a bundle's own copy of a Unity shader stays where it is (it carries its materials' variants).
+                        // A bundle's own copy of a Unity shader stays where it is (it carries its materials' variants).
                         if (unityCopies.Contains(current)) { unityOwnCount++; unityOwnNames.Add(current.name); continue; }
-                        // 0.2.269: another mod's own shader under a game shader's name keeps its shader (a texture report: "your core mod
+                        // Another mod's own shader under a game shader's name keeps its shader (a texture report: "your core mod
                         // breaks all the textures in my mod").
                         if (notTheGames.TryGetValue(current, out string why))
                         {
@@ -179,7 +179,7 @@ namespace FiresCore.Materials
         }
 
         // "indexed" turns true once the lookup knows any game shader, so the timing line is written only for sweeps that
-        // actually compared against the game's instances (the in-world one, not the main menu's). 0.2.273: one of the game's own
+        // actually compared against the game's instances (the in-world one, not the main menu's). One of the game's own
         // copies goes into gameCopies and is never moved; another copy moves to the first game copy it is the same shader as
         // (IsSameShader); one that matches none goes into notTheGames, with why, and is never moved.
         private static Shader LiveReplacementFor(Shader current, Dictionary<Shader, Shader> known, Dictionary<Shader, string> notTheGames,
@@ -195,7 +195,7 @@ namespace FiresCore.Materials
             if (copies == null || copies.Count == 0) copies = new[] { live };
             foreach (var copy in copies)
                 if (copy == current) { gameCopies.Add(current); return null; }
-            // 0.2.275: a bundle's copy of one of Unity's own shaders is real, with its materials' variants (the game's copy has only
+            // A bundle's copy of one of Unity's own shaders is real, with its materials' variants (the game's copy has only
             // Valheim's): never moved while supported. WW1: WildWeapons' OrcSwordMat had been moved off its Standard onto the game's.
             if (IsUnityShader(current.name)) { unityCopies.Add(current); return null; }
             string firstWhy = null;
@@ -209,7 +209,7 @@ namespace FiresCore.Materials
             return null;
         }
 
-        // 0.2.269: a supported copy is the game's shader only when everything it declares is the game's (a SUBSET test): each property
+        // A supported copy is the game's shader only when everything it declares is the game's (a SUBSET test): each property
         // exists on the game's shader with the same type, and each of its own local keywords is one the game's shader knows. A ripped
         // copy or a mod's stub of a vanilla shader (the usual swap-to-vanilla pattern) declares the game's properties or fewer and is
         // moved as before; a mod's own build under a game shader's name, with texture slots, properties or keywords of its own, is a
@@ -217,7 +217,7 @@ namespace FiresCore.Materials
         // itself. Any failure answers "not the same" (the material is left alone).
         internal static bool IsSameShader(Shader copy, Shader live) => WhyNotSameShader(copy, live) == null;
 
-        // 0.2.275 (WW1: WildWeapons' OrcSwordMat moved off its bundle's Standard onto the game's and drew as a blocky mess): Unity's own
+        // Unity's own
         // shaders. Every bundle carries a real, compiled copy of these with the variants its own materials use, while the game's copy has
         // only Valheim's variants, so a supported copy of one is never moved (an unsupported one still is: it would draw magenta). Only
         // Valheim's own shaders (Custom/*, Standard TwoSided, Particles/Standard Unlit2, Unlit/WeaponGlow, Lux ...) have stub copies.
@@ -239,7 +239,7 @@ namespace FiresCore.Materials
             return false;
         }
 
-        // 0.2.275: what a shader declares, read once per instance per sweep (0.2.273 re-read both sides for every pair: 1.8 s at load).
+        // What a shader declares, read once per instance per sweep (re-reading both sides for every pair cost 1.8 s at load).
         // Property kinds, not types: a rip declares Color as Vector and Range as Float (WW1: "_Color is Vector, the game's is Color"),
         // the same float4 / number to a material.
         private sealed class ShaderSignature
@@ -292,7 +292,7 @@ namespace FiresCore.Materials
             return signature;
         }
 
-        // 0.2.270 (shaderrebind_test): null when the copy is the game's shader, else the first thing it declares that the game's doesn't.
+        // Null when the copy is the game's shader, else the first thing it declares that the game's doesn't.
         internal static string WhyNotSameShader(Shader copy, Shader live)
         {
             if (copy == null || live == null) return "no shader";
@@ -308,7 +308,7 @@ namespace FiresCore.Materials
             return null;
         }
 
-        // 0.2.270 (WildWeapons repro): the shader each moved material was on before its first move ("name #instance"), by material
+        // The shader each moved material was on before its first move ("name #instance"), by material
         // instance id, so shaderrebind_test can say what the sweep did to a mod's item.
         private static readonly Dictionary<int, string> s_movedFrom = new Dictionary<int, string>();
 

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc;
 using FiresCore.Npc.Archetypes.StatusEffects;
@@ -58,7 +58,7 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>
         /// When a class cast must not go out: only while the local player is being rebuilt (respawn, loading: the respawn
         /// freeze CompanionPatches guards) or teleporting. Not while merely staggered: AreCompanionTeleportsSuppressed's
-        /// !CanMove branch (and the timer it re-arms) made a staggered player's skills fail silently (R49: ChiStrike right
+        /// !CanMove branch (and the timer it re-arms) made a staggered player's skills fail silently (e.g. ChiStrike right
         /// after a stagger). The companion paths keep that gate.
         /// </summary>
         public static bool CastBlocked()
@@ -243,10 +243,43 @@ namespace FiresCore.Npc.Archetypes
         
         #endregion
         
+        // An ability RPC comes from the peer that simulates the caster (or the buffed target): it must own that ZDO.
+        private const float MaxEffectDuration = 600f;
+        private const float MaxEffectRange = 50f;
+        private const float MinFxScale = 0.1f;
+        private const float MaxFxScale = 5f;
+
+        internal static bool SenderOwns(long sender, ZDOID id)
+        {
+            if (id.IsNone() || ZDOMan.instance == null) return false;
+            if (sender == ZDOMan.GetSessionID() || RpcGuard.SenderIsServer(sender)) return true;
+            ZDO zdo = ZDOMan.instance.GetZDO(id);
+            if (zdo == null) return false;
+            if (zdo.GetOwner() == sender) return true;
+            // A companion caster: its owner PLAYER's machine casts for it, also while ZDO ownership is still moving after a long jump
+            long ownerPlayer = zdo.GetLong("companion_owner", 0L);
+            return ownerPlayer != 0L && RpcGuard.SenderIsPlayer(sender, ownerPlayer);
+        }
+
+        // An FX name from the network may only name an effect: vanilla's vfx_/sfx_/fx_ prefabs, or a prefab without a ZNetView.
+        // Never a creature, piece or item (those are networked and named otherwise).
+        private static readonly string[] EffectPrefixes = { "vfx_", "sfx_", "fx_" };
+
+        private static bool IsVisualOnlyPrefab(string name)
+        {
+            if (string.IsNullOrEmpty(name) || ZNetScene.instance == null) return false;
+            foreach (string prefix in EffectPrefixes)
+                if (name.StartsWith(prefix, System.StringComparison.OrdinalIgnoreCase)) return true;
+            GameObject prefab = ZNetScene.instance.GetPrefab(name);
+            return prefab != null && prefab.GetComponent<ZNetView>() == null;
+        }
+
         #region RPC Handlers
         
         private static void RPC_HandleGroupBuff(long sender, ZDOID sourceId, string effectName, float range, float duration)
         {
+            if (!SenderOwns(sender, sourceId)) { RpcGuard.Refuse("RPC_HandleGroupBuff", sender, "does not own the caster"); return; }
+            range = Mathf.Clamp(range, 0f, MaxEffectRange); duration = Mathf.Clamp(duration, 0f, MaxEffectDuration);
             var source = FindCharacterByZDOID(sourceId);
             if (source == null) return;
             
@@ -263,6 +296,8 @@ namespace FiresCore.Npc.Archetypes
         
         private static void RPC_HandleSingleEffect(long sender, ZDOID sourceId, ZDOID targetId, string effectName, float duration)
         {
+            if (!SenderOwns(sender, sourceId)) { RpcGuard.Refuse("RPC_HandleSingleEffect", sender, "does not own the caster"); return; }
+            duration = Mathf.Clamp(duration, 0f, MaxEffectDuration);
             var source = FindCharacterByZDOID(sourceId);
             var target = FindCharacterByZDOID(targetId);
             if (target == null) return;
@@ -273,7 +308,7 @@ namespace FiresCore.Npc.Archetypes
             if (source == null)
             {
                 // The caster isn't loaded here (out of this peer's zones), but the target is and may be ours: the owner must still
-                // apply it or nobody does (class_test R54 se_sync: Caltrops / Death Mark / Hunter's Mark never reached the owner).
+                // apply it or nobody does.
                 // The sender already checked who it may hit before sending.
                 if (IsOwnedHere(target))
                 {
@@ -293,6 +328,8 @@ namespace FiresCore.Npc.Archetypes
         
         private static void RPC_HandleSelfBuff(long sender, ZDOID targetId, string effectName, float duration)
         {
+            if (!SenderOwns(sender, targetId)) { RpcGuard.Refuse("RPC_HandleSelfBuff", sender, "does not own the target"); return; }
+            duration = Mathf.Clamp(duration, 0f, MaxEffectDuration);
             var target = FindCharacterByZDOID(targetId);
             if (target == null) return;
             
@@ -309,6 +346,7 @@ namespace FiresCore.Npc.Archetypes
         
         private static void RPC_HandleRemoveSelfBuff(long sender, ZDOID targetId, string effectName)
         {
+            if (!SenderOwns(sender, targetId)) { RpcGuard.Refuse("RPC_HandleRemoveSelfBuff", sender, "does not own the target"); return; }
             if (ZNet.instance != null && ZNet.GetUID() == sender) return;
             var target = FindCharacterByZDOID(targetId);
             if (target == null) return;
@@ -317,6 +355,8 @@ namespace FiresCore.Npc.Archetypes
 
         private static void RPC_HandleAoEEffect(long sender, ZDOID sourceId, string effectName, float range, float duration)
         {
+            if (!SenderOwns(sender, sourceId)) { RpcGuard.Refuse("RPC_HandleAoEEffect", sender, "does not own the caster"); return; }
+            range = Mathf.Clamp(range, 0f, MaxEffectRange); duration = Mathf.Clamp(duration, 0f, MaxEffectDuration);
             var source = FindCharacterByZDOID(sourceId);
             if (source == null) return;
             
@@ -333,6 +373,8 @@ namespace FiresCore.Npc.Archetypes
         
         private static void RPC_HandleSpawnFX(long sender, Vector3 position, string effectName, float scale)
         {
+            if (!IsVisualOnlyPrefab(effectName)) { RpcGuard.Refuse("RPC_HandleSpawnFX", sender, $"'{effectName}' is not a visual effect"); return; }
+            scale = Mathf.Clamp(scale, MinFxScale, MaxFxScale);
             // Check if we're the sender
             if (ZNet.instance != null && ZNet.GetUID() == sender) return;
             
@@ -364,7 +406,7 @@ namespace FiresCore.Npc.Archetypes
         }
 
         /// <summary>
-        /// Applies a group buff to every party member of the caster in range (Fire: heals and buffs only the party:
+        /// Applies a group buff to every party member of the caster in range (heals and buffs only the party:
         /// see <see cref="ClassTargeting"/>).
         /// </summary>
         private static int ApplyGroupBuffLocal(Character source, string effectName, float range, float duration)
@@ -601,7 +643,7 @@ namespace FiresCore.Npc.Archetypes
                 default:
                     // Every other class effect StatusEffectManager registers (Avatar of Light, Divine Shield, Consecration,
                     // Lay on Hands, Meteor, Death Mark ... 24 of the 50) had no case here, so a companion casting one
-                    // applied nothing (class_test R37). They go on through the type they were registered with.
+                    // applied nothing. They go on through the type they were registered with.
                     success = ApplyRegisteredEffect(target, effectName, duration, source);
                     if (!success)
                     {
@@ -769,8 +811,21 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>
         /// Determines if an effect is a buff (beneficial) or debuff (harmful).
         /// </summary>
+        // Other mods'
+        // harmful effects, registered by status-effect name, so they are not treated as party-only buffs. Add-only.
+        private static readonly HashSet<string> s_registeredDebuffs = new HashSet<string>(System.StringComparer.Ordinal);
+
+        /// <summary>Marks <paramref name="seName"/> (a status effect's prefab/name, as passed to ApplySingleEffect) as a DEBUFF, so it
+        /// can be put on enemies (buffs are party-only). Call once at start-up; safe to repeat. Add-only API.</summary>
+        public static void RegisterDebuff(string seName)
+        {
+            if (string.IsNullOrEmpty(seName)) return;
+            if (s_registeredDebuffs.Add(seName)) FiresCore.Logging.FiresLogger.LogDebug($"[AbilityRPC] debuff registered: {seName}");
+        }
+
         private static bool IsBuffEffect(string effectName)
         {
+            if (effectName != null && s_registeredDebuffs.Contains(effectName)) return false;   // a mod's own debuff
             // Debuffs (harmful effects that go on enemies)
             switch (effectName)
             {
@@ -800,6 +855,23 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>
         /// Gets a friendly display name for an effect.
         /// </summary>
+        /// <summary>Grants longer than this (s) are internal states, not announced.</summary>
+        private const float MaxGrantMessageSeconds = 600f;
+
+        // The status effect's m_name, localized ("$se_..." tokens resolved); null when there is none or it is just the id again.
+        private static string LocalizedEffectName(string effectName)
+        {
+            try
+            {
+                var se = ObjectDB.instance != null ? ObjectDB.instance.GetStatusEffect(effectName.GetStableHashCode()) : null;
+                if (se == null || string.IsNullOrEmpty(se.m_name)) return null;
+                string name = Localization.instance != null ? Localization.instance.Localize(se.m_name) : se.m_name;
+                if (string.IsNullOrEmpty(name) || name.StartsWith("$") || name == effectName) return null;
+                return name;
+            }
+            catch { return null; }
+        }
+
         private static string GetEffectDisplayName(string effectName)
         {
             switch (effectName)
@@ -852,8 +924,16 @@ namespace FiresCore.Npc.Archetypes
                 return;
             }
             
-            // Get friendly names
-            string effectDisplayName = GetEffectDisplayName(effectName);
+            // No grant message for self / environment effects (no other
+            // caster) or for long / no-duration ones (internal states, not buffs a companion gave).
+            if (source == null || source == target || duration <= 0f || duration > MaxGrantMessageSeconds)
+            {
+                if (VerboseLogging) Debug.Log($"[AbilityRPCManager] NotifyPlayerOfBuff: {effectName} not announced (source {source?.m_name ?? "none"}, {duration:F0}s)");
+                return;
+            }
+
+            // Get friendly names: the status effect's own localized name first, never its id
+            string effectDisplayName = LocalizedEffectName(effectName) ?? GetEffectDisplayName(effectName);
             string sourceName = "Companion";
             
             // Get companion name if available
@@ -863,6 +943,10 @@ namespace FiresCore.Npc.Archetypes
                 if (companion != null && !string.IsNullOrEmpty(companion.companionName))
                 {
                     sourceName = companion.companionName;
+                }
+                else if (source is Player sp)
+                {
+                    sourceName = sp.GetPlayerName();   // never the character type ("Human")
                 }
                 else
                 {

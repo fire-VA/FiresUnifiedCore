@@ -38,8 +38,9 @@ namespace FiresCore.Npc
         public float HairColorR, HairColorG, HairColorB;
         public float SkinColorR, SkinColorG, SkinColorB;
         public float EyeColorR, EyeColorG, EyeColorB;
-        public bool HasBeardColor;        // 0.2.368: independent beard colour (else the hair colour)
+        public bool HasBeardColor;        // independent beard colour (else the hair colour)
         public float BeardColorR, BeardColorG, BeardColorB;
+        public string FccModel;   // the companion ZDO key "fcc_model" (FCC model swap), add-only
         public bool HasAppearanceData;
         public float Scale = 1f;          // precise body scale (e.g. 0.5–1.3) — restores exact size on recall
         public bool IsGiant;              // coarse derived flag: scale >= 1.15

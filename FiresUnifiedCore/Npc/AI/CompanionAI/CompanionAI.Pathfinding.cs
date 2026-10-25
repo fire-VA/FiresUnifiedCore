@@ -124,10 +124,10 @@ namespace FiresCore.Npc.AI
 
         #region Movement
 
-        // Audit slice 4 (T1, 0.2.329): the stuck-recovery chain that ended in TeleportNearTarget (transform.position written
+        // The stuck-recovery chain that ended in TeleportNearTarget (transform.position written
         // with no ZDO sync or physics reset) is gone. It hung off a private MoveToward that nothing called; live movement goes
         // through MoveToThroughAuthority -> vanilla BaseAI.MoveTo, which drops the goal when there is no path. The one teleport
-        // kept is the follow-stranded one in CompanionController (T4, a mod feature with ZDO + RPC sync).
+        // kept is the follow-stranded one in CompanionController (a mod feature with ZDO + RPC sync).
 
         /// <summary>BaseAI.FindPath returns its cached result for 1-5 s (BaseAI.cs:711-716); forgetting the last search
         /// time makes the next MoveTo path again.</summary>

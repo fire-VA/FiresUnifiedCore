@@ -17,7 +17,7 @@ namespace FiresCore.Input
         InventoryOpen,
         MapOpen,
         Menu,
-        // 0.2.339: modes that replace normal play. Their keys collide only with Always and their own mode, never Gameplay.
+        // Modes that replace normal play. Their keys collide only with Always and their own mode, never Gameplay.
         Possessed,
         Minigame,
     }
@@ -205,7 +205,7 @@ namespace FiresCore.Input
         public static bool Overlap(BindingContext a, BindingContext b)
         {
             if (a == BindingContext.Always || b == BindingContext.Always || a == b) return true;
-            if (IsExclusiveMode(a) || IsExclusiveMode(b)) return false;   // 0.2.339: possession / minigame replace gameplay
+            if (IsExclusiveMode(a) || IsExclusiveMode(b)) return false;   // Possession / minigame replace gameplay
             return a == BindingContext.Gameplay || b == BindingContext.Gameplay;
         }
 

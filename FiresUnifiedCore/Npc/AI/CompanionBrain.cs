@@ -5,8 +5,8 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// The companions' decisions, with no body attached (Fire, 2026-09-29: "one brain, two bodies": a companion and the FDT autoplay
-    /// bot run the same logic, so refining one refines the other; Tools\COMPANION_BRAIN_PLAN.md). Every input is passed in, so a
+    /// The companions' decisions, with no body attached ("one brain, two bodies": a companion and the FDT autoplay
+    /// bot run the same logic, so refining one refines the other). Every input is passed in, so a
     /// CompanionAI (BaseAI body) and a Player driven through inputs ask the same questions and get the same answers. Slice 1: which
     /// hostile threatens the fight, and how much each target is worth.
     /// </summary>
@@ -35,12 +35,12 @@ namespace FiresCore.Npc.AI
                     if (aiTarget == self) return true;
                     if (ownerCharacter != null && aiTarget == ownerCharacter) return true;
                     // Something after another player, or after a party member, only pulls us in while that fight is near our owner
-                    // (Fire 2026-09-28: party members count as well).
+                    // (party members count as well).
                     if (distToOwner <= leashDistance &&
                         (aiTarget.IsPlayer() || Archetypes.ClassTargeting.IsPartyMember(self, aiTarget)))
                         return true;
                 }
-                // Off the monster's owner its AI target reads null (R76: a drake spitting from 18 m was "no foe after us"): an
+                // Off the monster's owner its AI target reads null: an
                 // alerted enemy for which this body is the nearest player counts (ThreatLevel.IsAfter).
                 else if (ThreatLevel.IsAfter(target, self)) return true;
             }
@@ -195,7 +195,7 @@ namespace FiresCore.Npc.AI
                 if (!CompanionCombat.IsCombatWeapon(item)) continue;
                 if (IsGatheringTool(item)) continue;
                 // Broken (durability 0): vanilla won't equip it (Humanoid.EquipItem), so it's no pick unless already in hand, where it
-                // still swings (R73 Crypt4: two broken Clubs were "chosen", the equip failed, the bot fought bare-handed as "no weapon").
+                // still swings.
                 if (item.m_shared.m_useDurability && item.m_durability <= 0f && !item.m_equipped) continue;
                 if (IsStaff(item))
                 {
@@ -384,12 +384,12 @@ namespace FiresCore.Npc.AI
 
         /// <summary>
         /// Set by a class mod (RPGClasses): which weapon kind drives the body's active class bar, None without a class. Core can't
-        /// reference the class mod, so it asks through this. R72: a tank handed a bow at 2.2 m had every class skill refused
+        /// reference the class mod, so it asks through this. Without it a tank handed a bow had every class skill refused
         /// (WrongArchetype).
         /// </summary>
         public static System.Func<Humanoid, ClassWeaponWant> ClassWeapon;
 
-        /// <summary>No ranged pick with the target this close while melee can reach it (R72: "wield $item_bow … 2.2 m").</summary>
+        /// <summary>No ranged pick with the target this close while melee can reach it.</summary>
         public const float RangedMinDistance = 4f;
 
         /// <summary>The class bar's weapon kind for <paramref name="body"/>; None without a hook, a class, or when the hook throws.</summary>
@@ -467,7 +467,7 @@ namespace FiresCore.Npc.AI
             return Vector3.Dot(velocity.normalized, toUs) > 0.5f;
         }
 
-        // ---- Class skills (the brain picks, the body presses; PickClassSkill arrives in Core 0.2.158) ----
+        // ---- Class skills (the brain picks, the body presses; PickClassSkill) ----
 
         /// <summary>
         /// One class skill that is Ready on a body's bar, as FiresRPGClasses reports it
@@ -511,8 +511,8 @@ namespace FiresCore.Npc.AI
         /// <summary>
         /// <see cref="PickClassSkill(Character, Character, float, float, IReadOnlyList{SkillOption})"/> plus why: for a pick, the
         /// rule that chose it ("<id> (opener)"); for none, each Ready node's reason ("monk_flurry Sustained: out of range 0-3 m").
-        /// After the opener / control windows, a Ready attack or self-buff in range is still used rather than left idle (R62 class_drill:
-        /// a kit with no Sustained skill never cast after 8 s).
+        /// After the opener / control windows, a Ready attack or self-buff in range is still used rather than left idle
+        /// (otherwise a kit with no Sustained skill never casts after the opener).
         /// </summary>
         public static int PickClassSkill(Character caster, Character target, float distance, float fightSeconds, IReadOnlyList<SkillOption> ready,
             out string why)
@@ -532,7 +532,7 @@ namespace FiresCore.Npc.AI
                 if ((slot = First(caster, ready, o => o.Category == Reactive, target, distance)) >= 0) return Chose(ready, slot, "defence, hurt", out why);
             }
 
-            // Low eitr (0.2.201): a Ready eitr restore (Eitr Well) answers the eitr bar the way a Reactive heal answers health.
+            // Low eitr: a Ready eitr restore (Eitr Well) answers the eitr bar the way a Reactive heal answers health.
             float eitr = EitrShare(caster);
             if (eitr < SkillLowEitr && (slot = First(caster, ready, IsEitrRestore, target, distance)) >= 0)
                 return Chose(ready, slot, $"eitr restore, eitr {eitr * 100f:0} %", out why);
@@ -605,8 +605,8 @@ namespace FiresCore.Npc.AI
                 if (!want(option)) continue;
                 bool onSelf = option.Heal || option.Buff;
                 if (!onSelf && (target == null || distance < option.MinRange || distance > option.MaxRange)) continue;
-                // A damaging skill with a neutral bystander in its area or its lane is skipped (R74: a volley at a Hatchling hit
-                // a Dverger-faction wild companion, which then fought the bot for minutes).
+                // A damaging skill with a neutral bystander in its area or its lane is skipped (hitting a neutral
+                // turns it hostile).
                 if (!onSelf && caster != null && NeutralInTheWay(caster, target, option.Aoe ? AoeNeutralRadius : LaneNeutralRadius, out string neutral))
                 {
                     NeutralSkipLog(caster, option.Id, neutral);
@@ -644,8 +644,8 @@ namespace FiresCore.Npc.AI
                 if (!near) continue;
                 if (Archetypes.ClassTargeting.IsPartyMember(caster, other)) continue;
                 if (Archetypes.ClassTargeting.IsEnemyTarget(caster, other)) continue;
-                // A player can only be hurt with PvP on (0.2.217, R87 class_drill: "[CompanionBrain] Human: skill ranger_mark: skipped
-                // neutral Human in the area" x305 for the bot beside Fire's tester, PvP off, so no attack skill was ever cast).
+                // A player can only be hurt with PvP on (otherwise a nearby
+                // non-PvP player would block every attack skill).
                 if (other is Player bystander && !(bystander.IsPVPEnabled() && (!(caster is Player casterPlayer) || casterPlayer.IsPVPEnabled()))) continue;
                 who = other.m_name;
                 return true;
@@ -689,7 +689,7 @@ namespace FiresCore.Npc.AI
             return count;
         }
 
-        // ---- Slice 2: reach (R56: the bot swam after targets and landed 0 hits) ----
+        // ---- Slice 2: reach ----
 
         /// <summary>Height gap past which a melee body can't reach a target (the companion's elevation swap threshold).</summary>
         public const float MeleeHeightReach = 3f;
@@ -704,7 +704,7 @@ namespace FiresCore.Npc.AI
 
         /// <summary>
         /// <see cref="CanFight(Character, Character, float, bool)"/> with the height limit given, so a caller can hold a hysteresis
-        /// band (R57: a target 3.0 m up flipped Approach / OutOfReach every frame). The height only counts once the body is close
+        /// band (a target right at the limit would flip Approach / OutOfReach every frame). The height only counts once the body is close
         /// (within reach + <see cref="HeightCheckMargin"/>): from further out a slope is just ground to walk up.
         /// </summary>
         public static bool CanFight(Character self, Character target, float reach, bool ranged, float heightLimit)
@@ -724,8 +724,8 @@ namespace FiresCore.Npc.AI
 
         /// <summary>
         /// Whether <paramref name="target"/> may be picked as a fight at all by a body that isn't a companion's own AI: never a tamed
-        /// creature, a companion or a player unless it is coming for <paramref name="self"/> (its AI targets self). R57: with PvP on
-        /// the tester's idle companions counted as enemies within 8 m, and the bot hit them 101 times.
+        /// creature, a companion or a player unless it is coming for <paramref name="self"/> (its AI targets self). Without it, with PvP on,
+        /// idle companions nearby would count as enemies.
         /// </summary>
         public static bool IsFairGame(Character self, Character target)
         {

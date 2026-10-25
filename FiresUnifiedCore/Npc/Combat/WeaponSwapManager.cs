@@ -491,7 +491,7 @@ public bool IsRanged;
             
             foreach (var item in storageInv.GetAllItems())
             {
-                // 0.2.361: worn gear sits in the bag's equip cells; those are scanned as equipment slots, not storage.
+                // Worn gear sits in the bag's equip cells; those are scanned as equipment slots, not storage.
                 if (_inventory.IsWorn(item)) continue;
                 if (!CompanionCombat.IsCombatWeapon(item)) continue;
 
@@ -539,7 +539,7 @@ public bool IsRanged;
                 bool isRanged = IsRangedItem(item);
                 
                 // Only record if we don't already have this type from equipped slots
-                // 0.2.365: a bow or crossbow with no matching ammo in the pouch/storage is not a ranged option.
+                // A bow or crossbow with no matching ammo in the pouch/storage is not a ranged option.
                 if (isRanged && _rangedWeapon == null && CompanionAmmo.HasAmmoFor(_inventory, item))
                 {
                     _rangedWeapon = new CachedWeaponInfo
@@ -736,8 +736,8 @@ public bool IsRanged;
             var pick = GatePick(target, assessment.recommendation, distToTarget, out string why);
             bool gated = why != "weighed";
 
-            // The target's resistances (one rule with the bot's CombatAdvisor.Effectiveness; R74 Crypt4: a Club on a blunt-immune
-            // Ghost): the other weapon gets more than twice as much through -> that one, whatever the weighing says.
+            // The target's resistances (one rule with the bot's CombatAdvisor.Effectiveness): the other weapon gets more than
+            // twice as much through -> that one, whatever the weighing says.
             float meleeEff = Effectiveness(_meleeWeapon, target, out string meleeNote);
             float rangedEff = Effectiveness(_rangedWeapon, target, out string rangedNote);
             if (currentlyRanged && meleeEff > rangedEff * 2f && CompanionBrain.CanFight(_character, target, 2f, false))

@@ -7,14 +7,14 @@ using UnityEngine;
 namespace FiresCore.Ravens
 {
     /// <summary>
-    /// Hugin and Munin as real, networked creatures (Fire 10-08: "both the crows should be posessable and offered as pets...
-    /// they will need to sync to multiplayer"; Tools\FIRES_RAVENS_PLAN.md). Vanilla's ravens are the tutorial's client-side
+    /// Hugin and Munin as real, networked creatures, possessable and offered as pets,
+    /// synced in multiplayer (Tools\FIRES_RAVENS_PLAN.md). Vanilla's ravens are the tutorial's client-side
     /// Raven component, so each bird is built at runtime from vanilla's Bat (a flying Character with MonsterAI, ZNetView,
     /// ZSyncTransform, ZSyncAnimation) wearing the raven's model:
     /// - the Bat's own visual and animator stay (renderers hidden) and are what Character / ZSyncAnimation drive, so every
     ///   parameter the engine writes exists;
     /// - the raven model rides along with its own animator, played by <see cref="RavenAnimDriver"/>;
-    /// - no weapons (Fire: no attacks), no drops, no hunting, random flight on, not a boss.
+    /// - no weapons (no attacks), no drops, no hunting, random flight on, not a boss.
     /// Prefabs: <see cref="Hugin"/>, <see cref="Munin"/> (names are a contract: Valcast possession and FiresRPGmaker's pets).
     /// </summary>
     public static class RavenPrefabs
@@ -115,7 +115,7 @@ namespace FiresCore.Ravens
             }
             if (character is Humanoid humanoid)
             {
-                // Fire: no attacks. With nothing to swing, possession's LMB / MMB / RMB do nothing.
+                // No attacks. With nothing to swing, possession's LMB / MMB / RMB do nothing.
                 humanoid.m_defaultItems = new GameObject[0];
                 humanoid.m_randomWeapon = new GameObject[0];
                 humanoid.m_randomArmor = new GameObject[0];
@@ -155,7 +155,7 @@ namespace FiresCore.Ravens
 
             FiresLogger.LogDebug($"[Ravens] {prefab} built: {Base} body ({(character != null ? character.GetType().Name : "no Character")}, "
                 + $"MonsterAI {(ai != null)}) wearing vanilla {display}'s model.");
-            // 0.2.379: what the bird actually wears (a pets shot showed a humanoid; the dump showed the raven rig).
+            // What the bird actually wears (a pets shot showed a humanoid; the dump showed the raven rig).
             try
             {
                 Animator ravenAnim = raven.GetComponent<Animator>();

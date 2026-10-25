@@ -4,8 +4,8 @@ using UnityEngine;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// The foe each player (the FDT bot included) last hit, so their companions join the fight the owner starts (the lead, R67 pve:
-    /// the bot fought the pack and its companions engaged nothing; before this a companion only answered foes near the owner,
+    /// The foe each player (the FDT bot included) last hit, so their companions join the fight the owner starts (otherwise
+    /// a companion only answers foes near the owner,
     /// after the owner or itself, or that had hit it). Recorded on the owner's machine as its hit leaves (Core's Character.Damage
     /// prefix), which is where its companions simulate. CompanionAI's target scan asks <see cref="Recent"/>.
     /// </summary>

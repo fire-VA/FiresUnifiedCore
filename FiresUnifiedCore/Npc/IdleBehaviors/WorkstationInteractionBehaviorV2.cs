@@ -72,7 +72,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private CraftingStation _targetStation;
         private PieceDataHelper.PieceData _pieceData;
         private Vector3 _workPosition;
-        // 0.2.328: arrival is vanilla's use range (InUseRange); re-aims at the station's surface when the spot was short of it.
+        // Arrival is vanilla's use range (InUseRange); re-aims at the station's surface when the spot was short of it.
         private const int MaxApproachRetries = 2;
         private int _approachRetries;
         private float _workEndTime;
@@ -130,7 +130,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return WorkPhase.Complete;
         }
 
-        // Always on: where it was, where it was going and who held its movement (R65: a bare "timed out" beside the bench).
+        // Always on: where it was, where it was going and who held its movement for a useful timeout line.
         private string TimeoutDetail(WorkPhase phase)
         {
             if (phase != WorkPhase.MovingToWorkstation || Character == null) return "";
@@ -344,8 +344,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return true;
             }
             
-            // 0.2.328 (Fire, round 12 companion_motion_test: "they should try to get a little closer to the workbenches before
-            // interacting"; chore_workstation stopped 2.9 m off the bench): arrived = vanilla CraftingStation.InUseDistance, the
+            // Companions should get close to a workbench before interacting:
+            // arrived = vanilla CraftingStation.InUseDistance, the
             // range that keeps a player's crafting window open, instead of the old 3.5 m from the pivot.
             if (InUseRange())
             {
@@ -356,7 +356,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             // CRITICAL: Call ContinueMovement() every frame for vanilla pathfinding to work!
             // This keeps calling MoveTo() which follows waypoints around obstacles.
-            // 0.2.333 (round 13: "never within m_useDistance 2.0 m of its PIVOT (closest 2.5 m)"): ContinueMovement counts as
+            // ContinueMovement counts as
             // arrived inside InteractionPointHelper.ARRIVAL_THRESHOLD (2.5 m) of the spot, wider than a workbench's 2 m use range,
             // so the walk stopped short every time. Keep walking until the spot itself is reached (0.4 m); the use-range check
             // above ends it as soon as vanilla's range is met.
@@ -410,7 +410,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 Character.SetWalk(false);
                 Character.SetRun(false);
             }
-            // 0.2.327 (audit slice 3): no rigidbody velocity write; the hold's SetMoveDir(0) lets vanilla UpdateWalking brake.
+            // No rigidbody velocity write; the hold's SetMoveDir(0) lets vanilla UpdateWalking brake.
 
             // Play work animation periodically
             if (Time.time - _lastAnimationTime >= WorkAnimationInterval)
@@ -463,7 +463,7 @@ namespace FiresCore.Npc.IdleBehaviors
             StartCraftingAnimation();
 
             // A commanded visit upgrades by the rules (ChoreBrain): the idle flavour below only upgrades at 2 % per hammer swing
-            // and for free, so "use the workbench" never upgraded anything in companion_test (R61: 150 s, no line at all).
+            // and for free, so "use the workbench" never upgraded anything before.
             if (_wasCommanded) TryCommandedUpgrade();
 
             // Also do an initial hammer swing
@@ -536,7 +536,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Check upgrade chance first (upgrade is rarer than repair). An idle upgrade follows the SAME rule as a commanded one
             // (ChoreBrain: the station's level, the recipe's materials, paid from the bag); it used to be a free quality level on
-            // top of a commanded visit's paid one (R71 workstation: q1 -> q3 with one upgrade's materials, [ghost]). A commanded
+            // top of a commanded visit's paid one (two upgrades for one upgrade's materials). A commanded
             // visit has already done its upgrade, so it doesn't roll.
             if (!_wasCommanded && Random.value <= UpgradeChancePerAnimation)
             {
@@ -905,7 +905,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool InUseRange() => Humanoid != null && _targetStation != null && _targetStation.InUseDistance(Humanoid);
 
         /// <summary>
-        /// 0.2.328: a spot 0.7 m off the station's surface nearest to the companion (its closest collider point; the bounds point
+        /// A spot 0.7 m off the station's surface nearest to the companion (its closest collider point; the bounds point
         /// of a non-convex mesh, as for mine rocks), kept inside vanilla's use range (m_useDistance from the pivot, as InUseDistance
         /// measures). It replaces "1.5 m along the piece's forward", which ignored the station's shape and could sit outside it.
         /// </summary>

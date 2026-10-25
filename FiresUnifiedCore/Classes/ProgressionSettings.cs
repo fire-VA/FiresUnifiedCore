@@ -1,3 +1,4 @@
+using UnityEngine;
 using BepInEx.Configuration;
 using FiresCore.Sync;
 
@@ -66,7 +67,10 @@ namespace FiresCore.Classes
         private const int DefaultSkillPointsPerValorLevel = 4;
         private const float DefaultValorLevelXpMultiplier = 1.8f;
         private const float DefaultAttributePointsPerLevel = 0.5f;
-        private const int DefaultAttributePointsMaximum = 80;
+        // 0 = unlimited, the new default (was 80).
+        private const int DefaultAttributePointsMaximum = 0;
+        private const int DefaultMaxCharacterLevel = 100, DefaultParagonPointsPerValorLevel = 1, DefaultFiresSkillMaxLevel = 200;
+        private const float DefaultParagonCostGrowth = 0.02f;
 
         /// <summary>
         /// First-pass calibration: the XP a player is expected to earn per hour. The shipped curve is
@@ -94,6 +98,11 @@ namespace FiresCore.Classes
         public static ConfigEntry<int> AttributePointsMaximum;
         public static ConfigEntry<float> ExpectedXpPerHour;
         public static ConfigEntry<OverspentPointPolicy> WhenPointsDrop;
+        // The level cap as a setting, Paragon points (ESO Champion Points) and the Fires skill level cap.
+        public static ConfigEntry<int> MaxCharacterLevel;
+        public static ConfigEntry<int> ParagonPointsPerValorLevel;
+        public static ConfigEntry<float> ParagonCostGrowth;
+        public static ConfigEntry<int> FiresSkillMaxLevel;
 
         public static bool IsInitialized => XpMultiplier != null;
 
@@ -163,8 +172,32 @@ namespace FiresCore.Classes
             AttributePointsMaximum = config.Bind(
                 Section, "Attribute points maximum", DefaultAttributePointsMaximum,
                 new ConfigDescription(
-                    "Total attribute points a character can ever hold. [Synced with Server]",
-                    new AcceptableValueRange<int>(0, 1000)));
+                    "Total attribute points a character can ever hold. 0 = unlimited (the default). [Synced with Server]",
+                    new AcceptableValueRange<int>(0, 100000)));
+
+            MaxCharacterLevel = config.Bind(
+                Section, "Max character level", DefaultMaxCharacterLevel,
+                new ConfigDescription(
+                    "The character level cap. Past it every level is a Valor level (Paragon). The XP curve extends with the same formula. [Synced with Server]",
+                    new AcceptableValueRange<int>(1, 1000)));
+
+            ParagonPointsPerValorLevel = config.Bind(
+                Section, "Paragon points per Valor level", DefaultParagonPointsPerValorLevel,
+                new ConfigDescription(
+                    "Paragon points for each Valor level, spent on Paragon passives and on talent ranks past 3 (no rank cap). [Synced with Server]",
+                    new AcceptableValueRange<int>(0, MaxSkillPointsPerLevel)));
+
+            ParagonCostGrowth = config.Bind(
+                Section, "Paragon cost growth", DefaultParagonCostGrowth,
+                new ConfigDescription(
+                    "Each Valor level costs this much more XP than the last, as a share of the first (0.02: Valor level 50 costs 2x the first). [Synced with Server]",
+                    new AcceptableValueRange<float>(0f, 1f)));
+
+            FiresSkillMaxLevel = config.Bind(
+                Section, "Fires skill max level", DefaultFiresSkillMaxLevel,
+                new ConfigDescription(
+                    "The level Fires skills can reach. Effects grow normally to 100, then keep growing on a soft curve. [Synced with Server]",
+                    new AcceptableValueRange<int>(100, 1000)));
 
             ExpectedXpPerHour = config.Bind(
                 Section, "Expected XP per hour", DefaultExpectedXpPerHour,
@@ -196,12 +229,22 @@ namespace FiresCore.Classes
             configSync.AddConfigEntry(AttributePointsMaximum);
             configSync.AddConfigEntry(ExpectedXpPerHour);
             configSync.AddConfigEntry(WhenPointsDrop);
-            // 0.2.359: hidden behind Show advanced when no classes/companion mod is loaded.
-            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.RPGCLASSES, true,   // 0.2.387: RPGClasses only (owner map)
+            configSync.AddConfigEntry(MaxCharacterLevel);
+            configSync.AddConfigEntry(ParagonPointsPerValorLevel);
+            configSync.AddConfigEntry(ParagonCostGrowth);
+            configSync.AddConfigEntry(FiresSkillMaxLevel);
+            // Hidden behind Show advanced when no classes/companion mod is loaded.
+            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.RPGCLASSES, true,   // RPGClasses only (owner map)
                 XpMultiplier, KillXpMultiplier, NonCombatXpMultiplier, QuestXpMultiplier, SkillPointsPerLevel, ExtraSkillPointsPerTenthLevel,
                 SkillPointsPerValorLevel, ValorLevelXpMultiplier, AttributePointsPerLevel, AttributePointsPerValorLevel, AttributePointsMaximum,
-                ExpectedXpPerHour, WhenPointsDrop);
+                ExpectedXpPerHour, WhenPointsDrop, MaxCharacterLevel, ParagonPointsPerValorLevel, ParagonCostGrowth, FiresSkillMaxLevel);
         }
+
+        /// <summary>The configured level cap (the shipped 100 before Initialize).</summary>
+        public static int MaxLevel => MaxCharacterLevel != null ? Mathf.Max(1, MaxCharacterLevel.Value) : DefaultMaxCharacterLevel;
+        public static int ParagonPerValor => ParagonPointsPerValorLevel != null ? ParagonPointsPerValorLevel.Value : DefaultParagonPointsPerValorLevel;
+        public static float ParagonGrowth => ParagonCostGrowth != null ? Mathf.Max(0f, ParagonCostGrowth.Value) : DefaultParagonCostGrowth;
+        public static int SkillMaxLevel => FiresSkillMaxLevel != null ? Mathf.Max(100, FiresSkillMaxLevel.Value) : DefaultFiresSkillMaxLevel;
 
         /// <summary>
         /// The rates in force. Falls back to the shipped defaults before Initialize runs, so a caller

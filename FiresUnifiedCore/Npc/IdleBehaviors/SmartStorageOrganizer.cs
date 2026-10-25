@@ -691,6 +691,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private static string Localize(string key) => Localization.instance != null ? Localization.instance.Localize(key) : key;
 
+        // A wanted tag outranks the organizer's own scoring (station / like-items), per tag score 3 item / 2 drop type / 1 category.
+        private const float TagWantBonus = 1000f;
+
         private static bool HasRoom(Inventory inv, ItemDrop.ItemData item)
             => inv.HaveEmptySlot() || inv.FindFreeStackSpace(item.m_shared.m_name, item.m_worldLevel) > 0;
 
@@ -710,13 +713,17 @@ namespace FiresCore.Npc.IdleBehaviors
             foreach (var ctx in contexts)
             {
                 if (!HasRoom(ctx.Inventory, item)) continue;
+                // Chest tags: refused = skip, wanted = tag score on top, null (untagged / storage off) = today's rule.
+                bool? tag = FiresCore.Storage.ChestTags.Match(ctx.Chest, item, out int tagScore);
+                if (tag == false) continue;
                 var placement = Score(profile, item, ctx, false);
-                if (best != null && placement.Score <= best.Score) continue;
+                float score = placement.Score + (tag == true ? TagWantBonus * tagScore : 0f);
+                if (best != null && score <= best.Score) continue;
                 best = new ChestRecommendation
                 {
                     Chest = ctx.Chest,
-                    Score = placement.Score,
-                    Reason = placement.Reason ?? "free space",
+                    Score = score,
+                    Reason = tag == true ? "chest tag" : placement.Reason ?? "free space",
                     HasMatchingItems = placement.Matches,
                     NearestRelevantStation = placement.Station
                 };

@@ -17,8 +17,8 @@ namespace FiresCore.Npc.Combat
         public Vector3 LookAt;
 
         /// <summary>
-        /// The class-skill bar slot to press this frame, or -1. Core can't see the skill bar: from Core 0.2.158 Advise fills it
-        /// from the Ready slots the driver passes in (CompanionBrain.PickClassSkill); until then it stays -1.
+        /// The class-skill bar slot to press this frame, or -1. Core can't see the skill bar: Advise fills it
+        /// from the Ready slots the driver passes in (CompanionBrain.PickClassSkill); otherwise it stays -1.
         /// </summary>
         public int SkillSlot = -1;
 
@@ -37,7 +37,7 @@ namespace FiresCore.Npc.Combat
 
         /// <summary>
         /// A timed block (parry, COMBAT_TACTICS §1): the Time.time to RAISE the block, held <see cref="CombatAdvisor.ParryHold"/> s
-        /// unless <see cref="Block"/> says hold; -1 = none. Vanilla parries a hit landing within 0.25 s of the raise. Filled from 0.2.199.
+        /// unless <see cref="Block"/> says hold; -1 = none. Vanilla parries a hit landing within 0.25 s of the raise.
         /// </summary>
         public float ParryAt = -1f;
 
@@ -45,8 +45,8 @@ namespace FiresCore.Npc.Combat
         public bool Sprint;
 
         /// <summary>
-        /// Crouch (sneak) while closing on unaware prey (its AI not alerted, no target; Fire, R74: "crouch down to remain hidden so
-        /// it can sneak up on the deer"); stand to attack, block, dodge or retreat. Never with <see cref="Sprint"/>.
+        /// Crouch (sneak) while closing on unaware prey (its AI not alerted, no target), to stay hidden on the approach;
+        /// stand to attack, block, dodge or retreat. Never with <see cref="Sprint"/>.
         /// </summary>
         public bool Sneak;
 
@@ -58,8 +58,8 @@ namespace FiresCore.Npc.Combat
     }
 
     /// <summary>
-    /// The companions' fighting rules for a body something else drives (Fire, 2026-09-29: the FDT autoplay bot defends itself
-    /// "with the companion logic"). CompanionAI is a BaseAI and its stamina/attack helpers read companion components, so none of
+    /// The companions' fighting rules for a body something else drives (the FDT autoplay bot defends itself with the companion
+    /// logic). CompanionAI is a BaseAI and its stamina/attack helpers read companion components, so none of
     /// it runs on a Player; this advisor applies the same rules to any Humanoid and returns orders the caller turns into input.
     /// Targets: whoever is after the body or its party, then anything hostile within <see cref="ClosePressureRange"/>; it never
     /// goes hunting. Stamina: StaminaManager's thresholds (attack from 50 %, recover under 40 % until 85 %, run 50/30). Spacing:
@@ -100,7 +100,7 @@ namespace FiresCore.Npc.Combat
 
         private sealed class Memory
         {
-            // On the melee weapon because the staff ran out of eitr with a foe close (0.2.201); back to the staff at EitrBackShare.
+            // On the melee weapon because the staff ran out of eitr with a foe close; back to the staff at EitrBackShare.
             public bool EitrMelee;
             public bool Recovering;
             public bool Running;
@@ -139,6 +139,9 @@ namespace FiresCore.Npc.Combat
             // This cornering already ended in a run past (counted once); a chokepoint already counted this group fight.
             public bool CornerEscaped;
             public bool ChokeCounted;
+            // Without hysteresis the body flips Approach <-> Pull every tick and stands still: a pull commits for a while, and a
+            // pull that ended may not start again until the cooldown is over.
+            public float PullCommitUntil, PullStartedAt, PullCooldownUntil;
             // The group tactic this frame (null = the threat level's name), and the last one logged.
             public string TacticNow;
             // The last "foe behind a wall" line (kind) logged.
@@ -194,7 +197,7 @@ namespace FiresCore.Npc.Combat
                 if (!AI.CompanionBrain.CanFight(self, other, reach, hasRanged)) continue;
                 if (!AI.Perception.Knows(self, other, eye, look, senses, alerted)) continue;
                 // Heard or remembered is not enough to engage: never through a wall (dungeons). A clear line, or a way to walk there.
-                // Defending is not hunting ([seasons], R70: the bot chased a fleeing Deer with its Club): a passive animal, or a
+                // Defending is not hunting (never chase a fleeing animal): a passive animal, or a
                 // monster that hasn't noticed anyone, is left alone unless it is after us or our party.
                 if (Passive(self, other)) continue;
                 if (!Engageable(self, other, eye)) continue;
@@ -241,7 +244,7 @@ namespace FiresCore.Npc.Combat
             BaseAI ai = other.GetBaseAI();
             if (ai == null) return false;
             // A drill's monster is always fair game: the drill aggroes it on another peer, and that aggro doesn't survive an
-            // ownership handover ([visual]).
+            // ownership handover.
             ZNetView view = other.m_nview;
             if (view != null && view.IsValid() && view.GetZDO().GetBool(DrillMonsterKey)) return false;
             Character itsTarget = FiresCore.Npc.Combat.ThreatLevel.TargetOf(ai);
@@ -322,8 +325,7 @@ namespace FiresCore.Npc.Combat
         {
             CombatOrder order = AdviseMoves(self, target, dt, healthShare);
             if (ready == null || self == null) return order;
-            // No memory = AdviseMoves never saw a live target for this body: said, not silent (0.2.215, R86 tank drill: a Ready bar of
-            // tank skills every tick and not one "[CombatAdvisor] Human: …skill…" line for the tester).
+            // No memory = AdviseMoves never saw a live target for this body: said, not silent.
             if (!s_memory.TryGetValue(self, out Memory memory))
             {
                 s_memory[self] = memory = new Memory();
@@ -352,7 +354,7 @@ namespace FiresCore.Npc.Combat
             return order;
         }
 
-        // Why no class skill was chosen: always on, printed when the reason changes or every SkillWhyRepeat s (R62 class_drill).
+        // Why no class skill was chosen: always on, printed when the reason changes or every SkillWhyRepeat s.
         private const float SkillWhyRepeat = 5f;
 
         private static void SkillWhy(Humanoid self, Memory memory, string why, string context = null)
@@ -368,8 +370,8 @@ namespace FiresCore.Npc.Combat
             var order = new CombatOrder();
             if (self == null || target == null || target.IsDead()) return Finish(self, order, "Hold");
             if (!s_memory.TryGetValue(self, out Memory memory)) s_memory[self] = memory = new Memory();
-            // A new target is a new fight: the opener / control windows count from here (R62 class_drill: the memory outlived
-            // earlier fights, so only Sustained skills were ever tried).
+            // A new target is a new fight: the opener / control windows count from here (otherwise the memory outlives
+            // earlier fights, so only Sustained skills are ever tried).
             if (memory.Target != target)
             {
                 memory.Target = target;
@@ -377,14 +379,13 @@ namespace FiresCore.Npc.Combat
                 memory.ProgressAt = Time.time;
                 memory.ProgressHealth = target.GetHealth();
                 memory.ProgressSwings = 0;
-                // A new fight: read the threat now and log the verdict with its numbers (R76 survival (b): "fight the Greyling at
-                // 30 %" and no Core line said why).
+                // A new fight: read the threat now and log the verdict with its numbers.
                 memory.NextThreat = 0f;
                 memory.VerdictPending = true;
             }
 
-            // A fight going nowhere (R74: 80+ hits on a wild companion, its hp 344/346 throughout: ~1 per hit after its armour,
-            // regenerated): after FutileSeconds of swinging with its health down less than FutileShare, break off and leave it
+            // A fight going nowhere (armour and regen absorb almost every hit): after FutileSeconds of swinging with its health
+            // down less than FutileShare, break off and leave it
             // alone for a while. Retreat if it keeps coming; PickTarget skips it meanwhile.
             if (Time.time - memory.ProgressAt >= FutileSeconds)
             {
@@ -438,12 +439,12 @@ namespace FiresCore.Npc.Combat
             ReadThreat(self, memory, health, stamina);
 
             ItemDrop.ItemData weapon = self.GetCurrentWeapon();
-            // Anything whose attack launches a projectile keeps ranged spacing: bows, crossbows AND staffs ([visual], R71 mage
-            // class_drill: a StaffFireball got melee spacing and walked into reach).
+            // Anything whose attack launches a projectile keeps ranged spacing: bows, crossbows AND staffs (a staff with melee
+            // spacing walks into reach).
             bool ranged = IsProjectileWeapon(weapon);
             float reach = weapon != null && weapon.m_shared.m_attack != null ? Mathf.Max(1f, weapon.m_shared.m_attack.m_attackRange) : 2f;
 
-            // No attack works in water: get out, away from the target (R56: the bot swam after targets and landed 0 hits).
+            // No attack works in water: get out, away from the target.
             if (self.IsSwimming())
             {
                 order.MoveDir = -toward;
@@ -451,13 +452,13 @@ namespace FiresCore.Npc.Combat
                 return Finish(self, order, "Swim");
             }
             // Out of reach from here (melee vs a target in water or far above/below): don't chase it, hand back.
-            // Hysteresis: once out of reach, the target must come 1 m nearer in height to count again (R57 flicker).
+            // Hysteresis: once out of reach, the target must come 1 m nearer in height to count again (avoids flicker).
             float heightLimit = memory.OutOfReach ? AI.CompanionBrain.MeleeHeightReach - 0.5f : AI.CompanionBrain.MeleeHeightReach + 0.5f;
             bool wasOut = memory.OutOfReach;
             memory.OutOfReach = !AI.CompanionBrain.CanFight(self, target, reach, ranged, heightLimit);
             if (memory.OutOfReach)
             {
-                // Once per episode (0.2.203, Fire R77: "punching a cliff because the wolf is up top"): why no swing.
+                // Once per episode: why no swing (e.g. the target is up on a cliff).
                 if (!wasOut)
                 {
                     float dy = target.transform.position.y - self.transform.position.y;
@@ -473,7 +474,7 @@ namespace FiresCore.Npc.Combat
             {
                 // Away from all of them (their damage-weighted centre), not just the target (§2 retreat); a wall that way turns it
                 // up to 90° either side. No way back at all = cornered: fight back from the corner (below) instead of pressing into
-                // the wall with the hits landing unblocked (R73 Crypt4: 4 Skeletons + 2 Ghosts, "not even trying to fight back").
+                // the wall with the hits landing unblocked.
                 Vector3 away = memory.Threat.Away.sqrMagnitude > 0.0001f ? memory.Threat.Away : -toward;
                 if (FreeWay(self, away, out Vector3 way))
                 {
@@ -546,8 +547,16 @@ namespace FiresCore.Npc.Combat
                 else
                 {
                     FoesOn(self, 15f, s_foes, out float spread);
-                    if (spread < PullSpread && EscapeRules.PullPoint(self, memory.Threat.Nearest, out Vector3 pull))
+                    float now = Time.time;
+                    bool pulling = memory.LastTactic == "pull";
+                    // keep a running pull until they string out (spread + 1.5 m) or past its commit; never pull longer than PullMaxSeconds
+                    bool wantPull = pulling
+                        ? (now < memory.PullCommitUntil || spread < PullSpread + 1.5f) && now - memory.PullStartedAt < PullMaxSeconds
+                        : spread < PullSpread && now >= memory.PullCooldownUntil;
+                    if (pulling && !wantPull) memory.PullCooldownUntil = now + PullCooldownSeconds;
+                    if (wantPull && EscapeRules.PullPoint(self, memory.Threat.Nearest, out Vector3 pull))
                     {
+                        if (!pulling) { memory.PullStartedAt = now; memory.PullCommitUntil = now + PullCommitSeconds; }
                         Vector3 toPull = pull - self.transform.position;
                         toPull.y = 0f;
                         if (memory.LastTactic != "pull")
@@ -647,7 +656,7 @@ namespace FiresCore.Npc.Combat
                     }
                     order.Block = true;
                     // Out of our reach while it swings (a Skeleton hits from ~2.9 m, past a Club): step in under the guard, or
-                    // the bot blocks in place forever (R61: 50 s frozen at 2.9 m, Approach <-> Block, 0 hits).
+                    // the bot blocks in place forever.
                     if (distance > reach) order.MoveDir = toward;
                     return Finish(self, order, "Block");
                 }
@@ -655,7 +664,7 @@ namespace FiresCore.Npc.Combat
 
             // Staggered (a parry, or a heavy hit): vanilla's damage window. Commit: attack it, no pause, heavy first with the
             // stamina for it, until the stagger ends (§1 "punish the stagger").
-            // Facing it first, like every other swing (0.2.203, R77: swings in the wrong direction).
+            // Facing it first, like every other swing.
             if (!ranged && target.IsStaggering() && distance <= reach + 0.5f && !self.InAttack() && IsFacing(self, toward))
             {
                 order.Attack = true;
@@ -671,7 +680,7 @@ namespace FiresCore.Npc.Combat
             if (ranged && distance < rangedMin) order.MoveDir = -toward;
             else if (distance > (ranged ? rangedMax : reach))
             {
-                // A foe behind a wall (R75 Crypt4: "Approach" straight at a Ghost 11.6 m off through a crypt wall): never walk
+                // A foe behind a wall (e.g. in a crypt): never walk
                 // straight at it. A flier that passes through walls is waited out; anything else is reached by the navmesh path
                 // if that's short enough, else left alone until it comes into sight.
                 if (!HasLineOfSight(self, target))
@@ -711,8 +720,7 @@ namespace FiresCore.Npc.Combat
                 && memory.Threat.FlankShift.sqrMagnitude > 0.0001f)
                 order.MoveDir = memory.Threat.FlankShift;
 
-            // Recovering in melee (R74 Crypt4: "Recover -> Block -> Recover" 0.9-2.2 m from a Skeleton, no swing, 35.8 through the
-            // held block, near death): a held block regenerates at 80 % and every blocked hit drains stamina and restarts the
+            // Recovering in melee: a held block regenerates at 80 % and every blocked hit drains stamina and restarts the
             // regen delay, so it never recovers. Instead: block only a swing coming in, else step back out of reach to refill;
             // with no way back, swing back when a swing is affordable. With a foe on us, resume at ResumeUnderPressure.
             bool pressedClose = !ranged && distance <= reach + 1.5f && memory.Threat.OnMe > 0;
@@ -742,15 +750,15 @@ namespace FiresCore.Npc.Combat
             if (memory.Recovering)
             {
                 order.Block = !ranged && distance <= reach + 1f;
-                // No attack input while the bar refills (R74: the bow drawn at stamina 0); a bow keeps its distance, and a
+                // No attack input while the bar refills (never draw a bow at stamina 0); a bow keeps its distance, and a
                 // player eats if a food slot is free.
                 if (ranged && distance < rangedMin && order.MoveDir.sqrMagnitude < 0.0001f) order.MoveDir = -toward;
                 if (self is Player eater) order.Eat = FoodToEat(eater, out _);
                 return Finish(self, order, "Recover");
             }
 
-            // A ranged shot only down a clear lane: never through a piece, terrain, a companion or a player (Fire: the bot shot an
-            // enemy through its own workbench). Blocked: step sideways to find a lane (switching side every few seconds); after
+            // A ranged shot only down a clear lane: never through a piece, terrain, a companion or a player. Blocked: step
+            // sideways to find a lane (switching side every few seconds); after
             // a while ChooseWeapon hands over to melee when there is one.
             bool facing = Vector3.Dot(self.transform.forward, toward) >= FacingDot;
             if (ranged) return Shoot(self, target, weapon, order, memory, toward, facing, stamina);
@@ -788,8 +796,8 @@ namespace FiresCore.Npc.Combat
             {
                 float side = Mathf.FloorToInt((Time.time - memory.FireBlockedSince) / LaneSideSeconds) % 2 == 0 ? 1f : -1f;
                 order.MoveDir = Vector3.Cross(Vector3.up, toward) * side;
-                // Still blocked after a while (R76: a drake above the mausoleum, "lane blocked by FiresMausoleumPortal" x4, then the
-                // fight was dropped): back off at a slant as well, to see over the building instead of sliding along it.
+                // Still blocked after a while (e.g. a flier above a building): back off at a slant as well, to see over the
+                // building instead of sliding along it.
                 if (Time.time - memory.FireBlockedSince > LaneBackOffAfter) order.MoveDir = (order.MoveDir - toward * 0.8f).normalized;
                 order.DrawHold = drawing;   // keep a drawn arrow up while looking for a lane; never release it into the block
                 return Finish(self, order, "LaneBlocked");
@@ -812,8 +820,8 @@ namespace FiresCore.Npc.Combat
                 }
                 return Finish(self, order, "Draw");
             }
-            // A staff out of eitr (Fire, R75 mage drill: point-blank staff swings with no eitr, "sitting there getting hit"): no
-            // press; back off out of reach to regenerate, eat eitr food if carried.
+            // A staff out of eitr: no press (point-blank staff swings do nothing); back off out of reach to regenerate, eat
+            // eitr food if carried.
             if (!bowDraw && !CanAfford(self, bow, false, out string shortOf) && shortOf != null && shortOf.StartsWith("eitr"))
             {
                 Vector3 away = memory.Threat.Away.sqrMagnitude > 0.0001f ? memory.Threat.Away : -toward;
@@ -840,8 +848,8 @@ namespace FiresCore.Npc.Combat
         }
 
         /// <summary>
-        /// Whether <paramref name="self"/> can pay for this attack now (Fire, R74: "trying to spam pull its bow back when it has no
-        /// stamina"): stamina for the swing (vanilla's m_attackStamina, less the skill discount taken as none: conservative) plus, for
+        /// Whether <paramref name="self"/> can pay for this attack now (never spam a bow draw with no stamina): stamina for the
+        /// swing (vanilla's m_attackStamina, less the skill discount taken as none: conservative) plus, for
         /// a bow, a full draw (drain per second × the minimum draw time), and eitr likewise, with a 5 % margin of the bar. Every
         /// driver that presses attack itself (a hunt, a drill) asks this first; Advise's own orders already hold back under 50 %.
         /// </summary>
@@ -903,7 +911,7 @@ namespace FiresCore.Npc.Combat
         public const float EitrMeleeDistance = 5f, EitrBackShare = 0.5f;
 
         /// <summary>
-        /// What to take for eitr now, or null (0.2.201): first an eitr mead whose effect gives eitr at once (vanilla SE_Stats
+        /// What to take for eitr now, or null: first an eitr mead whose effect gives eitr at once (vanilla SE_Stats
         /// m_eitrUpFront: MeadEitrMinor), then one that speeds eitr regen, then the carried food with the most eitr. A mead only when
         /// its effect (and its category: meads share a cooldown) isn't already running, as vanilla's CanConsumeItem, without messages.
         /// </summary>
@@ -995,7 +1003,7 @@ namespace FiresCore.Npc.Combat
         // Swap for resistances only when the held weapon gets through less than this share of the best carried one.
         private const float ResistSwapShare = 0.5f;
 
-        // R74 Crypt4: a Club did 4 raw blunt to a Ghost (blunt-immune), 15 hits, hp 60/60. The carried weapon that gets the most
+        // A weapon the target is immune to does nothing (e.g. blunt on a Ghost). The carried weapon that gets the most
         // through the target's resistances (usable: not broken unless in hand; a bow with its ammo), when the held one gets through
         // under ResistSwapShare of it. Null: keep the held weapon.
         private static ItemDrop.ItemData BestAgainst(Humanoid self, Character target, ItemDrop.ItemData held, out string why)
@@ -1042,12 +1050,12 @@ namespace FiresCore.Npc.Combat
         /// ranged picked as a companion scans its slots (<see cref="AI.CompanionBrain.ChooseWeapons"/>, equipped items first), then
         /// <see cref="AI.CompanionBrain.WeighWeapons"/> when it has both; at most one swap every 5 s, never mid-attack. With nothing
         /// in hand it returns the melee weapon (or the ranged one). While a torch is held in the off hand beside a one-hander (the torch
-        /// tactic, <see cref="FireScare.HoldsTorchOffHand"/>), only a one-handed weapon is handed over (0.2.231).
+        /// tactic, <see cref="FireScare.HoldsTorchOffHand"/>), only a one-handed weapon is handed over.
         /// </summary>
         public static ItemDrop.ItemData ChooseWeapon(Humanoid self, Character target)
         {
             ItemDrop.ItemData pick = ChooseWeaponCore(self, target);
-            // Fire: "they have to hold the torch in their off hand and fight with a weapon in the main hand". A two-hander, bow or staff
+            // The torch must stay in the off hand with a weapon in the main hand. A two-hander, bow or staff
             // makes vanilla's EquipItem put the torch away, so while it is out the body keeps what is in hand instead.
             if (pick?.m_shared == null || pick.m_shared.m_itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon || !FireScare.HoldsTorchOffHand(self)) return pick;
             if (!s_torchKeptLogged.TryGetValue(self, out ItemDrop.ItemData logged) || logged != pick)
@@ -1075,7 +1083,7 @@ namespace FiresCore.Npc.Combat
 
             ItemDrop.ItemData held = self.GetCurrentWeapon();
 
-            // The target's resistances first (R74 Crypt4: a Club on a blunt-immune Ghost): the carried weapon that gets the most
+            // The target's resistances first (e.g. a Club on a blunt-immune Ghost): the carried weapon that gets the most
             // through, kept while it's in hand against this target (the melee/ranged rules below would hand back the default).
             if (target != null)
             {
@@ -1095,8 +1103,8 @@ namespace FiresCore.Npc.Combat
                 }
             }
 
-            // A staff with a foe close (0.2.203, Fire R77: fireballs at 4.7 m with a Club in the bag; R75: point-blank staff swings with
-            // no eitr, "sitting there getting hit"): within EitrMeleeDistance the melee weapon, whatever the eitr, so the eitr stays for
+            // A staff with a foe close (point-blank staff shots miss and waste eitr): within EitrMeleeDistance the melee weapon,
+            // whatever the eitr, so the eitr stays for
             // shots that hit and for skills. The staff comes back past EitrMeleeDistance + 2 m with eitr over the reserve and a shot.
             if (target != null && melee != null && held != null && held == ranged && IsEitrWeapon(held))
             {
@@ -1138,13 +1146,12 @@ namespace FiresCore.Npc.Combat
             bool currentlyRanged = held == ranged;
 
             // No lane for the bow for a while, or the target close with the lane blocked: melee, and stay on it for a bit
-            // (Fire: the bot shot through its own workbench; a blocked archer closes in instead).
+            // (a blocked archer closes in instead).
             if (!currentlyRanged && Time.time < memory.PreferMeleeUntil && AI.CompanionBrain.ClassWeaponFor(self) != AI.CompanionBrain.ClassWeaponWant.Ranged) return null;
 
             // Melee can't reach it (far above or below): take the ranged weapon if its ammo is carried. The lane rule still holds
             // a blocked shot.
-            // The class bar first (R74 ranger class_drill: these two early branches never asked it, so a Ranger was handed a club
-            // at 5.9 m and four ranger skills went untested).
+            // The class bar first: these two early branches must ask it too, or a ranged class gets handed a melee weapon.
             var classWant = AI.CompanionBrain.ClassWeaponFor(self);
             if (!currentlyRanged && classWant != AI.CompanionBrain.ClassWeaponWant.Melee
                 && CarriesAmmoFor(self, ranged) && !AI.CompanionBrain.CanFight(self, target, Reach(self), false))
@@ -1215,9 +1222,8 @@ namespace FiresCore.Npc.Combat
         }
 
 
-        // ---- The staff policy (0.2.203, Fire R77 mage drill: "the bot absolutely spams fire staff attacks and misses most of them
-        // … it shouldnt be wasting eitr like that"): a reserve kept for skills, shots only when a hit is likely, a miss streak closes
-        // in, and one tally line per fight. ----
+        // ---- The staff policy (never waste eitr on spammed, missed staff shots): a reserve kept for skills, shots only when a
+        // hit is likely, a miss streak closes in, and one tally line per fight. ----
 
         /// <summary>Eitr share kept for class skills and heals: a staff shot that would take eitr under it is not fired.</summary>
         public const float StaffReserve = 0.3f;
@@ -1361,7 +1367,7 @@ namespace FiresCore.Npc.Combat
         private static Vector3 Eye(Humanoid self) => self.m_eye != null ? self.m_eye.position : self.GetCenterPoint();
 
         // A ranged weapon in hand, or one carried with its ammo (ChooseWeapon swaps to it), so a target melee can't reach still
-        // counts as a fight (R70 read: a Greydwarf 6.4 m below; the Club couldn't, the bow in the bag never came out).
+        // counts as a fight (e.g. a target well below a melee body that carries a bow).
         private static bool HasRanged(Humanoid self)
         {
             ItemDrop.ItemData weapon = self.GetCurrentWeapon();
@@ -1428,7 +1434,7 @@ namespace FiresCore.Npc.Combat
         private static readonly Dictionary<Character, float> s_futile = new Dictionary<Character, float>();
 
         /// <summary>A target this body gave up on as futile (its hits barely scratched it), for the next minute.</summary>
-        // ---- Wild companions: friends-to-be, never fought (0.2.228) ----
+        // ---- Wild companions: friends-to-be, never fought ----
 
         private static readonly HashSet<Character> s_spareLogged = new HashSet<Character>();
 
@@ -1436,8 +1442,8 @@ namespace FiresCore.Npc.Combat
         /// <paramref name="target"/> is an untamed wild companion whose faction is no foe of players: Neutral (Dverger) or still the
         /// prefab's Players baseline before the server dresses it. Such a one is hostile only because it was hit, and a body never
         /// fights it: <see cref="PickTarget"/> skips it and <see cref="Advise(Humanoid, Character, float, float)"/> backs off with the
-        /// guard up (state "Spare"). R90 run 10: Coop1's chop swing caught Yrsa, a wild companion fighting the same Greydwarf; it hit
-        /// back and "defend" fought it dead in 13 hits. A Bandit (ForestMonsters) or Cultist (Demon) one is a real foe and is fought.
+        /// guard up (state "Spare"); a stray hit on one must not turn into a fight to the death.
+        /// A Bandit (ForestMonsters) or Cultist (Demon) one is a real foe and is fought.
         /// </summary>
         public static bool Spare(Character target, out string why)
         {
@@ -1476,7 +1482,7 @@ namespace FiresCore.Npc.Combat
             || order.MoveDir.sqrMagnitude > 0.0001f;
 
         // §4 never stop defending: a foe in reach on us and this frame's order does nothing -> block, or with no stamina for it,
-        // strafe off the nearest foe. Logged as "filled" with the branch that left it empty (R72: "wasn't even trying to defend").
+        // strafe off the nearest foe. Logged as "filled" with the branch that left it empty.
         private static void FillIfIdle(Humanoid self, CombatOrder order, Memory memory, float stamina)
         {
             if (Acting(order) || memory.Threat.OnMe == 0)
@@ -1629,8 +1635,8 @@ namespace FiresCore.Npc.Combat
             Vector3 toSelf = self.transform.position - target.transform.position;
             toSelf.y = 0f;
             float distance = toSelf.magnitude;
-            // An archer / caster reaches much further than 5 m (R75: a Skeleton archer hit the bot 8 times from 17 m, "not
-            // blocking"): its own weapon's range counts for projectiles, so the shield comes up against arrows too.
+            // An archer / caster reaches much further than 5 m: its own weapon's range counts for projectiles, so the shield
+            // comes up against arrows too.
             float reach = Mathf.Max(5f, RangedReach(target) + 2f);
             if (distance > reach) return false;
             return distance < 0.01f || Vector3.Dot(target.transform.forward, toSelf / distance) >= 0.5f;
@@ -1639,7 +1645,7 @@ namespace FiresCore.Npc.Combat
         /// <summary>
         /// The threat reading this advisor acts on for <paramref name="body"/> (fight / space / retreat, seconds to die, foes): the
         /// cached one from its last Advise within a second, else a fresh ThreatLevel.Assess. Survival's fight-or-flee reads this
-        /// so the two never disagree (R75: survival fled a lone Greyling the advisor would have fought).
+        /// so the two never disagree.
         /// </summary>
         public static ThreatLevel.Reading Threat(Humanoid body)
         {
@@ -1667,8 +1673,8 @@ namespace FiresCore.Npc.Combat
         /// <summary>
         /// The weapon <paramref name="c"/>'s synced record says it holds, in vanilla's Humanoid.GetCurrentWeapon order: the right-hand
         /// item when it is a weapon, else the left-hand one when it is a weapon and not a torch. A bow is a LEFT-hand item (vanilla
-        /// EquipItem), so reading only the right hand saw a Skeleton archer off its owner as unarmed (0.2.226, R90 run 8: its bow
-        /// read 0 m and the archer that shot Coop2 from 15.1 m dropped out of the threat reading). Null when neither hand holds one.
+        /// EquipItem), so reading only the right hand would see an archer off its owner as unarmed and drop it out of the
+        /// threat reading. Null when neither hand holds one.
         /// </summary>
         public static ItemDrop.ItemData SyncedWeapon(Character c)
         {
@@ -1734,6 +1740,7 @@ namespace FiresCore.Npc.Combat
         // Three or more on us is a group; the first two nearer than PullSpread apart are still bunched.
         private const int GroupFoes = 3;
         private const float PullSpread = 3f;
+        private const float PullCommitSeconds = 2.5f, PullMaxSeconds = 6f, PullCooldownSeconds = 4f;   // pull hysteresis
         private static readonly List<Character> s_foes = new List<Character>();
 
         // The hostiles within radius targeting self (nearest first), and how far apart the first two are (their distances).

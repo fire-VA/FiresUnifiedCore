@@ -48,7 +48,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Paladin
             foreach (var character in characters)
             {
                 if (character == null || character.IsDead()) continue;
-                if (!IsParty(character)) continue; // Fire: heals and buffs only the caster's party
+                if (!IsParty(character)) continue; // heals and buffs only the caster's party
                 
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
@@ -346,7 +346,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Paladin
             foreach (var character in characters)
             {
                 if (character == null || character.IsDead()) continue;
-                if (!IsParty(character)) continue; // Fire: heals and buffs only the caster's party
+                if (!IsParty(character)) continue; // heals and buffs only the caster's party
                 
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)
@@ -408,7 +408,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Hybrid.Paladin
             foreach (var character in characters)
             {
                 if (character == null || character.IsDead()) continue;
-                if (!IsParty(character)) continue; // Fire: heals and buffs only the caster's party
+                if (!IsParty(character)) continue; // heals and buffs only the caster's party
                 
                 float dist = Vector3.Distance(m_character.transform.position, character.transform.position);
                 if (dist <= GroupRange)

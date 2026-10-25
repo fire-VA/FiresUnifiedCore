@@ -32,7 +32,12 @@ namespace FiresCore.Config
         public ConfigEntry<bool> configServerAuthority;
         public ConfigEntry<bool> configCompanionFollowDiag;
         public ConfigEntry<bool> configCompanionVerbose;
+        public ConfigEntry<bool> configPeriodicDiagnostics;
         public ConfigEntry<bool> configCompanionJobVerbose;
+        public ConfigEntry<bool> configPerfLog;
+        // Companions gear up from base chests / craft their own clothing and tools.
+        public ConfigEntry<bool> configGearUp;
+        public ConfigEntry<int> configSelfCraftPerDay, configSelfCraftKeep;
 
         public event Action ConfigLockChanged;
 
@@ -44,8 +49,23 @@ namespace FiresCore.Config
             configServerAuthority = config.Bind(GeneralSection, ServerAuthorityKey, true, ServerAuthorityDescription);
             configCompanionFollowDiag = config.Bind(DebugSection, CompanionFollowDiagKey, false, CompanionFollowDiagDescription);
             configCompanionVerbose = config.Bind(DebugSection, CompanionVerboseKey, false, CompanionVerboseDescription);
+            // Diagnostic and periodic lines go behind a toggle that is OFF until needed.
+            configPeriodicDiagnostics = config.Bind(DebugSection, "PeriodicDiagnostics", false,
+                "Dev diagnostic (off by default): periodic timing lines (companion census passes, the teleport census/heartbeat split, the kinematic sync summary). They also need the Core log level at Debug.");
+            FiresCore.Logging.Diag.Periodic = configPeriodicDiagnostics.Value;
+            configPeriodicDiagnostics.SettingChanged += (_, __) => FiresCore.Logging.Diag.Periodic = configPeriodicDiagnostics.Value;
             configCompanionJobVerbose = config.Bind(DebugSection, CompanionJobVerboseKey, false, CompanionJobVerboseDescription);
-            // 0.2.359: companion diagnostics leave the config without a companion host.
+            // Companions gear up from base chests / craft their own armour
+            configGearUp = config.Bind("Companions", "Companions gear up from base chests", true,
+                "An idle companion at base takes better armour (or a cape) from base chests you can open, puts it on and puts its old piece back. Never from private chests, chests behind a door it may not open, hoppers, carts, ships, your inventory or another companion.");
+            configSelfCraftPerDay = config.Bind("Companions", "Companion self-craft per day", 1,
+                new ConfigDescription("When no spare fits, a companion may craft itself a better armour piece this many times per in-game day, from base chests at a station in the base, using only recipes its owner knows. 0 = never.", new AcceptableValueRange<int>(0, 5)));
+            configSelfCraftKeep = config.Bind("Companions", "Self-craft keeps materials", 5,
+                new ConfigDescription("Self-crafting never uses the last this-many of any material in the base chests.", new AcceptableValueRange<int>(0, 100)));
+            // A "[Perf]" line every 10 s on a client; a test round turns it on
+            configPerfLog = config.Bind(DebugSection, "PerfLog", false,
+                "Dev diagnostic (off by default): every 10 s one [Perf] line with the average / worst frame time and FPS (clients only).");
+            // Companion diagnostics leave the config without a companion host.
             OwnerGatedConfig.Gate(OwnerGatedConfig.Owners.COMP, false, configCompanionFollowDiag, configCompanionVerbose, configCompanionJobVerbose);
 
             // The companion classes keep their verbose flags as statics, so drive them from here and on every change.

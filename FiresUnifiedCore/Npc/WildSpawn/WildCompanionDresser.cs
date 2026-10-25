@@ -206,6 +206,8 @@ namespace FiresCore.Npc.WildSpawn
             zdo.Set(ZDO_ROLLED_ARCHETYPE, (int)archetype);
             zdo.Set(ZDO_ROLLED_STARS, stars);
             zdo.Set(ZDO_FACTION, (int)faction);
+            // Race companions: the race is rolled here, server-side, once; looks + traits only, never faction or AI.
+            FiresCore.Npc.Races.CompanionRaces.RollInto(zdo, rng, gameObject.name);
 
             // GenerateRandomLoadout is left to CompanionRandomLoadout's own delayed call: running it this early, before
             // NpcVisEquipment sets up the player models, silently skipped hair and beards.

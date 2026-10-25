@@ -42,7 +42,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            // No cultivator in chests: craft one by the game's recipe (0.2.242, ChoreBrain.CraftFromStock, the bot's rule too). Materials
+            // No cultivator in chests: craft one by the game's recipe (ChoreBrain.CraftFromStock, the bot's rule too). Materials
             // missing from storage are fetched from the nearby chests one take at a time (this phase re-plans after each), then the
             // recipe's station.
             string why = CultivatorCraft(out var plan);
@@ -408,7 +408,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             float age = Time.time - _phaseStartTime;
             if (age < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
-            if (age < InteractPauseDuration) return false;
+            if (age < SkillPause) return false;
 
             if (FarmingDataHelper.IsPickableReady(_targetCrop) && _humanoid != null && Player.m_localPlayer != null)
             {
@@ -418,6 +418,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (_targetCrop.GetPicked())
                 {
                     _cropsHarvested++;
+                    LearnFromHarvest(_targetCrop);
                     Debug.Log($"[Farming] {Companion?.companionName} harvested {_targetCrop.name.Replace("(Clone)", "").Trim()}");
                     AI.ChoreBrain.ChoreDone(Companion?.companionName, "farm", $"harvested {Utils.GetPrefabName(_targetCrop.gameObject)}");
                 }
@@ -467,12 +468,13 @@ namespace FiresCore.Npc.IdleBehaviors
 
             float age = Time.time - _phaseStartTime;
             if (age < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
-            if (age < InteractPauseDuration) return false;
+            if (age < SkillPause) return false;
 
             // Position may no longer be valid if something else planted there.
-            if (!FarmingDataHelper.IsValidPlantingPosition(_plantPosition, _cropToPlant, PlantSpacing))
+            if (_badSpots.Contains(Cell(_plantPosition)) || !FarmingDataHelper.IsValidPlantingPosition(_plantPosition, _cropToPlant, LearnedSpacing(_cropToPlant)))
             {
                 Debug.Log($"[Farming] {Companion?.companionName} plant position no longer valid — re-scanning");
+                _rejectedSpots.Add(FineCell(_plantPosition));
                 _cropToPlant = null;
                 SetPhase(FarmPhase.Idle);
                 return false;
@@ -490,6 +492,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 _plantedCountBySapling.TryGetValue(sapling, out int planted);
                 _plantedCountBySapling[sapling] = planted + 1;
                 _seedsPlanted++;
+                RaiseFarming();
                 Debug.Log($"[Farming] {Companion?.companionName} planted {sapling}");
                 AI.ChoreBrain.ChoreDone(Companion?.companionName, "farm", $"planted {sapling}");
             }
@@ -572,7 +575,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var storage = _inventory.GetStorageInventory();
             if (storage == null) return false;
 
-            // 0.2.322 (dupe fix): the ownership-checked pickup (ChestHelper.TryTakeLooseItem: CanPickup, else RequestOwn and try
+            // Dupe fix: the ownership-checked pickup (ChestHelper.TryTakeLooseItem: CanPickup, else RequestOwn and try
             // again next tick; fresh data; the world item destroyed only once all of it landed). The old clone + AddItem +
             // ZNetView.Destroy ran on a machine that didn't own the drop, where Destroy only removes the local copy: the item
             // came back and was counted twice. Vanilla Humanoid.Pickup comes with the one-inventory slice.
@@ -627,7 +630,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (storage != null && chestInv != null)
             {
-                foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storage))) // 0.2.362: storage rows only
+                foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storage))) // Storage rows only
                 {
                     if (item == null) continue;
                     if (IsEquippedItem(item)) continue;

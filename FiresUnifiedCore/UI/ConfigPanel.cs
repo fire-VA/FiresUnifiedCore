@@ -92,9 +92,12 @@ namespace FiresCore.UI
         private static readonly Color CaptureButtonGreen = new Color(0.35f, 0.75f, 0.30f);
 
         private const string ChangedColor = "#FFD980";
+        // section headers in the Valheim orange-gold accent, so they stand out from the rows.
+        private const string SectionColor = "#E8A33D";
         private const string LockedColor = "#9AA0A6";
         private const string OffColor = "#997F55";
         private const string OnColor = "#66DD66";
+        private const string DisabledColor = "#FF4A3A";
         private const string CaptureColor = "#FFCC66";
         private const string NoticeColor = "#CC9944";
 
@@ -103,7 +106,7 @@ namespace FiresCore.UI
 
         public static void EnsureHost()
         {
-            // 0.2.378: never on a headless server (its Update polled the hotkey there and crashed the dedi on 0.2.376).
+            // never on a headless server (its Update polled the hotkey there and crashed the dedicated server).
             if (_instance != null || HeadlessGuard.IsHeadless) return;
             var host = new GameObject("FiresConfigPanelHost");
             UnityEngine.Object.DontDestroyOnLoad(host);
@@ -123,14 +126,14 @@ namespace FiresCore.UI
         /// </summary>
         public static bool EverOpened { get; private set; }
 
-        // Open timing ([ghost] for [perf], 2026-09-28: ui_test measured a 740 ms open): each open logs its Show phases,
+        // Open timing: each open logs its Show phases,
         // then the IMGUI time until the first Repaint that drew the window.
         private readonly System.Diagnostics.Stopwatch _openClock = new System.Diagnostics.Stopwatch();
         private string _openPhases;
         private double _openGuiMs;
         private bool _openDrawPending;
         private int _openCount;
-        // R5 ([perf]): the cold open's first frame took 491 ms of which Show was 6 and IMGUI 20, so the rest of that frame
+        // The cold open's first frame took 491 ms of which Show was 6 and IMGUI 20, so the rest of that frame
         // is split too: when this LateUpdate, the canvases, the first camera and the first OnGUI pass came, garbage
         // collections, and how many frames went by.
         private double _openLateMs, _openCanvasMs, _openCameraMs, _openFirstGuiMs;
@@ -150,6 +153,11 @@ namespace FiresCore.UI
         private bool _hudHidden;
 
         private readonly HashSet<string> _collapsed = new HashSet<string>();
+        // a section is collapsed the first time it is seen; the player's
+        // own expand / collapse then holds for the session.
+        private readonly HashSet<string> _seenSections = new HashSet<string>();
+        // mods whose section list is open in the left nav (none at first).
+        private readonly HashSet<string> _navExpanded = new HashSet<string>();
         private readonly HashSet<string> _customDrawerFailed = new HashSet<string>();
         private readonly HashSet<string> _modsWithKeybinds = new HashSet<string>();
         private readonly HashSet<string> _sectionsWithKeybinds = new HashSet<string>();
@@ -195,6 +203,7 @@ namespace FiresCore.UI
         private void Update()
         {
             if (!_cmdRegistered) { try { RegisterCommands(); _cmdRegistered = true; } catch { } }
+            SyncGuiHost();   // IMGUI only while it can draw something
             WatchVanillaControlsMenu();
             LogKeybindConflictsOnce();
             ArmPrewarm();
@@ -220,7 +229,11 @@ namespace FiresCore.UI
         // Chord.IsDown rather than KeyboardShortcut.IsDown: BepInEx's own check refuses to fire while any
         // unrelated key is held, so the window would not open while the player is walking.
         private static bool HotkeyPressed()
-            => FiresConfigUI.CfgHotkey != null
+            // UI shell: with [UI] Fires UI override ON and the config key equal to the hub key,
+            // the config window's key yields and the hub (whose Settings tab opens this window) takes it.
+            // OFF = exactly today's behaviour.
+            => Shell.FiresShell.ConfigKeyYieldsToHub() ? false
+             : FiresConfigUI.CfgHotkey != null
                 ? Input.Chord.IsDown(FiresConfigUI.CfgHotkey.Value)
                 : Input.FiresKeys.GetKeyDown(FiresConfigUI.ToggleKey);
 
@@ -396,7 +409,32 @@ namespace FiresCore.UI
         private static string IdOf(CfgDescriptor descriptor) => descriptor.ModGuid + "|" + descriptor.Section + "|" + descriptor.Key;
 
         // ---------------------------------------------------------------- draw
-        private void OnGUI()
+        // a MonoBehaviour that has OnGUI
+        // makes Unity run IMGUI's layout/event passes for it every frame, allocating even when the body returns at once. OnGUI now
+        // lives on a small child component that is enabled only while the panel is open or its one-off prewarm/hidden draw is pending.
+        private sealed class GuiHost : MonoBehaviour
+        {
+            internal ConfigPanel Panel;
+            private void OnGUI() { if (Panel != null) Panel.DrawGui(); }
+        }
+
+        private GuiHost _guiHost;
+
+        private void SyncGuiHost()
+        {
+            if (_guiHost == null)
+            {
+                var go = new GameObject("FiresConfigPanelGui");
+                go.transform.SetParent(transform, false);
+                _guiHost = go.AddComponent<GuiHost>();
+                _guiHost.Panel = this;
+            }
+            // _resizeHotControl: one more closed pass releases a resize grab the close interrupted.
+            bool need = _open || _capturing || !_prewarmDone || _hiddenDrawsLeft > 0 || _resizeHotControl != 0;
+            if (_guiHost.enabled != need) _guiHost.enabled = need;
+        }
+
+        private void DrawGui()
         {
             _hiddenPass = false;
             if (!_open) { ReleaseResizeCapture(); PrewarmFonts(); HiddenDraw(); return; }
@@ -418,7 +456,7 @@ namespace FiresCore.UI
                 ConfigPopup.Draw();
                 DrawKeybindPopup();
                 CommitOnFocusChange();
-                // 0.2.310: a test's queued click / character (FiresGuiTest), replayed against this frame's layout, as the OS's would be.
+                // a test's queued click / character, replayed against this frame's layout, as the OS's would be.
                 if (FiresGuiTest.TryNext(out Event injected))
                 {
                     Event real = Event.current;
@@ -619,6 +657,10 @@ namespace FiresCore.UI
             GUILayout.EndHorizontal();
         }
 
+        // the hub's Settings module opens this window straight in its Conflicts / Files view (those stay here in v1).
+        internal static void OpenConflictsView() { Open(); if (_instance != null) { if (_instance._filesMode) _instance.ToggleFilesMode(); _instance.ShowConflicts(); } }
+        internal static void OpenFilesView() { Open(); if (_instance != null && !_instance._filesMode) _instance.ToggleFilesMode(); }
+
         private void ToggleFilesMode()
         {
             _filesMode = !_filesMode;
@@ -635,6 +677,7 @@ namespace FiresCore.UI
             foreach (var section in CfgDiscovery.SectionsOf(_mod))
             {
                 string key = CollapseKey(_mod, section);
+                _seenSections.Add(key);
                 if (collapsed) _collapsed.Add(key);
                 else _collapsed.Remove(key);
             }
@@ -651,16 +694,28 @@ namespace FiresCore.UI
             {
                 if (!ModIsVisible(mod)) continue;
                 bool selected = mod == _mod;
-                if (GUILayout.Button(mod, selected ? ConfigSkin.NavSel : ConfigSkin.NavItem))
+                // mod names in the section headers' gold so they stand out from their
+                // sub-section rows, and every mod starts collapsed in the nav (the selected one too). Clicking the selected mod again
+                // opens or closes its section list; the choice holds for the session.
+                bool navOpen = selected && _navExpanded.Contains(mod);
+                string modLabel = $"<b><color={SectionColor}>{(selected ? (navOpen ? "[-] " : "[+] ") : "")}{mod}</color></b>";
+                if (GUILayout.Button(modLabel, selected ? ConfigSkin.NavSel : ConfigSkin.NavItem))
                 {
-                    _search = "";
-                    GUIUtility.keyboardControl = 0;
-                    ConfigPopup.Close();
-                    _mod = mod;
-                    _navSection = null;
-                    _bodyScroll = Vector2.zero;
+                    if (selected)
+                    {
+                        if (!_navExpanded.Remove(mod)) _navExpanded.Add(mod);
+                    }
+                    else
+                    {
+                        _search = "";
+                        GUIUtility.keyboardControl = 0;
+                        ConfigPopup.Close();
+                        _mod = mod;
+                        _navSection = null;
+                        _bodyScroll = Vector2.zero;
+                    }
                 }
-                if (!selected) continue;
+                if (!selected || !_navExpanded.Contains(mod)) continue;
 
                 var sections = CfgDiscovery.SectionsOf(mod);
                 for (int i = 0; i < sections.Count; i++)
@@ -673,6 +728,7 @@ namespace FiresCore.UI
                     {
                         _navSection = section;
                         string key = CollapseKey(mod, section);
+                        _seenSections.Add(key);
                         _collapsed.Remove(key);
                         _pendingJump = key;
                         InvalidateRowPositions();
@@ -722,9 +778,45 @@ namespace FiresCore.UI
             if (_searchResults.Count == 0) GUILayout.Label("No matches.", ConfigSkin.Label);
         }
 
+        // a mod's settings the mod no longer uses ("old settings", BepInEx orphans) can be removed from
+        // its .cfg here: two clicks, a copy of the file kept first. Never automatic: some mods bind keys late.
+        private string _pruneArmedMod;
+        private float _pruneArmedUntil, _pruneCountAt = -10f;
+        private int _pruneCount;
+        private string _pruneCountMod;
+
+        private ConfigFile CurrentModFile()
+        {
+            foreach (string section in CfgDiscovery.SectionsOf(_mod))
+                foreach (var d in CfgDiscovery.RowsOf(_mod, section))
+                    if (d.Entry?.ConfigFile != null) return d.Entry.ConfigFile;
+            return null;
+        }
+
+        private void DrawPruneButton()
+        {
+            if (_pruneCountMod != _mod || Time.unscaledTime - _pruneCountAt > 2f)
+            {
+                _pruneCountMod = _mod;
+                _pruneCountAt = Time.unscaledTime;
+                _pruneCount = StaleEntries.Count(CurrentModFile());
+            }
+            if (_pruneCount <= 0) return;
+            bool armed = _pruneArmedMod == _mod && Time.unscaledTime < _pruneArmedUntil;
+            string label = armed
+                ? $"<color={ChangedColor}>Click again to remove {_pruneCount} old setting(s) (a copy of the file is kept)</color>"
+                : $"Remove {_pruneCount} old setting(s) this mod no longer uses";
+            if (!GUILayout.Button(label, ConfigSkin.ButtonSmall)) return;
+            if (!armed) { _pruneArmedMod = _mod; _pruneArmedUntil = Time.unscaledTime + 5f; return; }
+            _pruneArmedMod = null;
+            StaleEntries.Prune(CurrentModFile(), null, "removed in the config window", backup: true);
+            _pruneCountAt = -10f;
+        }
+
         private void DrawModSections()
         {
             GUILayout.Label(_mod, ConfigSkin.Title);
+            DrawPruneButton();
             var sections = CfgDiscovery.SectionsOf(_mod);
             for (int i = 0; i < sections.Count; i++)
             {
@@ -734,11 +826,13 @@ namespace FiresCore.UI
                 if (!HasVisibleRows(rows)) continue;
 
                 string key = CollapseKey(_mod, section);
-                bool collapsed = _collapsed.Contains(key);
+                if (_seenSections.Add(key)) _collapsed.Add(key);
+                // While searching, every section shows its matches.
+                bool collapsed = _collapsed.Contains(key) && string.IsNullOrEmpty(_search);
 
                 GUILayout.Space(3f);
                 string barText = (collapsed ? "[+]  " : "[-]  ") + "<b>" + (i + 1) + ". " + CfgDiscovery.CleanSection(section) + "</b>";
-                if (collapsed && HasChangedRows(rows)) barText = $"<color={ChangedColor}>" + barText + "</color>";
+                barText = $"<color={(collapsed && HasChangedRows(rows) ? ChangedColor : SectionColor)}>" + barText + "</color>";
                 if (GUILayout.Button(barText, ConfigSkin.SectionBar))
                 {
                     if (!_collapsed.Remove(key)) _collapsed.Add(key);
@@ -801,7 +895,7 @@ namespace FiresCore.UI
                 if (!descriptor.Tags.HideSettingName)
                 {
                     GUILayout.Label(RowName(descriptor, locked), ConfigSkin.Label, ScaledLayout.Width(NameWidth));
-                    FiresRoundedSkin.MarkHint(descriptor.Description);
+                    FiresRoundedSkin.MarkHint(string.IsNullOrEmpty(descriptor.LongDescription) ? descriptor.Description : descriptor.LongDescription);   // hover = the full text
                     if (WasDoubleClicked()) SettingEditWindow.Open(descriptor);
                 }
 
@@ -827,7 +921,7 @@ namespace FiresCore.UI
             // text runs straight underneath those buttons.
             GUILayout.BeginHorizontal();
             GUILayout.Label(descriptor.DescriptionLine, ConfigSkin.Desc);
-            FiresRoundedSkin.MarkHint(descriptor.Description);
+            FiresRoundedSkin.MarkHint(string.IsNullOrEmpty(descriptor.LongDescription) ? descriptor.Description : descriptor.LongDescription);   // hover = the full text
             GUILayout.Space(DescriptionRightGutter);
             GUILayout.EndHorizontal();
         }
@@ -924,7 +1018,8 @@ namespace FiresCore.UI
         private void DrawBool(CfgDescriptor descriptor, object value)
         {
             bool isOn = value is bool flag && flag;
-            string text = isOn ? $"<b><color={OnColor}>Enabled</color></b>" : $"<color={OffColor}>Disabled</color>";
+            // OffColor (#997F55) on the brown pill read as empty; Disabled is bold bright red, like Enabled is bold green
+            string text = isOn ? $"<b><color={OnColor}>Enabled</color></b>" : $"<b><color={DisabledColor}>Disabled</color></b>";
             if (GUILayout.Button(text, ConfigSkin.Button, ScaledLayout.Width(Px(92f)))) Set(descriptor, !isOn);
         }
 
@@ -1199,7 +1294,7 @@ namespace FiresCore.UI
             if (GUILayout.Button("X", ConfigSkin.ButtonSmall, ScaledLayout.Width(ClearButtonWidth)))
             {
                 if (capturingThis) CancelCapture();
-                else Set(descriptor, descriptor.Type == typeof(KeyboardShortcut) ? (object)KeyboardShortcut.Empty : (object)KeyCode.None);
+                else Set(descriptor, descriptor.Type == typeof(KeyboardShortcut) ? (object)KeyboardShortcut.Empty : descriptor.Type == typeof(string) ? (object)"" : (object)KeyCode.None);
             }
 
             DrawCaptureNotice(descriptor);
@@ -1341,7 +1436,7 @@ namespace FiresCore.UI
         private void CommitCapture(CfgDescriptor descriptor)
         {
             var target = _captureTarget;
-            bool wantsShortcut = target != null && target.SettingType == typeof(KeyboardShortcut);
+            bool wantsShortcut = target != null && (target.SettingType == typeof(KeyboardShortcut) || target.SettingType == typeof(string));   // a keybind string takes modifiers too
             KeyCode main = _capMain;
             var modifiers = new List<KeyCode>(_capMods);
 
@@ -1363,7 +1458,8 @@ namespace FiresCore.UI
             if (target == null) return;
             try
             {
-                if (wantsShortcut) CfgDiscovery.Write(target, new KeyboardShortcut(main, modifiers.ToArray()), "key capture");
+                if (target.SettingType == typeof(string)) CfgDiscovery.Write(target, KeybindStrings.Format(main, modifiers), "key capture");   // "Ctrl+Shift+F"
+                else if (wantsShortcut) CfgDiscovery.Write(target, new KeyboardShortcut(main, modifiers.ToArray()), "key capture");
                 else CfgDiscovery.Write(target, main, "key capture");
             }
             catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind capture failed: " + ex.Message); }
@@ -1378,7 +1474,7 @@ namespace FiresCore.UI
             {
                 CfgDiscovery.Write(target, target.SettingType == typeof(KeyboardShortcut)
                     ? (object)KeyboardShortcut.Empty
-                    : (object)KeyCode.None, "unbind");
+                    : target.SettingType == typeof(string) ? (object)"" : (object)KeyCode.None, "unbind");
             }
             catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind unbind failed: " + ex.Message); }
         }
@@ -1416,7 +1512,7 @@ namespace FiresCore.UI
         private void HandleResize()
         {
             var grip = new Rect(_rect.width - GripSize - GripInset, _rect.height - GripSize - GripInset, GripSize, GripSize);
-            // 0.2.372: sprite grip (the "//" label read as a square)
+            // sprite grip (the "//" label read as a square)
             FiresResizeGrip.DrawGrip(grip, ConfigSkin.Hint.normal.textColor);
 
             int controlId = GUIUtility.GetControlID(ResizeControlHint, FocusType.Passive);
@@ -1467,7 +1563,7 @@ namespace FiresCore.UI
                 || Contains(descriptor.Section, lowercaseQuery)
                 || Contains(descriptor.ModName, lowercaseQuery)
                 || Contains(descriptor.ModGuid, lowercaseQuery)
-                || Contains(descriptor.Description, lowercaseQuery);
+                || Contains(descriptor.Description, lowercaseQuery) || Contains(descriptor.LongDescription, lowercaseQuery);
         }
 
         private static bool Contains(string text, string lowercaseQuery)

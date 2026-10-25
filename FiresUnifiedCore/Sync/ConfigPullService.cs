@@ -26,6 +26,7 @@ namespace FiresCore.Sync
         // How long the client keeps accepting inbound pull data after asking.
         private static readonly long PullWindowTicks = 180L * TimeSpan.TicksPerSecond;
         private static long _pullDeadlineTicks;
+        private static string _pullPattern;   // what the admin asked for: inbound files must match it
         private static Terminal _replyTerminal;
         private static int _received;
 
@@ -106,6 +107,7 @@ namespace FiresCore.Sync
             _replyTerminal = args.Context;
             _received = 0;
             _pullDeadlineTicks = DateTime.UtcNow.Ticks + PullWindowTicks;
+            _pullPattern = string.Join(" ", args.Args, 1, args.Args.Length - 1).Trim();
             _inbound.Clear();
 
             var pkg = new ZPackage();
@@ -144,6 +146,11 @@ namespace FiresCore.Sync
         {
             if (pkg == null) return;
             if (ZNet.instance != null && ZNet.instance.IsServer()) return;
+            if (ZRoutedRpc.instance == null || sender != ZRoutedRpc.instance.GetServerPeerID())
+            {
+                FiresLogger.LogWarning($"[ConfigPull] dropped config data from peer {sender}, not the server.");
+                return;
+            }
 
             try
             {
@@ -164,7 +171,12 @@ namespace FiresCore.Sync
                     FiresLogger.LogWarning($"[ConfigPull] refused unsafe inbound path '{relPath}'.");
                     return;
                 }
-                if (count <= 0 || index < 0 || index >= count) return;
+                if (!ConfigPushService.PatternAllows(_pullPattern, relPath))
+                {
+                    FiresLogger.LogWarning($"[ConfigPull] refused '{relPath}': not a file your pull '{_pullPattern}' asked for.");
+                    return;
+                }
+                if (count <= 0 || count > ConfigPushService.MaxInboundChunks || index < 0 || index >= count) return;
 
                 if (!_inbound.TryGetValue(relPath, out var asm) || asm.Chunks == null || asm.Chunks.Length != count)
                 {

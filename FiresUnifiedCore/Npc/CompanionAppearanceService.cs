@@ -7,13 +7,14 @@ using UnityEngine;
 
 namespace FiresCore.Npc
 {
-    /// <summary>0.2.357: one companion look, as the barber UI edits it. Vanilla has ONE hair colour for hair and beard.</summary>
+    /// <summary>One companion look, as the barber UI edits it. Vanilla has ONE hair colour for hair and beard.</summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public sealed class CompanionAppearance
     {
         public string Hair;
         public string Beard;
         public Color HairColor;
-        /// <summary>0.2.368: the beard's own colour (ZDO companion_beardColor). Alpha 0 = not set: the beard follows HairColor.</summary>
+        /// <summary>The beard's own colour (ZDO companion_beardColor). Alpha 0 = not set: the beard follows HairColor.</summary>
         public Color BeardColor;
         public Color SkinColor;
 
@@ -21,15 +22,18 @@ namespace FiresCore.Npc
         public Color EffectiveBeardColor => HasBeardColor ? new Color(BeardColor.r, BeardColor.g, BeardColor.b, 1f) : HairColor;
         public int Model; // 0 male, 1 female
         public float Scale;
+        /// <summary>One of the player's model options (FccApi.AllowedModels); "" = the companion's own body. ZDO npc_model_override (BodyModelSwap).</summary>
+        public string ModelOverride = "";
 
         public CompanionAppearance Clone() => (CompanionAppearance)MemberwiseClone();
     }
 
-    // ── The companion barber (0.2.357) ──
+    // ── The companion barber ──
     // Server-authoritative: the client asks with Fires_CompanionAppearance; the server checks the sender owns the companion
     // and the values are barber values, charges the fee through the requesting client (its own inventory, vanilla
     // CountItems/RemoveItem), and only on a paid ack writes the companion_* keys the loadout restores from. Every peer then
     // re-applies the look (Applied broadcast now, CompanionInventory's appearance hash as the fallback).
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class CompanionAppearanceService
     {
         public const string RequestRpc = "Fires_CompanionAppearance";
@@ -57,7 +61,7 @@ namespace FiresCore.Npc
             s_cost = config.Bind("Barber", "Appearance change cost", 75,
                 new ConfigDescription("SERVER. Coins a companion's look change costs at the barber, taken from the asking player's inventory. 0 = free.",
                     new AcceptableValueRange<int>(0, 1000)));
-            // 0.2.371: Fire set the range to wild creature size variance, 0.50-1.30. New key names so cfgs holding the old
+            // The range matches wild creature size variance, 0.50-1.30. New key names so cfgs holding the old
             // 0.90/1.10 defaults pick the new range up; the old "Scale minimum"/"Scale maximum" lines are left unread.
             s_minScale = config.Bind("Barber", "Size minimum", 0.50f,
                 new ConfigDescription("SERVER. Smallest companion size the barber allows.", new AcceptableValueRange<float>(0.5f, 1.3f)));
@@ -66,7 +70,7 @@ namespace FiresCore.Npc
             configSync?.AddConfigEntry(s_cost);
             configSync?.AddConfigEntry(s_minScale);
             configSync?.AddConfigEntry(s_maxScale);
-            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.COMP, true, s_cost, s_minScale, s_maxScale);   // 0.2.359
+            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.COMP, true, s_cost, s_minScale, s_maxScale);
         }
 
         // ── style lists ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -114,10 +118,11 @@ namespace FiresCore.Npc
             a.Model = zdo.GetBool("companion_isfemale", false) || zdo.GetInt(ZDOVars.s_modelIndex, a.Model) == 1 ? 1 : 0;
             a.Scale = zdo.GetFloat("companion_scale", a.Scale);
             a.BeardColor = TryReadBeardColor(zdo, out Color bc) ? bc : new Color(a.HairColor.r, a.HairColor.g, a.HairColor.b, 0f);
+            a.ModelOverride = zdo.GetString(BodyModelSwap.ZdoKey, "");
             return a;
         }
 
-        /// <summary>0.2.368: ZDO key of the independent beard colour (Vector3). Absent = the beard follows the hair colour.</summary>
+        /// <summary>ZDO key of the independent beard colour (Vector3). Absent = the beard follows the hair colour.</summary>
         public const string BeardColorKey = "companion_beardColor";
         private static readonly Vector3 NoBeardColor = new Vector3(-1f, -1f, -1f);
 
@@ -131,7 +136,7 @@ namespace FiresCore.Npc
             return true;
         }
 
-        // 0.2.368: the drawn gear of a companion, as vanilla UpdateEquipmentVisuals reads it: the ZDO's keys when there is a ZDO
+        // The drawn gear of a companion, as vanilla UpdateEquipmentVisuals reads it: the ZDO's keys when there is a ZDO
         // (a non-owner's fields stay 0), else the fields. { item field, variant field or null, ZDO key, ZDO variant key or null }
         private static readonly string[][] GearSlots =
         {
@@ -146,7 +151,7 @@ namespace FiresCore.Npc
             new[] { "m_leftBackItem", "m_leftBackItemVariant", "LeftBackItem", "LeftBackItemVariant" },
         };
 
-        /// <summary>0.2.368: copies the companion's whole drawn gear (hands, back, armour, utility) onto a ZDO-less preview clone's
+        /// <summary>Copies the companion's whole drawn gear (hands, back, armour, utility) onto a ZDO-less preview clone's
         /// VisEquipment fields; the clone's own VisEquipment update then instantiates the attachments (back items included:
         /// Core draws the back cells through these same vanilla back slots). Returns a hash of what was copied.</summary>
         public static int SyncPreviewGear(VisEquipment src, VisEquipment dst)
@@ -180,7 +185,7 @@ namespace FiresCore.Npc
         private static readonly int HairColorId = Shader.PropertyToID("_HairColor");
         private static readonly int SkinColorId = Shader.PropertyToID("_SkinColor");
 
-        /// <summary>0.2.368: colours a bare preview clone (no NpcVisEquipment, not m_isPlayer, so vanilla UpdateColors never runs
+        /// <summary>Colours a bare preview clone (no NpcVisEquipment, not m_isPlayer, so vanilla UpdateColors never runs
         /// for it): hair "_HairColor" = HairColor, beard "_HairColor" = the beard colour (vanilla's beard shader property), body
         /// "_SkinColor" = SkinColor. MaterialPropertyBlocks, no material copies; cheap enough to call every frame, which also
         /// catches hair/beard instances VisEquipment spawns on later frames.</summary>
@@ -214,7 +219,7 @@ namespace FiresCore.Npc
         /// <summary>Local-only look on any companion-like object (the UI preview clone). Never writes a ZDO.</summary>
         public static void ApplyPreview(GameObject target, CompanionAppearance a) => ApplyPreview(target, a, null);
 
-        /// <summary>0.2.368: as ApplyPreview; <paramref name="source"/> (the live companion) supplies the body meshes when the
+        /// <summary>As ApplyPreview; <paramref name="source"/> (the live companion) supplies the body meshes when the
         /// bare clone switches model, since vanilla only swaps the body mesh for m_isPlayer bodies.</summary>
         public static void ApplyPreview(GameObject target, CompanionAppearance a, GameObject source)
         {
@@ -224,6 +229,8 @@ namespace FiresCore.Npc
             bool hasZdo = nview != null && nview.IsValid() && nview.GetZDO() != null;
             var vis = target.GetComponent<VisEquipment>();
             if (!hasZdo && vis != null && target.GetComponent<NpcVisEquipment>() == null) SwitchPreviewModel(vis, a.Model, source);
+            // The preview shows the chosen player model option too (or goes back to its own body)
+            if (!string.IsNullOrEmpty(a.ModelOverride) || BodyModelSwap.Current(target).Length > 0) BodyModelSwap.Apply(target, a.ModelOverride ?? "");
         }
 
         private static void SwitchPreviewModel(VisEquipment vis, int model, GameObject source)
@@ -251,7 +258,7 @@ namespace FiresCore.Npc
 
         private static readonly string[] PreviewHashFields = { "m_currentHairItemHash", "m_currentBeardItemHash", "m_currentModelIndex" };
 
-        /// <summary>0.2.370: forces a ZDO-less preview VisEquipment to rebuild now (hair, beard, base model, colours).</summary>
+        /// <summary>Forces a ZDO-less preview VisEquipment to rebuild now (hair, beard, base model, colours).</summary>
         private static void RebuildPreview(VisEquipment vis)
         {
             foreach (var f in PreviewHashFields)
@@ -292,7 +299,7 @@ namespace FiresCore.Npc
                 var vis = target.GetComponent<VisEquipment>();
                 if (vis != null)
                 {
-                    // 0.2.370: vanilla only spawns hair/beard and swaps the base model for m_isPlayer bodies; the companion
+                    // Vanilla only spawns hair/beard and swaps the base model for m_isPlayer bodies; the companion
                     // prefab's VisEquipment is not one, so the clone stayed bald and male. Mark it a player body, write the
                     // fields directly (ZDO-less, hash-or-name aware), then rebuild synchronously.
                     vis.m_isPlayer = true;
@@ -550,7 +557,7 @@ namespace FiresCore.Npc
             a.Scale = Mathf.Clamp(float.IsNaN(a.Scale) ? 1f : a.Scale, MinScale, MaxScale);
             a.HairColor = ClampColor(a.HairColor);
             a.SkinColor = ClampColor(a.SkinColor);
-            if (a.HasBeardColor) a.BeardColor = ClampColor(a.BeardColor);   // 0.2.368: alpha stays 1 (set)
+            if (a.HasBeardColor) a.BeardColor = ClampColor(a.BeardColor);   // alpha stays 1 (set)
             return null;
         }
 
@@ -596,6 +603,7 @@ namespace FiresCore.Npc
             if (a.HasBeardColor) zdo.Set(BeardColorKey, new Vector3(a.BeardColor.r, a.BeardColor.g, a.BeardColor.b));
             zdo.Set("companion_isgiant", a.Scale >= CompanionRandomLoadout.GIANT_THRESHOLD);
             zdo.Set("companion_isdwarf", a.Scale <= CompanionRandomLoadout.DWARF_THRESHOLD);
+            zdo.Set(BodyModelSwap.ZdoKey, a.ModelOverride ?? "");   // BodyModelWatcher applies it on every peer
         }
 
         // ── wire format ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -608,8 +616,9 @@ namespace FiresCore.Npc
             pkg.Write(new Vector3(a.SkinColor.r, a.SkinColor.g, a.SkinColor.b));
             pkg.Write(a.Model);
             pkg.Write(a.Scale);
-            // 0.2.368: appended, so an older reader stops before it. x < 0 = no own beard colour.
+            // Appended, so an older reader stops before it. x < 0 = no own beard colour.
             pkg.Write(a.HasBeardColor ? new Vector3(a.BeardColor.r, a.BeardColor.g, a.BeardColor.b) : NoBeardColor);
+            pkg.Write(a.ModelOverride ?? "");   // appended after the beard colour (an older reader stops before it)
         }
 
         private static CompanionAppearance ReadAppearance(ZPackage pkg)
@@ -628,6 +637,7 @@ namespace FiresCore.Npc
                 {
                     Vector3 bc = pkg.ReadVector3();
                     if (bc.x >= 0f) a.BeardColor = new Color(bc.x, bc.y, bc.z, 1f);
+                    if (pkg.GetPos() < pkg.Size()) a.ModelOverride = pkg.ReadString() ?? "";
                 }
             }
             catch { }

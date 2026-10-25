@@ -86,7 +86,7 @@ namespace FiresCore.Bridge
             int id = npc.GetInstanceID();
             _chosen.TryGetValue(id, out var chosen);
             if (hasHair) { chosen.Hair = hair; chosen.Color = colorStr; }
-            if (hasBeard) { chosen.Beard = beard; chosen.BeardColor = colorStr; }   // 0.2.368: beard keeps its own colour
+            if (hasBeard) { chosen.Beard = beard; chosen.BeardColor = colorStr; }   // Beard keeps its own colour
             _chosen[id] = chosen;
         }
     }

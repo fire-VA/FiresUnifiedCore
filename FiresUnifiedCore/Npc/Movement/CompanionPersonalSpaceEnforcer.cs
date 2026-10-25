@@ -29,10 +29,10 @@ namespace FiresCore.Npc.Movement
             _character = GetComponent<Character>();
         }
 
-        // 0.2.327 (audit slice 3, M4, Fire's vanilla-method rule): the push was a Rigidbody.AddForce on the companion every physics
+        // The push was a Rigidbody.AddForce on the companion every physics
         // step. Vanilla NPCs keep apart by their colliders, and folding the push into the move direction would make a second
         // SetMoveDir writer beside the movement authority. So it is off; the code stays for a steering-based return if crowding
-        // shows up in the companion_test.
+        // becomes a problem.
         internal static bool Enabled = false;
 
         private void FixedUpdate()
@@ -40,7 +40,7 @@ namespace FiresCore.Npc.Movement
             if (!Enabled) return;
             if (_rigidbody == null || _rigidbody.isKinematic) return;
             if (_companion == null || !_companion.isTamed) return;
-            if (_companion.IsPossessed) return;   // 0.2.292: no push off its driver's own frozen body
+            if (_companion.IsPossessed) return;   // No push off its driver's own frozen body
             if (_character == null || _character.IsDead()) return;
 
             Vector3 myPos = transform.position;

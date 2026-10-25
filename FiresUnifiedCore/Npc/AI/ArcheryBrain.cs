@@ -7,7 +7,7 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// The one archery-practice brain for every body (Core 0.2.244; Fire: "we shouldnt skip bow training, its useful right?"). Picks
+    /// The one archery-practice brain for every body. Picks
     /// a vanilla ArcheryTarget near base, a clear firing spot 6-15 m in front of it, the bow and the arrows (real ones: every shot
     /// uses one; the target hands back the ones that hit when interacted with, at its return point), how many shots, and when to stop
     /// (shots done, out of arrows, low stamina, the target gone). Skill comes from the game (ArcheryTarget.OnProjectileHit raises the
@@ -112,7 +112,7 @@ namespace FiresCore.Npc.AI
             foreach (ArcheryTarget target in targets.Take(4))
             {
                 Vector3 center = CenterOf(target);
-                // R33 (0.2.245): a target spawned with its pivot on the ground (a player's placement lifts it so its lowest collider
+                // A target spawned with its pivot on the ground (a player's placement lifts it so its lowest collider
                 // point sits there) stands half buried; its bullseye is in the dirt and every arrow aimed at it lands short.
                 if (TerrainHeight(center, out float terrain) && terrain - center.y > BuriedMetres)
                 {
@@ -177,7 +177,7 @@ namespace FiresCore.Npc.AI
                     p.y = ground;
                     if (FishingBrain.WaterAt(p, out _, out float depth) && depth > 0.3f) { refusal = "the spots in front of the target are in water"; continue; }
                     // The bullseye in clear sight: nothing in the way, or the first thing hit is this target's board within its scoring
-                    // disc (an arrow scores only on the target's own collider, Projectile.OnHit; R33 aimed past the board's top edge).
+                    // disc (an arrow scores only on the target's own collider, Projectile.OnHit).
                     Vector3 eye = p + Vector3.up * 1.5f;
                     if (Physics.Linecast(eye, center, out RaycastHit hit, s_losMask) && hit.distance < Vector3.Distance(eye, center) - 0.6f
                         && !(hit.collider.GetComponentInParent<ArcheryTarget>() == target && Vector3.Distance(hit.point, center) <= Mathf.Max(0.3f, target.m_targetSize)))

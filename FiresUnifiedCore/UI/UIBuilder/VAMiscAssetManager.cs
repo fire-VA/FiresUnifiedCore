@@ -117,11 +117,11 @@ namespace FiresCore.UI
             return null;
     }
 
-        // ── 0.2.330: every mod's bundle, not only the last one set ──
+        // ── Every mod's bundle, not only the last one set ──
         // UIBuilderHost.AssetBundle is one global; FiresCompanions loads after FiresRPGmaker and replaced its bundle, so the
         // RPGmaker globe's prefab was never found. Lookups now try the current mod's bundle, then every bundle a mod has set
         // (UIBuilderHost.Bundles), then, once per missing name, every loaded bundle by its "Assets/..." paths only: a mod
-        // built before 0.2.330 never calls UIBuilderHost.Register, and its bundle is found that way and remembered.
+        // built without Register support never calls UIBuilderHost.Register, and its bundle is found that way and remembered.
         private static readonly HashSet<string> _scanMisses = new HashSet<string>(StringComparer.Ordinal);
 
         private static T FindInBundles<T>(string[] paths, out string foundAt) where T : UnityEngine.Object
