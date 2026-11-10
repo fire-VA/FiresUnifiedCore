@@ -1,3 +1,8 @@
+## 0.2.1224
+
+### Fixed
+- The day and time box under the minimap is off unless a mod that uses it (such as VA Inventory) is installed; 0.2.1223 showed it for everyone.
+
 ## 0.2.1223
 
 **Important when updating**

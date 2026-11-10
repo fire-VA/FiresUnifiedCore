@@ -148,7 +148,7 @@ namespace FiresCore.UI.Shell
         internal static ConfigEntry<bool> CfgOverride;
         internal static ConfigEntry<KeyboardShortcut> CfgHubKey;
         internal static ConfigEntry<bool> CfgReduceMotion;
-        internal static readonly FiresCore.Config.OwnedSetting<bool> CfgDayTimeBox = new FiresCore.Config.OwnedSetting<bool>(Section, "Show day and time box", true);   // 0.2.824: the biome / day / time box under the minimap (both UIs)
+        internal static readonly FiresCore.Config.OwnedSetting<bool> CfgDayTimeBox = new FiresCore.Config.OwnedSetting<bool>(Section, "Show day and time box", false);   // 0.2.1224 ([lead], Fire 11-10: "It should be off completely if VA inventory or any other mod that uses it is not installed"): the fallback was true, so with no owner mod the box showed under every player's minimap   // 0.2.824: the biome / day / time box under the minimap (both UIs)
         // 0.2.1036 (plan step 1, Fire: off without an owner): shown only when a mod provides the setting through CoreSettings
         internal static bool DayTimeBoxOn => CfgDayTimeBox.Value;
         internal enum MinimapClockMode { SunTime, GameTime }

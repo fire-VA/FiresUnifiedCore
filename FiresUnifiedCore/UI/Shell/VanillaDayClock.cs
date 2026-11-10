@@ -13,6 +13,7 @@ namespace FiresCore.UI.Shell
     /// </summary>
     internal sealed class VanillaDayClock : MonoBehaviour
     {
+        private static bool s_said;   // 0.2.1224: one Info line saying whether the box is on and why
         private const float PaddingPx = 8f;
         private KitLabel _title;
         private RectTransform _box;
@@ -45,6 +46,7 @@ namespace FiresCore.UI.Shell
         private void Update()
         {
             bool show = !ShellMinimap.RoundOn && FiresShell.DayTimeBoxOn && EnvMan.instance != null && ZNet.instance != null;   // 0.2.824: [UI] Show day and time box
+            if (!s_said && EnvMan.instance != null && ZNet.instance != null) { s_said = true; ShellLog.Info($"day / time box under the minimap: {(FiresShell.DayTimeBoxOn ? "ON (a mod provides [UI] Show day and time box and has it on)" : "OFF (no installed mod provides [UI] Show day and time box, or it is off there)")} (0.2.1224)"); }
             for (int i = 0; i < _box.childCount; i++) { var c = _box.GetChild(i).gameObject; if (c.activeSelf != show) c.SetActive(show); }
             // 0.2.828 (Fire 10-26, shot 449): the minimap column stacks under this box in the non-unified UI (under the square map when
             // the box is off), 4x a second
