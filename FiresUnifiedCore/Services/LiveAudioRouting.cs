@@ -25,6 +25,17 @@ namespace FiresCore.Services
         private static object _liveSfxGroup;
         private static object _liveGuiGroup;
 
+        /// <summary>"[Audio] Route mod sounds to the game mixer" (default on). Off = mod / NPC sources keep their own
+        /// serialized mixer group (the stream-silence A/B).</summary>
+        public static BepInEx.Configuration.ConfigEntry<bool> EnabledEntry;
+        private static bool Enabled => EnabledEntry == null || EnabledEntry.Value;
+
+        public static void Initialize(BepInEx.Configuration.ConfigFile config)
+        {
+            EnabledEntry = config.Bind("Audio", "Route mod sounds to the game mixer", true,
+                "Route Fires mods' and NPCs' sounds through the game's own SFX / GUI mixer groups so the volume sliders apply. Off = they keep their own mixer reference. This machine only.");
+        }
+
         private static void EnsureReflection()
         {
             if (_reflected) return;
@@ -35,7 +46,7 @@ namespace FiresCore.Services
             _pBypassReverb = _tAudioSource.GetProperty("bypassReverbZones");
         }
 
-        // A dedicated server plays nothing, and the first harvest walks every ZNetScene prefab's AudioSources ([worldgen], R51:
+        // A dedicated server plays nothing, and the first harvest walks every ZNetScene prefab's AudioSources (measured
         // 34 ms inside a join frame). Every entry point returns at once there.
         private static void HarvestSfxGroup()
         {
@@ -79,7 +90,7 @@ namespace FiresCore.Services
         /// </summary>
         public static int RouteWorldSfx(GameObject root)
         {
-            if (root == null || FiresCore.Lifecycle.FiresMod.IsDedicatedServer) return 0;
+            if (root == null || FiresCore.Lifecycle.FiresMod.IsDedicatedServer || !Enabled) return 0;
             EnsureReflection();
             if (_tAudioSource == null || _pOutputGroup == null) return 0;
             HarvestSfxGroup();
@@ -105,7 +116,7 @@ namespace FiresCore.Services
         /// </summary>
         public static int RouteUiSfx(GameObject root)
         {
-            if (root == null || FiresCore.Lifecycle.FiresMod.IsDedicatedServer) return 0;
+            if (root == null || FiresCore.Lifecycle.FiresMod.IsDedicatedServer || !Enabled) return 0;
             EnsureReflection();
             if (_tAudioSource == null || _pBypassReverb == null) return 0;
 

@@ -35,15 +35,29 @@ namespace FiresCore.Pieces
             if (ground != null && !s_grounds.Contains(ground)) s_grounds.Add(ground);
         }
 
+        // 0.2.1199 ([seasons], [fgn]'s DESIGN_FiresFixes_WearNTear_20261108 #6: "9 dictionary lookups per piece per pass"): the 3 x 3 answer for a
+        // centre zone is worked out once per frame and reused by every piece in that zone this frame (the last zone asked is a field, the rest a
+        // small per-frame dictionary). The per-zone state still re-checks once a second, so the answer is the same as before.
+        private static int s_cacheFrame = -1; private static Vector2s s_lastZone; private static bool s_lastReady, s_haveLast;
+        private static readonly Dictionary<Vector2s, bool> s_frameReady = new Dictionary<Vector2s, bool>();
         public static bool IsReady(Vector3 position)
         {
             if (ZoneSystem.instance == null) return false;
             var zone = ZoneSystem.GetZone(position);
-            float now = Time.time;
-            for (int dz = -1; dz <= 1; dz++)
-                for (int dx = -1; dx <= 1; dx++)
-                    if (!ZoneReady(new Vector2s(zone.x + dx, zone.y + dz), now)) return false;
-            return true;
+            int frame = Time.frameCount;
+            if (frame != s_cacheFrame) { s_cacheFrame = frame; s_frameReady.Clear(); s_haveLast = false; }
+            if (s_haveLast && zone.x == s_lastZone.x && zone.y == s_lastZone.y) return s_lastReady;
+            if (!s_frameReady.TryGetValue(zone, out bool ready))
+            {
+                float now = Time.time;
+                ready = true;
+                for (int dz = -1; dz <= 1 && ready; dz++)
+                    for (int dx = -1; dx <= 1 && ready; dx++)
+                        if (!ZoneReady(new Vector2s(zone.x + dx, zone.y + dz), now)) ready = false;
+                s_frameReady[zone] = ready;
+            }
+            s_lastZone = zone; s_lastReady = ready; s_haveLast = true;
+            return ready;
         }
 
         private static bool ZoneReady(Vector2s zone, float now)

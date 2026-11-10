@@ -13,15 +13,14 @@ namespace FiresCore.Npc.Core
     /// subject.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class CompanionSpeedRamp
     {
         private const float MinRampSeconds = 0.05f;
 
-        // m_moveDir is protected and m_running is private on Character; read them with fast Harmony field refs.
+        // m_moveDir is protected on Character; read it with a fast Harmony field ref.
         private static readonly AccessTools.FieldRef<Character, Vector3> MoveDir =
             AccessTools.FieldRefAccess<Character, Vector3>("m_moveDir");
-        private static readonly AccessTools.FieldRef<Character, bool> Running =
-            AccessTools.FieldRefAccess<Character, bool>("m_running");
 
         private sealed class Ramp { public float Current = -1f; }
 
@@ -77,7 +76,7 @@ namespace FiresCore.Npc.Core
             __state.Run = -1f;
             if (__instance == null) return;
             var driven = CompanionPatches.GetCachedCompanion(__instance);
-            if (driven != null && driven.IsPossessed) return;   // 0.2.292: a player is driving it: vanilla speeds, no ramp or patrol tier
+            if (driven != null && driven.IsPossessed) return;   // a player is driving it: vanilla speeds, no ramp or patrol tier
 
             // DBSM patrol takes priority: while a fresh patrol multiplier is published it owns the active
             // tier's speed scalar. Independent of the cosmetic follow-ramp toggle (a slow/fast patrol is a
@@ -122,9 +121,9 @@ namespace FiresCore.Npc.Core
             if (ramp.Current < 0f) ramp.Current = min;
 
             // Ramp UP toward full run speed only when the companion actually intends to run; otherwise ease
-            // back down toward walk speed. m_running is last frame's value (set later in UpdateWalking) - a
-            // one-frame lag that is invisible.
-            bool runningIntent = Running(__instance) && MoveDir(__instance).sqrMagnitude > 0.0001f;
+            // back down toward walk speed. [ghost] 11-02: read the run ORDER, m_run. This used m_running, which vanilla UpdateMotion clears
+            // before UpdateWalking every step, so it was always false here: the ramp sat at walk speed and companions "ran" at about 2 m/s.
+            bool runningIntent = __instance.m_run && MoveDir(__instance).sqrMagnitude > 0.0001f;
             float target = runningIntent ? max : min;
             float rate = (max - min) / Mathf.Max(MinRampSeconds, MovementRampConfig.Seconds);
 

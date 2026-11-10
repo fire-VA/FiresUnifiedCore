@@ -19,6 +19,10 @@ namespace FiresCore.Npc.Patrol
         /// </summary>
         public string PresetName;
 
+        /// <summary>Add-only: a driver that runs this NPC's patrol instead of the point walk while it wants control
+        /// (RPGmaker's exact-replay ghost). Null = the normal walk, as before.</summary>
+        [System.NonSerialized] public IPatrolTimelineDriver TimelineDriver;
+
         public bool HasRoute => !string.IsNullOrEmpty(RouteName)
                                 && PatrolRouteManager.GetRoute(RouteName) != null;
     }

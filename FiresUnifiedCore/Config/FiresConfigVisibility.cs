@@ -22,10 +22,7 @@ namespace FiresCore.Config
 
         private const string DescriptionBackingField = "<Description>k__BackingField";
 
-        private static readonly Dictionary<ConfigEntryBase, object[]> s_foreignTags =
-            new Dictionary<ConfigEntryBase, object[]>();
-
-        private static readonly Dictionary<ConfigEntryBase, HashSet<string>> s_managedTags =
+private static readonly Dictionary<ConfigEntryBase, HashSet<string>> s_managedTags =
             new Dictionary<ConfigEntryBase, HashSet<string>>();
 
         private static FieldInfo s_descriptionField;
@@ -59,13 +56,9 @@ namespace FiresCore.Config
         {
             var description = entry.Description ?? ConfigDescription.Empty;
 
-            if (!s_foreignTags.TryGetValue(entry, out var foreign))
-            {
-                foreign = (description.Tags ?? Array.Empty<object>())
-                    .Where(existing => !IsManagedTag(existing))
-                    .ToArray();
-                s_foreignTags[entry] = foreign;
-            }
+            // 0.2.1091 (lead 11-02, [worldgen]'s find: FAT's Received 0 configs): read the other tags fresh on every call. A cached copy dropped
+            // ConfigSync's tag when a key was synced after its first retag (gate registered before AddConfigEntry), which killed its server sync.
+            var foreign = (description.Tags ?? Array.Empty<object>()).Where(existing => !IsManagedTag(existing)).ToArray();
 
             if (!s_managedTags.TryGetValue(entry, out var managed))
             {

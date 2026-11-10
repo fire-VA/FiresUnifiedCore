@@ -53,12 +53,26 @@ namespace FiresCore.Sync
             }
         }
 
+        /// <summary>THE server-side admin check (Fire 10-23: devcommands / debugmode never grant or block anything): the sender's own
+        /// connection host id against the server's admin list (vanilla's matching), or the local host itself. Never a client flag.</summary>
         public static bool IsAdmin(long senderId)
         {
             if (!ZNet.instance) return false;
+            if (senderId == ZDOMan.GetSessionID() && ZNet.instance.IsServer()) { NoteAdminCheck(senderId, "host", true, "host"); return true; }   // the listen-host / single player
             var peer = ZNet.instance.GetPeer(senderId);
             if (peer == null) return false;
-            return AdminListContains(peer.m_rpc.GetSocket().GetHostName());
+            string host = peer.m_rpc.GetSocket().GetHostName();
+            bool admin = AdminListContains(host);
+            NoteAdminCheck(senderId, host, admin, "adminlist");
+            return admin;
+        }
+
+        private static readonly Dictionary<long, bool> s_adminNoted = new Dictionary<long, bool>();
+        private static void NoteAdminCheck(long peer, string id, bool admin, string source)
+        {
+            if (s_adminNoted.TryGetValue(peer, out bool was) && was == admin) return;
+            s_adminNoted[peer] = admin;
+            FiresCore.Logging.FiresLogger.LogDebug($"[Admin] admin check: {id} admin={admin} (source {source})");
         }
 
         /// <summary>
@@ -67,14 +81,38 @@ namespace FiresCore.Sync
         /// should subscribe to <see cref="AdminStatusChanged"/> rather than cache a result. Never use it server-side
         /// for a remote player, since it is always true on a server; use <see cref="IsAdmin(long)"/> for that.
         /// </summary>
+        // Hotkey checks ask this every frame, and vanilla's
+        // LocalPlayerIsAdminOrHost builds id strings. The answer is cached for half a second per ZNet.
+        private static float s_adminAt = -1f;
+        private static bool s_admin;
+        private static ZNet s_adminNet;
+
         public static bool IsLocalAdmin()
         {
             var znet = ZNet.instance;
             if (znet == null) return false;
-            try { if (znet.IsServer()) return true; } catch { }
-            try { if (znet.LocalPlayerIsAdminOrHost()) return true; } catch { }
-            try { if (ConfigSync.lockExempt) return true; } catch { }
-            return false;
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            if (ReferenceEquals(znet, s_adminNet) && s_adminAt >= 0f && now - s_adminAt < 0.5f) return s_admin;
+            bool before = s_admin;
+            s_admin = IsLocalAdminUncached(znet);
+            if (s_admin != before || !ReferenceEquals(znet, s_adminNet)) FiresCore.Logging.FiresLogger.LogDebug($"[Admin] admin check: admin={s_admin} (source {s_adminSource})");
+            s_adminNet = znet; s_adminAt = now;
+            return s_admin;
+        }
+
+        // Fire 10-23, his rule: "if the mod IS on the server it checks for admin, if its NOT on the server it checks for debugmode".
+        //   host (single player / listen):      admin
+        //   Core on the server (its config sync handshake reached us): the server's admin-status push (adminlist, server re-checks every action)
+        //   Core NOT on the server (vanilla):   Player.m_debugMode
+        // "Core on the server" comes from the real handshake: Core's ConfigSync gets the server's push only from a Core server.
+        private static string s_adminSource = "none";
+        internal static bool CoreOnServer => FiresCoreRoot.Instance != null && FiresCoreRoot.Instance.configSync != null && FiresCoreRoot.Instance.configSync.InitialSyncDone;
+        private static bool IsLocalAdminUncached(ZNet znet)
+        {
+            try { if (znet.IsServer()) { s_adminSource = "host"; return true; } } catch { }
+            if (CoreOnServer) { s_adminSource = "core-server"; return ConfigSync.lockExempt; }
+            s_adminSource = "debugmode";
+            return Player.m_debugMode;
         }
 
         // adminlist.txt entries may be stored bare ("7656...") or platform-prefixed ("Steam_7656..."),
@@ -83,6 +121,9 @@ namespace FiresCore.Sync
         internal static bool AdminListContains(string hostName)
         {
             if (string.IsNullOrEmpty(hostName)) return false;
+            // Vanilla's own matching first (ZNet.ListContainsId: platform prefixes, crossplay id filtering), the same answer the server's
+            // own admin commands use; the normalized compare below stays as the fallback for older list entries.
+            try { if (ZNet.instance != null && ZNet.instance.IsAdmin(hostName)) return true; } catch { }
             var list = GetAdminList();
             if (list == null) return false;
             if (list.Contains(hostName)) return true;

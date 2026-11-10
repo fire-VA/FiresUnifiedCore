@@ -691,6 +691,15 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private static string Localize(string key) => Localization.instance != null ? Localization.instance.Localize(key) : key;
 
+        // A wanted tag outranks the organizer's own scoring (station / like-items), per tag score 3 item / 2 drop type / 1 category.
+        private const float TagWantBonus = 1000f;
+        // 0.2.917: above StackBonus + CohesionBonus (1500) at any closeness (1600..2000).
+        private const float ConsumerNearBonus = 2000f;
+        // 1086 ([generator], Fire 11-01: configs live in their own mods): bound by its owner; Core reads the owner's value (old default without it).
+        private static readonly FiresCore.Config.OwnedSetting<bool> s_consumerNear = new FiresCore.Config.OwnedSetting<bool>("Storage", "Deposit near the consuming station", true);
+        internal static void BindConfig(BepInEx.Configuration.ConfigFile cfg) { }
+        private static bool ConsumerNearOn => s_consumerNear.Value;
+
         private static bool HasRoom(Inventory inv, ItemDrop.ItemData item)
             => inv.HaveEmptySlot() || inv.FindFreeStackSpace(item.m_shared.m_name, item.m_worldLevel) > 0;
 
@@ -710,13 +719,27 @@ namespace FiresCore.Npc.IdleBehaviors
             foreach (var ctx in contexts)
             {
                 if (!HasRoom(ctx.Inventory, item)) continue;
+                // Chest tags: refused = skip, wanted = tag score on top, null (untagged / storage off) = today's rule.
+                bool? tag = FiresCore.Storage.ChestTags.Match(ctx.Chest, item, out int tagScore);
+                if (tag == false) continue;
                 var placement = Score(profile, item, ctx, false);
-                if (best != null && placement.Score <= best.Score) continue;
+                float score = placement.Score + (tag == true ? TagWantBonus * tagScore : 0f);
+                // [ghost] 0.2.917 (Fire 10-27: "our auto sort logic should be putting things like coal and ores and refined bars closer to
+                // the smelters and forges"): a chest within StationReach of a station that uses the item outranks stacking / same kind
+                // (nearest to the station wins); wanted tags get the same top-up so they stay first.
+                bool consumerNear = false;
+                if (ConsumerNearOn)
+                {
+                    if (tag == true) score += ConsumerNearBonus;
+                    else if (placement.Station != null && ctx.Proximity.TryGetValue(placement.Station.Key, out float near))
+                    { score += ConsumerNearBonus * (0.8f + 0.2f * near); consumerNear = true; }
+                }
+                if (best != null && score <= best.Score) continue;
                 best = new ChestRecommendation
                 {
                     Chest = ctx.Chest,
-                    Score = placement.Score,
-                    Reason = placement.Reason ?? "free space",
+                    Score = score,
+                    Reason = tag == true ? "chest tag" : consumerNear ? "consumer-near" : placement.Reason ?? "free space",
                     HasMatchingItems = placement.Matches,
                     NearestRelevantStation = placement.Station
                 };

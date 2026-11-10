@@ -196,6 +196,30 @@ namespace FiresCore.Npc
         /// Returns true if a home position has been set.
         /// </summary>
         public bool HasHomePosition => _hasHomePosition;
+
+        // Fire 10-27 ("It would just be added to the daily jobs and the rotation of work"): a designated homestead-map zone a board job
+        // sent this companion to for ONE work run. Chores search inside it; the stay point is untouched; it clears when that chore ends.
+        public bool HasWorkZone { get; private set; }
+        public Vector3 WorkZoneCenter { get; private set; }
+        public float WorkZoneRadius { get; private set; }
+        public string WorkZoneFocus { get; private set; }
+        public string WorkZoneName { get; private set; }
+        public Vector3 WorkCenter => HasWorkZone ? WorkZoneCenter : _homePosition;
+        public float WorkRadius(Vector3 home) => HasWorkZone ? WorkZoneRadius : CompanionSettings.GetStayModeWorkSearchRadius(home);
+        public void SetWorkZone(Vector3 center, float radius, string focus, string name) => SetWorkZone(center, radius, focus, name, true);
+        // 0.2.912: say = false for the quiet "can it start here?" check before a run (no "works" line for a run that never starts)
+        public void SetWorkZone(Vector3 center, float radius, string focus, string name, bool say)
+        {
+            HasWorkZone = true; WorkZoneCenter = center; WorkZoneRadius = radius; WorkZoneFocus = focus; WorkZoneName = name;
+            if (say) FiresCore.Logging.FiresLogger.LogDebug($"[HomeMap] zone run: {_companion?.GetDisplayName()} works {name} at ({center.x:0}, {center.z:0}) r={radius:0} m for one run (stay point kept)");
+        }
+        public void ClearWorkZone(string why) => ClearWorkZone(why, true);
+        public void ClearWorkZone(string why, bool say)
+        {
+            if (!HasWorkZone) return;
+            if (say) FiresCore.Logging.FiresLogger.LogDebug($"[HomeMap] zone run: {_companion?.GetDisplayName()} finished {WorkZoneName} ({why}); back to the full rotation");
+            HasWorkZone = false; WorkZoneFocus = null; WorkZoneName = null;
+        }
         
         /// <summary>
         /// Gets the current home position. Returns Vector3.zero if no home is set.
@@ -268,6 +292,9 @@ namespace FiresCore.Npc
         private float _standingPauseMaxDuration = 45f;  // Maximum 45 seconds standing still
         private float _nextDecisionTime;
         private bool _isInStandingPause = false;
+        internal bool _lastRoundFoundWork = true;   // 0.2.843: did the last chore round start something (short pauses while there is work)
+        internal float _emptyRoundUntil;
+        private const float EmptyRoundBackoff = 20f;   // 0.2.843            // 0.2.843: after a round that found nothing, the next round waits until this
         private const float MinVelocityForStationary = 0.1f;
 
         // Weapon holstering
@@ -355,17 +382,16 @@ namespace FiresCore.Npc
                 // wander radius). A patrol route is an explicit assignment and must run regardless,
                 // so let a route-carrying static NPC through even with wandering off (mirrors the
                 // with-CompanionController static path below).
-                if (_npcModule == null || !_npcModule.isStaticPlacement
-                    || (!_npcModule.allowIdleWandering && !HasPatrolRoute()))
-                    return;
+                if (_npcModule == null || !_npcModule.isStaticPlacement) return;
+                if (!_npcModule.allowIdleWandering && !HasPatrolRoute()) { StaticHeadLookOnly(); return; }
             }
             else if (_companion.isStaticPlacement)
             {
                 // Static placement with CompanionController - only run if wandering is enabled
                 if (_npcModule == null)
                     _npcModule = GetComponent<CompanionNpcModule>();
-                if (_npcModule == null || (!_npcModule.allowIdleWandering && !HasPatrolRoute()))
-                    return;
+                if (_npcModule == null) return;
+                if (!_npcModule.allowIdleWandering && !HasPatrolRoute()) { StaticHeadLookOnly(); return; }
             }
             else if (!_companion.isTamed)
             {
@@ -384,6 +410,7 @@ namespace FiresCore.Npc
             }
             if (!_wasOwner) ClearInheritedPoses();
             _wasOwner = true;
+            ReleaseStaleSeatWhileMoving();
 
             if (_stateController == null)
                 _stateController = GetComponent<CompanionStateController>();
@@ -499,23 +526,46 @@ namespace FiresCore.Npc
             }
 
             // Check for stuck states periodically
+            long tSec = System.Diagnostics.Stopwatch.GetTimestamp();
             CheckForStuckState();
 
             // Patrol: keep an assigned route running (force-started, not part of the random rotation).
             TryStartPatrolIfAssigned();
+            tSec = NoteSection("stuck + patrol", tSec);
 
-            // Update active sub-behavior
+            string secSub = _activeSubBehavior != null ? _activeSubBehavior.GetType().Name : "start check";
             UpdateActiveSubBehavior();
 
-            // Update head look-at (skip during sub-behaviors)
+            tSec = NoteSection(secSub, tSec);
             if (_activeSubBehavior == null)
                 UpdateHeadLookAt();
 
-            // Update smooth rotation
+            tSec = NoteSection("head look", tSec);
             UpdateSmoothRotation();
 
-            // Update weapon holstering
+            // holstering, timed with the rotation
             UpdateWeaponHolstering();
+            NoteSection("rotation + holster", tSec);
+        }
+
+        // 0.2.1102 (lead, [fgn]'s stall ranking: 2,442 ms over 486 frames, no child timings): Debug, the slowest section across companions every 10 s, and the total per section.
+        private static readonly Dictionary<string, double> s_secMs = new Dictionary<string, double>();
+        private static double s_secWorst; private static string s_secWorstName; private static float s_secSayAt;
+        private static long NoteSection(string name, long since)
+        {
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            double ms = (now - since) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            s_secMs.TryGetValue(name, out double sum); s_secMs[name] = sum + ms;
+            if (ms > s_secWorst) { s_secWorst = ms; s_secWorstName = name; }
+            if (Time.unscaledTime >= s_secSayAt)
+            {
+                s_secSayAt = Time.unscaledTime + 10f;
+                var parts = new List<string>();
+                foreach (var kv in s_secMs) if (kv.Value >= 1.0) parts.Add($"{kv.Key} {kv.Value:0}");
+                if (parts.Count > 0) FiresCore.Logging.FiresLogger.LogDebug($"[CompanionIdle] last 10 s: worst {s_secWorst:0.0} ms in {s_secWorstName}; ms per section: {string.Join(", ", parts)}");
+                s_secMs.Clear(); s_secWorst = 0;
+            }
+            return now;
         }
 
         private void LateUpdate()
@@ -523,8 +573,19 @@ namespace FiresCore.Npc
             ApplyHeadLookAt();
         }
 
+        // 0.2.1186 ([ghost], Fire 11-06 placed NPCs "dont look at us"): a static fixture (no wander, no route) skipped the whole
+        // Update, head look-at included, so it never turned its head. It now runs ONLY the head look-at (local + cosmetic, on every
+        // machine, as for non-owners below); no chores, emotes or movement. RPGM 0.0.833 keeps this component enabled on fixtures.
+        private bool _staticLookLogged;
+        private void StaticHeadLookOnly()
+        {
+            if (!_headBoneFound && !_staticLookLogged) FindHeadBone();   // one retry (the body may be dressed after Start), never per frame
+            UpdateHeadLookAt();
+            if (!_staticLookLogged) { _staticLookLogged = true; FiresCore.Logging.FiresLogger.LogDebug($"[IdleHeadLook] {name}: static NPC - head look-at only (head bone {(_headBoneFound ? "found" : "MISSING")})"); }
+        }
+
         /// <summary>Drops the chore, seat and emote this machine was running once another machine owns the companion.</summary>
-        // 0.2.267: who called CancelAllIdleBehaviors (the two frames above it), for the sub-behaviour's "cancelled:" end line.
+        // who called CancelAllIdleBehaviors (the two frames above it), for the sub-behaviour's "cancelled:" end line.
         private static string CallerChain()
         {
             try
@@ -556,6 +617,28 @@ namespace FiresCore.Npc
         /// A new owner inherits the previous owner's seat and emote bools through the ZDO (a saved companion keeps them
         /// too), but none of the seat or emote state that would end them, so they are released unless it really sits.
         /// </summary>
+        // Companions could get stuck sitting: a seat / sit bool left set (a Dressing-room preview played on the
+        // real NPC, a saved idle key, a seat whose release was missed) was only cleared on an ownership change, and every "end emote"
+        // path uses StopEmotes, which by design keeps attach_*. A companion that is MOVING and not attached to a seat can't be sitting:
+        // its seat / sit bools are released (StopAll), checked twice a second on the owner. A companion sitting still (its own sit
+        // emote, a chair) is untouched. One Debug line per release.
+        private static readonly string[] s_seatBools = { "emote_sit", "attach_chair", "attach_throne", "attach_bed", "attach_sitship", "attach_divan" };
+        private float _nextSeatCheck;
+        private void ReleaseStaleSeatWhileMoving()
+        {
+            if (Time.time < _nextSeatCheck || _animator == null) return;
+            _nextSeatCheck = Time.time + 0.5f;
+            if (_interactionBehavior != null && _interactionBehavior.IsAttached) return;
+            var body = GetComponent<Character>();
+            if (body == null || body.GetVelocity().magnitude < 0.6f) return;
+            string held = null;
+            foreach (var p in _animator.parameters)
+                if (p.type == AnimatorControllerParameterType.Bool && System.Array.IndexOf(s_seatBools, p.name) >= 0 && _animator.GetBool(p.nameHash)) { held = p.name; break; }
+            if (held == null) return;
+            PlayerAnimationCatalog.StopAll(_zanim, _animator);
+            FiresCore.Logging.FiresLogger.LogDebug($"[IdleBehavior] {name}: '{held}' was still set while moving ({body.GetVelocity().magnitude:0.0} m/s, not attached); seat/sit poses released");
+        }
+
         private void ClearInheritedPoses()
         {
             if (_interactionBehavior != null && _interactionBehavior.IsAttached) return;
@@ -566,20 +649,24 @@ namespace FiresCore.Npc
 
         #region Public API
 
+        private float _fightDropLogAt;   // 0.2.941
+
         public bool UpdateIdleBehavior()
         {
             // Check if stationed as NPC without idle wandering
             if (_npcModule == null)
                 _npcModule = GetComponent<CompanionNpcModule>();
-            if (_npcModule != null && _npcModule.IsStationedAsNpc && !_npcModule.allowIdleWandering)
+            // A saved patrol route passes these gates like the two above (~359/367) and
+            // EnforceStaticInertness do, so a placed NPC with a route walks it even with idle wandering off.
+            if (_npcModule != null && _npcModule.IsStationedAsNpc && !_npcModule.allowIdleWandering && !HasPatrolRoute())
             {
                 return false;
             }
 
-            // Static placed NPCs should not wander until explicitly enabled
+            // Static placed NPCs should not wander until explicitly enabled (a patrol route counts as enabled)
             if (_companion != null && _companion.isStaticPlacement)
             {
-                if (_npcModule == null || !_npcModule.allowIdleWandering)
+                if (_npcModule == null || (!_npcModule.allowIdleWandering && !HasPatrolRoute()))
                     return false;
             }
             
@@ -594,8 +681,15 @@ namespace FiresCore.Npc
                 return false;
             }
 
-            if (_combatMovement != null && _combatMovement.IsInCombat)
+            // 0.2.941 (round #37 melee test: Knut planted turnips 3 times between swings while he had a fight target - the combat
+            // movement's IsInCombat flickers off between swings): a live fight target within 40 m also counts as in combat, so chores
+            // stop until the fight resolves (staying companions included; lead / Fire 10-27)
+            var fightAi = _companion != null ? _companion.GetCompanionAI() : null;
+            var fightTarget = fightAi != null ? fightAi.CombatTarget : null;
+            bool hasFight = fightTarget != null && !fightTarget.IsDead() && Vector3.Distance(transform.position, fightTarget.transform.position) < 40f;
+            if ((_combatMovement != null && _combatMovement.IsInCombat) || hasFight)
             {
+                if (hasFight && _activeSubBehavior != null && Time.time >= _fightDropLogAt) { _fightDropLogAt = Time.time + 10f; FiresCore.Logging.FiresLogger.LogDebug($"[CompanionIdleBehavior] {_companion?.companionName}: chore {_activeSubBehavior.BehaviorName} dropped - fighting {fightTarget.m_name} at {Vector3.Distance(transform.position, fightTarget.transform.position):0.0} m"); }
                 _lastCombatTime = Time.time;
                 CancelAllIdleBehaviors();
                 return false;
@@ -789,6 +883,11 @@ namespace FiresCore.Npc
                 // Calculate how long to pause before making the next decision
                 // This creates the "stop, wait, then decide" behavior
                 float pauseDuration = UnityEngine.Random.Range(_standingPauseMinDuration, _standingPauseMaxDuration);
+                // [ghost] 0.2.843 (Fire's log: 199 standing pauses averaging 26 s, up to 45 s, before each decision - 5,160 s of standing
+                // across 5 companions in ~20 min): a staying companion whose last chore round found work pauses 2-5 s; after an empty
+                // round 6-15 s. Followers keep the old 8-45 s.
+                if (_hasHomePosition && _companion != null && !_companion.ShouldBeFollowing)
+                    pauseDuration = _lastRoundFoundWork ? UnityEngine.Random.Range(2f, 5f) : UnityEngine.Random.Range(6f, 15f);
                 _nextDecisionTime = Time.time + pauseDuration;
                 
                 if (VerboseLogging)
@@ -977,7 +1076,12 @@ namespace FiresCore.Npc
         {
             // Priority 0: Sub-behaviors (only when near a player - these do expensive
             // Physics.OverlapSphere, chest scanning, etc. in their CanStart checks)
-            if (_isNearAnyPlayer && TryStartSubBehavior())
+            // [ghost] 0.2.843 (Fire 10-26: "companions ... are all mostly idle"; his log: Knut stood through 41 pauses, 955 s, with NOT ONE
+            // chore round - he was 64-180 m from Fire, and this gate skips chores without a player within 64 m; Fire earlier: staying
+            // companions "should work regardless of owner around"): a staying companion tries its chores wherever the owner is. The
+            // scan cost is bounded by TryStartSubBehavior's cooldown and empty-round back-off.
+            bool staying = _hasHomePosition && _companion != null && !_companion.ShouldBeFollowing;
+            if ((_isNearAnyPlayer || staying) && TryStartSubBehavior())
                 return;
 
             // Priority 1: Check for chairs
@@ -1075,6 +1179,22 @@ namespace FiresCore.Npc
         }
 
         #endregion
+
+        // a pose (emote, sit, rest, chair) left on while a job runs is ended; logged once per episode
+        private object _jobPoseCheckedFor;
+        private void EndPoseForJob(string job)
+        {
+            bool emoting = false;
+            try { emoting = FiresCore.Npc.Animation.PlayerAnimationCatalog.IsEmoting(_zanim, _animator); } catch { }
+            bool stateSit = _stateController != null && (_stateController.CurrentState == CompanionStateController.CompanionState.Emote || _stateController.CurrentState == CompanionStateController.CompanionState.ChairSit);
+            if (!emoting && !stateSit && !_isSittingOnChair) return;
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[JobPose] {_companion?.companionName}: job {job} started/running in a pose (animator emote {emoting}, state {_stateController?.CurrentState}, chair {_isSittingOnChair}); standing up first");
+            }
+            if (_isSittingOnChair) StandUpFromChair();
+            _stateController?.ForceStopEmote();
+            if (_stateController == null) { try { FiresCore.Npc.Animation.PlayerAnimationCatalog.StopEmotes(_zanim, _animator); } catch { } }
+        }
 
         #region UI Interaction Freeze
         

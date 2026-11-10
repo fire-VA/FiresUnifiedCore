@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.Core;
 using FiresCore.Npc.Events;
@@ -53,7 +53,10 @@ namespace FiresCore.Npc.IdleBehaviors
         // INTERACTION DISTANCES - Use InteractionPointHelper constants for consistency
         // These ensure companions walk to the correct side of objects before interacting
         private static float InteractionDistance => InteractionPointHelper.MAX_INTERACTION_RANGE;  // How close to be to interact
-        private static float ArrivalDistance => InteractionPointHelper.ARRIVAL_THRESHOLD;          // How close to consider "arrived"
+        private static float ArrivalDistance => InteractionPointHelper.ARRIVAL_THRESHOLD;
+        private const float PullBackoffSeconds = 30f, UnreachableChestSeconds = 60f;
+        private float _pullBackoffUntil, _reachLogAt;
+        private readonly System.Collections.Generic.Dictionary<int, float> _unreachableChests = new System.Collections.Generic.Dictionary<int, float>();          // How close to consider "arrived"
         
         private const float OperationCheckInterval = 2f; // Faster checks
         private const float MaxOperateTime = 600f;    // 10 minutes max - continuous operation
@@ -163,7 +166,6 @@ namespace FiresCore.Npc.IdleBehaviors
         private static readonly string[] _waitingEmotes = { "emote_nonono", "emote_shrug", "emote_comehere", "emote_point", "emote_wave" };
         private const string AddOreRpc = "RPC_AddOre";
         private const string AddFuelRpc = "RPC_AddFuel";
-        private const string EmptyProcessedRpc = "RPC_EmptyProcessed";
         private const float MinEmoteInterval = 8f;
         private const float MaxEmoteInterval = 20f;
         
@@ -260,7 +262,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region CanStart
         
-        // 0.2.257 ([ghost]): the autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
+        // The autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
         // the next CanStart read it as a player command, which bypasses the occupancy checks (two companions on one smelter).
         private GameObject _autoPick;
 
@@ -268,7 +270,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (Companion == null)
             {
-                Debug.Log($"[SmelterOperator] CanStart FAILED: Companion is null");
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] CanStart FAILED: Companion is null");
                 return false;
             }
 
@@ -391,18 +393,26 @@ namespace FiresCore.Npc.IdleBehaviors
             Smelter bestSmelter = null;
             float bestScore = 0f;
 
-            // One set of station rules with the bot's base chores (0.2.237): ChoreBrain.SmeltersNear (operable stations this
+            // One set of station rules with the bot's base chores: ChoreBrain.SmeltersNear (operable stations this
             // companion may use); the attention score below stays this behaviour's own.
+            var scores = new System.Collections.Generic.List<string>();   // 0.2.911: why this station (lead: "log why each smelting run chose the kiln")
             foreach (var smelter in AI.ChoreBrain.SmeltersNear(homePos, searchRadius, _character))
             {
                 // Score this smelter based on how much it needs attention
-                float score = ScoreSmelterNeedsAttention(smelter);
-
-                if (score > bestScore && IsReachable(smelter.transform.position))
+                float score = AI.ChoreBrain.SmelterAttention(smelter, Transform != null ? Transform.position : smelter.transform.position, CHEST_SEARCH_RADIUS, _inventory?.GetStorageInventory(), out string why);
+                bool reachable = score > 0f && IsReachable(smelter.transform.position);
+                if (scores.Count < 6) scores.Add($"{Utils.GetPrefabName(smelter.gameObject)} ({smelter.transform.position.x:0}, {smelter.transform.position.z:0}) {score:0.#}{(why.Length > 0 ? " (" + why + ")" : "")}{(score > 0f && !reachable ? " unreachable" : "")}");
+                if (score > bestScore && reachable)
                 {
                     bestScore = score;
                     bestSmelter = smelter;
                 }
+            }
+            string pickLine = $"{(bestSmelter != null && bestScore > 0f ? Utils.GetPrefabName(bestSmelter.gameObject) : "none")} <- {string.Join("; ", scores)}";
+            if (pickLine != _lastStationPick)
+            {
+                _lastStationPick = pickLine;
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} station pick: {pickLine}");
             }
             
             // Cache the result (even null = no smelter found)
@@ -422,7 +432,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private float ScoreSmelterNeedsAttention(Smelter smelter)
         {
-            // One score with the bot's base chores (0.2.239): ChoreBrain.SmelterAttention, the same terms as before (output waiting
+            // One score with the bot's base chores: ChoreBrain.SmelterAttention, the same terms as before (output waiting
             // +2, room and an input to hand +1, fuel to hand when under half +0.5, empty +0.5), chests round the smelter and this companion.
             Vector3 companionPos = Transform != null ? Transform.position : smelter.transform.position;
             float score = AI.ChoreBrain.SmelterAttention(smelter, companionPos, CHEST_SEARCH_RADIUS, _inventory?.GetStorageInventory(), out string why);

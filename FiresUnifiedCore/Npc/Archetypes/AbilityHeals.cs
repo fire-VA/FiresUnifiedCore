@@ -30,7 +30,7 @@ namespace FiresCore.Npc.Archetypes
         {
             if (target == null || amount <= 0f) return;
             // (Statistics are counted where the heal lands: ApplyLocally.)
-            // One gate for every class heal (Fire: heals only the caster's party). R58 companion_test pve: "FiresBot.healer>Vafire"
+            // One gate for every class heal (heals only the caster's party). A companion healer was seen healing a player outside its party
             // with PvP off, although every heal site checks the party; this catches whichever one didn't, and names it.
             if (healer != null && !ClassTargeting.IsPartyMember(healer, target))
             {
@@ -74,8 +74,12 @@ namespace FiresCore.Npc.Archetypes
             routed.Register<ZDOID, ZDOID, float, bool>(RpcApplyHeal, RPC_HandleHeal);
         }
 
+        private const float MaxHealPerCast = 1000f;
+
         private static void RPC_HandleHeal(long sender, ZDOID healerId, ZDOID targetId, float amount, bool showText)
         {
+            if (!AbilityRPCManager.SenderOwns(sender, healerId)) { RpcGuard.Refuse("RPC_HandleHeal", sender, "does not own the healer"); return; }
+            amount = Mathf.Clamp(amount, 0f, MaxHealPerCast);
             var target = AbilityRPCManager.FindCharacterByZDOID(targetId);
             if (target == null) return;
 
@@ -100,6 +104,9 @@ namespace FiresCore.Npc.Archetypes
         {
             if (VerboseLogging)
                 Debug.Log($"[AbilityHeals] {healer?.m_name ?? "unattributed"} healed {target.m_name} for {healed:0.#}");
+            // One Debug line per applied heal, actual HP gained, for heal counts.
+            var cc = healer != null ? healer.GetComponent<CompanionController>() : null;
+            FiresCore.FiresUnifiedCore.Log?.LogDebug($"[Companion] heal {target.m_name} +{healed:0.#} by {(cc != null ? cc.companionName : healer?.m_name ?? "unattributed")} (owner {(cc != null ? cc.ownerPlayerId : 0)})");
 
             var handlers = OnHealApplied;
             if (handlers == null) return;
@@ -131,7 +138,7 @@ namespace FiresCore.Npc.Archetypes
         // ArchetypeStatistics for a healing companion, from heals that LANDED (health went up), on the peer that owns both: the
         // amount always adds to TotalHealingDone, but AlliesHealed counts one heal per ally per HealCountWindow seconds. Counted in
         // Apply before, a heal-over-time ticking every frame (Sanctuary) added +1500 "allies healed" for one cast, and full-health
-        // targets counted although nothing was healed ([wishbone], R60). A heal worked out on another peer is not seen here.
+        // targets counted although nothing was healed. A heal worked out on another peer is not seen here.
         private const float HealCountWindow = 2f;
         private static readonly System.Collections.Generic.Dictionary<long, float> s_lastCounted =
             new System.Collections.Generic.Dictionary<long, float>();

@@ -215,7 +215,7 @@ namespace FiresCore.UI.ContextMenu
             if (_iEngagedBlock) InputBlock.Block(true);   // frees the cursor ONCE on this edge; InputBlock's
                                                           // UpdateMouseCapture prefix keeps it free every frame after.
             HideGameUi(true);                             // crosshair raycast suppression only — does NOT touch the cursor
-            Debug.Log($"[FiresContextMenu] engaged (blocked={InputBlock.IsBlocked}, weOwnBlock={_iEngagedBlock}).");
+            FiresCore.Logging.FiresLogger.LogDebug($"[FiresContextMenu] engaged (blocked={InputBlock.IsBlocked}, weOwnBlock={_iEngagedBlock}).");
         }
 
         private void Disengage()
@@ -226,7 +226,7 @@ namespace FiresCore.UI.ContextMenu
             if (_iEngagedBlock) InputBlock.Block(false);
             _iEngagedBlock = false;
             HideGameUi(false);
-            Debug.Log("[FiresContextMenu] disengaged.");
+            FiresCore.Logging.FiresLogger.LogDebug("[FiresContextMenu] disengaged.");
         }
 
         // DEBUG: on-change dump of the arm gate + cursor state while (trying to be) engaged. Reveals whether the

@@ -29,6 +29,8 @@ namespace FiresCore.Npc.Core
         public static bool Ready { get; private set; }
 
         /// <summary>Server, every frame.</summary>
+        private static float _passStart;
+
         internal static void Tick()
         {
             if (ZDOMan.instance == null) return;
@@ -36,6 +38,7 @@ namespace FiresCore.Npc.Core
             {
                 if (Time.unscaledTime < _nextPassTime) return;
                 _sweeping = true;
+                _passStart = Time.unscaledTime;
                 _prefabIndex = 0;
                 _sectorCursor = 0;
                 Gathering.Clear();
@@ -57,6 +60,8 @@ namespace FiresCore.Npc.Core
             Snapshot.AddRange(Gathering);
             _sweeping = false;
             _nextPassTime = Time.unscaledTime + PassIntervalSeconds;
+            // Stepping every 4th frame must still finish a pass in seconds
+            if (FiresCore.Logging.Diag.Periodic && FiresCore.Logging.FiresLogger.DebugEnabled) FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCensus] pass took {Time.unscaledTime - _passStart:0.0} s, {Snapshot.Count} companion ZDO(s)");
             if (Ready) return;
 
             Ready = true;

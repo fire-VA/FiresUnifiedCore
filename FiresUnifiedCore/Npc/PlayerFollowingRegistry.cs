@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace FiresCore.Npc
@@ -39,10 +39,10 @@ namespace FiresCore.Npc
             // window. Player-ZDO writes during IsTeleporting=true deadlock the zone
             // stream — the canonical mechanism for the respawn freeze. Owner commands
             // shouldn't fire during a loading screen anyway, but gate defensively.
-            if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
+            if (CompanionPatches.AreCompanionTeleportsSuppressed()) { FiresCore.Logging.FiresLogger.LogDebug($"[PlayerFollowingRegistry] {companionId} follow={follow} NOT written: teleports suppressed (loading or long jump)"); return; }
 
             var nview = player.GetComponent<ZNetView>();
-            if (nview == null || !nview.IsValid()) return;
+            if (nview == null || !nview.IsValid()) { FiresCore.Logging.FiresLogger.LogDebug($"[PlayerFollowingRegistry] {companionId} follow={follow} NOT written: player ZNetView invalid"); return; }
 
             // The local player always owns their own ZDO.  Take ownership defensively.
             if (!nview.IsOwner()) nview.ClaimOwnership();
@@ -55,7 +55,7 @@ namespace FiresCore.Npc
             if (!changed) return;
 
             zdo.Set(ZdoKey, string.Join(",", ids));
-            Debug.Log($"[PlayerFollowingRegistry] {player.GetPlayerName()}: companion '{companionId}' follow={follow} (registry size={ids.Count})");
+            FiresCore.Logging.FiresLogger.LogInfo($"[PlayerFollowingRegistry] {player.GetPlayerName()}: companion '{companionId}' follow={follow} (registry size={ids.Count})");
         }
 
         /// <summary>
@@ -97,7 +97,7 @@ namespace FiresCore.Npc
             if (added > 0)
             {
                 zdo.Set(ZdoKey, string.Join(",", ids));
-                Debug.Log($"[PlayerFollowingRegistry] Migrated {added} companion(s) into registry for {player.GetPlayerName()}");
+                FiresCore.Logging.FiresLogger.LogInfo($"[PlayerFollowingRegistry] Migrated {added} companion(s) into registry for {player.GetPlayerName()}");
             }
         }
 

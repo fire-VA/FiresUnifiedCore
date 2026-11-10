@@ -57,10 +57,17 @@ namespace FiresCore.Diagnostics
             return list.ToArray();
         }
 
+        private static bool Wired(ItemDrop.ItemData it) => it == null || it.m_dropPrefab != null;
+
         private static void Prefix(Humanoid __instance, out List<KeyValuePair<FieldInfo, ItemDrop.ItemData>> __state)
         {
             __state = null;
             if (__instance == null) return;
+            // 0.2.944 (lead 10-27: 61 % of GC world stops inside Humanoid.SetupVisEquipment): the common case - every equipped item has its
+            // drop prefab - returns here from direct field reads, with no reflection walk over the 10 slots
+            var hh = __instance;
+            if (Wired(hh.m_leftItem) && Wired(hh.m_rightItem) && Wired(hh.m_hiddenLeftItem) && Wired(hh.m_hiddenRightItem) && Wired(hh.m_chestItem)
+                && Wired(hh.m_legItem) && Wired(hh.m_helmetItem) && Wired(hh.m_shoulderItem) && Wired(hh.m_utilityItem) && Wired(hh.m_trinketItem)) return;
             var odb = ObjectDB.instance;
 
             foreach (var (slot, field) in _slots)

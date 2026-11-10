@@ -13,6 +13,7 @@ namespace FiresCore.Npc.Combat
     /// target's ZNetView and handled by whichever machine owns the target, and settings come from VikHavn's own config
     /// entries, which its ConfigSync keeps at the server's values.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class VikHavnBridge
     {
         private const string PluginGuid = "VikHavn.CombatMovesetAdditions";
@@ -225,6 +226,7 @@ namespace FiresCore.Npc.Combat
     /// <summary>Runs on the attacker's machine, before the hit is sent to the target's owner, like VikHavn's own kick patch. Core's
     /// one Character.Damage hook: the companion kick, then locational damage (dormant unless a mod enables it).</summary>
     [HarmonyPatch(typeof(Character), nameof(Character.Damage))]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionKickHitPatch
     {
         [HarmonyPrefix]
@@ -243,10 +245,11 @@ namespace FiresCore.Npc.Combat
     }
 
     /// <summary>
-    /// Counts a healer companion's vanilla StaffShield bubble as a buff (ArchetypeStatistics.BuffsApplied; [ghost]: companion_test's
+    /// Counts a healer companion's vanilla StaffShield bubble as a buff (ArchetypeStatistics.BuffsApplied; a
     /// healer carries StaffShield, so the bubble is its main action). Vanilla hands the shield out as an Aoe hit carrying
     /// Staff_shield with the companion as attacker, on the caster's machine: one count per character it lands on, self included.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionStaffShieldCount
     {
         private static readonly int StaffShieldHash = "Staff_shield".GetStableHashCode();
@@ -262,38 +265,28 @@ namespace FiresCore.Npc.Combat
     }
 
     /// <summary>
-    /// Scales a companion's hits on players, and on companions of other owners (Fire's popup 2026-09-29: "Lower, x0.3"; R54d a companion slash did 351 to a
-    /// 271 HP player). SERVER-synced [Combat] Companion damage vs players. Runs on the attacker's machine before the hit goes
+    /// Scales a companion's hits on players, and on companions of other owners, so a single slash cannot one-shot a
+    /// player. SERVER-synced [Combat] Companion damage vs players. Runs on the attacker's machine before the hit goes
     /// to the victim's owner, for native attacks, the fallback swing and projectiles alike.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionPvpDamage
     {
-        private static ConfigEntry<float> s_scale;
-        private static ConfigEntry<float> s_companionScale;
+        // 1086 ([generator], Fire 11-01: configs live in their own mods): bound and server-synced by FiresCompanions; Core reads the owner's value (old default without it).
+        private static readonly FiresCore.Config.OwnedSetting<float> s_scale = new FiresCore.Config.OwnedSetting<float>("Combat", "Companion damage vs players", 0.3f);
+        private static readonly FiresCore.Config.OwnedSetting<float> s_companionScale = new FiresCore.Config.OwnedSetting<float>("Combat", "Companion damage vs companions", 0.5f);
 
-        internal static void Bind(ConfigFile config, FiresCore.Sync.ConfigSync configSync)
-        {
-            s_scale = config.Bind("Combat", "Companion damage vs players", 0.3f,
-                new ConfigDescription("SERVER. Multiplies every hit a companion lands on a player (PvP companion fights). 1 = unscaled.",
-                    new AcceptableValueRange<float>(0f, 2f)));
-            configSync?.AddConfigEntry(s_scale);
-            // Fire's popup 2026-09-29: companion-on-companion hits of different owners at 0.5 (R73 threeway: ~197 per hit on a
-            // ~389 HP companion, two swings to a kill).
-            s_companionScale = config.Bind("Combat", "Companion damage vs companions", 0.5f,
-                new ConfigDescription("SERVER. Multiplies every hit a companion lands on another player's companion (companions of the same owner are never scaled). 1 = unscaled.",
-                    new AcceptableValueRange<float>(0f, 2f)));
-            configSync?.AddConfigEntry(s_companionScale);
-        }
+        internal static void Bind(ConfigFile config, FiresCore.Sync.ConfigSync configSync) { }
 
         internal static void OnDamage(Character victim, HitData hit)
         {
-            if (s_scale == null || hit == null || victim == null) return;
+            if (hit == null || victim == null) return;
             Character attacker = hit.GetAttacker();
             CompanionController companion = attacker != null && !(attacker is Player) ? attacker.GetComponent<CompanionController>() : null;
             if (companion == null) return;
             float scale;
             if (victim is Player) scale = s_scale.Value;
-            else if (s_companionScale != null && victim.GetComponent<CompanionController>() != null)
+            else if (victim.GetComponent<CompanionController>() != null)
             {
                 long mine = Archetypes.ClassTargeting.PartyOwner(attacker), theirs = Archetypes.ClassTargeting.PartyOwner(victim);
                 if (mine == 0L || theirs == 0L || mine == theirs) return;
@@ -311,7 +304,7 @@ namespace FiresCore.Npc.Combat
 
         /// <summary>
         /// "[CompanionHit] <name> -> <victim>: <skill>, level L (x level factor), archetype xA, crit C% xM, pre-armour B x0.3 = T"
-        /// ([ghost]: companion_test quotes it next to a WOULD-DIE). B already holds weapon x skill x level x archetype x crit x
+        /// B already holds weapon x skill x level x archetype x crit x
         /// status effects; armour and resistances come off afterwards on the victim.
         /// </summary>
         private static void LogHit(CompanionController companion, Character attacker, Character victim, HitData hit, float before, float scale)
@@ -322,7 +315,7 @@ namespace FiresCore.Npc.Combat
 
             int level = companion.GetEffectiveLevel();
             var gear = companion.EquipmentData;
-            // Did THIS hit crit ([ghost], R73: the line printed the crit stats only)? A melee hit is the same HitData the crit
+            // Did THIS hit crit? A melee hit is the same HitData the crit
             // amplified; a projectile's is a copy made on impact, so it reads "?".
             string crit = gear == null ? "?" : ReferenceEquals(gear.LastCritHit, hit) ? "yes"
                 : hit.m_skill == Skills.SkillType.Bows || hit.m_skill == Skills.SkillType.Crossbows
@@ -330,7 +323,7 @@ namespace FiresCore.Npc.Combat
             string archetype = gear != null
                 ? $"archetype x{gear.ArchetypeDamageMultiplier:0.00}, crit {gear.ArchetypeCritChance * 100f:0}% x{gear.ArchetypeCritDamageMultiplier:0.00} (this hit: crit {crit})"
                 : "archetype ?";
-            Debug.Log($"[CompanionHit] {companion.companionName} -> {victim.m_name}: {hit.m_skill}, level {level} "
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionHit] {companion.companionName} -> {victim.m_name}: {hit.m_skill}, level {level} "
                       + $"(x{1f + Mathf.Max(0, level - 1) * 0.5f:0.0}), {archetype}, pre-armour {before:0} x{scale:0.00} = {hit.GetTotalDamage():0}");
         }
     }

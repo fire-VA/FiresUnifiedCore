@@ -89,7 +89,25 @@ namespace FiresCore.Npc.Archetypes
             Evasion_Disengage,
             Evasion_ShieldCharge,
             Evasion_DivineRetreat,
-            Evasion_WindStep
+            Evasion_WindStep,
+
+            // === DRUID ===
+            Druid_Regrowth,
+            Druid_EntanglingRoots,
+            Druid_Barkskin,
+            Druid_Thornfield,
+            Druid_AlphaHowl,
+            Druid_WildHunt,
+
+            // === NECROMANCER ===
+            Necromancer_Wither,
+            Necromancer_LichForm,
+            Necromancer_GraveChill,
+            Necromancer_GravePestilence,
+            Druid_WolfPack,
+            Necromancer_RaiseArcher,
+            Necromancer_RaiseWraith,
+            Necromancer_Legion
         }
         
         /// <summary>
@@ -273,7 +291,22 @@ namespace FiresCore.Npc.Archetypes
         {
             return _skills.TryGetValue(skill, out var data) ? data : null;
         }
-        
+
+        /// <summary>
+        /// Sets a skill's level directly, up or down (Studio God panel, Fire 10-30: "raise or lower companion skills"),
+        /// 1..MAX_LEVEL, XP to 0, saved through SaveToZDO (owner only). No level-up messages. False = unknown skill.
+        /// </summary>
+        public bool SetSkillLevel(ArchetypeSkill skill, int level)
+        {
+            if (!_skills.TryGetValue(skill, out var data)) return false;
+            data.Level = Mathf.Clamp(level, 1, MAX_LEVEL);
+            data.CurrentXP = 0f;
+            _isDirty = true;
+            SaveToZDO();
+            Debug.Log($"[ArchetypeSkillSystem] Set {skill} to level {data.Level} for {_companion?.companionName}");
+            return true;
+        }
+
         /// <summary>
         /// Grants XP to a skill from using an ability.
         /// This is the BASE XP - call OnAbilityHitEnemy/OnAbilityBuffedAlly for bonus XP.
@@ -616,6 +649,8 @@ namespace FiresCore.Npc.Archetypes
                 case ArchetypeClass.Mage: return ArchetypeSkill.Mage_ElementalInfusion;
                 case ArchetypeClass.Healer: return ArchetypeSkill.Healer_Sanctuary;
                 case ArchetypeClass.Monk: return ArchetypeSkill.Monk_ChiStrike;
+                case ArchetypeClass.Druid: return ArchetypeSkill.Druid_Regrowth;
+                case ArchetypeClass.Necromancer: return ArchetypeSkill.Necromancer_Wither;
                 default: return null;
             }
         }
@@ -716,6 +751,25 @@ namespace FiresCore.Npc.Archetypes
                 case "chiexplosion": return (ArchetypeSkill.Monk_ChiExplosion, AbilityTier.Master);
                 case "wayofperfection": return (ArchetypeSkill.Monk_WayOfPerfection, AbilityTier.Ultimate);
                 
+                // Druid
+                case "regrowth": return (ArchetypeSkill.Druid_Regrowth, AbilityTier.Basic);
+                case "entanglingroots": return (ArchetypeSkill.Druid_EntanglingRoots, AbilityTier.Advanced);
+                case "barkskin": return (ArchetypeSkill.Druid_Barkskin, AbilityTier.Advanced);
+                case "thornfield": return (ArchetypeSkill.Druid_Thornfield, AbilityTier.Expert);
+                case "alphahowl": return (ArchetypeSkill.Druid_AlphaHowl, AbilityTier.Expert);
+                case "wildhunt": return (ArchetypeSkill.Druid_WildHunt, AbilityTier.Ultimate);
+
+                // Necromancer
+                case "wither": return (ArchetypeSkill.Necromancer_Wither, AbilityTier.Basic);
+                case "lichform": return (ArchetypeSkill.Necromancer_LichForm, AbilityTier.Basic);
+                case "gravechill": return (ArchetypeSkill.Necromancer_GraveChill, AbilityTier.Advanced);
+                case "gravepestilence": return (ArchetypeSkill.Necromancer_GravePestilence, AbilityTier.Master);
+
+                case "wolfpack": return (ArchetypeSkill.Druid_WolfPack, AbilityTier.Advanced);
+                case "raisearcher": return (ArchetypeSkill.Necromancer_RaiseArcher, AbilityTier.Advanced);
+                case "raisewraith": return (ArchetypeSkill.Necromancer_RaiseWraith, AbilityTier.Expert);
+                case "legion": return (ArchetypeSkill.Necromancer_Legion, AbilityTier.Ultimate);
+
                 // Emergency Evasion
                 case "arcaneblink": return (ArchetypeSkill.Evasion_ArcaneBlink, AbilityTier.Advanced);
                 case "sanctuaryfade": return (ArchetypeSkill.Evasion_SanctuaryFade, AbilityTier.Advanced);

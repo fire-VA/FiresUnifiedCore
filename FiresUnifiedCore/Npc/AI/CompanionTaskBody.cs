@@ -6,7 +6,7 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// A companion as a task body (Core 0.2.220, the haul): the same questions ChoreBrain and the haul ask the FDT bot's
+    /// A companion as a task body (the haul): the same questions ChoreBrain and the haul ask the FDT bot's
     /// BotTaskBody, answered from CompanionController / CompanionInventory. HaulBehavior carries the haul's orders out itself (the
     /// swing, the pickup, the placement); these members serve ChoreBrain's other chores and any caller that drives a body directly.
     /// </summary>

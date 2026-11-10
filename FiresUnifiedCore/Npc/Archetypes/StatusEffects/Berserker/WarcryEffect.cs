@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Berserker
@@ -166,7 +166,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Berserker
             
             seman.AddStatusEffect(effect, true);
             
-            Debug.Log($"[WarcryEffect] Applied to {target.m_name}, hasIcon={icon != null}, isPlayer={target.IsPlayer()}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[WarcryEffect] Applied to {target.m_name}, hasIcon={icon != null}, isPlayer={target.IsPlayer()}");
         }
         
         public new WarcryEffect Clone()

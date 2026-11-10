@@ -92,9 +92,12 @@ namespace FiresCore.UI
         private static readonly Color CaptureButtonGreen = new Color(0.35f, 0.75f, 0.30f);
 
         private const string ChangedColor = "#FFD980";
+        // section headers in the Valheim orange-gold accent, so they stand out from the rows.
+        private const string SectionColor = "#E8A33D";
         private const string LockedColor = "#9AA0A6";
         private const string OffColor = "#997F55";
         private const string OnColor = "#66DD66";
+        private const string DisabledColor = "#FF4A3A";
         private const string CaptureColor = "#FFCC66";
         private const string NoticeColor = "#CC9944";
 
@@ -103,16 +106,17 @@ namespace FiresCore.UI
 
         public static void EnsureHost()
         {
-            if (_instance != null) return;
+            // never on a headless server (its Update polled the hotkey there and crashed the dedicated server).
+            if (_instance != null || HeadlessGuard.IsHeadless) return;
             var host = new GameObject("FiresConfigPanelHost");
             UnityEngine.Object.DontDestroyOnLoad(host);
             _instance = host.AddComponent<ConfigPanel>();
             FiresCore.Bridge.ModUiRegistry.Register("FiresConfigPanel", () => IsOpen, () => _instance?.Hide(), null);
         }
 
-        public static void Toggle() { EnsureHost(); _instance.ToggleInternal(); }
+        public static void Toggle() { EnsureHost(); if (_instance != null) _instance.ToggleInternal(); }
 
-        public static void Open() { EnsureHost(); if (!_instance._open) _instance.Show(); }
+        public static void Open() { EnsureHost(); if (_instance != null && !_instance._open) _instance.Show(); }
 
         public static bool IsOpen => _instance != null && _instance._open;
 
@@ -122,14 +126,14 @@ namespace FiresCore.UI
         /// </summary>
         public static bool EverOpened { get; private set; }
 
-        // Open timing ([ghost] for [perf], 2026-09-28: ui_test measured a 740 ms open): each open logs its Show phases,
+        // Open timing: each open logs its Show phases,
         // then the IMGUI time until the first Repaint that drew the window.
         private readonly System.Diagnostics.Stopwatch _openClock = new System.Diagnostics.Stopwatch();
         private string _openPhases;
         private double _openGuiMs;
         private bool _openDrawPending;
         private int _openCount;
-        // R5 ([perf]): the cold open's first frame took 491 ms of which Show was 6 and IMGUI 20, so the rest of that frame
+        // The cold open's first frame took 491 ms of which Show was 6 and IMGUI 20, so the rest of that frame
         // is split too: when this LateUpdate, the canvases, the first camera and the first OnGUI pass came, garbage
         // collections, and how many frames went by.
         private double _openLateMs, _openCanvasMs, _openCameraMs, _openFirstGuiMs;
@@ -149,10 +153,16 @@ namespace FiresCore.UI
         private bool _hudHidden;
 
         private readonly HashSet<string> _collapsed = new HashSet<string>();
+        // a section is collapsed the first time it is seen; the player's
+        // own expand / collapse then holds for the session.
+        private readonly HashSet<string> _seenSections = new HashSet<string>();
+        // mods whose section list is open in the left nav (none at first).
+        private readonly HashSet<string> _navExpanded = new HashSet<string>();
         private readonly HashSet<string> _customDrawerFailed = new HashSet<string>();
         private readonly HashSet<string> _modsWithKeybinds = new HashSet<string>();
         private readonly HashSet<string> _sectionsWithKeybinds = new HashSet<string>();
         private readonly List<CfgDescriptor> _searchResults = new List<CfgDescriptor>();
+        private string _searchTitle, _searchTitleFor;
         private readonly ConfigFilesEditor _filesEditor = new ConfigFilesEditor();
         private bool _filesMode;
         private string _controlScope = "";
@@ -194,6 +204,7 @@ namespace FiresCore.UI
         private void Update()
         {
             if (!_cmdRegistered) { try { RegisterCommands(); _cmdRegistered = true; } catch { } }
+            SyncGuiHost();   // IMGUI only while it can draw something
             WatchVanillaControlsMenu();
             LogKeybindConflictsOnce();
             ArmPrewarm();
@@ -219,9 +230,27 @@ namespace FiresCore.UI
         // Chord.IsDown rather than KeyboardShortcut.IsDown: BepInEx's own check refuses to fire while any
         // unrelated key is held, so the window would not open while the player is walking.
         private static bool HotkeyPressed()
-            => FiresConfigUI.CfgHotkey != null
-                ? Input.Chord.IsDown(FiresConfigUI.CfgHotkey.Value)
-                : Input.FiresKeys.GetKeyDown(FiresConfigUI.ToggleKey);
+        {
+            // UI shell: with [UI] Fires UI override ON and the config key equal to the hub key,
+            // the config window's key yields and the hub (whose Settings tab opens this window) takes it.
+            // OFF = exactly today's behaviour.
+            if (Shell.FiresShell.ConfigKeyYieldsToHub()) return false;
+            if (FiresConfigUI.CfgHotkey == null) return Input.FiresKeys.GetKeyDown(FiresConfigUI.ToggleKey);
+
+            KeyboardShortcut bind = FiresConfigUI.CfgHotkey.Value;
+            // 0.2.1188 (SugarRay: "F1 sometimes doesn't open"): a plain key (no modifiers) opens even while Shift
+            // (sprint), Ctrl (crouch) or Alt is held; Chord.IsDown refuses any unlisted held modifier. Binds WITH
+            // modifiers keep the exact chord check.
+            bool plain = bind.MainKey != KeyCode.None && !bind.Modifiers.GetEnumerator().MoveNext();
+            if (!plain) return Input.Chord.IsDown(bind);
+            if (!Input.FiresKeys.GetKeyDown(bind.MainKey)) return false;
+            if (Input.FiresInputBlock.IsTyping(out string source) && !(source == "imgui" && IsOurStaleFocus()))
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[Config] open key {bind} refused: typing ({source})");
+                return false;
+            }
+            return true;
+        }
 
         private static void RegisterCommands()
         {
@@ -242,7 +271,7 @@ namespace FiresCore.UI
                 RefreshDiscovery();
                 double discovery = _openClock.Elapsed.TotalMilliseconds;
                 _open = true;
-                InputBlock.Block(true);
+                InputBlock.Block(true); UiClickShield.Set("FiresConfigPanel", true);
                 HideGameUi(true);
                 double hud = _openClock.Elapsed.TotalMilliseconds;
                 ConfigGamePause.Apply(true);
@@ -293,7 +322,7 @@ namespace FiresCore.UI
             if (Event.current == null || Event.current.type != EventType.Repaint) return;
             _openDrawPending = false;
             HookOpenFrame(false);
-            FiresConfigUI.Log.LogInfo(string.Format(CultureInfo.InvariantCulture,
+            FiresCore.Logging.FiresLogger.LogDebug(string.Format(CultureInfo.InvariantCulture,
                 "ConfigPanel {0}; first frame drawn {1:0} ms after Show began, of which IMGUI {2:0} ms "
                 + "(after Show: LateUpdate at {3}, canvases at {4}, first camera at {5}, first OnGUI at {6} ms; "
                 + "{7} frame(s) later, {8} GC collection(s), {9} font atlas rebuild(s)).",
@@ -302,8 +331,11 @@ namespace FiresCore.UI
                 s_fontRebuilds - _openFontRebuilds));
         }
 
+        private void OnDestroy() { UiClickShield.Set("FiresConfigPanel", false); }
+
         public void Hide()
         {
+            UiClickShield.Set("FiresConfigPanel", false);   // 0.2.1153: first, so nothing below can leave uGUI blocked
             CancelCapture();
             CloseKeybindPopup();
             ConfigPopup.Close();
@@ -316,6 +348,48 @@ namespace FiresCore.UI
             HideGameUi(false);
             ConfigGamePause.Apply(false);
             Input.FiresInputBlock.Release(_textToken);
+            // 0.2.1188 (SugarRay: "F1 sometimes doesn't open"): a text field still focused at close (search box, Esc)
+            // left GUIUtility.keyboardControl set, so FiresInputBlock.IsTyping kept reporting "imgui" and every mod
+            // hotkey, this window's open key included, stayed blocked.
+            // 0.2.1192 (Fire 11-06 "f1 actually DOESNT work the second time"): the clear above runs from Update, and
+            // IMGUI puts the focus back at its next pass (log 1752: "focus cleared", then "refused: typing (imgui)" on
+            // every F1). The id is kept, and the clear is redone inside one closed OnGUI pass, where it holds.
+            if (GUIUtility.keyboardControl != 0)
+            {
+                s_closedFocusId = GUIUtility.keyboardControl;
+                GUIUtility.keyboardControl = 0;
+                _clearFocusPending = true;
+                FiresCore.Logging.FiresLogger.LogDebug("[Config] window closed with a text field focused: focus cleared");
+            }
+            SyncGuiHost();
+        }
+
+        private bool _clearFocusPending;
+        private static int s_closedFocusId;
+        private static bool s_staleFocusLogged;
+
+        // Inside OnGUI with the window closed: drop the focus our window's field left behind.
+        private void ClearStaleFocusInGui()
+        {
+            if (!_clearFocusPending) return;
+            GUI.FocusControl(null);
+            GUIUtility.keyboardControl = 0;
+            if (Event.current != null && Event.current.type == EventType.Repaint) _clearFocusPending = false;
+        }
+
+        // The typing gate saw IMGUI focus: if it is the id our closed window left, it is stale, not typing.
+        private static bool IsOurStaleFocus()
+        {
+            if (s_closedFocusId == 0 || GUIUtility.keyboardControl != s_closedFocusId) return false;
+            if (_instance != null && _instance._open) return false;   // typing in our own open window stays typing
+            GUIUtility.keyboardControl = 0;
+            if (_instance != null) { _instance._clearFocusPending = true; _instance.SyncGuiHost(); }
+            if (!s_staleFocusLogged)
+            {
+                s_staleFocusLogged = true;
+                FiresCore.Logging.FiresLogger.LogInfo("[Config] open key: stale focus from the closed window cleared, window opens");
+            }
+            return true;
         }
 
         // On open only a changed set of configs is discovered again (CfgDiscovery.RebuildIfChanged).
@@ -395,10 +469,35 @@ namespace FiresCore.UI
         private static string IdOf(CfgDescriptor descriptor) => descriptor.ModGuid + "|" + descriptor.Section + "|" + descriptor.Key;
 
         // ---------------------------------------------------------------- draw
-        private void OnGUI()
+        // a MonoBehaviour that has OnGUI
+        // makes Unity run IMGUI's layout/event passes for it every frame, allocating even when the body returns at once. OnGUI now
+        // lives on a small child component that is enabled only while the panel is open or its one-off prewarm/hidden draw is pending.
+        private sealed class GuiHost : MonoBehaviour
+        {
+            internal ConfigPanel Panel;
+            private void OnGUI() { if (Panel != null) Panel.DrawGui(); }
+        }
+
+        private GuiHost _guiHost;
+
+        private void SyncGuiHost()
+        {
+            if (_guiHost == null)
+            {
+                var go = new GameObject("FiresConfigPanelGui");
+                go.transform.SetParent(transform, false);
+                _guiHost = go.AddComponent<GuiHost>();
+                _guiHost.Panel = this;
+            }
+            // _resizeHotControl: one more closed pass releases a resize grab the close interrupted.
+            bool need = _open || _capturing || !_prewarmDone || _hiddenDrawsLeft > 0 || _resizeHotControl != 0 || _clearFocusPending;
+            if (_guiHost.enabled != need) _guiHost.enabled = need;
+        }
+
+        private void DrawGui()
         {
             _hiddenPass = false;
-            if (!_open) { ReleaseResizeCapture(); PrewarmFonts(); HiddenDraw(); return; }
+            if (!_open) { ClearStaleFocusInGui(); ReleaseResizeCapture(); PrewarmFonts(); HiddenDraw(); return; }
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
             double passStart = _openDrawPending ? _openClock.Elapsed.TotalMilliseconds : 0;
@@ -407,6 +506,8 @@ namespace FiresCore.UI
             // Valheim's own OnGUI can leave GUI.matrix scaled; inheriting it draws the window off-screen
             // (the documented "renders but invisible" trap). Draw in identity space, restore after.
             var matrix = GUI.matrix;
+            var probeType = Event.current.type;
+            ProbeBegin();   // 0.2.828: [CfgWin] Debug line (ConfigPanelPerfProbe.cs)
             ConfigWindowScale.Refresh();
             GUI.matrix = Matrix4x4.identity;
             try
@@ -417,7 +518,7 @@ namespace FiresCore.UI
                 ConfigPopup.Draw();
                 DrawKeybindPopup();
                 CommitOnFocusChange();
-                // 0.2.310: a test's queued click / character (FiresGuiTest), replayed against this frame's layout, as the OS's would be.
+                // a test's queued click / character, replayed against this frame's layout, as the OS's would be.
                 if (FiresGuiTest.TryNext(out Event injected))
                 {
                     Event real = Event.current;
@@ -429,6 +530,7 @@ namespace FiresCore.UI
             finally
             {
                 GUI.matrix = matrix;
+                ProbeEnd(probeType);
                 if (_openDrawPending) TimeFirstDraw(_openClock.Elapsed.TotalMilliseconds - passStart);
             }
         }
@@ -618,6 +720,10 @@ namespace FiresCore.UI
             GUILayout.EndHorizontal();
         }
 
+        // the hub's Settings module opens this window straight in its Conflicts / Files view (those stay here in v1).
+        internal static void OpenConflictsView() { Open(); if (_instance != null) { if (_instance._filesMode) _instance.ToggleFilesMode(); _instance.ShowConflicts(); } }
+        internal static void OpenFilesView() { Open(); if (_instance != null && !_instance._filesMode) _instance.ToggleFilesMode(); }
+
         private void ToggleFilesMode()
         {
             _filesMode = !_filesMode;
@@ -634,6 +740,7 @@ namespace FiresCore.UI
             foreach (var section in CfgDiscovery.SectionsOf(_mod))
             {
                 string key = CollapseKey(_mod, section);
+                _seenSections.Add(key);
                 if (collapsed) _collapsed.Add(key);
                 else _collapsed.Remove(key);
             }
@@ -650,16 +757,28 @@ namespace FiresCore.UI
             {
                 if (!ModIsVisible(mod)) continue;
                 bool selected = mod == _mod;
-                if (GUILayout.Button(mod, selected ? ConfigSkin.NavSel : ConfigSkin.NavItem))
+                // mod names in the section headers' gold so they stand out from their
+                // sub-section rows, and every mod starts collapsed in the nav (the selected one too). Clicking the selected mod again
+                // opens or closes its section list; the choice holds for the session.
+                bool navOpen = selected && _navExpanded.Contains(mod);
+                string modLabel = $"<b><color={SectionColor}>{(selected ? (navOpen ? "[-] " : "[+] ") : "")}{mod}</color></b>";
+                if (GUILayout.Button(modLabel, selected ? ConfigSkin.NavSel : ConfigSkin.NavItem))
                 {
-                    _search = "";
-                    GUIUtility.keyboardControl = 0;
-                    ConfigPopup.Close();
-                    _mod = mod;
-                    _navSection = null;
-                    _bodyScroll = Vector2.zero;
+                    if (selected)
+                    {
+                        if (!_navExpanded.Remove(mod)) _navExpanded.Add(mod);
+                    }
+                    else
+                    {
+                        _search = "";
+                        GUIUtility.keyboardControl = 0;
+                        ConfigPopup.Close();
+                        _mod = mod;
+                        _navSection = null;
+                        _bodyScroll = Vector2.zero;
+                    }
                 }
-                if (!selected) continue;
+                if (!selected || !_navExpanded.Contains(mod)) continue;
 
                 var sections = CfgDiscovery.SectionsOf(mod);
                 for (int i = 0; i < sections.Count; i++)
@@ -672,6 +791,7 @@ namespace FiresCore.UI
                     {
                         _navSection = section;
                         string key = CollapseKey(mod, section);
+                        _seenSections.Add(key);
                         _collapsed.Remove(key);
                         _pendingJump = key;
                         InvalidateRowPositions();
@@ -695,68 +815,55 @@ namespace FiresCore.UI
 
         private void DrawSearchResults()
         {
-            GUILayout.Label("Results for \"" + _search + "\"", ConfigSkin.Title);
+            if (_searchTitleFor != _search) { _searchTitleFor = _search; _searchTitle = "Results for \"" + _search + "\""; }
+            GUILayout.Label(_searchTitle, ConfigSkin.Title);
+            // 0.2.832: matches and group labels are found when the model is built (ConfigPanelRowCulling.BuildSearchModel)
+            if (DrawModelBody() == 0) GUILayout.Label("No matches.", ConfigSkin.Label);
+        }
 
-            _searchResults.Clear();
-            string query = _search.ToLowerInvariant();
-            foreach (var descriptor in CfgDiscovery.Descriptors)
-            {
-                descriptor.RefreshTags();
-                if (IsRowHidden(descriptor)) continue;
-                if (Matches(descriptor, query)) _searchResults.Add(descriptor);
-            }
+        // a mod's settings the mod no longer uses ("old settings", BepInEx orphans) can be removed from
+        // its .cfg here: two clicks, a copy of the file kept first. Never automatic: some mods bind keys late.
+        private string _pruneArmedMod;
+        private float _pruneArmedUntil, _pruneCountAt = -10f;
+        private int _pruneCount;
+        private string _pruneCountMod;
 
-            string lastGroup = null;
-            foreach (var descriptor in _searchResults)
+        private ConfigFile CurrentModFile()
+        {
+            foreach (string section in CfgDiscovery.SectionsOf(_mod))
+                foreach (var d in CfgDiscovery.RowsOf(_mod, section))
+                    if (d.Entry?.ConfigFile != null) return d.Entry.ConfigFile;
+            return null;
+        }
+
+        private void DrawPruneButton()
+        {
+            if (_pruneCountMod != _mod || Time.unscaledTime - _pruneCountAt > 2f)
             {
-                string group = descriptor.ModName + "  -  " + descriptor.SectionDisplay;
-                if (group != lastGroup)
-                {
-                    lastGroup = group;
-                    GUILayout.Space(3f);
-                    GUILayout.Label("<b>" + group + "</b>", ConfigSkin.SectionBar);
-                }
-                DrawRowCulled(descriptor);
+                _pruneCountMod = _mod;
+                _pruneCountAt = Time.unscaledTime;
+                _pruneCount = StaleEntries.Count(CurrentModFile());
             }
-            if (_searchResults.Count == 0) GUILayout.Label("No matches.", ConfigSkin.Label);
+            if (_pruneCount <= 0) return;
+            bool armed = _pruneArmedMod == _mod && Time.unscaledTime < _pruneArmedUntil;
+            string label = armed
+                ? $"<color={ChangedColor}>Click again to remove {_pruneCount} old setting(s) (a copy of the file is kept)</color>"
+                : $"Remove {_pruneCount} old setting(s) this mod no longer uses";
+            if (!GUILayout.Button(label, ConfigSkin.ButtonSmall)) return;
+            if (!armed) { _pruneArmedMod = _mod; _pruneArmedUntil = Time.unscaledTime + 5f; return; }
+            _pruneArmedMod = null;
+            StaleEntries.Prune(CurrentModFile(), null, "removed in the config window", backup: true);
+            _pruneCountAt = -10f;
         }
 
         private void DrawModSections()
         {
             GUILayout.Label(_mod, ConfigSkin.Title);
-            var sections = CfgDiscovery.SectionsOf(_mod);
-            for (int i = 0; i < sections.Count; i++)
-            {
-                string section = sections[i];
-                var rows = CfgDiscovery.RowsOf(_mod, section);
-                foreach (var descriptor in rows) descriptor.RefreshTags();
-                if (!HasVisibleRows(rows)) continue;
-
-                string key = CollapseKey(_mod, section);
-                bool collapsed = _collapsed.Contains(key);
-
-                GUILayout.Space(3f);
-                string barText = (collapsed ? "[+]  " : "[-]  ") + "<b>" + (i + 1) + ". " + CfgDiscovery.CleanSection(section) + "</b>";
-                if (collapsed && HasChangedRows(rows)) barText = $"<color={ChangedColor}>" + barText + "</color>";
-                if (GUILayout.Button(barText, ConfigSkin.SectionBar))
-                {
-                    if (!_collapsed.Remove(key)) _collapsed.Add(key);
-                    InvalidateRowPositions();
-                }
-                if (Event.current.type == EventType.Repaint && _pendingJump == key)
-                {
-                    _bodyScroll.y = Mathf.Max(0f, GUILayoutUtility.GetLastRect().y - 6f);
-                    _pendingJump = null;
-                }
-                if (collapsed) continue;
-
-                foreach (var descriptor in rows)
-                {
-                    if (IsRowHidden(descriptor)) continue;
-                    DrawRowCulled(descriptor);
-                }
-            }
-            if (sections.Count == 0) GUILayout.Label("No settings.", ConfigSkin.Label);
+            DrawPruneButton();
+            // 0.2.832: section bars and rows come from the row model (ConfigPanelRowCulling), built once per view; only the
+            // visible part is laid out, and a nav jump scrolls to the bar's offset in the model.
+            DrawModelBody();
+            if (CfgDiscovery.SectionsOf(_mod).Count == 0) GUILayout.Label("No settings.", ConfigSkin.Label);
         }
 
         // IMGUI reports repeat clicks on the MouseDown event itself, so the setting name needs no click timer
@@ -800,7 +907,7 @@ namespace FiresCore.UI
                 if (!descriptor.Tags.HideSettingName)
                 {
                     GUILayout.Label(RowName(descriptor, locked), ConfigSkin.Label, ScaledLayout.Width(NameWidth));
-                    FiresRoundedSkin.MarkHint(descriptor.Description);
+                    FiresRoundedSkin.MarkHint(string.IsNullOrEmpty(descriptor.LongDescription) ? descriptor.Description : descriptor.LongDescription);   // hover = the full text
                     if (WasDoubleClicked()) SettingEditWindow.Open(descriptor);
                 }
 
@@ -819,6 +926,9 @@ namespace FiresCore.UI
                 GUI.enabled = wasEnabled;
                 GUILayout.EndHorizontal();
             }
+            // 0.2.1188 (SugarRay: descriptions show on hover in other managers): the whole row (name, control, Reset)
+            // shows the description, not only the name; GetLastRect is the row's horizontal group here.
+            FiresRoundedSkin.MarkHint(string.IsNullOrEmpty(descriptor.LongDescription) ? descriptor.Description : descriptor.LongDescription);
 
             if (string.IsNullOrEmpty(descriptor.DescriptionLine)) return;
 
@@ -826,15 +936,20 @@ namespace FiresCore.UI
             // text runs straight underneath those buttons.
             GUILayout.BeginHorizontal();
             GUILayout.Label(descriptor.DescriptionLine, ConfigSkin.Desc);
-            FiresRoundedSkin.MarkHint(descriptor.Description);
+            FiresRoundedSkin.MarkHint(string.IsNullOrEmpty(descriptor.LongDescription) ? descriptor.Description : descriptor.LongDescription);   // hover = the full text
             GUILayout.Space(DescriptionRightGutter);
             GUILayout.EndHorizontal();
         }
 
+        // 0.2.832: a row name's locked / changed forms are built once per descriptor, not on every IMGUI event.
+        private static readonly Dictionary<CfgDescriptor, string[]> _rowNames = new Dictionary<CfgDescriptor, string[]>();
+
         private static string RowName(CfgDescriptor descriptor, bool locked)
         {
-            if (locked) return $"<color={LockedColor}>{descriptor.Label}  (locked)</color>";
-            return IsChanged(descriptor) ? $"<b><color={ChangedColor}>{descriptor.Label}</color></b>" : descriptor.Label;
+            if (!locked && !IsChanged(descriptor)) return descriptor.Label;
+            if (!_rowNames.TryGetValue(descriptor, out var forms) || forms[2] != descriptor.Label)
+                _rowNames[descriptor] = forms = new[] { $"<color={LockedColor}>{descriptor.Label}  (locked)</color>", $"<b><color={ChangedColor}>{descriptor.Label}</color></b>", descriptor.Label };
+            return locked ? forms[0] : forms[1];
         }
 
         private void ResetToDefault(CfgDescriptor descriptor)
@@ -923,7 +1038,8 @@ namespace FiresCore.UI
         private void DrawBool(CfgDescriptor descriptor, object value)
         {
             bool isOn = value is bool flag && flag;
-            string text = isOn ? $"<b><color={OnColor}>Enabled</color></b>" : $"<color={OffColor}>Disabled</color>";
+            // OffColor (#997F55) on the brown pill read as empty; Disabled is bold bright red, like Enabled is bold green
+            string text = isOn ? $"<b><color={OnColor}>Enabled</color></b>" : $"<b><color={DisabledColor}>Disabled</color></b>";
             if (GUILayout.Button(text, ConfigSkin.Button, ScaledLayout.Width(Px(92f)))) Set(descriptor, !isOn);
         }
 
@@ -1198,7 +1314,7 @@ namespace FiresCore.UI
             if (GUILayout.Button("X", ConfigSkin.ButtonSmall, ScaledLayout.Width(ClearButtonWidth)))
             {
                 if (capturingThis) CancelCapture();
-                else Set(descriptor, descriptor.Type == typeof(KeyboardShortcut) ? (object)KeyboardShortcut.Empty : (object)KeyCode.None);
+                else Set(descriptor, descriptor.Type == typeof(KeyboardShortcut) ? (object)KeyboardShortcut.Empty : descriptor.Type == typeof(string) ? (object)"" : (object)KeyCode.None);
             }
 
             DrawCaptureNotice(descriptor);
@@ -1340,7 +1456,7 @@ namespace FiresCore.UI
         private void CommitCapture(CfgDescriptor descriptor)
         {
             var target = _captureTarget;
-            bool wantsShortcut = target != null && target.SettingType == typeof(KeyboardShortcut);
+            bool wantsShortcut = target != null && (target.SettingType == typeof(KeyboardShortcut) || target.SettingType == typeof(string));   // a keybind string takes modifiers too
             KeyCode main = _capMain;
             var modifiers = new List<KeyCode>(_capMods);
 
@@ -1362,7 +1478,8 @@ namespace FiresCore.UI
             if (target == null) return;
             try
             {
-                if (wantsShortcut) CfgDiscovery.Write(target, new KeyboardShortcut(main, modifiers.ToArray()), "key capture");
+                if (target.SettingType == typeof(string)) CfgDiscovery.Write(target, KeybindStrings.Format(main, modifiers), "key capture");   // "Ctrl+Shift+F"
+                else if (wantsShortcut) CfgDiscovery.Write(target, new KeyboardShortcut(main, modifiers.ToArray()), "key capture");
                 else CfgDiscovery.Write(target, main, "key capture");
             }
             catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind capture failed: " + ex.Message); }
@@ -1377,7 +1494,7 @@ namespace FiresCore.UI
             {
                 CfgDiscovery.Write(target, target.SettingType == typeof(KeyboardShortcut)
                     ? (object)KeyboardShortcut.Empty
-                    : (object)KeyCode.None, "unbind");
+                    : target.SettingType == typeof(string) ? (object)"" : (object)KeyCode.None, "unbind");
             }
             catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybind unbind failed: " + ex.Message); }
         }
@@ -1415,7 +1532,8 @@ namespace FiresCore.UI
         private void HandleResize()
         {
             var grip = new Rect(_rect.width - GripSize - GripInset, _rect.height - GripSize - GripInset, GripSize, GripSize);
-            GUI.Label(grip, "//", ConfigSkin.Hint);
+            // sprite grip (the "//" label read as a square)
+            FiresResizeGrip.DrawGrip(grip, ConfigSkin.Hint.normal.textColor);
 
             int controlId = GUIUtility.GetControlID(ResizeControlHint, FocusType.Passive);
             var current = Event.current;
@@ -1465,7 +1583,7 @@ namespace FiresCore.UI
                 || Contains(descriptor.Section, lowercaseQuery)
                 || Contains(descriptor.ModName, lowercaseQuery)
                 || Contains(descriptor.ModGuid, lowercaseQuery)
-                || Contains(descriptor.Description, lowercaseQuery);
+                || Contains(descriptor.Description, lowercaseQuery) || Contains(descriptor.LongDescription, lowercaseQuery);
         }
 
         private static bool Contains(string text, string lowercaseQuery)

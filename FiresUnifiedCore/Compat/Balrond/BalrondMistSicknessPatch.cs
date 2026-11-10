@@ -1,3 +1,5 @@
+// 1086 ([generator], Fire 11-01: configs live in their own mods): commented out and unwired, kept for a later rewire (proposal 11-02).
+#if FIRES_BALROND_COMPAT
 using System;
 using HarmonyLib;
 
@@ -15,6 +17,7 @@ namespace FiresCore.Compat.Balrond
     /// it necessarily matches whatever Balrond passes. A second prefix covers the (unused-by-Balrond,
     /// but possible) StatusEffect-object overload for completeness.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Balrond)]
     internal static class BalrondMistSicknessPatch
     {
         private const string MistSicknessName = "SE_MistSickness";
@@ -55,3 +58,5 @@ namespace FiresCore.Compat.Balrond
         }
     }
 }
+
+#endif

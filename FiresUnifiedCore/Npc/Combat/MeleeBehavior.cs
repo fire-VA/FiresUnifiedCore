@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections;
 
 namespace FiresCore.Npc.Combat
@@ -105,6 +105,7 @@ namespace FiresCore.Npc.Combat
       
             // Decide whether to use secondary attack
             bool useSecondary = ShouldUseSecondaryAttack(target);
+            LogAttackPick(target, useSecondary);
             
             if (CompanionCombat.VerboseLogging)
                 Debug.Log($"[MeleeBehavior] UseSecondary: {useSecondary}, UseNativeAttackSystem: {Context.UseNativeAttackSystem}");
@@ -154,6 +155,7 @@ namespace FiresCore.Npc.Combat
       protected override bool ShouldUseSecondaryAttack(Character target)
    {
             if (!_hasSecondaryAttack) return false;
+            if (!SecondaryOffCooldown) return false;   // the melee extras (low hp, combo finisher) don't skip the cooldown
 
             // First check base conditions
    if (!base.ShouldUseSecondaryAttack(target))
@@ -161,7 +163,7 @@ namespace FiresCore.Npc.Combat
     // Additional melee-specific checks
           
      // Use secondary more often when aggression is high
-         if (_aggressionLevel > 0.7f && Random.value < _secondaryAttackChance * 1.5f)
+         if (false && _aggressionLevel > 0.7f && Random.value < _secondaryAttackChance * 1.5f)   // disabled: no secondary just for aggression
        {
      if (CompanionCombat.VerboseLogging)
             Debug.Log($"[MeleeBehavior] Using secondary attack - high aggression ({_aggressionLevel:F2})");

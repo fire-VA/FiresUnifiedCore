@@ -92,7 +92,7 @@ namespace FiresCore.ClientLogRelay
             {
                 if (_consumers.Count == 0)
                 {
-                    FiresLogger.LogInfo($"[ClientLogRelay] No consumers; dropping artifacts for {artifacts.PlatformId}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[ClientLogRelay] No consumers; dropping artifacts for {artifacts.PlatformId}");
                     return;
                 }
                 snapshot = _consumers.ToArray();

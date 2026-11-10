@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -90,15 +90,18 @@ namespace FiresCore.Npc.Core
         /// </summary>
         public static void Initialize()
         {
-            if (_initialized) return;
+            // On a direct world hop (no Game.Logout) a list holding destroyed containers is rebuilt instead of kept
+            if (_initialized) { bool dead = false; foreach (var c in _allContainers) if (c == null) { dead = true; break; } if (!dead) return; _initialized = false; }
             
             _allContainers.Clear();
             
+            var scanSw = SceneScanCensus.Start();   // 0.2.1221 [ghost]: measured only (once per Game.Start / world hop)
             var existingContainers = UnityEngine.Object.FindObjectsByType<Container>(UnityEngine.FindObjectsSortMode.None);
+            SceneScanCensus.Note("ContainerRegistry.Initialize", scanSw, existingContainers.Length);
             int registered = 0;
             int skipped = 0;
 
-            Debug.Log($"[ContainerRegistry] Initialize: Found {existingContainers.Length} Container components in scene");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ContainerRegistry] Initialize: Found {existingContainers.Length} Container components in scene");
 
             foreach (var container in existingContainers)
             {

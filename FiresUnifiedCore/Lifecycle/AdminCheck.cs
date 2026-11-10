@@ -23,8 +23,11 @@ namespace FiresCore.Lifecycle
         {
             if (sender == LocalServerLoopbackSender) return true;
 
+            // 0.2.1159 (command audit): this looked for another mod's type and let everyone through when it was missing. Core's own check, which fails closed.
+            return FiresCore.Sync.AdminSyncing.IsAdmin(sender);
+#pragma warning disable CS0162
             EnsureResolved();
-            if (_isAdminMethod == null) return true;
+            if (_isAdminMethod == null) return false;
 
             try
             {

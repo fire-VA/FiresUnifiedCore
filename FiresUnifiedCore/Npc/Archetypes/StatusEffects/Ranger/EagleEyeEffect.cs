@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Ranger
 {
@@ -106,7 +106,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ranger
             
             seman.AddStatusEffect(effect, true);
             
-            Debug.Log($"[EagleEyeEffect] Applied to {target.m_name}, hasIcon={icon != null}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[EagleEyeEffect] Applied to {target.m_name}, hasIcon={icon != null}");
             
             return true;
         }

@@ -1,3 +1,5 @@
+// 1086 ([generator], Fire 11-01: configs live in their own mods): commented out and unwired, kept for a later rewire (proposal 11-02).
+#if FIRES_BALROND_COMPAT
 using System;
 using System.Collections.Generic;
 using HarmonyLib;
@@ -12,6 +14,7 @@ namespace FiresCore.Compat.Balrond
     /// </summary>
     [HarmonyPatch(typeof(ZoneSystem), "SetupLocations")]
     [HarmonyAfter("balrond.astafaraios.BalrondAmazingNature")]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Balrond)]
     internal static class BalrondLocationBiomePatch
     {
         // Sourced verbatim from BalrondNature.LocationBuilder.deepNorthNames (the names Balrond
@@ -68,3 +71,5 @@ namespace FiresCore.Compat.Balrond
         }
     }
 }
+
+#endif

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -49,7 +49,7 @@ namespace FiresCore.ClientLogRelay.Transport
                     SteamId = steamId
                 };
                 _activeTransfers[peerId] = state;
-                Debug.Log($"[ClientLogChunkedTransfer] Stored metadata for peer {peerId}: {modList?.Count ?? 0} mods, expecting {totalChunks} chunks");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ClientLogChunkedTransfer] Stored metadata for peer {peerId}: {modList?.Count ?? 0} mods, expecting {totalChunks} chunks");
             }
             else
             {
@@ -58,7 +58,7 @@ namespace FiresCore.ClientLogRelay.Transport
                 state.SteamId = steamId;
                 state.TotalChunks = totalChunks;
                 state.LastChunkTime = Time.realtimeSinceStartup;
-                Debug.Log($"[ClientLogChunkedTransfer] Updated metadata for peer {peerId}: {modList?.Count ?? 0} mods");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ClientLogChunkedTransfer] Updated metadata for peer {peerId}: {modList?.Count ?? 0} mods");
             }
         }
 
@@ -92,12 +92,12 @@ namespace FiresCore.ClientLogRelay.Transport
             state.Chunks[chunkIndex] = chunkData;
             state.LastChunkTime = Time.realtimeSinceStartup;
 
-            Debug.Log($"[ClientLogChunkedTransfer] Received chunk {chunkIndex + 1}/{totalChunks} from peer {peerId} ({chunkData.Length} bytes)");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ClientLogChunkedTransfer] Received chunk {chunkIndex + 1}/{totalChunks} from peer {peerId} ({chunkData.Length} bytes)");
 
             // Check if complete
             if (state.Chunks.Count == totalChunks)
             {
-                Debug.Log($"[ClientLogChunkedTransfer] Transfer complete for peer {peerId} - reassembling {totalChunks} chunks");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ClientLogChunkedTransfer] Transfer complete for peer {peerId} - reassembling {totalChunks} chunks");
 
                 // Reassemble in order
                 int totalSize = state.Chunks.Values.Sum(c => c.Length);
@@ -126,7 +126,7 @@ namespace FiresCore.ClientLogRelay.Transport
                 };
 
                 _activeTransfers.Remove(peerId);
-                Debug.Log($"[ClientLogChunkedTransfer] Reassembled {totalSize} bytes from {totalChunks} chunks for peer {peerId}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ClientLogChunkedTransfer] Reassembled {totalSize} bytes from {totalChunks} chunks for peer {peerId}");
                 return result;
             }
 
@@ -176,7 +176,7 @@ namespace FiresCore.ClientLogRelay.Transport
         {
             if (_activeTransfers.Remove(peerId))
             {
-                Debug.Log($"[ClientLogChunkedTransfer] Cancelled transfer for peer {peerId}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ClientLogChunkedTransfer] Cancelled transfer for peer {peerId}");
             }
         }
 
@@ -207,7 +207,7 @@ namespace FiresCore.ClientLogRelay.Transport
 
             // Store chunk
             state.Chunks[chunkIndex] = chunkData;
-            Debug.Log($"[ClientLogChunkedTransfer] Update chunk {chunkIndex + 1}/{totalChunks} received from peer {peerId} ({chunkData.Length} bytes)");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ClientLogChunkedTransfer] Update chunk {chunkIndex + 1}/{totalChunks} received from peer {peerId} ({chunkData.Length} bytes)");
 
             // Check if complete
             if (state.Chunks.Count == totalChunks)
@@ -238,7 +238,7 @@ namespace FiresCore.ClientLogRelay.Transport
                 };
 
                 _activeTransfers.Remove(updateKey);
-                Debug.Log($"[ClientLogChunkedTransfer] Reassembled update: {totalSize} bytes from {totalChunks} chunks for peer {peerId}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ClientLogChunkedTransfer] Reassembled update: {totalSize} bytes from {totalChunks} chunks for peer {peerId}");
                 return result;
             }
 

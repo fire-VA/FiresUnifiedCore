@@ -38,7 +38,7 @@ namespace FiresCore.Npc
                 if (SetFlag(type, StateTransitionField, value)) set++;
             }
 
-            Debug.Log($"[CompanionDebugLogging] companion logging {(companions ? "on" : "off")}, job logging {(jobs ? "on" : "off")} ({set} switches).");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDebugLogging] companion logging {(companions ? "on" : "off")}, job logging {(jobs ? "on" : "off")} ({set} switches).");
         }
 
         private static bool IsJobClass(Type type) =>

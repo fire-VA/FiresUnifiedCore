@@ -13,7 +13,14 @@ namespace FiresCore.Npc
             if (!holsterWeaponsWhenIdle) return;
             if (_inventory == null) return;
 
-            bool shouldBeHolstered = ShouldWeaponsBeHolstered();
+            // 10-30 ([fgn] proved: idle wander / emote / sit cycling holstered + unholstered every few seconds, a 35 ms VisEquipment
+            // model swap each): with "Holster only on combat change" ON the holster state follows COMBAT only (unholster when a fight
+            // starts, holster again once it's been over for the cooldown), ignoring idle sub-states, and never swaps twice within 30 s.
+            bool combatOnly = CombatOnlyHolster;
+            bool shouldBeHolstered = combatOnly ? ShouldWeaponsBeHolsteredCombatOnly() : ShouldWeaponsBeHolstered();
+            if (combatOnly && shouldBeHolstered != _weaponsHolstered && Time.time - _lastHolsterSwap < MinSwapSeconds
+                && !(_combatMovement != null && _combatMovement.IsInCombat)) return;   // a fight always unholsters at once
+            LogSwapRate();
 
             if (shouldBeHolstered && !_weaponsHolstered)
             {
@@ -50,6 +57,32 @@ namespace FiresCore.Npc
             }
         }
 
+        private bool ShouldWeaponsBeHolsteredCombatOnly()
+        {
+            if (_combatMovement != null && _combatMovement.IsInCombat) return false;
+            return Time.time - _lastCombatTime >= combatCooldownForIdle;
+        }
+
+        private const float MinSwapSeconds = 30f;
+        private float _lastHolsterSwap = -999f;
+        private static int s_holsters, s_unholsters; private static float s_rateNext;
+        // 1086 ([generator], Fire 11-01: configs live in their own mods): bound by FiresCompanions; Core reads the owner's value (old default without it).
+        private static readonly FiresCore.Config.OwnedSetting<bool> s_combatOnly = new FiresCore.Config.OwnedSetting<bool>("Companions", "Holster only on combat change", true);
+        private static bool CombatOnlyHolster
+        {
+            get
+            {
+                return s_combatOnly.Value;
+            }
+        }
+        private static void LogSwapRate()
+        {
+            if (Time.unscaledTime < s_rateNext) return;
+            if (s_rateNext > 0f && (s_holsters + s_unholsters) > 0)
+                global::FiresCore.Logging.FiresLogger.LogDebug($"[CompanionHolster] last minute: {s_holsters + s_unholsters} weapon swap(s) (holster {s_holsters}, unholster {s_unholsters}); combat-only {(CombatOnlyHolster ? "ON" : "off")}");
+            s_holsters = s_unholsters = 0; s_rateNext = Time.unscaledTime + 60f;
+        }
+
         private bool ShouldWeaponsBeHolstered()
         {
             if (_combatMovement != null && _combatMovement.IsInCombat)
@@ -66,6 +99,7 @@ namespace FiresCore.Npc
 
         private void HolsterWeapons()
         {
+            s_holsters++; _lastHolsterSwap = Time.time;
             if (_weaponsHolstered) return;
             if (_inventory == null) return;
 
@@ -123,6 +157,7 @@ namespace FiresCore.Npc
 
         private void UnholsterWeapons()
         {
+            s_unholsters++; _lastHolsterSwap = Time.time;
             if (!_weaponsHolstered) return;
             if (_inventory == null) return;
 

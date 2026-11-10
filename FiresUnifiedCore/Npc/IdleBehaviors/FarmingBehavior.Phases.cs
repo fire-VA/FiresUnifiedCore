@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.Core;
 
@@ -42,7 +42,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
 
-            // No cultivator in chests: craft one by the game's recipe (0.2.242, ChoreBrain.CraftFromStock, the bot's rule too). Materials
+            // No cultivator in chests: craft one by the game's recipe (ChoreBrain.CraftFromStock, the bot's rule too). Materials
             // missing from storage are fetched from the nearby chests one take at a time (this phase re-plans after each), then the
             // recipe's station.
             string why = CultivatorCraft(out var plan);
@@ -78,7 +78,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // Cannot acquire a cultivator this session — skip planting entirely.
-            Debug.Log($"[Farming] {Companion?.companionName} cannot acquire cultivator ({why}) — planting skipped");
+            FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} cannot acquire cultivator ({why}) — planting skipped");
             return true; // signal Complete
         }
 
@@ -92,12 +92,12 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 StopMovement();
                 int took = TakeFromChest(_materialChest, _materialPrefab, _materialAmount);
-                Debug.Log($"[Farming] {Companion?.companionName} took {took} {_materialPrefab} from {Utils.GetPrefabName(_materialChest.gameObject)} to craft a Cultivator");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} took {took} {_materialPrefab} from {Utils.GetPrefabName(_materialChest.gameObject)} to craft a Cultivator");
                 if (took > 0) PlayInteractAnimation();
                 bool failed = took <= 0;
                 _materialChest = null;
                 // Re-plan from what storage and the chests hold now: the next take, or the station.
-                if (failed) { Debug.Log($"[Farming] {Companion?.companionName} cannot acquire cultivator (the chest gave no {_materialPrefab}) — planting skipped"); return true; }
+                if (failed) { FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} cannot acquire cultivator (the chest gave no {_materialPrefab}) — planting skipped"); return true; }
                 SetPhase(FarmPhase.GettingCultivator);
                 return false;
             }
@@ -124,7 +124,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (TakeOneFromChest(_cultivatorChest, IsCultivator))
                 {
                     _cultivatorReadyThisSession = true;
-                    Debug.Log($"[Farming] {Companion?.companionName} retrieved Cultivator from chest");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} retrieved Cultivator from chest");
                     PlayInteractAnimation();
                 }
                 _cultivatorChest = null;
@@ -180,7 +180,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 _cultivatorReadyThisSession = true;
                 _inventory?.SaveToZDO();
-                Debug.Log($"[Farming] {Companion?.companionName} crafted a Cultivator at {plan.StationName} ({plan.Cost})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} crafted a Cultivator at {plan.StationName} ({plan.Cost})");
             }
             else
             {
@@ -254,7 +254,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // No reachable chest with seeds — nothing to plant this session.
-            Debug.Log($"[Farming] {Companion?.companionName} cannot find seeds in any chest — planting skipped");
+            FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} cannot find seeds in any chest — planting skipped");
             return true; // signal Complete
         }
 
@@ -301,7 +301,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 _inventory?.SaveToZDO();
                 PlayInteractAnimation();
-                Debug.Log($"[Farming] {Companion?.companionName} retrieved {taken} seed stacks from chest");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} retrieved {taken} seed stacks from chest");
             }
         }
 
@@ -360,7 +360,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 _targetBeehive.GetComponent<ZNetView>().ClaimOwnership();
                 _targetBeehive.Interact(_humanoid, false, false);
                 _hiveProduceHarvested += stored;
-                Debug.Log($"[Farming] {Companion?.companionName} collected {stored} {FarmingDataHelper.GetProduceName(_targetBeehive)}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} collected {stored} {FarmingDataHelper.GetProduceName(_targetBeehive)}");
                 AI.ChoreBrain.ChoreDone(Companion?.companionName, "farm", $"collected {stored} {FarmingDataHelper.GetProduceName(_targetBeehive)} from {Utils.GetPrefabName(_targetBeehive.gameObject)}");
             }
 
@@ -408,7 +408,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             float age = Time.time - _phaseStartTime;
             if (age < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
-            if (age < InteractPauseDuration) return false;
+            if (age < SkillPause) return false;
 
             if (FarmingDataHelper.IsPickableReady(_targetCrop) && _humanoid != null && Player.m_localPlayer != null)
             {
@@ -418,7 +418,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (_targetCrop.GetPicked())
                 {
                     _cropsHarvested++;
-                    Debug.Log($"[Farming] {Companion?.companionName} harvested {_targetCrop.name.Replace("(Clone)", "").Trim()}");
+                    LearnFromHarvest(_targetCrop);
+                    FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} harvested {_targetCrop.name.Replace("(Clone)", "").Trim()}");
                     AI.ChoreBrain.ChoreDone(Companion?.companionName, "farm", $"harvested {Utils.GetPrefabName(_targetCrop.gameObject)}");
                 }
             }
@@ -467,12 +468,13 @@ namespace FiresCore.Npc.IdleBehaviors
 
             float age = Time.time - _phaseStartTime;
             if (age < PhaseEntryWindow) { PlayInteractAnimation(); return false; }
-            if (age < InteractPauseDuration) return false;
+            if (age < SkillPause) return false;
 
             // Position may no longer be valid if something else planted there.
-            if (!FarmingDataHelper.IsValidPlantingPosition(_plantPosition, _cropToPlant, PlantSpacing))
+            if (_badSpots.Contains(Cell(_plantPosition)) || !FarmingDataHelper.IsValidPlantingPosition(_plantPosition, _cropToPlant, LearnedSpacing(_cropToPlant)))
             {
-                Debug.Log($"[Farming] {Companion?.companionName} plant position no longer valid — re-scanning");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} plant position no longer valid — re-scanning");
+                _rejectedSpots.Add(FineCell(_plantPosition));
                 _cropToPlant = null;
                 SetPhase(FarmPhase.Idle);
                 return false;
@@ -490,7 +492,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 _plantedCountBySapling.TryGetValue(sapling, out int planted);
                 _plantedCountBySapling[sapling] = planted + 1;
                 _seedsPlanted++;
-                Debug.Log($"[Farming] {Companion?.companionName} planted {sapling}");
+                RaiseFarming();
+                FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} planted {sapling}");
                 AI.ChoreBrain.ChoreDone(Companion?.companionName, "farm", $"planted {sapling}");
             }
 
@@ -548,7 +551,9 @@ namespace FiresCore.Npc.IdleBehaviors
             else
             {
                 StopMovement();
-                TryPickupItem(_currentPickupTarget);
+                // Ownership requested (another machine owned the drop): back in the queue to try once it lands; the timeout below bounds it.
+                if (!TryPickupItem(_currentPickupTarget) && _currentPickupTarget != null && !_currentPickupTarget.CanPickup())
+                    _pendingPickups.Add(_currentPickupTarget);
                 _currentPickupTarget = null;
                 if (_pendingPickups.Count == 0) SetPhase(FarmPhase.Idle);
             }
@@ -563,22 +568,20 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
 
-        private void TryPickupItem(ItemDrop drop)
+        /// <summary>True when any of the drop landed in storage.</summary>
+        private bool TryPickupItem(ItemDrop drop)
         {
-            if (drop == null || _inventory == null) return;
+            if (drop == null || _inventory == null) return false;
             var storage = _inventory.GetStorageInventory();
-            if (storage == null) return;
+            if (storage == null) return false;
 
-            var data = drop.m_itemData;
-            if (data == null || !storage.CanAddItem(data)) return;
-
-            // A partial merge returns false with the rest left in the clone's stack; that rest stays on the ground.
-            var picked = data.Clone();
-            if (storage.AddItem(picked))
-                drop.GetComponent<ZNetView>()?.Destroy();
-            else
-                drop.SetStack(picked.m_stack);
+            // Dupe fix: the ownership-checked pickup (ChestHelper.TryTakeLooseItem: CanPickup, else RequestOwn and try
+            // again next tick; fresh data; the world item destroyed only once all of it landed). The old clone + AddItem +
+            // ZNetView.Destroy ran on a machine that didn't own the drop, where Destroy only removes the local copy: the item
+            // came back and was counted twice. Vanilla Humanoid.Pickup comes with the one-inventory slice.
+            if (ChestHelper.TryTakeLooseItem(drop, storage) <= 0) return false;
             _inventory.SaveToZDO();
+            return true;
         }
 
         #endregion
@@ -627,7 +630,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (storage != null && chestInv != null)
             {
-                foreach (var item in new List<ItemDrop.ItemData>(storage.GetAllItems()))
+                foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storage))) // Storage rows only
                 {
                     if (item == null) continue;
                     if (IsEquippedItem(item)) continue;
@@ -637,7 +640,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 _inventory.SaveToZDO();
             }
 
-            Debug.Log($"[Farming] {Companion?.companionName} deposited {_itemsDeposited} farming items");
+            FiresCore.Logging.FiresLogger.LogDebug($"[Farming] {Companion?.companionName} deposited {_itemsDeposited} farming items");
             if (_itemsDeposited > 0) AI.ChoreBrain.ChoreDone(Companion?.companionName, "deposit", $"{_itemsDeposited} farming stack(s) into chests");
             _targetChest = null;
             SetPhase(FarmPhase.Complete);

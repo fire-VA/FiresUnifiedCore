@@ -11,9 +11,29 @@ namespace FiresCore.Async
     // a multi-second compile freezes the game. Callers pass PrewarmOptions, including optional skip rules.
     // ZNetView.m_forceDisableInit is set around each Instantiate in try/finally: without it every clone creates a
     // ZDO that ZNetScene.RemoveObjects keeps tripping over, and being global it must not leak into other code.
+    //
+    // 0.2.1200 (= EBM 1.2.189, SanEggs 11-06: Jewelcrafting's Projectile.Awake postfix threw a NullReferenceException from this warm-up; Fire 11-08: "make sure
+    // ebm is safe for all mods"): clones are made UNDER AN INACTIVE HOLDER, so they are inactive in the hierarchy from the start. No Awake,
+    // OnEnable or OnDestroy runs on any component, vanilla or modded, and no other mod's Awake patch is reached. Before 0.2.1200 the clone was
+    // made active and switched off on the next line, after every Awake had already run. The clone / deserialise cost the warm-up exists for is
+    // still paid. Callers may also restrict the set (PrewarmOptions.Eligible).
     public static class PrewarmCoroutine
     {
         private static readonly Vector3 BelowWorld = new Vector3(0f, -1000f, 0f);
+        private static GameObject s_holder;
+
+        // A hidden, inactive parent: anything instantiated under it is inactive in the hierarchy, so Unity calls no Awake / OnEnable on it.
+        private static Transform Holder()
+        {
+            if (s_holder == null)
+            {
+                s_holder = new GameObject("EBM_PrewarmHolder (inactive)");
+                s_holder.SetActive(false);
+                s_holder.hideFlags = HideFlags.HideAndDontSave;
+                UnityEngine.Object.DontDestroyOnLoad(s_holder);
+            }
+            return s_holder.transform;
+        }
 
         public static IEnumerator Run(
             IList<GameObject> prefabs,
@@ -34,7 +54,7 @@ namespace FiresCore.Async
             long budgetTicks = (long)(budgetMs * Stopwatch.Frequency / 1000.0);
             int total = prefabs.Count;
 
-            int processed = 0, skipped = 0, errors = 0;
+            int processed = 0, skipped = 0, errors = 0, notEligible = 0;   // 0.2.1200: notEligible = refused by options.Eligible
             long totalTicks = 0, worstTicks = 0;
             string worstName = string.Empty;
 
@@ -87,7 +107,18 @@ namespace FiresCore.Async
                     }
                 }
 
-                if (options.SkipStatefulComponents && HasStatefulComponent(prefab))
+                // 0.2.1200: the caller's own filter first
+                if (options.Eligible != null)
+                {
+                    bool eligible;
+                    try { eligible = options.Eligible(prefab); } catch { eligible = false; }
+                    if (!eligible) { skipped++; notEligible++; continue; }
+                }
+
+                bool stateful;
+                try { stateful = options.SkipStatefulComponents && HasStatefulComponent(prefab); }   // 0.2.1200: a broken prefab is skipped, not fatal
+                catch { stateful = true; }
+                if (stateful)
                 {
                     skipped++;
                     if (options.Verbose) logDebug($"[Prewarm] Skipped {prefab.name} (stateful component).");
@@ -104,8 +135,7 @@ namespace FiresCore.Async
                 ZNetView.m_forceDisableInit = true;
                 try
                 {
-                    inst = UnityEngine.Object.Instantiate(prefab, BelowWorld, Quaternion.identity);
-                    inst.SetActive(false);
+                    inst = UnityEngine.Object.Instantiate(prefab, BelowWorld, Quaternion.identity, Holder());   // 0.2.1200: inactive in hierarchy, no Awake
                     frameInstances.Add(inst);
                 }
                 catch (Exception ex)
@@ -166,7 +196,7 @@ namespace FiresCore.Async
             double worstMs = worstTicks * 1000.0 / Stopwatch.Frequency;
             logInfo(
                 $"[Prewarm] DONE in {wall.Elapsed.TotalSeconds:F2}s wall — " +
-                $"{processed} processed, {skipped} skipped, {errors} errors. " +
+                $"{processed} processed (inactive, no Awake), {skipped} skipped ({notEligible} not eligible), {errors} errors. " +
                 $"Total Instantiate cost: {wallTotalMs:F0}ms. " +
                 $"Worst single: {worstMs:F1}ms ({worstName}).");
         }
@@ -272,6 +302,17 @@ namespace FiresCore.Async
             if (prefab.GetComponentInChildren<TreeLog>()          != null) return true;
             if (prefab.GetComponentInChildren<TerrainComp>()      != null) return true;
             if (prefab.GetComponentInChildren<TriggerPersistentEventOnDestroy>() != null) return true;
+            // 0.2.1200: gameplay objects are never warmed, whoever patches them (Jewelcrafting's Projectile.Awake postfix threw from here before
+            // the inactive holder). Belt and braces: with the holder no Awake runs anyway.
+            if (prefab.GetComponentInChildren<Projectile>()      != null) return true;
+            if (prefab.GetComponentInChildren<ItemDrop>()        != null) return true;
+            if (prefab.GetComponentInChildren<Ship>()            != null) return true;
+            if (prefab.GetComponentInChildren<Vagon>()           != null) return true;
+            if (prefab.GetComponentInChildren<CreatureSpawner>() != null) return true;
+            if (prefab.GetComponentInChildren<SpawnArea>()       != null) return true;
+            if (prefab.GetComponentInChildren<OfferingBowl>()    != null) return true;
+            if (prefab.GetComponentInChildren<Aoe>()             != null) return true;
+            if (prefab.GetComponentInChildren<SpawnAbility>()    != null) return true;
             foreach (PlayerClothWindShelter shelter in prefab.GetComponentsInChildren<PlayerClothWindShelter>())
                 if (shelter.GetComponent<MagicaCloth2.MagicaCloth>() == null) return true;
             return false;
@@ -324,5 +365,9 @@ namespace FiresCore.Async
         // attempt Instantiate on every prefab (rare — used for shader
         // pre-warm runs that don't care about Awake errors).
         public bool SkipStatefulComponents = true;
+
+        // 0.2.1200: the caller's own eligibility test, run before the built-in list (null = every prefab). A throw counts as "not eligible".
+        // EBM passes "can EBM bake or instance this" so it never touches gameplay prefabs.
+        public Func<GameObject, bool> Eligible = null;
     }
 }

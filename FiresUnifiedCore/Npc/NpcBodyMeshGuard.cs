@@ -30,6 +30,17 @@ namespace FiresCore.Npc
         private static readonly HashSet<string> _healed = new HashSet<string>();
         private static readonly HashSet<string> _queued = new HashSet<string>();
 
+        // [Companions] Rebuild body skin on reject (default off): one skin rebuild per renderer + mesh before blacklisting.
+        // 1086 ([generator], Fire 11-01: configs live in their own mods): bound by FiresCompanions; Core reads the owner's value (old default ON without it).
+        private static readonly FiresCore.Config.OwnedSetting<bool> s_rebuild = new FiresCore.Config.OwnedSetting<bool>("Companions", "Rebuild body skin on reject", true);
+        private static readonly HashSet<(int Renderer, int Mesh)> _rebuilt = new HashSet<(int, int)>();
+        internal static bool RebuildOnReject => s_rebuild.Value;
+
+        public static void Bind(BepInEx.Configuration.ConfigFile config) { }
+
+        /// <summary>True the first time for this renderer + mesh (a rebuild is due); false once it was tried.</summary>
+        internal static bool TryMarkRebuild(SkinnedMeshRenderer smr, Mesh mesh) => _rebuilt.Add((smr.GetInstanceID(), mesh.GetInstanceID()));
+
         public static void EnsureInstalled()
         {
             if (_installed) return;

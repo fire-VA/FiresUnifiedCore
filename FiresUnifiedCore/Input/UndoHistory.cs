@@ -16,8 +16,8 @@ namespace FiresCore.Undo
     }
 
     /// <summary>
-    /// ONE undo history for every Fires mod (Core 0.2.296, Fire 10-05: "build our undo and redo code into core so that way all of our mods
-    /// can use it when jere's mods are not installed"; numpad 7 = undo, numpad 9 = redo, as Infinity Hammer).
+    /// ONE undo history for every Fires mod, usable when Jere's mods are not installed
+    /// (numpad 7 = undo, numpad 9 = redo, as Infinity Hammer).
     /// - With Server Devcommands installed, every step goes into ITS UndoManager (the history Infinity Hammer and World Edit Commands use),
     ///   so IH's numpad 7 / 9 and the console "undo" / "redo" step through our edits mixed with theirs. It's a soft dependency: SDC calls a
     ///   step's public Undo() / Redo() by reflection, and Core hands it the step through UndoManager's Add the same way; no SDC type is used.
@@ -35,7 +35,9 @@ namespace FiresCore.Undo
         /// <summary>Raised after a step is recorded, undone or redone, or the history cleared.</summary>
         public static event Action Changed;
 
-        private static ConfigEntry<KeyCode> s_undoKey, s_redoKey;
+        // 1086 ([generator], Fire 11-01: configs live in their own mods): [Undo] keys are FiresAdminTerrain's (getter provider), read on use
+        private static readonly FiresCore.Config.LiveSetting<KeyCode> s_undoKey = new FiresCore.Config.LiveSetting<KeyCode>("Undo", "Undo key", KeyCode.Keypad7),
+            s_redoKey = new FiresCore.Config.LiveSetting<KeyCode>("Undo", "Redo key", KeyCode.Keypad9);
         private static readonly List<IUndoStep> s_steps = new List<IUndoStep>();
         private static int s_index = -1;
         private static bool s_sdcResolved;
@@ -45,10 +47,7 @@ namespace FiresCore.Undo
 
         internal static void Bind(ConfigFile config)
         {
-            s_undoKey = config.Bind("Undo", "Undo key", KeyCode.Keypad7,
-                "Undo the last edit made with a Fires tool (and, with Server Devcommands, any edit in its shared history). Read only when Infinity Hammer isn't installed; it binds numpad 7 to the same undo then.");
-            s_redoKey = config.Bind("Undo", "Redo key", KeyCode.Keypad9,
-                "Redo the last undone edit. Read only when Infinity Hammer isn't installed; it binds numpad 9 to the same redo then.");
+            // 1086 ([generator], Fire 11-01: configs live in their own mods): no Core bind; the keys come from the owner
             Runner.Ensure();
         }
 

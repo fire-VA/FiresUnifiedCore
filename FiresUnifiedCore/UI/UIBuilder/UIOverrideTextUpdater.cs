@@ -82,10 +82,7 @@ namespace FiresCore.UI
                 case TextType.Biome:
                     if (EnvMan.instance != null)
                     {
-                        var biome = player.GetCurrentBiome();
-                        value = Localization.instance != null
-                            ? Localization.instance.Localize("$biome_" + biome.ToString().ToLowerInvariant())
-                            : biome.ToString();
+                        value = FiresCore.World.BiomeDisplay.CurrentName(player);   // + the alt biome ("Plains - Heath")
                     }
                     break;
                 case TextType.PlayerName:

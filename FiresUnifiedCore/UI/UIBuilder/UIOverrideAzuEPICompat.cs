@@ -115,7 +115,7 @@ namespace FiresCore.UI
                     ManagedObjects.Add(_toggleButtonsGO.transform.GetChild(i).gameObject);
             }
 
-            Debug.Log($"[UIOverrideAzuEPICompat] Found {ManagedObjects.Count} managed element(s), " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideAzuEPICompat] Found {ManagedObjects.Count} managed element(s), " +
                 $"Preview={_playerPreviewGO != null}, Stats={_statsPanelGO != null}, " +
                 $"Vanity={_vanityPanelGO != null}, Loadout={_loadoutPanelGO != null}, " +
                 $"DropAll={_dropAllButtonGO != null}, ToggleGroup={_toggleButtonsGO != null}, " +
@@ -140,7 +140,7 @@ namespace FiresCore.UI
                 {
                     btn.onClick.RemoveAllListeners();
                     btn.onClick.AddListener(OnDropAllClicked);
-                    Debug.Log("[UIOverrideAzuEPICompat] Wired Drop All button");
+                    FiresCore.Logging.FiresLogger.LogDebug("[UIOverrideAzuEPICompat] Wired Drop All button");
                 }
             }
 
@@ -162,22 +162,22 @@ namespace FiresCore.UI
                         nameLower.Contains("camera") || nameLower.Contains("model"))
                     {
                         btn.onClick.AddListener(OnTogglePreview);
-                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Preview");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Preview");
                     }
                     else if (nameLower.Contains("stat"))
                     {
                         btn.onClick.AddListener(OnToggleStats);
-                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Stats");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Stats");
                     }
                     else if (nameLower.Contains("vanity") || nameLower.Contains("transmog"))
                     {
                         btn.onClick.AddListener(OnToggleVanity);
-                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Vanity");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Vanity");
                     }
                     else if (nameLower.Contains("loadout") || nameLower.Contains("preset"))
                     {
                         btn.onClick.AddListener(OnToggleLoadout);
-                        Debug.Log($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Loadout");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideAzuEPICompat] Wired '{child.name}' -> Loadout");
                     }
                     else
                     {
@@ -232,7 +232,7 @@ namespace FiresCore.UI
                 dragHandler = _previewRawImage.gameObject.AddComponent<UIPreviewDragHandler>();
             dragHandler.Compat = this;
 
-            Debug.Log("[UIOverrideAzuEPICompat] Created player preview camera (FOV=12, dist=5.5)");
+            FiresCore.Logging.FiresLogger.LogDebug("[UIOverrideAzuEPICompat] Created player preview camera (FOV=12, dist=5.5)");
         }
 
         /// <summary>Called by the drag handler when the user drags on the preview RawImage.</summary>
@@ -294,7 +294,7 @@ namespace FiresCore.UI
                     dropped++;
                 }
 
-                Debug.Log($"[UIOverrideAzuEPICompat] Drop All: dropped {dropped} items");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideAzuEPICompat] Drop All: dropped {dropped} items");
             }
             catch (Exception ex)
             {
@@ -447,7 +447,7 @@ namespace FiresCore.UI
 
             compat.Initialize();
 
-            Debug.Log($"[UIOverrideAzuEPICompat] Attached to '{vanillaRoot.name}' " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideAzuEPICompat] Attached to '{vanillaRoot.name}' " +
                 $"(ExtraRows={compat.ExtraRows}, SeparateEquip={compat.DisplayEquipmentRowSeparate})");
             return true;
         }

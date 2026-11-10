@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Mage
 {
@@ -109,7 +109,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Mage
             
             seman.AddStatusEffect(effect, true);
             
-            Debug.Log($"[ElementalInfusionEffect] Applied to {target.m_name}, hasIcon={icon != null}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ElementalInfusionEffect] Applied to {target.m_name}, hasIcon={icon != null}");
             
             return true;
         }

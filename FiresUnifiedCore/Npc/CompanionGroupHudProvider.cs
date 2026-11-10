@@ -25,7 +25,9 @@ namespace FiresCore.Npc
         /// <summary>Feeds the HUD only when a mod that actually spawns companions is loaded.</summary>
         internal static void RegisterIfCompanionHostLoaded()
         {
-            if (CompanionHostPluginGuids.Any(Chainloader.PluginInfos.ContainsKey)) Register();
+            bool host = CompanionHostPluginGuids.Any(Chainloader.PluginInfos.ContainsKey);
+            if (host) Register();
+            FiresCore.Logging.FiresLogger.LogDebug($"[GroupHud] companion rows provider {(host ? "registered" : "NOT registered: no FiresCompanions / FiresRPGmaker")}");
         }
 
         // ── Dead-pending roster (keep dead companions on the HUD) ────────────────────────────────────
@@ -81,8 +83,19 @@ namespace FiresCore.Npc
             foreach (var companion in CompanionController.AllCompanions)
             {
                 if (companion == null) continue;
-                if (!companion.isTamed || companion.ownerPlayerId != playerId) continue;
-                if (!companion.ShouldBeFollowing) continue;
+                // A companion of THIS player that
+                // is left off the HUD says why, once per reason (Debug)
+                // (Fire 10-31 "no companion does": this skip was the only silent one) a mismatch says both ids
+                if (companion.ownerPlayerId != playerId)
+                {
+                    if (companion.isTamed && companion.GetPersistentFollowIntent())
+                        Excluded(companion, $"owner id {companion.ownerPlayerId} is not the local player {local.GetPlayerName()} ({playerId})");
+                    continue;
+                }
+                if (!companion.isTamed) { Excluded(companion, "not tamed"); continue; }
+                // Group membership changes only on the player's Follow / Stay: the persistent follow intent, not the
+                // runtime AI flag (haul / combat / a deferred owner-follow restore flip that without the player saying anything)
+                if (!companion.GetPersistentFollowIntent()) { Excluded(companion, "its persistent follow intent is OFF (runtime following " + (companion.IsFollowing ? "on" : "off") + ")"); continue; }
 
                 if (!string.IsNullOrEmpty(companion.companionId)) liveIds.Add(companion.companionId);
                 yield return ToMember(companion, playerPos);
@@ -97,7 +110,12 @@ namespace FiresCore.Npc
                 foreach (var kv in _deadPending)
                 {
                     var pending = kv.Value;
-                    if (pending.OwnerPlayerId != playerId || liveIds.Contains(kv.Key) || now > pending.GraceExpiry)
+                    // Past the
+                    // grace window the row stays as long as the kennel still holds its DeadPendingRespawn entry (where it is readable)
+                    bool stillPending = false;
+                    if (now > pending.GraceExpiry)
+                        try { var ke = FiresCore.Bridge.NpcDormancyBridge.Get(playerId, kv.Key); stillPending = ke != null && ke.Kind == FiresCore.Bridge.DormancyKind.DeadPendingRespawn; } catch { }
+                    if (pending.OwnerPlayerId != playerId || liveIds.Contains(kv.Key) || (now > pending.GraceExpiry && !stillPending))
                     {
                         (stale ?? (stale = new List<string>())).Add(kv.Key);
                         continue;
@@ -113,6 +131,15 @@ namespace FiresCore.Npc
                 }
                 if (stale != null) foreach (var staleId in stale) _deadPending.Remove(staleId);
             }
+        }
+
+        private static readonly Dictionary<string, string> _excludedLogged = new Dictionary<string, string>();
+        private static void Excluded(CompanionController c, string why)
+        {
+            string key = c.companionId ?? c.GetInstanceID().ToString();
+            if (_excludedLogged.TryGetValue(key, out var was) && was == why) return;
+            _excludedLogged[key] = why;
+            FiresCore.Logging.FiresLogger.LogDebug($"[GroupHud] {c.companionName}: not on the group HUD - {why}");
         }
 
         private static GroupHudMember ToMember(CompanionController companion, Vector3 playerPos)

@@ -49,8 +49,22 @@ namespace FiresCore.Npc.AI
                 // UpdateOwnerIdleState polls owner position with a 0.5s throttle and
                 // resets _isOwnerIdle = false the moment ownerMovement > MovementThreshold.
                 UpdateOwnerIdleState(_followTarget.transform.position);
-                if (!_isOwnerIdle)
+                // An owner who stood still far away left an idle companion behind forever: an owner who is idle but no longer close sends it back to Following too, not only one
+                // who moves. Following then closes in and drops to idle again within 3 m.
+                // Resume at once when the owner has moved > 0.5 m since we went idle, or is > 5 m away.
+                Vector3 idleOwnerNow = _followTarget.transform.position;
+                float ownerDist = Vector3.Distance(transform.position, idleOwnerNow);
+                bool farFromIdleOwner = ownerDist > IdleResumeDistance;
+                bool ownerMovedSinceIdle = _idleOwnerAnchorValid && Vector3.Distance(idleOwnerNow, _idleOwnerAnchor) > IdleResumeOwnerMove;
+                if (!_isOwnerIdle || farFromIdleOwner || ownerMovedSinceIdle)
                 {
+                    if (farFromIdleOwner)
+                        FollowState($"-> Following: owner {ownerDist:0.0} m away");
+                    else if (ownerMovedSinceIdle)
+                        FollowState("-> Following: owner moved");
+                    _idleOwnerAnchorValid = false;
+                    _isOwnerIdle = false;
+                    _ownerIdleStartTime = Time.time;   // a fresh 8 s of stillness before idling again
                     SetState(AIState.Following);
                     return;
                 }
@@ -73,8 +87,12 @@ namespace FiresCore.Npc.AI
             {
                 float distToDest = Vector3.Distance(transform.position, _idleDestination);
                 
-                if (VerboseLogging)
+                // 0.2.874 (soak #1 census): said once per idle destination, not every tick
+                if (VerboseLogging && _idleDestSaid != _idleDestination)
+                {
+                    _idleDestSaid = _idleDestination;
                     Debug.Log($"[CompanionAI] {m_character?.m_name} executing idle movement to {_idleDestination} (dist: {distToDest:F1}m)");
+                }
                 
                 // Use vanilla pathfinding with authority coordination
                 if (MoveToWithAuthority(_idleDestination, false, PositionReachedThreshold))
@@ -103,18 +121,21 @@ namespace FiresCore.Npc.AI
             if (hasActiveSubBehavior)
             {
                 // Sub-behavior is active - stop following and let it handle movement
+                FollowState("sub-behaviour active, not moving");
                 StopMoving();
                 return;
             }
 
             if (_targetCreature != null && !_targetCreature.IsDead())
             {
+                FollowState($"-> Combat (target {_targetCreature.m_name})");
                 SetState(AIState.Combat);
                 return;
             }
 
             if (!_shouldFollow || _followTarget == null)
             {
+                FollowState($"-> Idle (shouldFollow {_shouldFollow}, target {(_followTarget != null ? _followTarget.name : "none")})");
                 SetState(AIState.Idle);
                 return;
             }
@@ -130,13 +151,87 @@ namespace FiresCore.Npc.AI
             // local wander/sub-behaviors. UpdateIdleState will snap us back to
             // Following the moment the owner moves again.
             UpdateOwnerIdleState(_followTarget.transform.position);
-            if (_isOwnerIdle && _idleBehavior != null)
+            // Idle only near the owner (otherwise it wanders and never reaches a still owner): idle
+            // wander only once it has come to the owner (within stopDistanceOuter); farther out it keeps following.
+            // Idle only after >= 8 s of owner stillness AND within 4 m.
+            if (_isOwnerIdle && _idleBehavior != null
+                && Vector3.Distance(transform.position, _followTarget.transform.position) <= IdleEnterDistance)
             {
+                _idleOwnerAnchor = _followTarget.transform.position;
+                _idleOwnerAnchorValid = true;
+                FollowState($"-> Idle: owner idle (still for >= {playerIdleThreshold:0.#} s) at {Vector3.Distance(transform.position, _followTarget.transform.position):0.0} m");
                 SetState(AIState.Idle);
                 return;
             }
 
+            if (TryCatchUpWhenFollowStuck()) return;
             UpdateFollowMovement(dt);
+        }
+
+        // A companion can sit a few metres from its owner with no path, too near for the far
+        // teleport-with-owner): following with no progress toward the owner for FollowStuckSeconds ends any climb and catches up next to the
+        // owner (vanilla-style, the same safe spot as TeleportToOwner). Logged at Debug with the distance and the reason.
+        private const float FollowStuckSeconds = 8f, FollowStuckProgress = 0.5f, FollowStuckMinDistance = 3f, FollowStuckCooldown = 20f;
+        private const float FollowStuckMoved = 1.5f;
+        private const float FollowStuckPauseGap = 1f;          // a gap this long between checks means following paused: restart the watch
+        private const float FollowFarStuckMultiplier = 2f;     // over catchUpDistance x this counts as far behind
+        private const float FollowFarStuckSeconds = 4f, FollowFarStuckCooldown = 8f;
+        private Vector3 _followMovedFrom;
+        private float _followBestDistance = float.MaxValue, _followBestAt = -1f, _followCatchUpAt = -100f, _followLastCheck = -100f;
+
+        private bool TryCatchUpWhenFollowStuck()
+        {
+            if (_followTarget == null || _companion == null || m_character == null) return false;
+            var view = m_character.GetComponent<ZNetView>();
+            if (view == null || !view.IsValid() || !view.IsOwner()) return false;
+            // A pause in following (idle, combat, a command) starts the watch over.
+            if (Time.time - _followLastCheck > FollowStuckPauseGap) _followBestAt = -1f;
+            _followLastCheck = Time.time;
+            float dist = Vector3.Distance(transform.position, _followTarget.transform.position);
+            // A companion running behind a sprinting owner is not stuck: the companion's own travel counts as progress too, so only a companion that has
+            // stayed put (under FollowStuckMoved metres since the watch began) while the gap stays is caught up
+            bool movedSinceWatchStart = _followBestAt >= 0f && (transform.position - _followMovedFrom).sqrMagnitude > FollowStuckMoved * FollowStuckMoved;
+            if (dist <= FollowStuckMinDistance || _followBestAt < 0f || dist < _followBestDistance - FollowStuckProgress || movedSinceWatchStart)
+            {
+                _followBestDistance = dist;
+                _followBestAt = Time.time;
+                _followMovedFrom = transform.position;
+                return false;
+            }
+            // Far behind (over twice the catch-up distance) the stuck catch-up waits 4 s with an 8 s cooldown.
+            bool farStuck = _followTarget != null && Vector3.Distance(transform.position, _followTarget.transform.position) > catchUpDistance * FollowFarStuckMultiplier;
+            if (Time.time - _followBestAt < (farStuck ? FollowFarStuckSeconds : FollowStuckSeconds) || Time.time - _followCatchUpAt < (farStuck ? FollowFarStuckCooldown : FollowStuckCooldown)) return false;
+
+            bool climbing = FiresCore.Movement.Climb.HasRun(m_character);
+            if (climbing) FiresCore.Movement.Climb.Stop(m_character, "follow stuck: catching up to the owner");
+            FiresCore.Logging.FiresLogger.LogDebug($"[FollowStuck] {m_character.m_name}: no progress toward {(_followTarget.GetComponent<Player>()?.GetPlayerName() ?? _followTarget.name)} for " +
+                $"{Time.time - _followBestAt:0} s at {dist:0.0} m (best {_followBestDistance:0.0} m){(climbing ? ", climb ended" : "")}; catching up next to the owner");
+            _followCatchUpAt = Time.time;
+            _followBestDistance = float.MaxValue;
+            _followBestAt = -1f;
+            StopMoving();
+            _companion.TeleportToOwner();
+            return true;
+        }
+
+        // The follow state, why it moves or stops.
+        // Debug, at most every 2 s per companion, and at once when the reason changes.
+        private const float IdleEnterDistance = 4f;
+        private const float IdleResumeDistance = 5f;
+        private const float IdleResumeOwnerMove = 0.5f;
+        private Vector3 _idleOwnerAnchor;
+        private bool _idleOwnerAnchorValid;
+
+        private string _lastFollowState;
+        private float _lastFollowStateTime;
+        private void FollowState(string what)
+        {
+            string head = what.Length > 12 ? what.Substring(0, 12) : what;
+            bool changed = _lastFollowState == null || !_lastFollowState.StartsWith(head, System.StringComparison.Ordinal);
+            if (!changed && Time.time - _lastFollowStateTime < 2f) return;
+            _lastFollowState = what;
+            _lastFollowStateTime = Time.time;
+            FiresCore.Logging.FiresLogger.LogDebug($"[FollowState] {m_character?.m_name}: {what}");
         }
 
         private void UpdateFollowMovement(float dt)
@@ -187,6 +282,14 @@ namespace FiresCore.Npc.AI
                 if (VerboseLogging)
                     Debug.Log($"[CompanionAI] {m_character?.m_name} sneak={shouldSneak} (mirroring owner)");
             }
+            // Only a CHANGE of shouldSneak used to write the crouch bool,
+            // so a "crouching" / FiresCompanion_Prone left set on the ZDO (fresh spawn, inherited owner, a missed stand-up) stayed set while
+            // _isCompanionSneaking was already false. Not sneaking = the stance is made to match, with a Debug line.
+            else if (!shouldSneak && _stance != null && (_stance.IsCrouching || _stance.IsProne))
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] {m_character?.m_name}: crouch{(_stance.IsProne ? "/prone" : "")} was still set while not sneaking; standing up");
+                SetCompanionCrouch(false);
+            }
 
             // VikHavn prone: crawl beside a prone owner, at the owner's crawl speed.
             if (shouldSneak && _stance != null)
@@ -198,7 +301,11 @@ namespace FiresCore.Npc.AI
             //   m_run=true   -> uses m_runSpeed  (sprint)
             //   both false   -> uses m_speed     (default jog)
             ApplyFollowSpeedToCharacter(_currentFollowSpeed);
-            
+            var followAuthority = GetMovementAuthority();
+            FollowState($"moving: target {ownerPos:F1} (owner {_followTarget.name}), dist {distToOwner:0.0} m, speed {_currentFollowSpeed}, "
+                + $"stop at {stopDistanceInner:0.0} m, path {(m_path != null ? m_path.Count : -1)} pt(s), "
+                + $"authority {(followAuthority == null ? "none" : followAuthority.HasAuthority(AIAuthorityOwner) || followAuthority.CanAcquireAuthority(GetAIMovementSource()) ? "ok" : "held by another")}");
+
             switch (_currentFollowSpeed)
             {
                 case FollowSpeed.Stopped:
@@ -370,7 +477,10 @@ namespace FiresCore.Npc.AI
             if (closing)
             {
                 _isClosingGap = distToOwner > stopDistanceInner;
-                _currentFollowSpeed = (matched == FollowSpeed.Running) ? FollowSpeed.Running : FollowSpeed.Jogging;
+                // Closing used the OWNER's tier, so behind a jogging owner it jogged at the same base speed
+                // with no catch-up boost and the gap never closed. Closing now goes one tier above the owner: Running (with its RunCatchUpBoost)
+                // unless the owner is walking, sneaking or standing, then Jogging.
+                _currentFollowSpeed = (matched == FollowSpeed.Running || matched == FollowSpeed.Jogging) ? FollowSpeed.Running : FollowSpeed.Jogging;
                 return;
             }
 
@@ -392,18 +502,21 @@ namespace FiresCore.Npc.AI
         {
             if (m_character == null) return;
 
-            // Fire: pace the sprint by stamina so a follower isn't left empty. StaminaManager.ShouldSprint starts a sprint at
+            // Pace the sprint by stamina so a follower isn't left empty. StaminaManager.ShouldSprint starts a sprint at
             // 50 % and stops it under 30 %; in between the follower jogs and recovers.
             // An EMERGENCY catch-up (Sprinting: past catchUpDistance) is not held back by combat recovery, only by a nearly empty
             // bar: after a fight the recovery flag kept the follower jogging until 85 % stamina, and a jog never closes on a
-            // running owner (R58 follow: gaps of 109-117 m, "follow sprint paused … (stamina=52 %)").
-            bool paced = _staminaManager != null && (speed == FollowSpeed.Sprinting
+            // running owner.
+            // Far behind (over twice the
+            // catch-up distance) stamina never paces the sprint
+            bool farBehind = _followTarget != null && Vector3.Distance(transform.position, _followTarget.transform.position) > catchUpDistance * FollowFarStuckMultiplier;
+            bool paced = !farBehind && _staminaManager != null && (speed == FollowSpeed.Sprinting
                 ? _staminaManager.GetStaminaPercent() < _staminaManager.sprintStopThreshold
                 : speed == FollowSpeed.Running && !_staminaManager.ShouldSprint());
             if (paced != _sprintPaced && (paced || speed == FollowSpeed.Running || speed == FollowSpeed.Sprinting))
             {
                 _sprintPaced = paced;
-                Debug.Log($"[CompanionAI] {m_character.m_name} follow sprint {(paced ? "paused: jogging to recover" : "resumed")} " +
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] {m_character.m_name} follow sprint {(paced ? "paused: jogging to recover" : "resumed")} " +
                           $"(stamina={_staminaManager.GetStaminaPercent():P0})");
             }
             if (paced) speed = FollowSpeed.Jogging;

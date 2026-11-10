@@ -172,7 +172,7 @@ namespace FiresCore.UI
                 _manifest.Entries.Add(entry);
                 SaveManifest();
 
-                Debug.Log($"[UIBuilderAssetCache] Cached sprite '{originalName}' -> {safeName}.png ({entry.TextureWidth}x{entry.TextureHeight})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Cached sprite '{originalName}' -> {safeName}.png ({entry.TextureWidth}x{entry.TextureHeight})");
                 return CachePrefix + safeName;
             }
             catch (Exception ex)
@@ -267,7 +267,7 @@ namespace FiresCore.UI
                 _manifest.Entries.Add(entry);
                 SaveManifest();
 
-                Debug.Log($"[UIBuilderAssetCache] Cached RawImage texture '{originalName}' -> {safeName}.png ({tex.width}x{tex.height})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Cached RawImage texture '{originalName}' -> {safeName}.png ({tex.width}x{tex.height})");
                 return CachePrefix + safeName;
             }
             catch (Exception ex)
@@ -616,7 +616,7 @@ namespace FiresCore.UI
                         string safeName = MakeSafeFileName(bundleForSprite);
                         _loadedBundles[safeName] = cachedBundle;
                         IndexSpritesFromBundle(cachedBundle, safeName);
-                        Debug.Log($"[UIBuilderAssetCache] On-demand loaded cached bundle '{bundleForSprite}' for sprite '{spriteName}'");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] On-demand loaded cached bundle '{bundleForSprite}' for sprite '{spriteName}'");
                     }
                 }
 
@@ -659,7 +659,7 @@ namespace FiresCore.UI
                 {
                     if (bundle == null) continue;
                     if (IsVanillaBundle(bundle)) continue;
-                    try { if (UIBuilderHost.AssetBundle != null && bundle == UIBuilderHost.AssetBundle) continue; } catch { }
+                    try { if (UIBuilderHost.IsHostBundle(bundle)) continue; } catch { }
 
                     try
                     {
@@ -746,7 +746,7 @@ namespace FiresCore.UI
         {
             if (requiredBundleNames == null || requiredBundleNames.Count == 0) return;
 
-            Debug.Log($"[UIBuilderAssetCache] Loading required bundles: {string.Join(", ", requiredBundleNames)}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Loading required bundles: {string.Join(", ", requiredBundleNames)}");
 
             // First pass: index sprites from live bundles already loaded by their mods
             var liveIndexed = IndexLiveModBundles(requiredBundleNames);
@@ -791,7 +791,7 @@ namespace FiresCore.UI
 
             if (loadedFromCache > 0 || liveIndexed.Count > 0)
             {
-                Debug.Log($"[UIBuilderAssetCache] Required bundles: {liveIndexed.Count} indexed from live mods, " +
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Required bundles: {liveIndexed.Count} indexed from live mods, " +
                     $"{loadedFromCache} loaded from cache ({indexedFromCache} sprites indexed)");
             }
         }
@@ -822,11 +822,11 @@ namespace FiresCore.UI
 
                     if (!bundleNames.Contains(bundleName)) continue;
                     if (IsVanillaBundle(bundle)) continue;
-                    try { if (UIBuilderHost.AssetBundle != null && bundle == UIBuilderHost.AssetBundle) continue; } catch { }
+                    try { if (UIBuilderHost.IsHostBundle(bundle)) continue; } catch { }
 
                     int count = IndexSpritesFromBundle(bundle, bundleName);
                     indexed.Add(bundleName);
-                    Debug.Log($"[UIBuilderAssetCache] Indexed {count} sprites from live mod bundle '{bundleName}'");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Indexed {count} sprites from live mod bundle '{bundleName}'");
                 }
             }
             catch (Exception ex)
@@ -925,7 +925,7 @@ namespace FiresCore.UI
                     try { bundleName = bundle.name; } catch { continue; }
                     if (string.IsNullOrEmpty(bundleName)) continue;
                     if (IsVanillaBundle(bundle)) continue;
-                    try { if (UIBuilderHost.AssetBundle != null && bundle == UIBuilderHost.AssetBundle) continue; } catch { }
+                    try { if (UIBuilderHost.IsHostBundle(bundle)) continue; } catch { }
 
                     // Skip if we've already indexed this bundle
                     if (_loadedBundles.ContainsKey(bundleName)) continue;
@@ -1134,7 +1134,7 @@ namespace FiresCore.UI
                     foreach (var bundle in allBundles)
                     {
                         if (bundle == null) continue;
-                        try { if (UIBuilderHost.AssetBundle != null && bundle == UIBuilderHost.AssetBundle) continue; } catch { }
+                        try { if (UIBuilderHost.IsHostBundle(bundle)) continue; } catch { }
                         if (IsVanillaBundle(bundle)) continue;
                         modBundles.Add(bundle);
                     }
@@ -1196,7 +1196,7 @@ namespace FiresCore.UI
                 }
 
                 completedUnits++;
-                Debug.Log($"[UIBuilderAssetCache] Indexed mod bundle '{bundleName}'");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Indexed mod bundle '{bundleName}'");
                 yield return null; // Always yield between bundles
                 stopwatch.Restart();
             }
@@ -1492,7 +1492,7 @@ namespace FiresCore.UI
                         if (filePath.IndexOf("CapturedAssets", StringComparison.OrdinalIgnoreCase) >= 0) continue;
                         // Skip files in our own UIAssets/Sprites directory
                         if (filePath.IndexOf("UIAssets", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                            filePath.IndexOf(UIBuilderHost.ModName, StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                            UIBuilderHost.PathHasModName(filePath)) continue;
                         // Skip files in the vanilla game data directory
                         if (filePath.IndexOf("valheim_Data", StringComparison.OrdinalIgnoreCase) >= 0) continue;
 
@@ -1696,7 +1696,7 @@ namespace FiresCore.UI
                 if (!Directory.Exists(BundleCacheDir))
                     Directory.CreateDirectory(BundleCacheDir);
                 File.WriteAllBytes(destPath, rawBytes);
-                Debug.Log($"[UIBuilderAssetCache] Cached raw bundle '{bundleName}' -> {safeName}.bundle ({rawBytes.Length:N0} bytes)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Cached raw bundle '{bundleName}' -> {safeName}.bundle ({rawBytes.Length:N0} bytes)");
 
                 // Create a per-bundle manifest with full asset inventory
                 try
@@ -1767,7 +1767,7 @@ namespace FiresCore.UI
                         if (internalName != null &&
                             string.Equals(internalName, bundleName, StringComparison.OrdinalIgnoreCase))
                         {
-                            Debug.Log($"[UIBuilderAssetCache] Found raw bundle on disk: {matchingFiles[i]} " +
+                            FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Found raw bundle on disk: {matchingFiles[i]} " +
                                 $"(internal name: '{internalName}')");
                             return bytes;
                         }
@@ -1778,7 +1778,7 @@ namespace FiresCore.UI
                         if (string.Equals(fileName, bundleName, StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(fileName, bundleName + ".bundle", StringComparison.OrdinalIgnoreCase))
                         {
-                            Debug.Log($"[UIBuilderAssetCache] Found raw bundle on disk by exact filename: {matchingFiles[i]} " +
+                            FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Found raw bundle on disk by exact filename: {matchingFiles[i]} " +
                                 $"(internal name: '{internalName ?? "unknown"}')");
                             return bytes;
                         }
@@ -1831,7 +1831,7 @@ namespace FiresCore.UI
 
                         if (IsUnityFSBundle(bytes))
                         {
-                            Debug.Log($"[UIBuilderAssetCache] Extracted raw bundle from embedded resource: {resName} ({bytes.Length:N0} bytes)");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Extracted raw bundle from embedded resource: {resName} ({bytes.Length:N0} bytes)");
                             return bytes;
                         }
                     }
@@ -1864,7 +1864,7 @@ namespace FiresCore.UI
                             if (internalName != null &&
                                 string.Equals(internalName, bundleName, StringComparison.OrdinalIgnoreCase))
                             {
-                                Debug.Log($"[UIBuilderAssetCache] Extracted raw bundle from embedded resource " +
+                                FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Extracted raw bundle from embedded resource " +
                                     $"(internal name match '{internalName}'): {resourceNames[i]} ({bytes.Length:N0} bytes)");
                                 return bytes;
                             }
@@ -2027,7 +2027,7 @@ namespace FiresCore.UI
                         if (string.Equals(internalName, bundleName, StringComparison.OrdinalIgnoreCase))
                         {
                             byte[] bytes = File.ReadAllBytes(candidateFiles[i]);
-                            Debug.Log($"[UIBuilderAssetCache] Found raw bundle via internal name match: " +
+                            FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderAssetCache] Found raw bundle via internal name match: " +
                                 $"'{internalName}' in file '{candidateFiles[i]}' ({bytes.Length:N0} bytes)");
                             return bytes;
                         }

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Master
@@ -15,6 +15,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// When the tank would die, they instead survive with 1 HP.
     /// 5 minute cooldown after triggering.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class UnyieldingEffect : CompanionStatusEffectBase
     {
         private const float CooldownSeconds = 300f;
@@ -84,7 +85,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 var skillSystem = m_character.GetComponent<ArchetypeSkillSystem>();
                 skillSystem?.OnAbilityHitEnemy("unyielding", attacker, false);
                 
-                Debug.Log($"[UnyieldingEffect] {m_character.m_name} SURVIVED FATAL DAMAGE! Unyielding triggered!");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UnyieldingEffect] {m_character.m_name} SURVIVED FATAL DAMAGE! Unyielding triggered!");
                 
                 // Start cooldown timer - effect will be removed and reapplied after 5 minutes
                 // For now, the effect stays but won't trigger again
@@ -109,7 +110,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             {
                 _hasTriggered = false;
                 m_character?.Message(MessageHud.MessageType.TopLeft, "Unyielding ready again!");
-                Debug.Log($"[UnyieldingEffect] {m_character?.m_name} Unyielding cooldown complete - ready again");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UnyieldingEffect] {m_character?.m_name} Unyielding cooldown complete - ready again");
             }
         }
         
@@ -124,6 +125,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Lay on Hands Effect (Paladin L75) - Full heal with long cooldown.
     /// This is applied briefly to trigger the heal, then removed.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class LayOnHandsEffect : CompanionStatusEffectBase
     {
         public Character HealTarget { get; set; }
@@ -164,7 +166,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             SpawnVFX("fx_creature_tamed", target.transform.position);
             SpawnVFX("vfx_ghost_hit", target.transform.position);
             
-            Debug.Log($"[LayOnHandsEffect] {m_character?.m_name} used Lay on Hands on {target.m_name} - healed {healAmount:F0} HP");
+            FiresCore.Logging.FiresLogger.LogDebug($"[LayOnHandsEffect] {m_character?.m_name} used Lay on Hands on {target.m_name} - healed {healAmount:F0} HP");
         }
         
         private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
@@ -178,6 +180,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Death Wish Effect (Berserker L75) - Massive damage boost when near death.
     /// +100% damage when below 10% HP, but cannot be healed.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class DeathWishEffect : CompanionStatusEffectBase
     {
         private const float HealthThreshold = 0.10f; // 10% HP
@@ -214,14 +217,14 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 SpawnVFX("vfx_MeadBzerker", m_character.transform.position);
                 var companion = m_character.GetComponent<CompanionController>();
                 if (companion != null) ArchetypeChatManager.AnnounceAbilityUsed(companion, "DeathWish");
-                Debug.Log($"[DeathWishEffect] {m_character.m_name} DEATH WISH activated at {healthPercent * 100:F0}% HP!");
+                FiresCore.Logging.FiresLogger.LogDebug($"[DeathWishEffect] {m_character.m_name} DEATH WISH activated at {healthPercent * 100:F0}% HP!");
             }
             else if (!shouldBeActive && _isActive)
             {
                 // Deactivate (healed above threshold somehow)
                 _isActive = false;
                 m_character.Message(MessageHud.MessageType.TopLeft, "Death Wish deactivated");
-                Debug.Log($"[DeathWishEffect] {m_character.m_name} Death Wish deactivated");
+                FiresCore.Logging.FiresLogger.LogDebug($"[DeathWishEffect] {m_character.m_name} Death Wish deactivated");
             }
         }
         
@@ -248,18 +251,24 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     }
 
     /// <summary>
-    /// Death Wish's "cannot be healed" (Fire, popup 2026-09-28 20:4x): while it is active no heal lands on its carrier, player
+    /// Death Wish's "cannot be healed": while it is active no heal lands on its carrier, player
     /// or companion. Every Character.Heal ends in RPC_Heal on the character's owner, the peer where the effect runs.
     /// </summary>
     [HarmonyLib.HarmonyPatch(typeof(Character), "RPC_Heal")]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     internal static class DeathWishBlocksHealing
     {
         private static readonly int s_deathWish = StatusEffectManager.EFFECT_DEATH_WISH.GetStableHashCode();
+        private static readonly int s_wounded = StatusEffectManager.EFFECT_CLASS_WOUNDED.GetStableHashCode();
 
-        private static bool Prefix(Character __instance)
+        // Also the yaml's Wounded: a Wounded carrier receives half of every heal.
+        private static bool Prefix(Character __instance, ref float hp)
         {
-            var effect = __instance != null ? __instance.GetSEMan()?.GetStatusEffect(s_deathWish) as DeathWishEffect : null;
-            return effect == null || !effect.BlocksHealing;
+            SEMan seman = __instance != null ? __instance.GetSEMan() : null;
+            var effect = seman?.GetStatusEffect(s_deathWish) as DeathWishEffect;
+            if (effect != null && effect.BlocksHealing) return false;
+            if (seman != null && seman.HaveStatusEffect(s_wounded)) hp *= Common.ClassWoundedEffect.HealingReceived;
+            return true;
         }
     }
 
@@ -271,6 +280,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Death Mark Effect (Rogue L75) - Marks enemy for bonus damage from all sources.
     /// Applied to ENEMY targets, increases all damage they take by 30%.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class DeathMarkEffect : CompanionStatusEffectBase
     {
         public const float DAMAGE_INCREASE = 1.30f; // +30% damage taken
@@ -332,6 +342,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Rain of Arrows Effect (Ranger L75) - Creates an AoE damage zone.
     /// Deals damage over time to enemies in the area.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class RainOfArrowsEffect : CompanionStatusEffectBase
     {
         private const float DefaultTargetDistance = 8f;
@@ -365,7 +376,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             if (TargetPosition == Vector3.zero && m_character != null)
             {
                 TargetPosition = PlacedTarget(DefaultTargetDistance, out string how);
-                Debug.Log($"[ClassSkill] rain of arrows placed at ({TargetPosition.x:0}, {TargetPosition.z:0}) ({how})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ClassSkill] rain of arrows placed at ({TargetPosition.x:0}, {TargetPosition.z:0}) ({how})");
             }
             
             // Initial VFX
@@ -401,7 +412,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
+                if (!IsFoe(character)) continue; // enemies only; a player when both have PvP on
 
                 float dist = Vector3.Distance(TargetPosition, character.transform.position);
                 if (dist <= Radius)
@@ -470,6 +481,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Meteor Effect (Mage L75) - Calls down a massive AoE attack.
     /// High damage, long cooldown, impressive VFX.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class MeteorEffect : CompanionStatusEffectBase
     {
         private const float DefaultTargetDistance = 10f;
@@ -502,7 +514,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             if (TargetPosition == Vector3.zero && m_character != null)
             {
                 TargetPosition = PlacedTarget(DefaultTargetDistance, out string how);
-                Debug.Log($"[ClassSkill] meteor placed at ({TargetPosition.x:0}, {TargetPosition.z:0}) ({how})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ClassSkill] meteor placed at ({TargetPosition.x:0}, {TargetPosition.z:0}) ({how})");
             }
             
             // Warning VFX at target location
@@ -513,7 +525,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 m_character.Message(MessageHud.MessageType.Center, "<color=orange>METEOR!</color>");
             }
             
-            Debug.Log($"[MeteorEffect] Meteor called at {TargetPosition}, impact in {ImpactDelay}s");
+            FiresCore.Logging.FiresLogger.LogDebug($"[MeteorEffect] Meteor called at {TargetPosition}, impact in {ImpactDelay}s");
         }
         
         public override void UpdateStatusEffect(float dt)
@@ -542,7 +554,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             {
                 if (character == null || character.IsDead()) continue;
                 if (m_character != null && character == m_character) continue;
-                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
+                if (!IsFoe(character)) continue; // enemies only; a player when both have PvP on
                 
                 float dist = Vector3.Distance(TargetPosition, character.transform.position);
                 if (dist <= Radius)
@@ -570,11 +582,11 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                     // Grant skill XP for hitting (and possibly killing)
                     skillSystem?.OnAbilityHitEnemy("meteor", character, willKill || character.IsDead());
                     
-                    Debug.Log($"[MeteorEffect] Hit {character.m_name} for {actualDamage:F0} fire damage");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[MeteorEffect] Hit {character.m_name} for {actualDamage:F0} fire damage");
                 }
             }
             
-            Debug.Log($"[MeteorEffect] IMPACT! {Damage:F0} fire damage in {Radius}m radius");
+            FiresCore.Logging.FiresLogger.LogDebug($"[MeteorEffect] IMPACT! {Damage:F0} fire damage in {Radius}m radius");
         }
         
         private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
@@ -588,6 +600,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Divine Hymn Effect (Healer L75) - Channel powerful group heal.
     /// Heals all allies in range rapidly while channeling.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class DivineHymnEffect : CompanionStatusEffectBase
     {
         public float HealPerTick { get; set; } = 20f;
@@ -619,7 +632,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 SpawnVFX("fx_DvergerMage_Support_start", m_character.transform.position);
             }
             
-            Debug.Log($"[DivineHymnEffect] Started channeling - {HealPerTick} HP/tick, {Duration}s duration");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DivineHymnEffect] Started channeling - {HealPerTick} HP/tick, {Duration}s duration");
         }
         
         public override void UpdateStatusEffect(float dt)
@@ -643,7 +656,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             // Get skill system for XP tracking
             var skillSystem = m_character.GetComponent<ArchetypeSkillSystem>();
             
-            // Heal the caster's party in range (Fire: heals only the party). The owner used to be healed twice per tick:
+            // Heal the caster's party in range (only the party). The owner used to be healed twice per tick:
             // once in its own block and again here as a non-enemy.
             foreach (var character in Character.GetAllCharacters())
             {
@@ -679,7 +692,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
             {
                 m_character.Message(MessageHud.MessageType.TopLeft, "Divine Hymn ended");
             }
-            Debug.Log($"[DivineHymnEffect] Channeling complete");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DivineHymnEffect] Channeling complete");
         }
         
         private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);
@@ -693,6 +706,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
     /// Chi Explosion Effect (Monk L75) - Releases all chi in a devastating AoE.
     /// Instant burst damage around the monk.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Archetypes)]
     public class ChiExplosionEffect : CompanionStatusEffectBase
     {
         private const float MaxDistanceFalloff = 0.3f;
@@ -734,7 +748,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 if (!Authoritative) break;
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
+                if (!IsFoe(character)) continue; // enemies only; a player when both have PvP on
                 
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist <= Radius)
@@ -764,7 +778,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Master
                 }
             }
             
-            Debug.Log($"[ChiExplosionEffect] Hit {hitCount} enemies for up to {Damage:F0} damage");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChiExplosionEffect] Hit {hitCount} enemies for up to {Damage:F0} damage");
         }
         
         private void SpawnVFX(string prefabName, Vector3 position) => AbilityFXManager.SpawnEffect(prefabName, position);

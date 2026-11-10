@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.Combat
 {
@@ -54,7 +54,9 @@ namespace FiresCore.Npc.Combat
 
             FaceTarget(target);
             if (TryGrab(target)) return;
-            if (ShouldUseSecondaryAttack(target)) Kick(target);
+            bool kick = ShouldUseSecondaryAttack(target);
+            LogAttackPick(target, kick);
+            if (kick) Kick(target);
             else TryStartNativeAttack(target, false);
         }
 

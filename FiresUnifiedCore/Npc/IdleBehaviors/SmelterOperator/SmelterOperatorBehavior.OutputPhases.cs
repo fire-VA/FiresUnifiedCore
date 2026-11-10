@@ -77,6 +77,35 @@ namespace FiresCore.Npc.IdleBehaviors
                     return false;
                 }
                 
+                // 0.2.905: a heartbeat while waiting (queued ore, fuel, held output), and ore with no fuel goes to fetch fuel: in the bag ->
+                // fill the station, else pull it from the nearest reachable chest; none reachable -> the run ends and says so
+                if (Time.time >= _waitSayAt)
+                {
+                    _waitSayAt = Time.time + 60f;
+                    var wz = _targetSmelter.GetComponent<ZNetView>()?.GetZDO();
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} waiting at {GetStationName()} {Time.time - _phaseStartTime:0} s: ore queued {wz?.GetInt(ZDOVars.s_queued, 0) ?? 0}, fuel {GetCurrentFuel():0.#}/{_targetSmelter.m_maxFuel}, held output {wz?.GetInt(ZDOVars.s_spawnAmount, 0) ?? 0}");
+                }
+                if (StarvedOfFuel())
+                {
+                    string fuelName = _targetSmelter.m_fuelItem.gameObject.name;
+                    _combatMovement?.UnlockMovement();
+                    if (HasFuel())
+                    {
+                        FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: {GetStationName()} has ore but no fuel; adding the {fuelName} it carries");
+                        SetPhase(OperatePhase.FillingStation);
+                        return false;
+                    }
+                    if (ClosestReachableWithItem(fuelName) != null)
+                    {
+                        FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: {GetStationName()} has ore but no fuel; fetching {fuelName} from a chest");
+                        SetPhase(OperatePhase.PullingFromChests);
+                        return false;
+                    }
+                    _runUnreached = _runUnreached ?? $"{GetStationName()} has ore but no fuel and no reachable chest holds {fuelName}";
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: {_runUnreached}; ending the run");
+                    SetPhase(OperatePhase.Complete);
+                    return false;
+                }
                 // Also try to add more materials while waiting
                 if (CanAddMore() && HasMaterials())
                 {

@@ -83,7 +83,10 @@ namespace FiresCore.Npc.Anchor
             }
 
             var mode = NpcAnchorFields.GetMode(zdo);
-            float delay = mode == NpcAnchorFields.Mode.Static ? 0f : Mathf.Max(0f, zdo.GetFloat(NpcAnchorFields.RespawnDelay, DefaultRespawnDelaySeconds));
+            // Every mode honours the NPC's own
+            // respawn delay (the book's Respawn Delay slider, carried on the anchor as npc_respawn_delay); Static used to force 0
+            _ = mode;
+            float delay = Mathf.Max(0f, zdo.GetFloat(NpcAnchorFields.RespawnDelay, DefaultRespawnDelaySeconds));
             if ((DateTime.UtcNow - new DateTime(missingSince, DateTimeKind.Utc)).TotalSeconds < delay) return;
 
             if (Time.realtimeSinceStartup < _noSpawnBefore) return;

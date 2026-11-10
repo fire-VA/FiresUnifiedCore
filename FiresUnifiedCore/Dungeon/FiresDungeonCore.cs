@@ -101,7 +101,7 @@ namespace FiresCore.Dungeon
                 bool firstTime = roomByHash == null || !roomByHash.ContainsKey(hash);
                 PutRoomInDb(rooms, roomByHash, hash, data);
                 if (firstTime)
-                    Debug.Log($"{spec.LogTag} registered room '{prefabName}' (hash {hash}) theme={spec.NamedTheme}.");
+                    FiresCore.Logging.FiresLogger.LogDebug($"{spec.LogTag} registered room '{prefabName}' (hash {hash}) theme={spec.NamedTheme}.");
             }
         }
 
@@ -174,7 +174,7 @@ namespace FiresCore.Dungeon
                 var spec = FiresDungeonRegistry.MatchForDg(__instance.gameObject.name);
                 if (spec != null && spec.EmptyInterior)
                 {
-                    Debug.Log($"{spec.LogTag} EmptyInterior — skipping room generation (portal + landing pad + exit + env box only).");
+                    FiresCore.Logging.FiresLogger.LogDebug($"{spec.LogTag} EmptyInterior — skipping room generation (portal + landing pad + exit + env box only).");
                     return false;   // do not run vanilla Generate
                 }
                 return true;
@@ -458,7 +458,7 @@ namespace FiresCore.Dungeon
             available.RemoveAll(rd => rd != null && rd.m_prefab.IsValid && ours.Contains(rd.m_prefab.Name));
             int removed = before - available.Count;
             if (removed > 0)
-                Debug.Log($"[FiresCore] stripped {removed} Fires room(s) from foreign dungeon '{generator.gameObject.name}' " +
+                FiresCore.Logging.FiresLogger.LogDebug($"[FiresCore] stripped {removed} Fires room(s) from foreign dungeon '{generator.gameObject.name}' " +
                           $"(available {before} -> {available.Count}) — our rooms only generate in our own dungeons.");
         }
 
@@ -494,7 +494,7 @@ namespace FiresCore.Dungeon
             int dbCount = DungeonDB.GetRooms()?.Count ?? -1;
             int present = CountOursInDb(held);
             int indexed = CountOursInRoomIndex(held);
-            Debug.Log($"{spec.LogTag} SetupAvailableRooms[{generator.gameObject.name}]: DungeonDB rooms={dbCount}, ours-in-DB={present}/{held.Count} " +
+            FiresCore.Logging.FiresLogger.LogDebug($"{spec.LogTag} SetupAvailableRooms[{generator.gameObject.name}]: DungeonDB rooms={dbCount}, ours-in-DB={present}/{held.Count} " +
                       $"(byHash {indexed}/{held.Count} — what a saved dungeon reloads through), " +
                       $"availableBefore={hadBefore} -> availableAfter={available.Count} (theme={spec.NamedTheme}).");
         }
@@ -515,7 +515,7 @@ namespace FiresCore.Dungeon
                     m_theme = spec.NamedTheme,
                 });
             }
-            Debug.Log($"{spec.LogTag} rebuilt held room set ({held.Count}) from bundle prefabs.");
+            FiresCore.Logging.FiresLogger.LogDebug($"{spec.LogTag} rebuilt held room set ({held.Count}) from bundle prefabs.");
         }
 
         private static void EnsureRoomsInDungeonDB(DungeonSpec spec, List<DungeonDB.RoomData> held)
@@ -818,6 +818,104 @@ namespace FiresCore.Dungeon
         /// reflected method can't be found. Fires <see cref="DungeonSpec.OnDungeonGenerated"/> after a successful
         /// spawn. Returns a short status string. Server-side only.
         /// </summary>
+        /// <summary>
+        /// 0.2.1076 (add-only, [saddles] for FAP's dungeons on the hammer): spawns ANY ZoneLocation through vanilla's private
+        /// ZoneSystem.SpawnLocation - the same reflected call <see cref="SpawnDungeonAt"/> uses (one implementation), with a random seed,
+        /// the given spawn mode and 1.0's trailing 'cheated' bool. Server-side only. Returns a short status string; a failed resolve logs
+        /// one Info line.
+        /// </summary>
+        public static string SpawnLocationAt(ZoneSystem.ZoneLocation loc, Vector3 pos, Quaternion rot, ZoneSystem.SpawnMode mode, bool cheated)
+        {
+            var zoneSystem = ZoneSystem.instance;
+            if (zoneSystem == null) return "ZoneSystem not ready.";
+            if (ZNet.instance != null && !ZNet.instance.IsServer()) return "server only.";
+            if (loc == null || !loc.m_prefab.IsValid) return "ZoneLocation unavailable.";
+            try
+            {
+                int seed = UnityEngine.Random.Range(int.MinValue, int.MaxValue);
+                int r = InvokeSpawnLocation(zoneSystem, loc, seed, pos, rot, mode, cheated);
+                if (r == SpawnNotFound)
+                {
+                    if (!_spawnLocationMissLogged) { _spawnLocationMissLogged = true; FiresCore.Logging.FiresLogger.LogInfo("[FiresDungeonCore] SpawnLocationAt: ZoneSystem.SpawnLocation not found on this game version; nothing spawned"); }
+                    return "ZoneSystem.SpawnLocation not found.";
+                }
+                if (r == SpawnRefused)   // 0.2.1083 ([saddles]): SpawnLocation returned null - a patch (e.g. FAT's super-flat rule) refused it
+                {
+                    FiresCore.Logging.FiresLogger.LogInfo($"[FiresDungeonCore] SpawnLocationAt: {loc.m_prefabName} at {pos} refused (it created nothing)");
+                    return $"refused: {loc.m_prefabName} at {pos} (it created nothing).";
+                }
+                return $"{loc.m_prefabName} spawned at {pos}.";
+            }
+            catch (Exception ex)
+            {
+                var inner = ex is System.Reflection.TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+                return $"{loc.m_prefabName} spawn failed: {inner.Message}";
+            }
+        }
+        private static bool _spawnLocationMissLogged;
+
+        // The one reflected call of vanilla's private SpawnLocation(loc, seed, pos, rot, mode, List<GameObject>[, bool cheated]). Resolved by
+        // NAME and invoked with an arg array sized to the live parameter list (1.0 appended 'bool cheated = false').
+        // 0.2.1083: returns SpawnNotFound / SpawnRefused (it returned null) / SpawnDone.
+        private const int SpawnNotFound = 0, SpawnDone = 1, SpawnRefused = 2;
+
+        /// <summary>0.2.1083 (add-only, with [worldgen]): true while Core runs a DELIBERATE spawn (SpawnLocationAt / SpawnDungeonAt - FAP,
+        /// FDM, admin tools), so a world-gen placement rule (FAT's super-flat refusal) can let it through.</summary>
+        public static bool IsManualSpawn => _manualSpawnDepth > 0;
+
+        // 0.2.1083: VerdantsAscent.FatApi.BeginDeliberateSpawn / EndDeliberateSpawn (DeliberateSpawnApiVersion >= 1, thread-static, nests),
+        // bound once by name; absent = skipped (older FAT)
+        private static Action s_fatBegin, s_fatEnd;
+        private static bool s_fatTried;
+        private static bool BeginDeliberate()
+        {
+            if (!s_fatTried)
+            {
+                s_fatTried = true;
+                try
+                {
+                    var t = FiresCore.Compat.OptionalTypes.Find("VerdantsAscent.FatApi");
+                    var ver = t?.GetField("DeliberateSpawnApiVersion", BindingFlags.Public | BindingFlags.Static);
+                    if (ver != null && Convert.ToInt32(ver.GetRawConstantValue()) >= 1)
+                    {
+                        var b = AccessTools.Method(t, "BeginDeliberateSpawn", Type.EmptyTypes);
+                        var e = AccessTools.Method(t, "EndDeliberateSpawn", Type.EmptyTypes);
+                        if (b != null && e != null) { s_fatBegin = (Action)Delegate.CreateDelegate(typeof(Action), b); s_fatEnd = (Action)Delegate.CreateDelegate(typeof(Action), e); }
+                    }
+                }
+                catch (Exception ex) { FiresCore.Logging.FiresLogger.LogDebug($"[FiresDungeonCore] FAT deliberate-spawn bind failed: {ex.Message}"); }
+                FiresCore.Logging.FiresLogger.LogDebug($"[FiresDungeonCore] FAT deliberate-spawn pass {(s_fatBegin != null ? "bound (Core's spawns pass FAT's placement rules)" : "not found (older FAT: skipped)")}");
+            }
+            if (s_fatBegin == null) return false;
+            try { s_fatBegin(); return true; } catch { return false; }
+        }
+        private static void EndDeliberate() { try { s_fatEnd?.Invoke(); } catch { } }
+
+        private static int InvokeSpawnLocation(ZoneSystem zoneSystem, ZoneSystem.ZoneLocation loc, int seed, Vector3 pos, Quaternion rot, ZoneSystem.SpawnMode mode, bool? cheated)
+        {
+            if (_spawnLocationMethod == null)
+                _spawnLocationMethod = AccessTools.Method(typeof(ZoneSystem), "SpawnLocation");
+            if (_spawnLocationMethod == null) return SpawnNotFound;
+            var pars = _spawnLocationMethod.GetParameters();
+            var args = new object[pars.Length];
+            args[0] = loc; args[1] = seed; args[2] = pos; args[3] = rot;
+            args[4] = mode; args[5] = new List<GameObject>();
+            for (int i = 6; i < pars.Length; i++)
+                args[i] = cheated.HasValue && pars[i].ParameterType == typeof(bool) && pars[i].Name == "cheated" ? (object)cheated.Value
+                        : pars[i].HasDefaultValue ? pars[i].DefaultValue : null;
+            object result;
+            _manualSpawnDepth++;
+            bool deliberate = BeginDeliberate();   // 0.2.1083: FAT 1325's deliberate-spawn pass (its super-flat rule lets it through)
+            int zdosBefore = FiresDungeonTeardown.ZdosCreated;
+            try { result = _spawnLocationMethod.Invoke(zoneSystem, args); }
+            finally { _manualSpawnDepth--; if (deliberate) EndDeliberate(); }
+            // 0.2.1095 ([seasons], r17 dedi log: 51 rooms placed, then "refused"): vanilla only assigns the return value in Client mode, so Full and Ghost
+            // always return null. Full makes ZDOs unless a patch refused it; Ghost makes none and can't be told apart, so it counts as done.
+            if (_spawnLocationMethod.ReturnType == typeof(void)) return SpawnDone;
+            if (mode == ZoneSystem.SpawnMode.Full) return FiresDungeonTeardown.ZdosCreated != zdosBefore ? SpawnDone : SpawnRefused;
+            return mode == ZoneSystem.SpawnMode.Ghost || result != null ? SpawnDone : SpawnRefused;
+        }
+
         public static string SpawnDungeonAt(DungeonSpec spec, Vector3 pos, Quaternion rot)
         {
             if (spec == null) return "no dungeon spec.";
@@ -839,7 +937,7 @@ namespace FiresCore.Dungeon
                 Vector3 requestedPosition = pos;
                 Vector3 zoneCentre = ZoneSystem.GetZonePos(ZoneSystem.GetZone(pos));
                 pos = new Vector3(zoneCentre.x, pos.y, zoneCentre.z);
-                Debug.Log($"[FDM-PLACE] {spec.LogTag} SpawnDungeonAt zone-centre snap: inPos={requestedPosition} " +
+                FiresCore.Logging.FiresLogger.LogDebug($"[FDM-PLACE] {spec.LogTag} SpawnDungeonAt zone-centre snap: inPos={requestedPosition} " +
                           $"zone={ZoneSystem.GetZone(requestedPosition)} zoneCentre={zoneCentre} -> spawnPos={pos} " +
                           $"(shifted XZ by {new Vector2(pos.x - requestedPosition.x, pos.z - requestedPosition.z).magnitude:F2}m). " +
                           $"DG should land at spawnPos+DGlocal; expect DG world XZ == zoneCentre XZ if DG local XZ~0.");
@@ -853,19 +951,14 @@ namespace FiresCore.Dungeon
             // manual spawn down the degraded direct-instantiate fallback below since the 1.0 update.
             try
             {
-                if (_spawnLocationMethod == null)
-                    _spawnLocationMethod = AccessTools.Method(typeof(ZoneSystem), "SpawnLocation");
-                if (_spawnLocationMethod != null)
+                int r = InvokeSpawnLocation(zoneSystem, loc, seed, pos, rot, ZoneSystem.SpawnMode.Full, null);
+                if (r == SpawnRefused)   // 0.2.1083 ([saddles]): refused by a patch - say so, no fallback around the rule
                 {
-                    var pars = _spawnLocationMethod.GetParameters();
-                    var args = new object[pars.Length];
-                    args[0] = loc; args[1] = seed; args[2] = pos; args[3] = rot;
-                    args[4] = ZoneSystem.SpawnMode.Full; args[5] = new List<GameObject>();
-                    for (int i = 6; i < pars.Length; i++)
-                        args[i] = pars[i].HasDefaultValue ? pars[i].DefaultValue : null;
-                    _manualSpawnDepth++;
-                    try { _spawnLocationMethod.Invoke(zoneSystem, args); }
-                    finally { _manualSpawnDepth--; }
+                    Debug.Log($"{spec.LogTag} spawn: refused at {pos} (it created nothing); no dungeon placed.");
+                    return $"refused: dungeon at {pos} (it created nothing).";
+                }
+                if (r == SpawnDone)
+                {
                     int rooms = LogGeneratedRooms(spec, pos);
                     Debug.Log($"{spec.LogTag} spawn: generated, placed {rooms} rooms (full pipeline).");
                     spec.OnDungeonGenerated?.Invoke();
@@ -915,7 +1008,7 @@ namespace FiresCore.Dungeon
                     float sqr = (generator.transform.position - generatorPosition).sqrMagnitude;
                     if (sqr < bestSqr) { bestSqr = sqr; best = generator; }
                 }
-                if (best == null) { Debug.Log($"{spec.LogTag} spawn: no DG found near spawn to count rooms."); return -1; }
+                if (best == null) { FiresCore.Logging.FiresLogger.LogDebug($"{spec.LogTag} spawn: no DG found near spawn to count rooms."); return -1; }
 
                 int rooms = -1;
                 var netView = best.GetComponent<ZNetView>();
@@ -945,13 +1038,13 @@ namespace FiresCore.Dungeon
                         }
                     }
                     Vector2 aabbOff = new Vector2(bounds.center.x - dgWorld.x, bounds.center.z - dgWorld.z);
-                    Debug.Log($"[FDM-PLACE] {spec.LogTag} PLACEMENT CHECK: DG world={dgWorld} zoneCentre={zoneCenter} " +
+                    FiresCore.Logging.FiresLogger.LogDebug($"[FDM-PLACE] {spec.LogTag} PLACEMENT CHECK: DG world={dgWorld} zoneCentre={zoneCenter} " +
                               $"DGoffZoneCentreXZ={offCentreXZ:F2}m | m_zoneCenter={best.m_zoneCenter} m_zoneSize={best.m_zoneSize} | " +
                               $"rooms={roomComps.Length} colliders={colliders} roomAABBcentre={bounds.center} size={bounds.size} " +
                               $"roomAABBoffDGxz={aabbOff.magnitude:F2}m. WANT: DGoffZoneCentreXZ~0 AND roomAABBoffDGxz small/symmetric.");
                 }
 
-                Debug.Log($"{spec.LogTag} spawn: DG at {dgWorld} saved {rooms} room(s) (theme {spec.NamedTheme}).");
+                FiresCore.Logging.FiresLogger.LogDebug($"{spec.LogTag} spawn: DG at {dgWorld} saved {rooms} room(s) (theme {spec.NamedTheme}).");
                 return rooms;
             }
             catch (Exception ex) { Debug.LogWarning($"{spec.LogTag} room-count log failed: {ex.Message}"); return -1; }

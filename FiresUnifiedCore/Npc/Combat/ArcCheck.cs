@@ -16,8 +16,8 @@ namespace FiresCore.Npc.Combat
     }
 
     /// <summary>
-    /// Is a bow or crossbow shot's arc clear to the target? (R61 pvp: 4 of 6 of the bot's head arrows hit a voxel ledge on the way,
-    /// "obstructed by FiresVoxelTerrain x4"; a real archer holds the shot while the arc is blocked.) The launch direction, speed and
+    /// Is a bow or crossbow shot's arc clear to the target? A real archer holds the shot while the arc is blocked (for example by
+    /// a terrain ledge on the way). The launch direction, speed and
     /// gravity trace the ballistic path in short segments; each is a linecast over solids (terrain, pieces, static things, not
     /// characters) until it passes the target. Shared by the test bot and companions with bows. No allocations.
     /// </summary>

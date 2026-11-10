@@ -15,6 +15,71 @@ namespace FiresCore.UI
     /// callers keep their own fallback. Any mod: <c>FiresCore.UI.ItemIconRenderer.Render(prefab)</c> or
     /// <c>RenderItem(itemDrop)</c>.
     /// </summary>
+    /// <summary>
+    /// Removes components from an INACTIVE hierarchy in [RequireComponent] order. Unity refuses to DestroyImmediate a
+    /// component another one requires (it only logs "Can't remove X because Y depends on it"; no exception), so each pass removes
+    /// only targets nothing remaining requires; a component that requires a target becomes a target too. Returns how many targets
+    /// are still there (0 = clean).
+    /// </summary>
+    internal static class ComponentStrip
+    {
+        private static readonly System.Collections.Generic.Dictionary<Type, Type[]> s_requires = new System.Collections.Generic.Dictionary<Type, Type[]>();
+
+        private static Type[] Requires(Type t)
+        {
+            if (s_requires.TryGetValue(t, out var r)) return r;
+            var list = new System.Collections.Generic.List<Type>();
+            foreach (RequireComponent a in t.GetCustomAttributes(typeof(RequireComponent), true))
+                foreach (var x in new[] { a.m_Type0, a.m_Type1, a.m_Type2 }) if (x != null) list.Add(x);
+            return s_requires[t] = list.ToArray();
+        }
+
+        private static bool NeedsAny(Component c, System.Collections.Generic.HashSet<Component> targets, GameObject go)
+        {
+            foreach (var req in Requires(c.GetType()))
+                foreach (var other in targets)
+                    if (other != null && other != c && other.gameObject == go && req.IsAssignableFrom(other.GetType())) return true;
+            return false;
+        }
+
+        internal static int Strip(GameObject root, Func<Component, bool> remove)
+        {
+            var targets = new System.Collections.Generic.HashSet<Component>();
+            for (int pass = 0; pass < 12; pass++)
+            {
+                var all = root.GetComponentsInChildren<Component>(true);
+                targets.Clear();
+                foreach (var c in all) if (c != null && !(c is Transform) && remove(c)) targets.Add(c);
+                // Anything that requires a target must go too (it could never stay without it).
+                bool grew = true;
+                while (grew)
+                {
+                    grew = false;
+                    foreach (var c in all)
+                        if (c != null && !(c is Transform) && !targets.Contains(c) && NeedsAny(c, targets, c.gameObject)) { targets.Add(c); grew = true; }
+                }
+                if (targets.Count == 0) return 0;
+                int removed = 0;
+                foreach (var t in new System.Collections.Generic.List<Component>(targets))
+                {
+                    if (t == null) continue;
+                    bool required = false;
+                    foreach (var other in all)
+                        if (other != null && other != t && other.gameObject == t.gameObject)
+                            foreach (var req in Requires(other.GetType()))
+                                if (req.IsAssignableFrom(t.GetType())) { required = true; break; }
+                    if (required) continue;
+                    try { UnityEngine.Object.DestroyImmediate(t); } catch { }
+                    if (t == null) removed++;
+                }
+                if (removed == 0) break;
+            }
+            int left = 0;
+            foreach (var c in root.GetComponentsInChildren<Component>(true)) if (c != null && !(c is Transform) && remove(c)) left++;
+            return left;
+        }
+    }
+
     public static class ItemIconRenderer
     {
         private const int IconLayer = 30;
@@ -43,6 +108,7 @@ namespace FiresCore.UI
         public static Sprite Render(GameObject prefab, int res, bool frontView)
         {
             if (IsClientOnly() || prefab == null) return null;
+            // No per-frame cap HERE: FDM, FATI and Mausoleum try once and keep a placeholder forever on null. Throttle via RenderQueued.
 
             Camera cam = null; Light light = null; GameObject model = null; RenderTexture renderTexture = null;
             var prevActive = RenderTexture.active;
@@ -69,9 +135,11 @@ namespace FiresCore.UI
                 light.intensity = 1.3f;
                 light.transform.rotation = Quaternion.Euler(150f, 0f, -5f);
 
-                ZNetView.m_forceDisableInit = true;
-                try { model = UnityEngine.Object.Instantiate(prefab); }
-                finally { ZNetView.m_forceDisableInit = false; }
+                // Build-menu native crash (ntdll access violation; FATI renders hundreds of Hammer
+                // pieces): the copy is made under an INACTIVE parent so no Awake/OnEnable runs (no Piece.s_allPieces, WearNTear,
+                // Container, Light, ZNetView...), stripped to its renderers, and only then made active for the shot.
+                Trace("ItemIconRenderer.Render begin", prefab.name);
+                model = StrippedCopy(prefab);
                 foreach (var child in model.GetComponentsInChildren<Transform>(true)) child.gameObject.layer = IconLayer;
 
                 var rends = model.GetComponentsInChildren<Renderer>()
@@ -137,11 +205,101 @@ namespace FiresCore.UI
             {
                 RenderSettings.fog = prevFog;
                 RenderTexture.active = prevActive;
-                if (model != null) UnityEngine.Object.Destroy(model);
-                if (cam != null) { cam.targetTexture = null; UnityEngine.Object.Destroy(cam.gameObject); }
-                if (light != null) UnityEngine.Object.Destroy(light.gameObject);
+                if (model != null) UnityEngine.Object.DestroyImmediate(model);
+                if (cam != null) { cam.targetTexture = null; UnityEngine.Object.DestroyImmediate(cam.gameObject); }
+                if (light != null) UnityEngine.Object.DestroyImmediate(light.gameObject);
                 if (renderTexture != null) RenderTexture.ReleaseTemporary(renderTexture);
+                Trace("ItemIconRenderer.Render end", prefab.name);
             }
+        }
+
+        // ── hardening ──────────────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>Renders <see cref="RenderQueued"/> does per frame.</summary>
+        public const int MaxRendersPerFrame = 4;
+
+        /// <summary>Queues a render; <paramref name="done"/> gets the Sprite (null on headless/failure) on a later frame, at most
+        /// <see cref="MaxRendersPerFrame"/> per frame. Add-only API.</summary>
+        public static void RenderQueued(GameObject prefab, int res, bool frontView, Action<Sprite> done)
+        {
+            if (prefab == null || IsClientOnly()) { done?.Invoke(null); return; }
+            s_queue.Enqueue(new QueuedRender { Prefab = prefab, Res = res, FrontView = frontView, Done = done });
+            if (s_pump == null)
+            {
+                var go = new GameObject("FiresIconRenderPump") { hideFlags = HideFlags.HideAndDontSave };
+                UnityEngine.Object.DontDestroyOnLoad(go);
+                s_pump = go.AddComponent<Pump>();
+            }
+        }
+
+        /// <summary>Frees a Sprite this class made (its Texture2D too). Callers that replace or drop icons should call it.</summary>
+        public static void Free(Sprite sprite)
+        {
+            if (sprite == null) return;
+            var tex = sprite.texture;
+            UnityEngine.Object.Destroy(sprite);
+            if (tex != null) UnityEngine.Object.Destroy(tex);
+        }
+
+        private struct QueuedRender { public GameObject Prefab; public int Res; public bool FrontView; public Action<Sprite> Done; }
+        private static readonly System.Collections.Generic.Queue<QueuedRender> s_queue = new System.Collections.Generic.Queue<QueuedRender>();
+        private static Pump s_pump;
+
+        private sealed class Pump : MonoBehaviour
+        {
+            private void LateUpdate()
+            {
+                for (int n = 0; s_queue.Count > 0 && n < MaxRendersPerFrame; n++)
+                {
+                    var job = s_queue.Dequeue();
+                    Sprite s = null;
+                    try { s = job.Prefab != null ? Render(job.Prefab, job.Res, job.FrontView) : null; }
+                    catch (Exception ex) { FiresUnifiedCore.Log?.LogDebug($"[FiresIconRenderer] queued render failed: {ex.Message}"); }
+                    try { job.Done?.Invoke(s); } catch (Exception ex) { FiresUnifiedCore.Log?.LogDebug($"[FiresIconRenderer] queued callback threw: {ex.Message}"); }
+                }
+            }
+        }
+
+        private static GameObject s_inactiveHolder;
+        private static readonly Type[] KeepTypes = { typeof(Transform), typeof(MeshFilter), typeof(MeshRenderer), typeof(SkinnedMeshRenderer), typeof(Animator), typeof(LODGroup) };
+
+        // A copy of the prefab with nothing but transforms, meshes, renderers, animators and LOD groups; no script ever woke on it.
+        private static GameObject StrippedCopy(GameObject prefab)
+        {
+            if (s_inactiveHolder == null)
+            {
+                s_inactiveHolder = new GameObject("FiresIconInactiveHolder") { hideFlags = HideFlags.HideAndDontSave };
+                s_inactiveHolder.SetActive(false);
+                UnityEngine.Object.DontDestroyOnLoad(s_inactiveHolder);
+            }
+            var copy = UnityEngine.Object.Instantiate(prefab, s_inactiveHolder.transform, false);
+            // Unity refused to remove Humanoid while CharacterDrop depended on it, then the creature woke with no
+            // ZNetView): dependency-ordered strip, verified, so nothing that can Awake is left when the copy activates.
+            int left = ComponentStrip.Strip(copy, c => Array.IndexOf(KeepTypes, c.GetType()) < 0);
+            if (left > 0) { UnityEngine.Object.DestroyImmediate(copy); throw new InvalidOperationException($"{left} component(s) could not be stripped"); }
+            copy.transform.SetParent(null, false);   // now active: only renderers and animators wake
+            if (!copy.activeSelf) copy.SetActive(true);   // a prefab stored inactive
+            copy.transform.position = new Vector3(0f, -9000f, 0f);
+            return copy;
+        }
+
+        // One flushed line per render into FAT's crash trace (BepInEx\FiresTests\fat_native_trace.log) when FAT is loaded.
+        private static Action<string, int, string> s_traceStep;
+        private static bool s_traceResolved;
+        private static void Trace(string step, string detail)
+        {
+            try
+            {
+                if (!s_traceResolved)
+                {
+                    s_traceResolved = true;
+                    var t = FiresCore.Pieces.BuildMenuPages.FatType("VerdantsAscent.Terrain.Voxel.FatNativeTrace");   // no full scan
+                    var m = t != null ? HarmonyLib.AccessTools.Method(t, "Step", new[] { typeof(string), typeof(int), typeof(string) }) : null;
+                    if (m != null) s_traceStep = (Action<string, int, string>)Delegate.CreateDelegate(typeof(Action<string, int, string>), m);
+                }
+                s_traceStep?.Invoke("Core " + step, 0, "'" + detail + "'");
+            }
+            catch { s_traceStep = null; }
         }
     }
 }

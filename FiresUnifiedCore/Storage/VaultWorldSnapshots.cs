@@ -11,11 +11,11 @@ using LiteDB;
 
 namespace FiresCore.Storage
 {
-    // Fire's "save with the world" (Tools\SAVE_SAFETY_AUDIT.md, fix 3). The vault (bank, mail, marketplace, guilds) commits each
+    // Save the vault with the world (Tools\SAVE_SAFETY_AUDIT.md, fix 3). The vault (bank, mail, marketplace, guilds) commits each
     // operation at once, but a crash puts the world back to its last save, so a deposit around a crash could be duplicated or
     // lost. At every world save the server copies the vault as it stands when vanilla captures the world; once that save is
     // written, the copy is tagged with the save's number and its .fwl2 write time (the number alone repeats after a crash
-    // mid-save, [worldgen]). A clean shutdown refreshes the final save's copy once the players are gone. At the next start, a
+    // mid-save). A clean shutdown refreshes the final save's copy once the players are gone. At the next start, a
     // vault that differs from the copy of the save the world actually loaded changed after that save: the copy is put back, and
     // the vault as it was is kept beside it. Vanilla's save numbering only; nothing on a client or for a cloud-stored world.
     internal static class VaultWorldSnapshots
@@ -34,7 +34,6 @@ namespace FiresCore.Storage
 
         private static readonly AccessTools.FieldRef<ZNet, Thread> s_saveThread = AccessTools.FieldRefAccess<ZNet, Thread>("m_saveThread");
         private static readonly object s_lock = new object();
-        private static ConfigEntry<bool> s_enabled;
         private static uint s_pendingSave;
         private static bool s_pendingValid;
         private static string s_lastCompletedTag;
@@ -43,9 +42,16 @@ namespace FiresCore.Storage
 
         internal static void Register(Harmony harmony, ConfigFile config)
         {
-            s_enabled = config.Bind("Vault", "Roll back with the world", true,
-                "SERVER. The vault (bank, mail, marketplace, guilds) keeps a copy per world save and, after a crash, goes back to the copy " +
-                "of the save the world loaded, so items can't be duplicated or lost around a crash. Off: the vault keeps every change.");
+            // 1086 ([generator], Fire 11-01: configs live in their own mods): [Vault] is bound by FiresCompanions; Core reads the owner's value (old default ON without it).
+            // The save hooks exist only with a vault mod installed (FiresGuilds, RPGmaker or FAP).
+            FiresCore.Config.CoreFeatures.WhenResolved(() =>
+            {
+                if (FiresCore.Config.CoreFeatures.IsLive(FiresCore.Config.CoreFeatures.Vault)) Hook(harmony);
+            });
+        }
+
+        private static void Hook(Harmony harmony)
+        {
             var self = typeof(VaultWorldSnapshots);
             harmony.Patch(AccessTools.Method(typeof(ZNet), "SaveWorld"), prefix: new HarmonyMethod(self, nameof(SaveWorld_Prefix)));
             harmony.Patch(AccessTools.Method(typeof(SaveSystem), nameof(SaveSystem.EndSave)), postfix: new HarmonyMethod(self, nameof(EndSave_Postfix)));
@@ -53,7 +59,7 @@ namespace FiresCore.Storage
                 prefix: new HarmonyMethod(self, nameof(Shutdown_Prefix)), postfix: new HarmonyMethod(self, nameof(Shutdown_Postfix)));
         }
 
-        private static bool Enabled => s_enabled != null && s_enabled.Value;
+        private static bool Enabled => FiresCore.Config.CoreSettings.Get("Vault", "Roll back with the world", true);   // 1086 ([generator], Fire 11-01: configs live in their own mods):
 
         private static bool OnLocalWorldServer =>
             ZNet.instance != null && ZNet.instance.IsServer() && ZNet.World != null && ZNet.World.m_fileSource == FileHelpers.FileSource.Local;
@@ -82,7 +88,7 @@ namespace FiresCore.Storage
                 return;
             }
             string snapshot = Path.Combine(root, tag);
-            // The save's files were whole but the server stopped before EndSave ([worldgen]'s A3b): the world kept that save, and the
+            // The save's files were whole but the server stopped before EndSave: the world kept that save, and the
             // copy taken at its capture is still pending under its number. Every save replaces the pending copy, so it is this one's.
             string pending = Path.Combine(root, PendingPrefix + number);
             if (!Directory.Exists(snapshot) && Directory.Exists(pending))
@@ -105,7 +111,7 @@ namespace FiresCore.Storage
                 return;
             }
             // The server left cleanly on this very save, so no crash can explain the difference: someone changed the vault while it
-            // was down (an admin tool, a manual fix). That change is kept ([perf]).
+            // was down (an admin tool, a manual fix). That change is kept.
             if (cleanShutdownOf == tag)
             {
                 FiresLogger.LogWarning($"{Tag}the vault differs from world save {number}'s copy although the server shut down cleanly on " +
@@ -148,7 +154,7 @@ namespace FiresCore.Storage
                     bytes = CopyVaultInto(Path.Combine(root, PendingPrefix + s_pendingSave));
                     s_pendingValid = true;
                 }
-                FiresLogger.LogInfo($"{Tag}vault copied for world save {s_pendingSave} ({bytes / BytesPerKb:0} KB) in {timer.ElapsedMilliseconds} ms.");
+                FiresCore.Logging.FiresLogger.LogDebug($"{Tag}vault copied for world save {s_pendingSave} ({bytes / BytesPerKb:0} KB) in {timer.ElapsedMilliseconds} ms.");
             }
             catch (Exception ex)
             {
@@ -313,7 +319,7 @@ namespace FiresCore.Storage
         // won't open.
         private static string RowCounts(string folder, string path)
         {
-            // Inside the game's BepInEx folder, not the OS temp folder (0.2.206, Fire: public mods keep their files inside the Valheim
+            // Inside the game's BepInEx folder, not the OS temp folder (public mods keep their files inside the Valheim
             // folder); what a crash mid-read left behind is swept on the next call.
             string root = Path.Combine(BepInEx.Paths.CachePath, "fires-vault");
             SweepStale(root);

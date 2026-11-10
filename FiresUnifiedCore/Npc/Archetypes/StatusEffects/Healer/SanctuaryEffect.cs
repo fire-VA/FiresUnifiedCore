@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Healer
 {
@@ -156,7 +156,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Healer
             
             // Verify the effect was actually added
             bool wasAdded = seman.HaveStatusEffect(existingHash);
-            Debug.Log($"[SanctuaryEffect] Applied to {target.m_name}, hasIcon={icon != null}, isPlayer={target.IsPlayer()}, wasAdded={wasAdded}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[SanctuaryEffect] Applied to {target.m_name}, hasIcon={icon != null}, isPlayer={target.IsPlayer()}, wasAdded={wasAdded}");
         }
         
         public new SanctuaryEffect Clone()

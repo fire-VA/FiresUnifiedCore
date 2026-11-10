@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using System.Collections.Generic;
 using FiresCore.Npc.Archetypes.StatusEffects.Base;
@@ -25,6 +25,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
     public static class StatusEffectManager
     {
         private static bool _effectsRegistered = false;
+        private static ObjectDB _registeredOn;
+        // names already warned about (no icon colour), so the gray-fallback warning logs once per name
+        private static readonly System.Collections.Generic.HashSet<string> s_grayWarned = new System.Collections.Generic.HashSet<string>();
         
         public static bool VerboseLogging = false;
         
@@ -50,12 +53,23 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         public const string EFFECT_CLASS_FLEE = "ClassFlee";
         public const string EFFECT_CLASS_LOSE_TARGET = "ClassLoseTarget";
         public const string EFFECT_CLASS_STAGGER_IMMUNE = "ClassStaggerImmune";
+        public const string EFFECT_CLASS_SILENCE = "ClassSilence"; // no magic/skill attacks; FMO treats it as an interrupt
+        // A boss's cast interrupt (ClassCrowdControl): bosses take a slow instead of a stun / knockdown / silence, so this marker rides
+        // along; Fires Monster Overhaul cancels the boss's cast when it lands. No gameplay of its own.
+        public const string EFFECT_CLASS_INTERRUPT = "ClassInterrupt";
 
         // Class skill presets (Common\ClassPresetEffects.cs): a Core effect carries no numbers over the wire.
         public const string EFFECT_CLASS_SLOW30 = "ClassSlow30";
         public const string EFFECT_CLASS_HASTE15 = "ClassHaste15";
         public const string EFFECT_CLASS_HASTE20 = "ClassHaste20";
         public const string EFFECT_CLASS_HASTE25 = "ClassHaste25";
+        // name-only carriers RPGClasses reads (Battle Trance, Shield Wall).
+        public const string EFFECT_CLASS_TRANCE10 = "ClassTrance10", EFFECT_CLASS_TRANCE15 = "ClassTrance15", EFFECT_CLASS_TRANCE20 = "ClassTrance20";
+        public const string EFFECT_CLASS_SHIELDWALL40 = "ClassShieldWall40", EFFECT_CLASS_SHIELDWALL50 = "ClassShieldWall50", EFFECT_CLASS_SHIELDWALL60 = "ClassShieldWall60";
+        // name-only carriers RPGClasses reads, like the trance / shield wall.
+        public const string EFFECT_CLASS_OATH = "ClassOath";
+        public const string EFFECT_CLASS_LIFELINE20 = "ClassLifeline20", EFFECT_CLASS_LIFELINE30 = "ClassLifeline30", EFFECT_CLASS_LIFELINE40 = "ClassLifeline40";
+        public const string EFFECT_CLASS_SPIRITLINK15 = "ClassSpiritLink15", EFFECT_CLASS_SPIRITLINK20 = "ClassSpiritLink20", EFFECT_CLASS_SPIRITLINK25 = "ClassSpiritLink25";
         public const string EFFECT_CLASS_AEGIS = "ClassAegis";
         // The lingering zones' presets (rank 1/2/3 where the tree text gives three numbers).
         public const string EFFECT_CLASS_SLOW20 = "ClassSlow20";
@@ -71,6 +85,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         public const string EFFECT_CLASS_WARD25 = "ClassWard25";
         public const string EFFECT_CLASS_DAMAGE25 = "ClassDamage25";
         public const string EFFECT_CLASS_SLOW60 = "ClassSlow60";
+        public const string EFFECT_CLASS_WITHERED = "ClassWithered";   // RPGClasses' Wither: +15% damage taken, 20% slow
+        public const string EFFECT_CLASS_WOUNDED = "ClassWounded";     // the yaml's Wounded: 50% less healing received
         
         // Tank
         public const string EFFECT_FORTIFY = "CompanionFortify";
@@ -145,8 +161,9 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         /// </summary>
         public static void RegisterAllEffects()
         {
-            if (_effectsRegistered) return;
+            if (_effectsRegistered && _registeredOn == ObjectDB.instance) return;   // a NEW ObjectDB gets them again
             if (ObjectDB.instance == null) return;
+            _effectsRegistered = false; _registeredOn = ObjectDB.instance;
             
             try
             {
@@ -162,10 +179,27 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
                 RegisterEffect<FleeEffect>(EFFECT_CLASS_FLEE, _iconColors[EFFECT_CLASS_FLEE]);
                 RegisterEffect<LoseTargetEffect>(EFFECT_CLASS_LOSE_TARGET, _iconColors[EFFECT_CLASS_LOSE_TARGET]);
                 RegisterEffect<StaggerImmuneEffect>(EFFECT_CLASS_STAGGER_IMMUNE, _iconColors[EFFECT_CLASS_STAGGER_IMMUNE]);
+                RegisterEffect<SilenceEffect>(EFFECT_CLASS_SILENCE, _iconColors[EFFECT_CLASS_SILENCE]);
+                RegisterEffect<InterruptMarkerEffect>(EFFECT_CLASS_INTERRUPT, _iconColors[EFFECT_CLASS_INTERRUPT]);
                 RegisterEffect<ClassSlow30Effect>(EFFECT_CLASS_SLOW30, _iconColors[EFFECT_CLASS_SLOW30]);
+                RegisterEffect<ClassWitheredEffect>(EFFECT_CLASS_WITHERED, _iconColors[EFFECT_CLASS_WITHERED]);
+                RegisterEffect<ClassWoundedEffect>(EFFECT_CLASS_WOUNDED, _iconColors[EFFECT_CLASS_WOUNDED]);
                 RegisterEffect<ClassHaste15Effect>(EFFECT_CLASS_HASTE15, _iconColors[EFFECT_CLASS_HASTE15]);
                 RegisterEffect<ClassHaste20Effect>(EFFECT_CLASS_HASTE20, _iconColors[EFFECT_CLASS_HASTE20]);
                 RegisterEffect<ClassHaste25Effect>(EFFECT_CLASS_HASTE25, _iconColors[EFFECT_CLASS_HASTE25]);
+                RegisterEffect<ClassTrance10Effect>(EFFECT_CLASS_TRANCE10, _iconColors[EFFECT_CLASS_TRANCE10]);
+                RegisterEffect<ClassTrance15Effect>(EFFECT_CLASS_TRANCE15, _iconColors[EFFECT_CLASS_TRANCE15]);
+                RegisterEffect<ClassTrance20Effect>(EFFECT_CLASS_TRANCE20, _iconColors[EFFECT_CLASS_TRANCE20]);
+                RegisterEffect<ClassShieldWall40Effect>(EFFECT_CLASS_SHIELDWALL40, _iconColors[EFFECT_CLASS_SHIELDWALL40]);
+                RegisterEffect<ClassShieldWall50Effect>(EFFECT_CLASS_SHIELDWALL50, _iconColors[EFFECT_CLASS_SHIELDWALL50]);
+                RegisterEffect<ClassShieldWall60Effect>(EFFECT_CLASS_SHIELDWALL60, _iconColors[EFFECT_CLASS_SHIELDWALL60]);
+                RegisterEffect<ClassOathEffect>(EFFECT_CLASS_OATH, _iconColors[EFFECT_CLASS_OATH]);
+                RegisterEffect<ClassLifeline20Effect>(EFFECT_CLASS_LIFELINE20, _iconColors[EFFECT_CLASS_LIFELINE20]);
+                RegisterEffect<ClassLifeline30Effect>(EFFECT_CLASS_LIFELINE30, _iconColors[EFFECT_CLASS_LIFELINE30]);
+                RegisterEffect<ClassLifeline40Effect>(EFFECT_CLASS_LIFELINE40, _iconColors[EFFECT_CLASS_LIFELINE40]);
+                RegisterEffect<ClassSpiritLink15Effect>(EFFECT_CLASS_SPIRITLINK15, _iconColors[EFFECT_CLASS_SPIRITLINK15]);
+                RegisterEffect<ClassSpiritLink20Effect>(EFFECT_CLASS_SPIRITLINK20, _iconColors[EFFECT_CLASS_SPIRITLINK20]);
+                RegisterEffect<ClassSpiritLink25Effect>(EFFECT_CLASS_SPIRITLINK25, _iconColors[EFFECT_CLASS_SPIRITLINK25]);
                 RegisterEffect<ClassAegisEffect>(EFFECT_CLASS_AEGIS, _iconColors[EFFECT_CLASS_AEGIS]);
                 RegisterEffect<ClassSlow20Effect>(EFFECT_CLASS_SLOW20, _iconColors[EFFECT_CLASS_SLOW20]);
                 RegisterEffect<ClassWardEffect>(EFFECT_CLASS_WARD10, _iconColors[EFFECT_CLASS_WARD10]);
@@ -275,10 +309,19 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
             _iconColors[EFFECT_CLASS_FLEE] = new Color(0.6f, 0.2f, 0.7f); // Violet
             _iconColors[EFFECT_CLASS_LOSE_TARGET] = new Color(0.6f, 0.6f, 0.6f); // Grey
             _iconColors[EFFECT_CLASS_STAGGER_IMMUNE] = new Color(0.5f, 0.7f, 0.5f); // Sage
+            _iconColors[EFFECT_CLASS_SILENCE] = new Color(0.55f, 0.45f, 0.85f); // Hushed violet
+            _iconColors[EFFECT_CLASS_INTERRUPT] = new Color(0.95f, 0.45f, 0.2f); // Ember
             _iconColors[EFFECT_CLASS_SLOW30] = new Color(0.5f, 0.7f, 0.9f); // Pale blue
+            _iconColors[EFFECT_CLASS_WITHERED] = new Color(0.45f, 0.6f, 0.25f); // Rot green
+            _iconColors[EFFECT_CLASS_WOUNDED] = new Color(0.7f, 0.15f, 0.2f); // Dried blood
             _iconColors[EFFECT_CLASS_HASTE15] = new Color(0.7f, 0.95f, 0.8f); // Mint
             _iconColors[EFFECT_CLASS_HASTE20] = new Color(0.6f, 0.95f, 0.75f); // Mint
             _iconColors[EFFECT_CLASS_HASTE25] = new Color(0.5f, 0.95f, 0.7f); // Mint
+            _iconColors[EFFECT_CLASS_TRANCE10] = _iconColors[EFFECT_CLASS_TRANCE15] = _iconColors[EFFECT_CLASS_TRANCE20] = new Color(0.95f, 0.45f, 0.3f); // Ember
+            _iconColors[EFFECT_CLASS_SHIELDWALL40] = _iconColors[EFFECT_CLASS_SHIELDWALL50] = _iconColors[EFFECT_CLASS_SHIELDWALL60] = new Color(0.75f, 0.8f, 0.95f); // Steel
+            _iconColors[EFFECT_CLASS_OATH] = new Color(0.85f, 0.7f, 0.35f); // Gold
+            _iconColors[EFFECT_CLASS_LIFELINE20] = _iconColors[EFFECT_CLASS_LIFELINE30] = _iconColors[EFFECT_CLASS_LIFELINE40] = new Color(0.45f, 0.9f, 0.55f); // Mint
+            _iconColors[EFFECT_CLASS_SPIRITLINK15] = _iconColors[EFFECT_CLASS_SPIRITLINK20] = _iconColors[EFFECT_CLASS_SPIRITLINK25] = new Color(0.6f, 0.75f, 1f); // Spirit blue
             _iconColors[EFFECT_CLASS_AEGIS] = new Color(0.95f, 0.85f, 0.4f); // Gold
             _iconColors[EFFECT_CLASS_SLOW20] = new Color(0.55f, 0.75f, 0.9f); // Pale blue
             _iconColors[EFFECT_CLASS_WARD10] = new Color(0.6f, 0.85f, 0.95f); // Sky
@@ -399,6 +442,35 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         /// <summary>
         /// Registers a single status effect type with ObjectDB and caches its icon.
         /// </summary>
+        /// <summary>
+        /// An owner mod's icon per effect name (RPGClasses: the skill's tree icon), asked before the colour swatch.
+        /// Return null to keep the swatch. Setting it clears the resolved cache and re-icons the registered templates, so templates made
+        /// before the owner mod loaded pick it up; live effects take their icon from GetEffectIcon when applied.
+        /// </summary>
+        public static System.Func<string, Sprite> IconResolver
+        {
+            get => s_iconResolver;
+            set
+            {
+                s_iconResolver = value;
+                _resolvedIcons.Clear();
+                int resolved = 0;
+                foreach (var template in _templates)
+                {
+                    if (template == null) continue;
+                    Sprite icon = GetEffectIcon(template.name);
+                    template.EffectIcon = icon;
+                    template.m_icon = icon;
+                    if (_resolvedIcons.TryGetValue(template.name, out Sprite r) && r != null) resolved++;
+                }
+                FiresCore.Logging.FiresLogger.LogDebug($"[StatusEffectManager] IconResolver {(value != null ? "set" : "cleared")}: {resolved} of {_templates.Count} registered effect(s) use the owner's icon, the rest keep their swatch");
+            }
+        }
+
+        private static System.Func<string, Sprite> s_iconResolver;
+        private static readonly Dictionary<string, Sprite> _resolvedIcons = new Dictionary<string, Sprite>();
+        private static readonly List<CompanionStatusEffectBase> _templates = new List<CompanionStatusEffectBase>();
+
         private static void RegisterEffect<T>(string effectName, Color iconColor) where T : CompanionStatusEffectBase
         {
             // Create and cache the icon
@@ -410,6 +482,10 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
             var effect = ScriptableObject.CreateInstance<T>();
             effect.name = effectName;
             effect.EffectIcon = icon;
+            // an owner mod's icon when one is set already; the template is kept so a later IconResolver re-icons it.
+            if (s_iconResolver != null) { var owned = GetEffectIcon(effectName); effect.EffectIcon = owned; effect.m_icon = owned; }
+            _templates.RemoveAll(t => t == null);   // templates of an earlier ObjectDB (world reload) are gone
+            _templates.Add(effect);
             ObjectDB.instance.m_StatusEffects.Add(effect);
             
             if (VerboseLogging)
@@ -423,6 +499,18 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         /// </summary>
         public static Sprite GetEffectIcon(string effectName)
         {
+            // the owner mod's icon first, cached per name.
+            if (s_iconResolver != null && effectName != null)
+            {
+                if (!_resolvedIcons.TryGetValue(effectName, out Sprite resolved))
+                {
+                    try { resolved = s_iconResolver(effectName); }
+                    catch (System.Exception ex) { FiresCore.Logging.FiresLogger.LogDebug($"[StatusEffectManager] IconResolver threw for '{effectName}': {ex.Message}"); resolved = null; }
+                    _resolvedIcons[effectName] = resolved;
+                }
+                if (resolved != null) return resolved;
+            }
+
             // Return cached icon if available
             if (_iconCache.TryGetValue(effectName, out Sprite cached))
             {
@@ -438,7 +526,8 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
             }
             
             // Fallback: create a gray icon
-            Debug.LogWarning($"[StatusEffectManager] No icon color registered for {effectName}, using gray fallback");
+            // once per name
+            if (s_grayWarned.Add(effectName)) Debug.LogWarning($"[StatusEffectManager] No icon color registered for {effectName}, using gray fallback");
             var fallback = CompanionStatusEffectBase.CreateFallbackIcon(Color.gray);
             _iconCache[effectName] = fallback;
             return fallback;
@@ -595,6 +684,18 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
         {
             return PoisonEffect.ApplyPoison(target, source, duration, damagePerTick);
         }
+
+        /// <summary>Poison with the caster's stack cap (rogue_virulence 2/3/4); a re-apply adds a stack.</summary>
+        public static bool ApplyPoisonStack(Character target, Character source, float duration, float damagePerTick, int maxStacks)
+        {
+            return PoisonEffect.ApplyPoison(target, source, duration, damagePerTick, maxStacks);
+        }
+
+        /// <summary>The target's live poison stacks (0 = not poisoned).</summary>
+        public static int GetPoisonStacks(Character target) => PoisonEffect.GetStacks(target);
+
+        /// <summary>rogue_plague_burst: sets the live poison stacks; 0 removes the poison. Returns the new count.</summary>
+        public static int SetPoisonStacks(Character target, int stacks) => PoisonEffect.SetStacks(target, stacks);
         
         /// <summary>
         /// Applies stealth to a character (invisibility + backstab bonus).
@@ -740,7 +841,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
             if (isPlayer || VerboseLogging)
             {
                 string targetType = isPlayer ? "PLAYER" : (target.GetComponent<CompanionController>() != null ? "COMPANION" : "NPC");
-                Debug.Log($"[StatusEffectManager] Applied {effect.name} to {target.m_name} ({targetType}), hasIcon={icon != null}, duration={effect.m_ttl}s");
+                FiresCore.Logging.FiresLogger.LogDebug($"[StatusEffectManager] Applied {effect.name} to {target.m_name} ({targetType}), hasIcon={icon != null}, duration={effect.m_ttl}s");
             }
             
             return true;
@@ -846,7 +947,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects
                 InitializeIconColors();
             }
             
-            Debug.Log($"[StatusEffectManager] DEBUG: Applying test effect '{effectName}' to player for {duration}s");
+            FiresCore.Logging.FiresLogger.LogDebug($"[StatusEffectManager] DEBUG: Applying test effect '{effectName}' to player for {duration}s");
             
             switch (effectName)
             {

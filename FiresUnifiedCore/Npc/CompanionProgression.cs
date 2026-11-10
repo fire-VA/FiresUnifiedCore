@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using System.Collections.Generic;
 
@@ -374,7 +374,7 @@ namespace FiresCore.Npc
             }
             
             _unspentAttributePoints += pointsToReturn;
-            
+
             Debug.Log($"[CompanionProgression] Reset attributes for {_companion?.companionName}. " +
                 $"Returned {pointsToReturn} points.");
             
@@ -386,8 +386,40 @@ namespace FiresCore.Npc
             SaveToZDO();
         }
         
+        /// <summary>
+        /// Studio God panel (Fire 10-30: "there are no rules"): sets an attribute to any value (0+), up or down, without
+        /// touching the unspent points. Same follow-up as SpendAttributePoint: stats recalculated, event, ZDO save.
+        /// </summary>
+        public void SetAttributeValue(AttributeType attribute, int value)
+        {
+            _attributes[attribute] = Mathf.Max(0, value);
+            _stats?.RecalculateMaxStats();
+            OnAttributeChanged?.Invoke();
+            SaveToZDO();
+            Debug.Log($"[CompanionProgression] Set {attribute} to {_attributes[attribute]} for {_companion?.companionName}");
+        }
+
+        /// <summary>Studio God panel: sets the unspent attribute points to any value (0+). Saved.</summary>
+        public void SetUnspentAttributePoints(int points)
+        {
+            _unspentAttributePoints = Mathf.Max(0, points);
+            OnAttributeChanged?.Invoke();
+            SaveToZDO();
+            Debug.Log($"[CompanionProgression] Set unspent points to {_unspentAttributePoints} for {_companion?.companionName}");
+        }
+
+        /// <summary>Studio God panel: sets the XP toward the next level to any value (0+), up or down; reaching the
+        /// next level's XP levels up through AddXp's own path. Saved.</summary>
+        public void SetXp(float xp)
+        {
+            _currentXp = 0f;
+            if (xp > 0f && !IsMaxLevel) AddXp(xp, "Studio");
+            SaveToZDO();
+            Debug.Log($"[CompanionProgression] Set XP to {_currentXp:F0}/{_cachedXpForNextLevel:F0} for {_companion?.companionName}");
+        }
+
         #endregion
-        
+
         #region Bonus Calculations
         
         // Cache CompanionLuck reference for scaling
@@ -594,7 +626,7 @@ namespace FiresCore.Npc
                 OnAttributeChanged?.Invoke();
                 
                 int totalSpent = GetTotalAttributePoints();
-                Debug.Log($"[CompanionProgression] Restored from vault for {_companion?.companionName} (ID: {_companion?.companionId}): " +
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionProgression] Restored from vault for {_companion?.companionName} (ID: {_companion?.companionId}): " +
                     $"Level {_level}, {_totalKills} kills, {totalSpent} attributes spent " +
                     $"(STR:{_attributes[AttributeType.Strength]} SPD:{_attributes[AttributeType.Speed]} " +
                     $"HP:{_attributes[AttributeType.Health]} END:{_attributes[AttributeType.Endurance]} " +

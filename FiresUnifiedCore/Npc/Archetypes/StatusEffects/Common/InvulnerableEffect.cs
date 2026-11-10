@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Common
 {
@@ -30,7 +30,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
         {
             if (m_character != null)
             {
-                Debug.Log($"[InvulnerableEffect] {m_character.m_name} is now INVULNERABLE for {Duration}s (m_ttl={m_ttl})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[InvulnerableEffect] {m_character.m_name} is now INVULNERABLE for {Duration}s (m_ttl={m_ttl})");
             }
         }
         
@@ -54,7 +54,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
         {
             if (m_character != null)
             {
-                Debug.Log($"[InvulnerableEffect] {m_character.m_name} invulnerability ENDED");
+                FiresCore.Logging.FiresLogger.LogDebug($"[InvulnerableEffect] {m_character.m_name} invulnerability ENDED");
             }
         }
         

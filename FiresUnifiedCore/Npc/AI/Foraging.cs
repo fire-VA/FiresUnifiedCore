@@ -6,8 +6,8 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// Food on the way while fleeing (Core 0.2.223; Fire 20:27, R90 run 6: "the fleeing bot at low health ran right by mushrooms it
-    /// could have picked to give it a second food item and regen health"). Asked from a flee tick (FDT's survival rule; a companion's
+    /// Food on the way while fleeing (a free food slot filled on the run
+    /// regenerates health). Asked from a flee tick (FDT's survival rule; a companion's
     /// later): a ripe pickable whose item is food, ahead within a corridor of the flee line, when the body has a free food slot and
     /// no foe is within a swing of it. The caller picks it, eats it and flees on.
     /// </summary>
@@ -55,8 +55,8 @@ namespace FiresCore.Npc.AI
                 if (along < 0f || along > ahead) continue;
                 if ((to - fleeDir * along).magnitude > corridor) continue;
                 if (!IsRipeFood(data, out string item, out ItemDrop.ItemData food)) continue;
-                // Vanilla refuses a kind still in the belly until it is half burnt (0.2.227, [seasons] R90 run 9: Coop2 with Mushroom +
-                // Raspberry eaten picked a Mushroom and never ate it, where Honey or a Raspberry later would have bought health).
+                // Vanilla refuses a kind still in the belly until it is half burnt, so such a kind
+                // is skipped for another food that can be eaten now.
                 if (!player.CanEat(food, false)) { eaten = eaten ?? item; continue; }
                 if (along >= bestAlong) continue;
                 bestAlong = along;

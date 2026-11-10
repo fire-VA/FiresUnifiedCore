@@ -76,7 +76,7 @@ namespace FiresCore.Dungeon
             if (zdo.GetByteArray(ZDOVars.s_roomData, out byte[] data) && data != null && data.Length >= MinRoomDataLength)
                 yield break;
 
-            Debug.Log($"{spec.LogTag} stale dungeon DG at {generator.transform.position} has no saved rooms — regenerating.");
+            FiresCore.Logging.FiresLogger.LogDebug($"{spec.LogTag} stale dungeon DG at {generator.transform.position} has no saved rooms — regenerating.");
             bool ok = false;
             try { generator.Generate(ZoneSystem.SpawnMode.Full); ok = true; }
             catch (Exception ex) { Debug.LogError($"{spec.LogTag} stale-dungeon regenerate threw: {ex}"); }

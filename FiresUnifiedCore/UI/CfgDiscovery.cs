@@ -51,6 +51,7 @@ namespace FiresCore.UI
         public Type Type;
         public string Description;
         public string DescriptionLine;
+        public string LongDescription;   // the mod's own full text when Description is a short plain line (hover)
         public CtrlKind Kind;
         public double Min;
         public double Max;
@@ -67,7 +68,9 @@ namespace FiresCore.UI
 
         public object BoxedValue => Entry.BoxedValue;
 
-        public bool IsLocked => Tags.IsReadOnlyNow();
+        // 0.2.1161 (Arby: Infinity Hammer greyed in single player; Fire: other mods handle their own admin checks): Core never decides a lock here; it shows the entry's own read-only flag. One Debug line per key says where it came from.
+        public bool IsLocked { get { bool locked = Tags.IsReadOnlyNow(); if (locked && !_lockSaid) { _lockSaid = true; FiresCore.Logging.FiresLogger.LogDebug($"[Config] {ModGuid} [{Entry.Definition.Section}] {Entry.Definition.Key} shows locked: flag from {Tags.LockSource}; Core added no lock; world {(ZNet.instance == null ? "none (menu)" : ZNet.instance.IsServer() ? "server or single player" : "client")}, Core local admin {FiresCore.Sync.ConfigSync.lockExempt}"); } return locked; } }
+        private bool _lockSaid;
 
         /// <summary>
         /// FiresConfigVisibility swaps in a whole new ConfigDescription when it retags an entry (advanced /
@@ -79,6 +82,7 @@ namespace FiresCore.UI
             if (ReferenceEquals(description, _tagsReadFrom)) return;
             _tagsReadFrom = description;
             Tags = CfgTags.Read(description);
+            if (CoreConfigTiers.Has(ModGuid)) Tags = CoreConfigTiers.Overlay(ModGuid, Entry.Definition, Entry, Tags);
         }
 
         internal void SetTags(ConfigDescription description, CfgTags tags)
@@ -133,7 +137,7 @@ namespace FiresCore.UI
 
         // The window asks RebuildIfChanged on open rather than Rebuild: an entry's value, lock and tags are read live,
         // so only a changed set of configs needs the list built again - a plugin or entry bound since the last build, a
-        // renamed mod, or the Fires-only filter ([perf], 2026-09-28: every open spent 145 ms rebuilding 2,476 entries).
+        // renamed mod, or the Fires-only filter (every open spent 145 ms rebuilding ~2,500 entries).
         private const int SignaturePrime = 31;
         private static bool s_built;
         private static int s_builtSignature;
@@ -146,7 +150,7 @@ namespace FiresCore.UI
             return true;
         }
 
-        // The ConfigFile's identity as well as its entry count (0.2.294): a plugin that swaps in a new ConfigFile, or removes and
+        // The ConfigFile's identity as well as its entry count: a plugin that swaps in a new ConfigFile, or removes and
         // re-binds its entries, keeps the same count, and the window kept the dead entries (see Write).
         private static int Signature()
         {
@@ -172,11 +176,14 @@ namespace FiresCore.UI
 
         private static int s_staleVersion;
 
+        /// <summary>Forces the next <see cref="RebuildIfChanged"/> to rescan (tags changed without a count change, e.g. OwnerGatedConfig).</summary>
+        public static void Invalidate() => s_staleVersion++;
+
         /// <summary>
         /// The entry the owning plugin uses NOW for <paramref name="entry"/>'s setting: the same object, or, when the plugin replaced its
         /// ConfigFile or re-bound the key since the window's scan, the live one (the window's list is rebuilt). Writing a dead entry
         /// changed nothing the plugin reads (no SettingChanged on its live entry) and its Save wrote stale values over the plugin's
-        /// file (Fire 10-05: changes not applied, other settings changed; a player's Infinity Hammer key rebound here kept its old key).
+        /// file (changes not applied, other settings changed; a key rebound here kept its old key).
         /// </summary>
         public static ConfigEntryBase Live(ConfigEntryBase entry, out bool stale)
         {
@@ -426,6 +433,9 @@ namespace FiresCore.UI
                 var description = entry.Description;
                 var tags = CfgTags.Read(description);
                 if (!tags.Browsable) continue;
+                bool core = CoreConfigTiers.Has(source.Guid);
+                if (core && CoreConfigTiers.IsHidden(source.Guid, definition)) continue;
+                if (core) tags = CoreConfigTiers.Overlay(source.Guid, definition, entry, tags);
                 if (source.AllAdvanced && !tags.IsAdvanced)
                 {
                     if (ReferenceEquals(tags, CfgTags.None)) tags = new CfgTags();
@@ -441,7 +451,8 @@ namespace FiresCore.UI
         private static CfgDescriptor Describe(PluginSource source, ConfigDefinition definition, ConfigEntryBase entry, CfgTags tags)
         {
             Type settingType = entry.SettingType;
-            string description = tags.Description ?? entry.Description?.Description ?? "";
+            string longDescription = tags.Description ?? entry.Description?.Description ?? "";
+            string description = CoreConfigTiers.ShortDescription(source.Guid, definition) ?? longDescription;
 
             GetAcceptable(entry, out bool hasRange, out double min, out double max, out object[] listValues);
             string[] options = listValues != null ? ToDisplayNames(listValues) : null;
@@ -452,6 +463,15 @@ namespace FiresCore.UI
             }
 
             CtrlKind kind = ResolveKind(settingType, hasRange, options);
+            // (Keybinds stored as strings showed with no way to set them): a string entry that is a keybind
+            // ("Alt+1", "Ctrl+Shift+F") gets the press-a-key recorder; KeybindStrings writes the same text back.
+            // 0.2.1188 (SugarRay / ExtraSlots: per-slot quickslot text took the first key pressed): only OUR mods' strings
+            // can become a key recorder. Every other author's string stays a plain text field, as in ConfigurationManager.
+            if (settingType == typeof(string) && KeybindStrings.IsKeybindEntry(definition.Key, description, entry.BoxedValue as string))
+            {
+                if (source.IsFires) kind = CtrlKind.KeyBind;
+                else FiresCore.Logging.FiresLogger.LogDebug($"[Config] {source.Guid} [{definition.Section}] {definition.Key}: string mentions a hotkey, kept as a text field (not one of our mods)");
+            }
             double step = kind == CtrlKind.IntRange ? 1.0 : kind == CtrlKind.FloatRange ? NiceStep(min, max) : 0.0;
             string section = tags.Category ?? definition.Section;
 
@@ -467,6 +487,7 @@ namespace FiresCore.UI
                 Type = settingType,
                 Description = description,
                 DescriptionLine = FirstLine(description),
+                LongDescription = longDescription,
                 Kind = kind,
                 Min = min,
                 Max = max,

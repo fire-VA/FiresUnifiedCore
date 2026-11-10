@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
@@ -97,7 +97,7 @@ namespace FiresCore.World
             Add(SectorOf(__instance), value ? 1 : -1);
         }
 
-        // ═══ THE PER-ZDO CHANGE HOOKS ARE GONE, 2026-09-24 ═══════════════════════════════════════════════════════
+        // ═══ THE PER-ZDO CHANGE HOOKS ARE GONE ═══════════════════════════════════════════════════════
         // There were four more postfixes here - IncreaseDataRevision, IncreaseOwnerRevision, Deserialize and
         // SetOwnerInternal - maintaining a per-sector "last changed" frame. They ran more than 50,000 times a SECOND,
         // measured: FDT's stall profiler refused to keep timing them because timing them cost more than the call.
@@ -169,9 +169,9 @@ namespace FiresCore.World
             s_nextReport = now + ReportSeconds;
             if (first) return;
             string line = TakeAuditLine();
-            if (line != null) FiresUnifiedCore.Log.LogInfo(line);
-            string skip = DistantSectorSkip.TakeReportLine();
-            if (skip != null) FiresUnifiedCore.Log.LogInfo(skip);
+            if (line != null) FiresCore.Logging.FiresLogger.LogDebug(line);
+            string skip = null;   // 0.2.1216: DistantSectorSkip lives in FiresFixes only
+            if (skip != null) FiresCore.Logging.FiresLogger.LogDebug(skip);
         }
 
         private static void Rebuild()

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Paladin
 {
@@ -115,7 +115,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Paladin
             
             seman.AddStatusEffect(effect, true);
             
-            Debug.Log($"[DivineProtectionEffect] Applied to {target.m_name}, hasIcon={icon != null}, isPlayer={target.IsPlayer()}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DivineProtectionEffect] Applied to {target.m_name}, hasIcon={icon != null}, isPlayer={target.IsPlayer()}");
         }
         
         public new DivineProtectionEffect Clone()

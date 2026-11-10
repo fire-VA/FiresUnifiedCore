@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 using FiresCore.Npc.Core;
@@ -94,15 +94,15 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private Container _targetChest;
 
-        // The walk to a chest is at walk speed (~1.6 m/s): a flat 15 s timed out on a 25 m walk (R76 companion_test 10/12, "Phase
-        // MovingToChest timed out"). The budget is set from the distance when the walk starts: 10 s plus 1 s per metre, 15 s minimum.
+        // The walk to a chest is at walk speed (~1.6 m/s): a flat 15 s timed out on a 25 m walk.
+        // The budget is set from the distance when the walk starts: 10 s plus 1 s per metre, 15 s minimum.
         private float _moveBudget = 15f;
 
         private void SetMoveBudget(Vector3 to)
         {
             float distance = Vector3.Distance(Transform.position, to);
             _moveBudget = Mathf.Max(15f, 10f + distance);
-            Debug.Log($"[{BehaviorName}] {Companion?.companionName} walk to chest {distance:0.0} m: allowing {_moveBudget:0} s");
+            FiresCore.Logging.FiresLogger.LogDebug($"[{BehaviorName}] {Companion?.companionName} walk to chest {distance:0.0} m: allowing {_moveBudget:0} s");
         }
         private int _totalItemsDeposited;
         private int _chestsVisited;
@@ -323,6 +323,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
                     SetMoveBudget(_targetChest.transform.position);
                     SetPhase(DepositPhase.MovingToChest);
+                    InteractTarget = _targetChest != null ? _targetChest.gameObject : null;   // [ghost] 10-26: arrive within interaction reach
                     MoveToPosition(_targetChest.transform.position);
                     CompanionChatHelper.QuickMessages.DepositingItems(Companion);
                     return;
@@ -387,6 +388,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             SetMoveBudget(_targetChest.transform.position);
             SetPhase(DepositPhase.MovingToChest);
+            InteractTarget = _targetChest != null ? _targetChest.gameObject : null;   // [ghost] 10-26: arrive within interaction reach
             
             // Use InteractionPointHelper to get proper standing position in front of chest
             Vector3 interactionPoint = InteractionPointHelper.GetContainerInteractionPoint(
@@ -445,12 +447,12 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (!ChestHelper.TryClaimForWrite(_targetChest, Companion))
             {
-                // Always on (R59 deposit FAIL: the chest stayed empty and nothing said why).
+                // Always on, so a failed deposit always says why.
                 var companionView = Companion.GetComponent<ZNetView>();
                 string why = companionView == null || !companionView.IsOwner()
                     ? "this peer doesn't own the companion"
                     : ChestHelper.WhyNotWritable(_targetChest, ChestHelper.ChestOwnerIdFor(Companion)) ?? "refused";
-                Debug.Log($"[ChestDeposit] {Companion.companionName} can't use {_targetChest.m_name} at {_targetChest.transform.position}: {why}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ChestDeposit] {Companion.companionName} can't use {_targetChest.m_name} at {_targetChest.transform.position}: {why}");
                 _visitedChests.Add(_targetChest);
                 SetPhase(DepositPhase.FindingNextChest);
                 return false;
@@ -477,7 +479,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 CompanionEvents.FireItemDeposited(Companion, "mixed", deposited);
             }
 
-            Debug.Log($"[ChestDeposit] {Companion.companionName} deposited {deposited} item(s) across {_clusterChests.Count} chest(s)");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChestDeposit] {Companion.companionName} deposited {deposited} item(s) across {_clusterChests.Count} chest(s)");
 
             // Always run the organize pass - even a single chest benefits from stack consolidation.
             SetPhase(DepositPhase.Organizing);
@@ -521,6 +523,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             SetMoveBudget(_targetChest.transform.position);
             SetPhase(DepositPhase.MovingToChest);
+            InteractTarget = _targetChest != null ? _targetChest.gameObject : null;   // [ghost] 10-26: arrive within interaction reach
             
             // Use InteractionPointHelper to get proper standing position in front of chest
             Vector3 interactionPoint = InteractionPointHelper.GetContainerInteractionPoint(
@@ -582,6 +585,12 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool ShouldDepositItem(ItemDrop.ItemData item)
         {
             if (item == null) return false;
+            // Only the companion bag's STORAGE rows are deposited (worn gear and pouch stacks stay)
+            if (!CompanionGridLayout.IsStorage(item.m_gridPos) && CompanionGridLayout.IsCompanionBag(GetStorageInventory()))
+            {
+                LogVerbose($"ShouldDepositItem: {item.m_shared?.m_name} - NO (pouch/equipment cell)");
+                return false;
+            }
             if (item.m_equipped)
             {
                 LogVerbose($"ShouldDepositItem: {item.m_shared?.m_name} - NO (equipped)");
@@ -691,11 +700,52 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
         
+        // 0.2.867 (Fire 10-27: "companions should choose the chest with our sorting logic, meat and food goes close to the cooking equipment
+        // etc"): the base-wide best chest per item from OUR organizer (SmartStorageOrganizer.FindBestChestForItem: chest tags first -
+        // refused skipped, wanted +1000 x tag score - then station proximity: food by the cooking stations, ore by the smelters, wood/stone by
+        // the workbench, seeds by the crops, from its item profiles; then chests holding the same kind, stack room, free space), asked over
+        // EVERY writable chest near home instead of only the cluster around the chest it happened to walk to.
+        private List<Container> _baseChests; private float _baseChestsAt = -1f;
+        private List<Container> BaseChests()
+        {
+            if (_baseChests != null && Time.time - _baseChestsAt < 5f) return _baseChests;
+            long ownerId = ChestHelper.ChestOwnerIdFor(Companion);
+            Vector3 home = IdleBehavior != null && IdleBehavior.HasHomePosition ? IdleBehavior.HomePosition : Transform.position;
+            _baseChests = ChestHelper.FindNearbyChests(home, Mathf.Max(40f, ChestClusterRange)).Where(c => c != null && ChestHelper.OwnerMayWrite(c, ownerId)).ToList();
+            _baseChestsAt = Time.time;
+            return _baseChests;
+        }
+        private SmartStorageOrganizer.ChestRecommendation BaseBest(ItemDrop.ItemData item)
+        {
+            var chests = BaseChests();
+            if (chests.Count == 0) return null;
+            Vector3 home = IdleBehavior != null && IdleBehavior.HasHomePosition ? IdleBehavior.HomePosition : Transform.position;
+            return SmartStorageOrganizer.FindBestChestForItem(item, chests, home, stationSearchRadius: Mathf.Max(40f, ChestClusterRange));
+        }
+
         private Container FindBestChestForDeposit()
         {
             var storage = GetStorageInventory();
             if (storage == null) return null;
-            
+
+            // 0.2.867: walk to the chest that is the organizer's best home for the most items in the bag (nearest on a tie)
+            {
+                var votes = new Dictionary<Container, int>();
+                foreach (var item in storage.GetAllItems())
+                {
+                    if (item == null || !ShouldDepositItem(item)) continue;
+                    var rec = BaseBest(item);
+                    if (rec?.Chest == null || _visitedChests.Contains(rec.Chest)) continue;
+                    votes[rec.Chest] = (votes.TryGetValue(rec.Chest, out int v) ? v : 0) + 1;
+                }
+                var pick = votes.Where(kv => IsReachable(kv.Key.transform.position)).OrderByDescending(kv => kv.Value).ThenBy(kv => DistanceTo(kv.Key.transform.position)).Select(kv => kv.Key).FirstOrDefault();
+                if (pick != null)
+                {
+                    FiresCore.Logging.FiresLogger.LogDebug($"[ChestDeposit] {Companion.companionName} heads for {pick.m_name} at ({pick.transform.position.x:0}, {pick.transform.position.z:0}): best home for {votes[pick]} item stack(s) by the sorting rules");
+                    return pick;
+                }
+            }
+
             Container bestChest = null;
             int bestScore = -1;
             float bestDistance = float.MaxValue;
@@ -784,8 +834,19 @@ namespace FiresCore.Npc.IdleBehaviors
                     continue;
                 }
                 
-                Container bestChest = FindBestChestForItem(item);
-                
+                // 0.2.867: the base-wide best chest first; an item whose best chest is elsewhere (not yet visited) waits for that trip
+                string rule;
+                Container bestChest = null;
+                var baseRec = BaseBest(item);
+                if (baseRec?.Chest != null && _clusterChests.Contains(baseRec.Chest)) { bestChest = baseRec.Chest; rule = RuleOf(baseRec); }
+                else if (baseRec?.Chest != null && !_visitedChests.Contains(baseRec.Chest) && baseRec.Chest != _targetChest && IsReachable(baseRec.Chest.transform.position))
+                {
+                    LogVerbose($"DepositItemsToCluster: {item.m_shared?.m_name} belongs in {baseRec.Chest.m_name} ({RuleOf(baseRec)}); kept for that trip");
+                    skippedItems++;
+                    continue;
+                }
+                else { bestChest = FindBestChestForItem(item); rule = bestChest != null && ChestContainsMatchingItem(bestChest.GetInventory(), item) ? "already holds it (fallback)" : "nearest with space (fallback)"; }
+
                 if (bestChest == null)
                 {
                     LogVerbose($"DepositItemsToCluster: No chest found for {item.m_shared?.m_name}");
@@ -810,6 +871,14 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 totalDeposited++;
                 string itemName = Localization.instance.Localize(item.m_shared?.m_name ?? "Item");
+                var cp = bestChest.transform.position;
+                FiresCore.Logging.FiresLogger.LogDebug($"[ChestDeposit] {Companion.companionName} {itemName} x{moved} -> {Localization.instance.Localize(bestChest.m_name)} at ({cp.x:0}, {cp.z:0}): rule {rule}");
+                // 0.2.917 why-lines: consumer-near placement and a deposit made through a storage terminal
+                if (baseRec?.Chest == bestChest && baseRec.Reason == "consumer-near" && baseRec.NearestRelevantStation != null)
+                    FiresCore.Logging.FiresLogger.LogDebug($"[Deposit] {itemName} -> chest ({cp.x:0}, {cp.z:0}) {Vector3.Distance(cp, baseRec.NearestRelevantStation.Position):0.0} m from {Localization.instance.Localize(baseRec.NearestRelevantStation.Key)} (rule: consumer-near)");
+                var depTerm = Core.InteractionPointHelper.TerminalUsedFor(_targetChest);
+                if (depTerm != null)
+                    FiresCore.Logging.FiresLogger.LogDebug($"[Chore] {Companion.companionName} used storage terminal at ({depTerm.transform.position.x:0}, {depTerm.transform.position.z:0}): put {itemName} x{moved} (into chest ({cp.x:0}, {cp.y:0}, {cp.z:0}))");
                 _depositedItemCounts.TryGetValue(itemName, out int depositedSoFar);
                 _depositedItemCounts[itemName] = depositedSoFar + moved;
                 LogVerbose($"DepositItemsToCluster: Deposited {moved}x {item.m_shared?.m_name}");
@@ -830,7 +899,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var claimed = new List<Container>();
             // The chest this run is FOR is always in the cluster (already claimed in UpdateDepositing). The nearby search only
             // returns player-built storage (a creator on the chest's ZDO), so a chest without one - spawned by a test, or by
-            // another mod - was never deposited into: R60 "deposited 0 item(s) across 0 chest(s)" 5 m from a writable chest.
+            // another mod - was never deposited into, even with a writable chest close by.
             if (_targetChest != null) claimed.Add(_targetChest);
             int found = 0, refused = 0;
             foreach (var chest in ChestHelper.FindNearbyChests(_targetChest.transform.position, ChestClusterRange))
@@ -840,9 +909,19 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (ChestHelper.TryClaimForWrite(chest, Companion)) claimed.Add(chest);
                 else refused++;
             }
-            Debug.Log($"[ChestDeposit] {Companion.companionName} cluster round {_targetChest.m_name} ({ChestClusterRange:0} m): "
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChestDeposit] {Companion.companionName} cluster round {_targetChest.m_name} ({ChestClusterRange:0} m): "
                       + $"{found} nearby player-built, {refused} refused, {claimed.Count} to fill");
             return claimed;
+        }
+
+        private static string RuleOf(SmartStorageOrganizer.ChestRecommendation r)
+        {
+            if (r == null) return "none";
+            if (r.Reason == "chest tag") return "chest tag";
+            if (r.Reason == "consumer-near" && r.NearestRelevantStation != null)
+                return $"consumer-near, {Vector3.Distance(r.Chest.transform.position, r.NearestRelevantStation.Position):0.0} m from {Localization.instance?.Localize(r.NearestRelevantStation.Key) ?? r.NearestRelevantStation.Key}";
+            if (r.NearestRelevantStation != null) return $"category + station ({r.Reason})";
+            return r.HasMatchingItems ? $"already holds ({r.Reason})" : $"fallback ({r.Reason})";
         }
 
         private Container FindBestChestForItem(ItemDrop.ItemData item)

@@ -17,12 +17,28 @@ namespace FiresCore.Help
             _registered = true;
 
             HelpRegistry.RegisterSection(ModId, "", "What Fires Core Provides", 0, BuildOverview);
-            HelpRegistry.RegisterSection(ModId, "Interface", "F8 Config Window", 10, BuildConfigWindow);
+            HelpRegistry.RegisterSection(ModId, "Interface", "F1 Config Window", 10, BuildConfigWindow);
             HelpRegistry.RegisterSection(ModId, "Interface", "Context Menu & Group HUD", 11, BuildContextAndHud);
+            HelpRegistry.RegisterSection(ModId, "Movement", "Flying", 15, BuildFlying);
             HelpRegistry.RegisterSection(ModId, "Building", "Environment Box", 20, BuildEnvironmentBox);
             HelpRegistry.RegisterSection(ModId, "Server (Admin)", "Config Push / Pull / Delete", 30, BuildConfigCommands, adminOnly: true);
             HelpRegistry.RegisterSection(ModId, "Server (Admin)", "Core Config Reference", 31, BuildConfigReference, adminOnly: true);
             HelpRegistry.RegisterSection(ModId, "Commands (Admin)", "FX & Asset Dump Commands", 40, BuildDumpCommands, adminOnly: true);
+        }
+
+        // Flight presets. The lines come from the shared FlightPresets, so FiresMounts' panel and Valcast say the same.
+        private static void BuildFlying(HelpContentWriter writer)
+        {
+            writer.Header("Flying");
+            writer.Paragraph("Flying mounts (FiresMounts) and possessed flyers share one flight controller. [Flight] Preset in the F1 config window picks " +
+                "how it steers; Auto lets each flyer fly its own natural way.");
+            Character flyer = FiresCore.Possession.PossessionApi.Current?.Creature;
+            var preset = FiresPossession.FlightPresets.Resolve(FiresCore.Flight.FlightKeys.Preset, flyer);
+            writer.SubHeader(FiresPossession.FlightPresets.Name(FiresCore.Flight.FlightKeys.Preset)
+                + (preset != FiresCore.Flight.FlightKeys.Preset ? " (" + FiresPossession.FlightPresets.Name(preset) + ")" : ""));
+            foreach (string line in FiresPossession.FlightPresets.Hints(preset)) writer.Bullet(line);
+            writer.Bullet(FiresCore.Flight.FlightKeys.KeysLine());
+            writer.Bullet("No preset binds LMB / MMB / RMB (the attacks), Alt + wheel (attack pick) or E.");
         }
 
         private static void BuildOverview(HelpContentWriter writer)
@@ -31,13 +47,15 @@ namespace FiresCore.Help
             writer.Paragraph("FiresUnifiedCore is the shared foundation every Fires mod builds on. Most of it " +
                 "is invisible plumbing — networking, storage, the companion engine, admin sync — but a few " +
                 "pieces are things you use directly:");
-            writer.Bullet("F8 — the Fires config window, covering EVERY Fires mod's settings in one place.");
+            writer.Bullet("F1 (F8 when another config manager is installed) — the Fires config window, covering EVERY Fires mod's settings in one place.");
             writer.Bullet("This help panel — the '? Help' button on the pause (Esc) menu. Every [-] " +
                 "subheading in it is collapsible: click the heading to fold or unfold it, and your " +
                 "layout is remembered per section for the session.");
-            writer.Bullet("Hold Alt+Shift + right-click — the context menu on companions, chests, and more.");
+            writer.Bullet("Hold Alt+Shift + right-click — the context menu on companions, chests, and more (OFF by default: turn on ContextMenu / Enabled in the config window).");
             writer.Bullet("The Group HUD under the minimap — status bars for companions traveling with you.");
             writer.Bullet("The Environment Box build piece — custom weather/environment zones.");
+            writer.Bullet("The Fires hub — with UI / Fires UI override on, F1 opens the hub instead: Player (stats, appearance, " +
+                "classes, leaderboard, achievements), Info and Config settings in one window.");
             writer.Divider();
             writer.Paragraph("Each Fires mod documents its own features under its own heading in this panel's " +
                 "sidebar. If you're looking for companions, building tools, water, or minigames, jump to " +
@@ -46,12 +64,12 @@ namespace FiresCore.Help
 
         private static void BuildConfigWindow(HelpContentWriter writer)
         {
-            writer.Header("F8 Config Window");
+            writer.Header("F1 Config Window");
             writer.Paragraph("One window for every Fires mod's settings — no per-mod config editing needed.");
             writer.Divider();
 
             writer.SubHeader("Basics");
-            writer.Bullet("Press F8 to open (rebindable: 00 - Config UI / 00 Hotkey). Esc closes.");
+            writer.Bullet("Press F1 to open (F8 when another config manager is installed; rebindable: 00 - Config UI / 00 Open Key). Esc closes.");
             writer.Bullet("va_config — console fallback that toggles the same window.");
             writer.Bullet("Left side lists every Fires mod; click one to expand its section index.");
             writer.Bullet("Search filters across ALL mods — key, section, and description text.");
@@ -67,8 +85,8 @@ namespace FiresCore.Help
             writer.Divider();
 
             writer.SubHeader("Notes");
-            writer.Bullet("00 - Config UI section styles the window itself (font, size, opacity, accent color).");
-            writer.Bullet("05 ShowAllPlugins widens the list to every installed plugin, not just Fires mods.");
+            writer.Bullet("Show advanced (the toggle in the window header) shows the deeper tuning settings; off, each mod lists its keybinds and basic settings only.");
+            writer.Bullet("The Fires toggle in the window header narrows the list to Fires mods only (off: every installed plugin).");
             writer.Bullet("Server-synced settings show the server's value; on locked servers only admins can " +
                 "change them.");
             writer.Bullet("va_config_dump — log every discovered config entry (for debugging).");
@@ -78,7 +96,7 @@ namespace FiresCore.Help
         {
             writer.Header("Context Menu & Group HUD");
             writer.SubHeader("Context Menu");
-            writer.Paragraph("Hold Alt+Shift and right-click an object to open its context menu. What appears " +
+            writer.Paragraph("Turn on ContextMenu / Enabled first (it is OFF by default). Then hold Alt+Shift and right-click an object to open its context menu. What appears " +
                 "depends on the target — companions offer orders ('Go here', 'Sit here', 'Fish here', " +
                 "'Move here'), chests offer 'Deposit items' and 'Organize', and other Fires mods add " +
                 "their own entries (wayshrine admin options, environment boxes, and more).");
@@ -92,7 +110,7 @@ namespace FiresCore.Help
                 "party members — with name, distance, and health/stamina/eitr bars.");
             writer.Bullet("GroupHud.ShowGroupHud — toggle it");
             writer.Bullet("GroupHud.MaxRowsPerColumn / Columns — layout (rows before scrolling; 1 or 2 columns)");
-            writer.Bullet("Drag it to reposition; DefaultPosX/Y set where it starts.");
+            writer.Bullet("Drag it to reposition (Esc menu > Edit layout); your spot is saved.");
         }
 
         private static void BuildEnvironmentBox(HelpContentWriter writer)
@@ -152,11 +170,6 @@ namespace FiresCore.Help
             writer.Bullet("General.ServerAuthority — the ConfigSync lock; server values override clients [lock]");
             writer.Bullet("General.VerboseLogging — detailed Core logs");
             writer.Bullet("Debug.CompanionFollowDiagnostics — throttled companion follow telemetry");
-            writer.AdminDivider();
-
-            writer.SubHeader("HeightmapOverride [Synced]");
-            writer.Bullet("Enabled — lift Valheim's ±8m terrain-edit clamp");
-            writer.Bullet("MaxHeight / MinHeight — how far terrain can be raised or dug (up to ±1000)");
             writer.AdminDivider();
 
             writer.SubHeader("Companions engine [Synced]");

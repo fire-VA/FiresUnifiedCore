@@ -87,7 +87,7 @@ namespace FiresCore.Logging
             if (method != null && !_diagnosticEmitted)
             {
                 _diagnosticEmitted = true;
-                Debug.Log($"{SummaryPrefix} UnityLogSuppressionPatch wired to {UnityLogSourceTypeName}.{CallbackMethodName} - Unity log noise will be filtered.");
+                if (FiresCore.Logging.FiresLogLevel.DebugOn) Debug.Log($"{SummaryPrefix} UnityLogSuppressionPatch wired to {UnityLogSourceTypeName}.{CallbackMethodName} - Unity log noise will be filtered.");
             }
             else if (method == null && !_diagnosticEmitted)
             {
@@ -134,6 +134,7 @@ namespace FiresCore.Logging
         {
             try
             {
+                if (!BepInExLogSuppressionPatch.QuietOtherModsOn) return true;   // Only with [Logging] QuietOtherMods on
                 if (VerbosePassThrough()) return true;
                 if (string.IsNullOrEmpty(message)) return true;
                 return !ShouldSuppress(message, type);

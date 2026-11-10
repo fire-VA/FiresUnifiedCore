@@ -36,7 +36,7 @@ namespace FiresCore.Dungeon
                 if (SpawnVisualClone(prefab, marker) != null) placed++;
             }
             if (placed > 0 || missing > 0)
-                Debug.Log($"{spec.LogTag} prop dresser: {placed} visual prop(s) placed" +
+                FiresCore.Logging.FiresLogger.LogDebug($"{spec.LogTag} prop dresser: {placed} visual prop(s) placed" +
                           (missing > 0 ? $", {missing} marker prefab(s) not found in ZNetScene" : "") + ".");
         }
 

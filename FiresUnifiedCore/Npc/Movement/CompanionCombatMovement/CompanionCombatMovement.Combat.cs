@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using FiresCore.Npc.Combat;
 using FiresCore.Npc.Movement;
@@ -16,6 +16,7 @@ namespace FiresCore.Npc
         // Track when we last logged critical stamina retreat (to avoid spam)
         private float _lastCriticalStaminaLogTime = -10f;
         private const float CriticalStaminaLogInterval = 5f;
+        private const float BackOffMetres = 6f;
 
         private void UpdateCombatState()
         {
@@ -281,7 +282,9 @@ namespace FiresCore.Npc
         private void OnDamageTaken(float damage, Character attacker)
         {
             _lastDamageTime = Time.time;
-            _staminaManager?.ForceRecovery();
+            // [ghost] 11-02 (Fire: "just stands there"; Haldor 53.8 of 65.9 s no-swing, 0 swings): a hit no longer forces recovery. It blocked swings until
+            // 85 % stamina whatever the stamina was. Recovery now comes from stamina alone (StaminaManager).
+            FiresCore.Logging.FiresLogger.LogDebug($"[CombatHit] {_character?.m_name}: hit taken, no forced recovery (stamina {(_staminaManager != null ? _staminaManager.GetStaminaPercent() * 100f : -1f):0} %)");
 
             if (_isInCombat)
             {
@@ -330,7 +333,7 @@ namespace FiresCore.Npc
                 {
                     var directive = coordinator.GetDirective(_companion);
                     // HasFlank, not FlankAngle != 0: 0° is a real angle (the first companion used to charge straight in), and a
-                    // tank keeps its intercept/taunt directive while holding the front flank spot (0.2.201).
+                    // tank keeps its intercept/taunt directive while holding the front flank spot.
                     if (directive != null && directive.IsValid && directive.HasFlank)
                     {
                         _combatHandler.SetFlankAngle(directive.FlankAngle);
@@ -380,21 +383,32 @@ namespace FiresCore.Npc
                 }
             }
             
-            if (_staminaManager != null && _staminaManager.IsInCriticalRecovery())
+            // No live foe: nothing to back off from, so the no-target handling below clears the fight, the same as at normal stamina.
+            var backOffFrom = _committedTarget ?? _currentTarget;
+            if (_staminaManager != null && _staminaManager.IsInCriticalRecovery() && backOffFrom != null && !backOffFrom.IsDead())
             {
                 _hasRangedMovementRequest = false;
-                
-                var owner = _companion?.GetOwner();
-                if (owner != null)
+
+                // [ghost] 11-02 fix 4 (Fire): back off near the foe, never run to the owner. Past BackOffMetres it stands and recovers.
                 {
-                    Vector3 retreatDir = (owner.transform.position - transform.position).normalized;
-                    retreatDir.y = 0;
-                    
+                    Vector3 toFoe = backOffFrom.transform.position - transform.position;
+                    toFoe.y = 0;
+                    if (toFoe.magnitude >= BackOffMetres)
+                    {
+                        SetIntent(MovementIntent.Idle);
+                        _hasActiveCommitment = false;
+                        SetMoveDirSafe(Vector3.zero);
+                        FaceMovementDirection(toFoe.normalized);
+                        return;
+                    }
+
+                    Vector3 retreatDir = -toFoe.normalized;
                     if (_terrainAwareness != null)
                     {
-                        retreatDir = _terrainAwareness.GetSafeMovementDirection(retreatDir);
+                        retreatDir = _terrainAwareness.GetSafeRetreatDirection(toFoe.normalized);
                     }
-                    
+
+
                     SetIntent(MovementIntent.CombatRetreat);
                     _committedMoveDirection = retreatDir;
                     _targetMoveDirection = retreatDir;
@@ -412,30 +426,13 @@ namespace FiresCore.Npc
                     }
                     _staminaManager.OnBlockEnded();
                     
-                    if ((VerboseLogging || StaminaManager.CombatFlowLogging) && 
-                        Time.time - _lastCriticalStaminaLogTime >= CriticalStaminaLogInterval)
+                    if (Time.time - _lastCriticalStaminaLogTime >= CriticalStaminaLogInterval)
                     {
                         _lastCriticalStaminaLogTime = Time.time;
-                        Debug.Log($"[CompanionCombatMovement] {_companion?.companionName} CRITICAL STAMINA - retreating to owner! No combat actions allowed.");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CombatStamina] {_companion?.companionName}: low stamina {_staminaManager.GetStaminaPercent() * 100f:0} %, backing off from {backOffFrom.m_name} at {toFoe.magnitude:0.0} m");
                     }
                 }
-                else
-                {
-                    var retreatFromTarget = _committedTarget ?? _currentTarget;
-                    if (retreatFromTarget != null)
-                    {
-                        Vector3 retreatDir = (transform.position - retreatFromTarget.transform.position).normalized;
-                        retreatDir.y = 0;
-                        
-                        SetIntent(MovementIntent.CombatRetreat);
-                        _committedMoveDirection = retreatDir;
-                        _targetMoveDirection = retreatDir;
-                        SetMoveDirSafe(retreatDir);
-                        SetWalkRunSafe(false, true);
-                        FaceMovementDirection(retreatDir);
-                    }
-                }
-                
+
                 return;
             }
             
@@ -699,6 +696,14 @@ namespace FiresCore.Npc
             if (IsTargetFleeing(_committedTarget) && distToTarget > attackRange * 1.5f)
             {
                 return (MovementIntent.CombatChase, approachCommitmentDuration * 1.5f);
+            }
+
+            // In reach but still on the owner-foe line (off its flank slot): keep walking to the slot (the approach path is the one
+            // that steers round to it); swings are never cancelled (isAttacking returned above)
+            if (distToTarget <= attackRange * 1.2f && _combatHandler != null && _committedTarget != null
+                && _combatHandler.OffFlankSlot(_committedTarget.transform.position, _committedTarget as Character))
+            {
+                return (MovementIntent.CombatApproach, 0.4f);
             }
 
             if (distToTarget <= attackRange * 1.2f)

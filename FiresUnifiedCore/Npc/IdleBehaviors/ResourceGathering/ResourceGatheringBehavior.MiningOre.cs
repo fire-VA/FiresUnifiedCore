@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 
@@ -14,15 +14,63 @@ namespace FiresCore.Npc.IdleBehaviors
         /// or MineRock_Tin) that yields one of <paramref name="wantedDrops"/> and needs no higher tier than
         /// <paramref name="maxToolTier"/>, so an unmineable vein (1.0 goldvein, tier 5) never blocks the ones that can be mined.
         /// </summary>
+        // 0.2.864 (Fire 10-27: "still not a lot of mining happening"): what the last ore search saw and skipped, for the "[Chore] pick" line
+        private struct OreScan { public int Seen, Unreached, NoProgress, NotWanted, NotPick, Tier, Wanted0, Infinite, Candidates; public float Radius; public string NotWantedRocks, Wanted;   // 0.2.902: + Infinite (IH 1e30 health)
+            public OreScan(int a, int b, int c, int d, int e, int f, int g, float r) { Seen = a; Unreached = b; NoProgress = c; NotWanted = d; NotPick = e; Tier = f; Wanted0 = g; Radius = r; } }
+        private OreScan _oreScan;
+        private string OreWhy(bool found)
+        {
+            var s = _oreScan;
+            if (s.Wanted0 > 0) return "skipped: no ore wanted (nothing smeltable listed)";
+            string counts = $"{s.Seen} deposit(s) within {s.Radius:0} m of home; skipped {s.Unreached} unreached lately, {s.NoProgress} taking no damage, {s.NotWanted} not ore wanted now{(s.NotWantedRocks != null ? $" (ore rocks among them: {s.NotWantedRocks}; wanted: {s.Wanted})" : "")}, {s.NotPick} not pickaxe work, {s.Tier} beyond its pick tier"
+                + $", {s.Infinite} with infinite health{(s.Infinite > 0 ? " (Infinity Hammer 'Overwrite health' at placement; fap_fix_resource_health resets them)" : "")}"   // 0.2.926: always its own bucket (lead)
+                + $", {s.Candidates} mineable{(s.Seen - (s.Unreached + s.NoProgress + s.NotWanted + s.NotPick + s.Tier + s.Infinite + s.Candidates) != 0 ? $", {s.Seen - (s.Unreached + s.NoProgress + s.NotWanted + s.NotPick + s.Tier + s.Infinite + s.Candidates)} UNCOUNTED" : "")}";   // 0.2.926: the buckets add up to Seen
+            return found ? "picked (" + counts + ")" : (s.Seen == 0 ? $"skipped: no deposit in range ({s.Radius:0} m of home)" : "skipped: none mineable (" + counts + ")");
+        }
+
+        private static readonly HashSet<string> s_one = new HashSet<string>();
+        private static int RankOf(GameObject target, ICollection<string> wanted)
+        {
+            if (!(wanted is IList<string> list) || list.Count < 2) return 0;
+            for (int i = 0; i < list.Count; i++) { s_one.Clear(); s_one.Add(list[i]); if (ResourceDataHelper.YieldsAnyOf(target, s_one)) return i; }
+            return list.Count;
+        }
+
+        // 0.2.929 (Fire "Always mine when free", lowest bars first): the ores the base's smelters take, ordered by how few of their bar the base
+        // holds (bag + chests within 60 m of home); "[Chore] mining order" at Debug when the order changes
+        private string _lastOreOrder;
+        private List<string> OreRankByBars(Vector3 home)
+        {
+            var bars = new Dictionary<string, int>();
+            foreach (var sm in AI.ChoreBrain.SmeltersNear(home, 60f, Companion != null ? Companion.GetComponent<Character>() : null))
+            {
+                if (sm == null || sm.m_conversion == null || sm.m_maxFuel <= 0) continue;   // fuel-burning smelters (not kilns / windmills)
+                foreach (var cv in sm.m_conversion)
+                {
+                    if (cv?.m_from == null || cv.m_to == null) continue;
+                    string ore = cv.m_from.gameObject.name;
+                    if (bars.ContainsKey(ore)) continue;
+                    bars[ore] = FiresCore.Npc.Core.ContainerRegistry.GetTotalItemCount(home, cv.m_to.gameObject.name, 60f);
+                }
+            }
+            var order = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Select(System.Linq.Enumerable.OrderBy(bars, kv => kv.Value), kv => kv.Key));
+            string say = string.Join(", ", System.Linq.Enumerable.Select(order, o => $"{o} ({bars[o]} bar(s))"));
+            if (say != _lastOreOrder) { _lastOreOrder = say; FiresCore.Logging.FiresLogger.LogDebug($"[Chore] mining order {Companion?.companionName}: always mine when free, lowest bars first: {say}"); }
+            return order;
+        }
+
         private GameObject FindNearbyOreDeposit(Vector3 position, float radius, ICollection<string> wantedDrops, int maxToolTier)
         {
-            // 0.2.274: no pick at all no longer ends the search; a node is offered when one can be crafted from base stock.
-            if (wantedDrops.Count == 0) return null;
+            // No pick at all no longer ends the search; a node is offered when one can be crafted from base stock.
+            _oreScan = new OreScan(0, 0, 0, 0, 0, 0, 0, radius);   // 0.2.864: per-search skip counts for the "[Chore] pick" line
+            _oreScan.Wanted = string.Join("/", System.Linq.Enumerable.Take(wantedDrops, 8));   // 0.2.905: what this search wanted
+            if (wantedDrops.Count == 0) { _oreScan.Wanted0 = 1; return null; }
 
             var colliders = Physics.OverlapSphere(position, radius);
             float closestDist = float.MaxValue;
+            int closestRank = int.MaxValue;
             GameObject closest = null;
-            // 0.2.274: the nearest node beyond the best pick, offered when a pick for it can be crafted from base stock.
+            // The nearest node beyond the best pick, offered when a pick for it can be crafted from base stock.
             float beyondDist = float.MaxValue;
             GameObject beyond = null;
             int beyondTier = 0;
@@ -36,23 +84,38 @@ namespace FiresCore.Npc.IdleBehaviors
                     ?? (Component)collider.GetComponentInParent<MineRock>()
                     ?? collider.GetComponentInParent<Destructible>();
                 if (depositComponent == null) continue;
-                
+
                 var target = depositComponent.gameObject;
                 if (!processed.Add(target)) continue;
-                if (IsUnreached(target)) continue;   // 0.2.268: a run timed out short of it lately
+                // 0.2.926 (lead, round #34: "233 deposit(s) ... 49 of 233 explained"): counted once per DEPOSIT (was once per collider, so a
+                // rock with several colliders counted several times and the skip buckets never added up)
+                _oreScan.Seen++;
+                if (IsUnreached(target)) { _oreScan.Unreached++; continue; }   // A run timed out short of it lately
+                if (FiresCore.World.ResourceHealth.Skip(target, "mining")) { _oreScan.Infinite++; continue; }   // 0.2.902: never pick a rock no hit can break
+                if (NoProgressShared(target)) { _oreScan.NoProgress++; continue; }   // 0.2.845: any companion found it takes no damage
 
-                if (!ResourceDataHelper.YieldsAnyOf(target, wantedDrops)) continue;
+                if (!ResourceDataHelper.YieldsAnyOf(target, wantedDrops))
+                {
+                    _oreScan.NotWanted++;
+                    // 0.2.905 (round 27: "none mineable" with ore rocks in range): name the ore rocks left out because their ore is not wanted now
+                    if ((target.GetComponent<MineRock5>() != null || target.GetComponent<MineRock>() != null || Utils.GetPrefabName(target).StartsWith("MineRock"))
+                        && (_oreScan.NotWantedRocks == null || _oreScan.NotWantedRocks.Length < 120)
+                        && (_oreScan.NotWantedRocks == null || !_oreScan.NotWantedRocks.Contains(Utils.GetPrefabName(target))))
+                        _oreScan.NotWantedRocks = (_oreScan.NotWantedRocks == null ? "" : _oreScan.NotWantedRocks + ", ") + Utils.GetPrefabName(target);
+                    continue;
+                }
                 var deposit = ResourceDataHelper.GetResourceData(target);
-                if (deposit == null || deposit.RequiredTool != ResourceDataHelper.ToolType.Pickaxe) continue;
+                if (deposit == null || deposit.RequiredTool != ResourceDataHelper.ToolType.Pickaxe) { _oreScan.NotPick++; continue; }
                 if (deposit.MinToolTier > maxToolTier)
                 {
+                    _oreScan.Tier++;
                     float beyondHere = Vector3.Distance(position, target.transform.position);
                     if (CanCraftToolFromStock(ResourceDataHelper.ToolType.Pickaxe, deposit.MinToolTier))
                     {
                         if (beyondHere < beyondDist) { beyondDist = beyondHere; beyond = target; beyondTier = deposit.MinToolTier; }
                         continue;
                     }
-                    // 0.2.268 ([lead]: say when a node is beyond the best pick it can get; the tier is the runtime prefab's).
+                    // Say when a node is beyond the best pick it can get; the tier is the runtime prefab's.
                     int id = target.GetInstanceID();
                     if (!_tierSkipSaid.TryGetValue(id, out float said) || Time.time - said >= UnreachedSkipSeconds)
                     {
@@ -65,9 +128,13 @@ namespace FiresCore.Npc.IdleBehaviors
                     continue;
                 }
                 
+                _oreScan.Candidates++;   // 0.2.926
                 float dist = Vector3.Distance(position, target.transform.position);
-                if (dist < closestDist)
+                // 0.2.929: an ordered list (OreRankByBars: lowest bars first) ranks by its order, then the nearest; a set ranks all alike
+                int rank = RankOf(target, wantedDrops);
+                if (rank < closestRank || (rank == closestRank && dist < closestDist))
                 {
+                    closestRank = rank;
                     closestDist = dist;
                     closest = target;
                 }
@@ -106,7 +173,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             if (_targetResource == null || _targetResource.GameObject == null)
             {
-                SayChoreHits("broke");
+                SayChoreHits("broke"); _runBroke++;   // 0.2.902
                 // Resource was destroyed - check if it was a stump
                 if (_wasTargetingStump)
                 {
@@ -134,6 +201,8 @@ namespace FiresCore.Npc.IdleBehaviors
                     return false;
                 }
                 
+                // 0.2.890 (Fire 10-27): in a mining camp a mined-out rock gets a mineral seed planted near it (Farming skill)
+                if (IdleBehavior != null && IdleBehavior.HasWorkZone && IdleBehavior.WorkZoneFocus == "mine") ZoneReplant.AfterHarvest(Companion, IdleBehavior, true, _targetPosition);
                 _resourcesGathered++;
                 SetPhase(GatherPhase.WaitingForDrops);
                 return false;
@@ -141,7 +210,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             if (_targetResource.Destructible == null)
             {
-                SayChoreHits("broke");
+                SayChoreHits("broke"); _runBroke++;   // 0.2.902
                 // Destructible component is gone but GameObject still exists (rare case)
                 if (_wasTargetingStump)
                 {
@@ -214,7 +283,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 else
                 {
-                    // Normal movement - try to reach the target (0.2.271: a rock's nearest face, from just off it)
+                    // Normal movement - try to reach the target (a rock's nearest face, from just off it)
                     float dist = GatherReach();
                     if (RockUnwedge(dist)) return false;
                     if (dist > AttackRange)
@@ -335,7 +404,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 yield break;
             }
 
-            // 0.2.271: a fractured rock is struck at its nearest standing area (see StrikeMineRock5).
+            // A fractured rock is struck at its nearest standing area (see StrikeMineRock5).
             if (_targetResource.MineRock5 != null)
             {
                 StrikeMineRock5(weapon);
@@ -343,7 +412,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             Collider hitCollider = null;
-            // 0.2.271: any other rock is struck at its nearest face, not its root.
+            // Any other rock is struck at its nearest face, not its root.
             Vector3 aim = GatherAim();
             Vector3 hitPoint = aim;
             Vector3 hitDir = (hitPoint - Transform.position).normalized;
@@ -454,14 +523,14 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"[ResourceGathering] {Companion.companionName} playing animation: {trigger}");
         }
                 
-        // 0.2.255 (Fire's homestead test): one always-on line per node / tree / stump the companion worked,
+        // One always-on line per node / tree / stump the companion worked,
         // with its hit count, when it breaks, when the companion moves to another target, or when gathering ends.
         private GameObject _choreObject;
         private string _choreName;
         private ResourceDataHelper.ToolType _choreTool;
         private int _choreHits;
 
-        // 0.2.268 ([lead]: the runtime tier, not a guess): one line per node prefab per session at its first hit.
+        // The runtime tier, not a guess: one line per node prefab per session at its first hit.
         private static readonly HashSet<string> s_tierSaid = new HashSet<string>();
 
         private void CountChoreHit(ItemDrop.ItemData weapon)
@@ -473,7 +542,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (s_tierSaid.Add(prefab))
                     AI.ChoreBrain.ChoreDone(Companion?.companionName, _targetResource.RequiredTool == ResourceDataHelper.ToolType.Pickaxe ? "mining" : "wood",
                         $"first hit on {prefab}: it needs tool tier {_targetResource.MinToolTier}; hitting with {(weapon?.m_dropPrefab != null ? weapon.m_dropPrefab.name : weapon?.m_shared?.m_name ?? "bare hands")} (tool tier {weapon?.m_shared?.m_toolTier ?? 0})");
-                // 0.2.268: only a node already hit has a "moved on" line (HR3: the first hit on a node printed "0 hits, never reached it").
+                // Only a node already hit has a "moved on" line.
                 if (_choreObject != null && _choreHits > 0) SayChoreHits("left standing, moved on");
                 _choreHits = 0;
                 _choreObject = _targetResource.GameObject;
@@ -481,13 +550,77 @@ namespace FiresCore.Npc.IdleBehaviors
                 _choreTool = _targetResource.RequiredTool;
             }
             _choreHits++;
+            RunSwing(_choreName, _choreTool == ResourceDataHelper.ToolType.Pickaxe);   // 0.2.902
+            // [ghost] 0.2.839 (Fire's log: "Iron vein: 76 hit(s), left standing, gathering cancelled" - a node whose ZDO never changed
+            // under 76 tier-3 hits, while the same spot ran a terrain-op storm): every NoProgressHits hits the node's ZDO must have
+            // changed (health / area health / drops); one that did not is skipped for 10 min instead of being hit until the timeout.
+            var zdo = _choreObject != null ? _choreObject.GetComponentInParent<ZNetView>()?.GetZDO() : null;
+            if (zdo != null)
+            {
+                if (_choreHits == 1) _choreRev = zdo.DataRevision;
+                else if (_choreHits % NoProgressHits == 0)
+                {
+                    if (zdo.DataRevision == _choreRev)
+                    {
+                        _unreachedUntil[_choreObject.GetInstanceID()] = Time.time + UnreachedSkipSeconds;
+                        NoteNoProgress(_choreObject);
+                        _runNoDamage++;   // 0.2.902
+                        SayChoreHits($"no damage in {NoProgressHits} hits (its data never changed), skipped for {UnreachedSkipSeconds / 60f:0} min");
+                        _choreHits = 0; _choreObject = null;
+                        SetPhase(GatherPhase.Complete);
+                        return;
+                    }
+                    _choreRev = zdo.DataRevision;
+                }
+            }
+        }
+        private const int NoProgressHits = 10;
+
+        // [ghost] 0.2.845 (Fire: "no mining is happening, no smelting is happening"; his log: every companion picked a MineRock_Iron
+        // ~11 m from home - nearer than the copper - broke its first stage in 4 hits, then "no damage in 10 hits ... skipped for 10 min";
+        // the skip was per companion and per node, so the next companion / the next iron node was picked again and the copper the smelter
+        // could use was never reached): a node that takes no damage is skipped for EVERY companion, and a prefab that does it twice is
+        // skipped for all its nodes for the same 10 min, so the next nearest deposit (copper / tin) gets mined.
+        private static readonly Dictionary<int, float> s_noProgressNode = new Dictionary<int, float>();
+        private static readonly Dictionary<string, int> s_noProgressCount = new Dictionary<string, int>();
+        private static readonly Dictionary<string, float> s_noProgressPrefab = new Dictionary<string, float>();
+
+        private static void NoteNoProgress(GameObject node)
+        {
+            if (node == null) return;
+            s_noProgressNode[node.GetInstanceID()] = Time.time + UnreachedSkipSeconds;
+            string prefab = Utils.GetPrefabName(node);
+            int n = s_noProgressCount.TryGetValue(prefab, out int c) ? c + 1 : 1;
+            s_noProgressCount[prefab] = n;
+            if (n >= 2)
+            {
+                s_noProgressPrefab[prefab] = Time.time + UnreachedSkipSeconds;
+                s_noProgressCount[prefab] = 0;
+                FiresCore.Logging.FiresLogger.LogDebug($"[Chores] mining: every {prefab} skipped for {UnreachedSkipSeconds / 60f:0} min (two of them took no damage); nearest other deposits next");
+            }
         }
 
-        // 0.2.268 (HR3: the yard's mudpile chased every run, "never reached it"): nodes and trees a run timed out short of, per companion.
+        /// <summary>0.2.905 (lead): after fap_fix_resource_health reset anything, the "took no damage" skips from before are stale.</summary>
+        internal static int ClearNoProgressSkips()
+        {
+            int n = s_noProgressNode.Count + s_noProgressPrefab.Count;
+            s_noProgressNode.Clear(); s_noProgressPrefab.Clear(); s_noProgressCount.Clear();
+            return n;
+        }
+
+        private static bool NoProgressShared(GameObject node)
+        {
+            if (node == null) return false;
+            if (s_noProgressNode.TryGetValue(node.GetInstanceID(), out float until) && Time.time < until) return true;
+            return s_noProgressPrefab.TryGetValue(Utils.GetPrefabName(node), out float p) && Time.time < p;
+        }
+        private uint _choreRev;
+
+        // Nodes and trees a run timed out short of, per companion.
         private const float UnreachedSkipSeconds = 600f;
         private readonly Dictionary<int, float> _unreachedUntil = new Dictionary<int, float>();
         private readonly Dictionary<int, float> _tierSkipSaid = new Dictionary<int, float>();
-        private readonly Dictionary<int, float> _goingForSaid = new Dictionary<int, float>();   // 0.2.274: "going for … crafted from base stock", once a minute per node
+        private readonly Dictionary<int, float> _goingForSaid = new Dictionary<int, float>();   // "going for … crafted from base stock", once a minute per node
 
         private bool IsUnreached(GameObject target) =>
             target != null && _unreachedUntil.TryGetValue(target.GetInstanceID(), out float until) && Time.time < until;
@@ -497,16 +630,16 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_choreHits > 0)
                 AI.ChoreBrain.ChoreDone(Companion?.companionName, _choreTool == ResourceDataHelper.ToolType.Pickaxe ? "mining" : "wood",
                     $"{_choreName ?? "?"}: {_choreHits} hit(s), {how}");
-            // 0.2.267 (HR2: three 31 s ResourceGathering runs after "iron ore", no hit and no line): a run that ends without one hit on
+            // A run that ends without one hit on
             // the node or tree it went for says so, with how far off it still was.
             // The no-hit line only at the end of a run (gathering done / cancelled), about the node it was going for.
             else if (!how.Contains("moved on") && _targetResource != null && _targetResource.RequiresCombat && _targetResource.GameObject != null && _character != null)
             {
                 Vector3 at = _targetResource.InteractionPosition;
-                // 0.2.271: a rock's distance is to its nearest face (its root sits inside it).
+                // A rock's distance is to its nearest face (its root sits inside it).
                 float off = IsRockTarget ? GatherReach() : Vector3.Distance(_character.transform.position, at);
                 bool pickaxe = _targetResource.RequiredTool == ResourceDataHelper.ToolType.Pickaxe;
-                // 0.2.268: a run that ended on its own (timed out) short of the node skips it for a while; a cancelled one (an order) doesn't.
+                // A run that ended on its own (timed out) short of the node skips it for a while; a cancelled one (an order) doesn't.
                 bool skip = how.Contains("gathering done");
                 if (skip) _unreachedUntil[_targetResource.GameObject.GetInstanceID()] = Time.time + UnreachedSkipSeconds;
                 AI.ChoreBrain.ChoreDone(Companion?.companionName, pickaxe ? "mining" : "wood",
@@ -519,8 +652,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _choreHits = 0;
         }
 
-        // ── 0.2.271 (Fire, on stream: "Companions get stuck in the minerock... make them do some damage or something if they cannot
-        // properly aim and connect with the minerock meshes when they break up into multiple parts"). A pickaxe target is aimed at the
+        // ── Rocks that break up into several mesh parts must stay hittable. A pickaxe target is aimed at the
         // closest point of its nearest live surface (a MineRock5's nearest standing hit area), not its root inside the rock: the walk
         // goes to a spot just off that face, reach is measured chest -> face, and the swing strikes that area. After
         // MineMissesBeforeStrike swings that couldn't reach a face, one within MineDirectStrikeReach is struck through vanilla's own hit
@@ -544,7 +676,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private float _stepBackUntil;
         private Vector3 _stepBackTo;
         private readonly HashSet<int> _wedgeSaid = new HashSet<int>();
-        private float _sideSign = 1f;   // 0.2.278: which way round the rock the next re-approach goes
+        private float _sideSign = 1f;   // Which way round the rock the next re-approach goes
 
         private Vector3 Chest => Transform.position + Vector3.up;
 
@@ -579,7 +711,7 @@ namespace FiresCore.Npc.IdleBehaviors
             away.y = 0f;
             if (away.sqrMagnitude < 0.01f) { away = -Transform.forward; away.y = 0f; }
             Vector3 stand = face + away.normalized * StandOffFace;
-            // 0.2.278: onto the navmesh, where the body can stand. A ground probe also hits static_solid, so beside a fragment it could put
+            // Onto the navmesh, where the body can stand. A ground probe also hits static_solid, so beside a fragment it could put
             // the stand point on top of the rock, where no path goes.
             if (Pathfinding.instance != null && Pathfinding.instance.FindValidPoint(out Vector3 onMesh, stand, 2f, Pathfinding.AgentType.Humanoid))
                 return onMesh;
@@ -601,8 +733,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
             if (Time.time - _wedgeSince < WedgeSeconds) return false;
 
-            // 0.2.278 (HR4: "wedged … (7.5 m from the nearest face); stepping back 2.5 m" then "never reached it (10.7 m off)", and at 2.6 m
-            // a step back from a face it could nearly reach): within MineDirectStrikeReach the body stays put and the direct strike takes the
+            // Within MineDirectStrikeReach the body stays put and the direct strike takes the
             // node; farther out the way in is blocked from this side, so it walks round to another side of the rock (±70°, alternating).
             if (reach <= MineDirectStrikeReach) { _wedgeSince = -1f; return false; }
             Vector3 center = _targetResource.GameObject.transform.position;

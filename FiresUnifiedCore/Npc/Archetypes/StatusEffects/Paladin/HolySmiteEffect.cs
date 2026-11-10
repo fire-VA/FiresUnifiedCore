@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Paladin
 {
@@ -121,7 +121,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Paladin
             
             seman.AddStatusEffect(effect, true);
             
-            Debug.Log($"[HolySmiteEffect] Applied to {target.m_name}, charges={charges}, hasIcon={icon != null}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[HolySmiteEffect] Applied to {target.m_name}, charges={charges}, hasIcon={icon != null}");
             
             return true;
         }

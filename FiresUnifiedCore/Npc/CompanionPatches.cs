@@ -18,6 +18,7 @@ namespace FiresCore.Npc
     /// Handles hover text, interactions, damage modification, and companion restoration on login.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class CompanionPatches
     {
         // Track which players have had their companions restored this session
@@ -451,7 +452,7 @@ namespace FiresCore.Npc
             var preserveIds = new HashSet<string>();
             {
                 var liveById = new Dictionary<string, CompanionController>();
-                foreach (var companion in UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None))
+                foreach (var companion in FiresCore.Npc.Core.SceneScanCensus.Companions("CompanionPatches"))
                 {
                     if (companion == null || companion.ownerPlayerId != playerId) continue;
                     if (string.IsNullOrEmpty(companion.companionId)) continue;
@@ -527,7 +528,7 @@ namespace FiresCore.Npc
             // duplicates produced by the old destroy/re-spawn flow get
             // consolidated to one instance on first persistent-mode login.
             {
-                var allControllers = UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None);
+                var allControllers = FiresCore.Npc.Core.SceneScanCensus.Companions("CompanionPatches");
                 var seen = new HashSet<string>();
                 int dupesDestroyed = 0;
                 foreach (var companion in allControllers)
@@ -550,7 +551,7 @@ namespace FiresCore.Npc
             // be the very bug we're trying to eliminate.
             if (!persistent)
             {
-                var allControllers = UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None);
+                var allControllers = FiresCore.Npc.Core.SceneScanCensus.Companions("CompanionPatches");
                 int staleDestroyed = 0;
                 foreach (var companion in allControllers)
                 {
@@ -585,12 +586,12 @@ namespace FiresCore.Npc
                         continue;
                     }
 
-                    Debug.Log($"[CompanionPatches] Processing companion: {companionData.CompanionName} (ID: {companionData.CompanionId}), IsFollowing={companionData.IsFollowing}, IsPendingRespawn={companionData.IsPendingRespawn}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Processing companion: {companionData.CompanionName} (ID: {companionData.CompanionId}), IsFollowing={companionData.IsFollowing}, IsPendingRespawn={companionData.IsPendingRespawn}");
 
                     // Stationed NPCs live permanently in the world - never touch them.
                     if (companionData.IsStationedAsNpc)
                     {
-                        Debug.Log($"[CompanionPatches] Companion {companionData.CompanionName} is stationed as NPC - skipping restoration (exists in world)");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Companion {companionData.CompanionName} is stationed as NPC - skipping restoration (exists in world)");
                         skippedCount++;
                         continue;
                     }
@@ -618,13 +619,13 @@ namespace FiresCore.Npc
                         // CompanionNpc/CompanionNpc_Wild not in the roster.
                         if (CompanionExistsAnywhere(companionData.CompanionId))
                         {
-                            Debug.Log($"[CompanionPatches] Stay-mode companion {companionData.CompanionName} already present in world (loaded or unloaded) - leaving in place");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Stay-mode companion {companionData.CompanionName} already present in world (loaded or unloaded) - leaving in place");
                             skippedCount++;
                             continue;
                         }
 
                         // Instance and ZDO are both gone - re-spawn at the saved home position.
-                        Debug.Log($"[CompanionPatches] Stay-mode companion {companionData.CompanionName} has no world instance OR ZDO - re-spawning at home position");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Stay-mode companion {companionData.CompanionName} has no world instance OR ZDO - re-spawning at home position");
 
                         string stayPrefab = companionData.PrefabName ?? "CompanionNpc";
                         if (!CompanionPrefabManager.HasCompanionPrefab(stayPrefab))
@@ -689,7 +690,7 @@ namespace FiresCore.Npc
                     // Pending respawn - check whether the timer expired offline.
                     if (companionData.IsPendingRespawn)
                     {
-                        Debug.Log($"[CompanionPatches] Companion {companionData.CompanionName} was pending respawn - checking timer");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Companion {companionData.CompanionName} was pending respawn - checking timer");
 
                         long currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                         long timeSinceDeath   = currentTimestamp - companionData.DeathTimestamp;
@@ -698,11 +699,11 @@ namespace FiresCore.Npc
                         if (remainingTime <= 0)
                         {
                             // Timer expired while offline - fall through to spawn logic below.
-                            Debug.Log($"[CompanionPatches] Respawn timer expired ({timeSinceDeath}s since death) - spawning {companionData.CompanionName}");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Respawn timer expired ({timeSinceDeath}s since death) - spawning {companionData.CompanionName}");
                         }
                         else
                         {
-                            Debug.Log($"[CompanionPatches] Respawn timer still active ({remainingTime:F0}s remaining) - scheduling respawn for {companionData.CompanionName}");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Respawn timer still active ({remainingTime:F0}s remaining) - scheduling respawn for {companionData.CompanionName}");
 
                             CompanionRespawnManager.Instance?.ScheduleRespawn(
                                 companionData.CompanionId,
@@ -766,7 +767,7 @@ namespace FiresCore.Npc
                             ClearRespawnStateInVault(playerId, companionData.CompanionId);
                             live.SaveToZDO();
                             restoredCount++;
-                            Debug.Log($"[CompanionPatches] Teleported live following companion {companionData.CompanionName} to player at {teleportPosition} (skipped re-spawn)");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Teleported live following companion {companionData.CompanionName} to player at {teleportPosition} (skipped re-spawn)");
                             continue;
                         }
                         // Fallthrough: no live instance found despite preserve flag - re-spawn as normal.
@@ -797,7 +798,7 @@ namespace FiresCore.Npc
                                 adoptZdo.SetPosition(teleportPosition);
                                 adoptZdo.DataRevision++;
                                 ZDOMan.instance?.ForceSendZDO(adoptZdo.m_uid);
-                                Debug.Log($"[CompanionPatches] Adopted unloaded companion ZDO {companionData.CompanionName} → {teleportPosition} (will materialise on zone load)");
+                                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Adopted unloaded companion ZDO {companionData.CompanionName} → {teleportPosition} (will materialise on zone load)");
                             }
                             else
                             {
@@ -805,7 +806,7 @@ namespace FiresCore.Npc
                                 // CompanionExistsAnywhere check above was bypassed
                                 // (registryFollowing flipped mid-flight), which is
                                 // unusual. Just leave the ZDO at its current position.
-                                Debug.Log($"[CompanionPatches] Adopted unloaded companion ZDO {companionData.CompanionName} (left at saved position)");
+                                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Adopted unloaded companion ZDO {companionData.CompanionName} (left at saved position)");
                             }
 
                             ClearRespawnStateInVault(playerId, companionData.CompanionId);
@@ -822,7 +823,7 @@ namespace FiresCore.Npc
                     var existing = DestroyDuplicateCompanions(companionData.CompanionId);
                     if (existing != null)
                     {
-                        Debug.Log($"[CompanionPatches] Destroying surviving instance of {companionData.CompanionId} to re-spawn from vault");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Destroying surviving instance of {companionData.CompanionId} to re-spawn from vault");
                         CompanionNetworkHelper.Destroy(existing.gameObject);
                     }
 
@@ -846,7 +847,7 @@ namespace FiresCore.Npc
                     var stale = FindExistingCompanion(companionData.CompanionId);
                     if (stale != null)
                     {
-                        Debug.Log($"[CompanionPatches] Destroying stale companion {companionData.CompanionId} before fresh spawn");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Destroying stale companion {companionData.CompanionId} before fresh spawn");
                         CompanionNetworkHelper.Destroy(stale.gameObject);
                     }
 
@@ -911,7 +912,7 @@ namespace FiresCore.Npc
                                     {
                                         var homePos = new Vector3(companionData.HomePositionX, companionData.HomePositionY, companionData.HomePositionZ);
                                         idleBehavior.SetHomePosition(homePos);
-                                        Debug.Log($"[CompanionPatches] Restored home position for spawned companion {companionData.CompanionName} at {homePos}");
+                                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Restored home position for spawned companion {companionData.CompanionName} at {homePos}");
                                     }
                                 }
                             }
@@ -1007,7 +1008,7 @@ namespace FiresCore.Npc
         {
             if (string.IsNullOrEmpty(companionId)) return null;
 
-            foreach (var controller in UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None))
+            foreach (var controller in FiresCore.Npc.Core.SceneScanCensus.Companions("CompanionPatches"))
             {
                 if (controller != null && controller.companionId == companionId)
                     return controller;
@@ -1136,7 +1137,7 @@ namespace FiresCore.Npc
             CompanionController keeper = null;
             int destroyed = 0;
 
-            foreach (var controller in UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None))
+            foreach (var controller in FiresCore.Npc.Core.SceneScanCensus.Companions("CompanionPatches"))
             {
                 if (controller == null || controller.companionId != companionId) continue;
 
@@ -1199,7 +1200,7 @@ namespace FiresCore.Npc
                 {
                     // This ZDO matches a companion we're about to restore from vault.
                     // Destroy the stale ZDO so we don't get a duplicate.
-                    Debug.Log($"[CompanionPatches] Destroying stale ZDO for companion {id} (ZDOID: {zdo.m_uid})");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Destroying stale ZDO for companion {id} (ZDOID: {zdo.m_uid})");
 
                     // Also destroy the Unity object if it's instantiated
                     var existingView = ZNetScene.instance?.FindInstance(zdo);
@@ -1239,7 +1240,7 @@ namespace FiresCore.Npc
                     companionData.DeathTimestamp = 0;
 
                     FiresCore.Bridge.CompanionVaultBridge.Save(playerId, companionData);
-                    Debug.Log($"[CompanionPatches] Cleared respawn state for {companionData.CompanionName}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Cleared respawn state for {companionData.CompanionName}");
                 }
             }
             catch (Exception ex)
@@ -1265,7 +1266,7 @@ namespace FiresCore.Npc
                     if (skills != null)
                     {
                         skills.RestoreSkillsFromVault(savedData.SkillsData);
-                        Debug.Log($"[CompanionPatches] Restored skills from vault for {savedData.CompanionName}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Restored skills from vault for {savedData.CompanionName}");
                     }
                 }
 
@@ -1276,7 +1277,7 @@ namespace FiresCore.Npc
                     if (progression != null)
                     {
                         progression.RestoreProgressionFromVault(savedData.ProgressionData);
-                        Debug.Log($"[CompanionPatches] Restored progression from vault for {savedData.CompanionName}: {savedData.ProgressionData}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Restored progression from vault for {savedData.CompanionName}: {savedData.ProgressionData}");
                     }
                 }
 
@@ -1287,7 +1288,7 @@ namespace FiresCore.Npc
                     if (stats != null)
                     {
                         stats.RestoreStatsFromVault(savedData.StatsData);
-                        Debug.Log($"[CompanionPatches] Restored stats from vault for {savedData.CompanionName}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Restored stats from vault for {savedData.CompanionName}");
                     }
                 }
 
@@ -1298,7 +1299,7 @@ namespace FiresCore.Npc
                     if (killTracker != null)
                     {
                         killTracker.RestoreKillsFromVault(savedData.KillsData);
-                        Debug.Log($"[CompanionPatches] Restored kill tracker from vault for {savedData.CompanionName}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Restored kill tracker from vault for {savedData.CompanionName}");
                     }
                 }
             }
@@ -1374,7 +1375,7 @@ namespace FiresCore.Npc
 
             try
             {
-                var allCompanions = UnityEngine.Object.FindObjectsByType<CompanionController>(UnityEngine.FindObjectsSortMode.None);
+                var allCompanions = FiresCore.Npc.Core.SceneScanCensus.Companions("CompanionPatches");
                 int destroyedCount = 0;
                 int releasedCount = 0;
                 int skippedStationedCount = 0;
@@ -1421,7 +1422,7 @@ namespace FiresCore.Npc
                     if (npcModule != null && npcModule.IsStationedAsNpc)
                     {
                         skippedStationedCount++;
-                        Debug.Log($"[CompanionPatches] Skipping stationed NPC {companion.companionName} on logout (persists for all players)");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Skipping stationed NPC {companion.companionName} on logout (persists for all players)");
                         continue;
                     }
 
@@ -1450,7 +1451,7 @@ namespace FiresCore.Npc
                     // didn't survive there was no fallback and it was gone permanently. The snapshot
                     // carries follow/stay/stationed + home, so restore puts it back in the right mode.
                     bool storedDormant = companion.StoreDormant(playerId, FiresCore.Bridge.DormancyKind.LoggedOutFollower, 0L);
-                    Debug.Log($"[CompanionPatches] Logout capture: '{companion.companionName}' (id={companion.companionId}, following={companion.ShouldBeFollowing}) -> dormant store {(storedDormant ? "OK" : "FAILED")}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Logout capture: '{companion.companionName}' (id={companion.companionId}, following={companion.ShouldBeFollowing}) -> dormant store {(storedDormant ? "OK" : "FAILED")}");
 
                     var nview = companion.GetComponent<ZNetView>();
 
@@ -1494,7 +1495,7 @@ namespace FiresCore.Npc
 
                         CompanionNetworkHelper.Destroy(companion.gameObject);
                         destroyedCount++;
-                        Debug.Log($"[CompanionPatches] Destroyed companion {companion.companionName} on logout (legacy mode)");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Destroyed companion {companion.companionName} on logout (legacy mode)");
                     }
                 }
 
@@ -1634,7 +1635,7 @@ namespace FiresCore.Npc
 
                 bool shiftHeld = UnityEngine.Input.GetKey(KeyCode.LeftShift) || UnityEngine.Input.GetKey(KeyCode.RightShift);
 
-                Debug.Log($"[CompanionPatches] Interact with {companion.GetDisplayName()}, tamed={companion.isTamed}, shift={shiftHeld}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Interact with {companion.GetDisplayName()}, tamed={companion.isTamed}, shift={shiftHeld}");
 
                 // Not tamed - try auto-tame from full inventory (including VAInventory's coin purse)
                 if (!companion.isTamed)
@@ -1781,7 +1782,7 @@ namespace FiresCore.Npc
 
             if (__state)
             {
-                Debug.Log("[CompanionPatches] Interacting with companion tombstone - will prevent corpse run");
+                FiresCore.Logging.FiresLogger.LogDebug("[CompanionPatches] Interacting with companion tombstone - will prevent corpse run");
             }
         }
 
@@ -1801,7 +1802,7 @@ namespace FiresCore.Npc
                     if (seman.HaveStatusEffect(corpseRunHash))
                     {
                         seman.RemoveStatusEffect(corpseRunHash, true); // quiet = true to avoid message
-                        Debug.Log("[CompanionPatches] Removed corpse run effect from companion tombstone interaction");
+                        FiresCore.Logging.FiresLogger.LogDebug("[CompanionPatches] Removed corpse run effect from companion tombstone interaction");
                     }
                 }
             }
@@ -1818,7 +1819,7 @@ namespace FiresCore.Npc
             // If this is a companion tombstone, skip the corpse run effect entirely
             if (IsCompanionTombstone(__instance))
             {
-                Debug.Log("[CompanionPatches] Blocking corpse run boost from companion tombstone");
+                FiresCore.Logging.FiresLogger.LogDebug("[CompanionPatches] Blocking corpse run boost from companion tombstone");
                 return false; // Skip the original method - no corpse run
             }
 
@@ -1900,6 +1901,18 @@ namespace FiresCore.Npc
         /// and track direct attacks for stationed NPCs.
         /// Stationed NPCs react to owner hits with a stumble and single retaliation.
         /// </summary>
+        // Once per attacker -> companion pair per 10 s
+        private static readonly Dictionary<(int, int), float> s_friendlySaid = new Dictionary<(int, int), float>();
+        private static void NoteFriendlyHitDropped(Character attacker, Character companion, HitData hit)
+        {
+            var key = (attacker.GetInstanceID(), companion.GetInstanceID());
+            if (s_friendlySaid.TryGetValue(key, out float at) && Time.time - at < 10f) return;
+            s_friendlySaid[key] = Time.time;
+            string who = attacker is Player p ? p.GetPlayerName() : attacker.m_name;
+            string src = hit.m_skill != Skills.SkillType.None ? hit.m_skill.ToString() : "?";
+            FiresCore.Logging.FiresLogger.LogDebug($"[FriendlyHit] dropped: {who} -> {companion.m_name} ({src}, {hit.GetTotalDamage():0.#} dmg; same party)");
+        }
+
         [HarmonyPatch(typeof(Character), "RPC_Damage")]
         [HarmonyPrefix]
         public static bool Character_RPC_Damage_Prefix(Character __instance, long sender, HitData hit)
@@ -1911,7 +1924,26 @@ namespace FiresCore.Npc
             try
             {
                 var companion = __instance.GetComponent<CompanionController>();
-                if (companion == null) return true; // Not our companion
+                if (companion == null)
+                {
+                    // A static fixture has no CompanionController, so it never heard it was hit; tell its NPC module
+                    // (defend-when-attacked) and let the damage through as before
+                    var staticModule = __instance.GetComponent<CompanionNpcModule>();
+                    if (staticModule != null) staticModule.OnDirectlyAttacked(   /* any NPC module, not only static fixtures */ hit != null ? hit.GetAttacker() : null);
+                    return true; // Not our companion
+                }
+
+                // A hit from the companion's own
+                // party never lands - before the NPC module hears "directly attacked" (that made it fight its owner). Stationed NPCs keep the
+                // owner-hit stumble below.
+                Character friendly = hit?.GetAttacker();
+                var partyModule = __instance.GetComponent<CompanionNpcModule>();
+                if (friendly != null && friendly != __instance && (partyModule == null || !partyModule.IsStationedAsNpc)
+                    && FiresCore.Npc.Archetypes.ClassTargeting.IsPartyMember(__instance, friendly))
+                {
+                    NoteFriendlyHitDropped(friendly, __instance, hit);
+                    return false;
+                }
 
                 // Companions that spawned in Ashlands keep fire immunity after taming. Vanilla's own immunity
                 // (base m_damageModifiers.m_fire) zeroes the fire in the resistance pass and keeps Burning off.
@@ -1925,9 +1957,11 @@ namespace FiresCore.Npc
                 // IMPORTANT: Notify NpcModule that this NPC was directly attacked
                 // This allows stationed NPCs to enter alert/combat state
                 var npcModule = __instance.GetComponent<CompanionNpcModule>();
+                // Every NPC module hears the hit, stationed or not
+                if (npcModule != null && !npcModule.IsStationedAsNpc) npcModule.OnDirectlyAttacked(hit != null ? hit.GetAttacker() : null);
                 if (npcModule != null && npcModule.IsStationedAsNpc)
                 {
-                    npcModule.OnDirectlyAttacked();
+                    npcModule.OnDirectlyAttacked(hit != null ? hit.GetAttacker() : null);   // passes the attacker so it can fight back
 
                     // Owner-hit reaction (stumble instead of taking damage) is ONLY for player-owned
                     // companion-style stationed NPCs. Static NPCs are ownerless and MUST stay killable so they
@@ -1946,7 +1980,7 @@ namespace FiresCore.Npc
                 // Check if damage should be allowed
                 if (!companion.ShouldAllowDamage(hit))
                 {
-                    Debug.Log($"[CompanionPatches] Blocked damage to {companion.GetDisplayName()} from owner");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Blocked damage to {companion.GetDisplayName()} from owner");
                     return false; // Block damage
                 }
 
@@ -1971,29 +2005,11 @@ namespace FiresCore.Npc
         {
             try
             {
-                // Play stagger/hit reaction animation
-                var zanim = character.GetComponent<ZSyncAnimation>();
-                if (zanim != null)
-                {
-                    zanim.SetTrigger("stagger");
-                }
-
-                // Apply knockback force to simulate stumbling
-                var rigidbody = character.GetComponent<Rigidbody>();
-                if (rigidbody != null && !rigidbody.isKinematic)
-                {
-                    Vector3 knockbackDir = (character.transform.position - attacker.transform.position).normalized;
-                    knockbackDir.y = 0.2f; // Slight upward component
-                    rigidbody.AddForce(knockbackDir * 3f, ForceMode.Impulse);
-                }
-
-                // Face the attacker
-                Vector3 toAttacker = (attacker.transform.position - character.transform.position);
-                toAttacker.y = 0;
-                if (toAttacker.sqrMagnitude > 0.01f)
-                {
-                    character.transform.rotation = Quaternion.LookRotation(toAttacker);
-                }
+                // Vanilla Character.Stagger, as a hit does. It turns the body to face
+                // the attacker and plays the stagger on the owner (RPC_Stagger), with no hand-made push or rotation.
+                Vector3 push = character.transform.position - attacker.transform.position;
+                push.y = 0f;
+                character.Stagger(push);
 
                 // Schedule a single retaliation attack after a short delay
                 companion.StartCoroutine(DelayedRetaliation(companion, character, attacker));
@@ -2002,7 +2018,7 @@ namespace FiresCore.Npc
                 MessageHud.instance?.ShowMessage(MessageHud.MessageType.TopLeft,
                     $"{companion.GetDisplayName()} doesn't appreciate that!");
 
-                Debug.Log($"[CompanionPatches] Stationed NPC {companion.GetDisplayName()} reacted to owner hit");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Stationed NPC {companion.GetDisplayName()} reacted to owner hit");
             }
             catch (Exception ex)
             {
@@ -2028,12 +2044,12 @@ namespace FiresCore.Npc
             float dist = Vector3.Distance(character.transform.position, attacker.transform.position);
             if (dist > 4f) yield break;
 
-            // Face the attacker again
+            // Face the attacker again (vanilla SetLookDir: the body turns at its own turn speed)
             Vector3 toAttacker = (attacker.transform.position - character.transform.position);
             toAttacker.y = 0;
             if (toAttacker.sqrMagnitude > 0.01f)
             {
-                character.transform.rotation = Quaternion.LookRotation(toAttacker);
+                character.SetLookDir(toAttacker.normalized);
             }
 
             // One swing's animation only, never a hit on the owner: the trigger without an Attack plays the swing, while
@@ -2042,7 +2058,7 @@ namespace FiresCore.Npc
             if (zanim != null)
                 zanim.SetTrigger(RetaliationSwingTrigger);
 
-            Debug.Log($"[CompanionPatches] {companion.GetDisplayName()} retaliated against owner");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] {companion.GetDisplayName()} retaliated against owner");
         }
 
         // Companions die for real: vanilla death → ragdoll + CompanionDeathHandler.OnCharacterDeath
@@ -2149,6 +2165,19 @@ namespace FiresCore.Npc
         {
             if (companion == null || player == null) return;
 
+            // Like a vanilla chest, the player who opens a companion takes ownership of its ZDO, so every take / put on its bag is an
+            // owner write. A non-owner's bag edit was overwritten by the real owner's copy, and a reload then put the item back (dupe).
+            if (player == Player.m_localPlayer)
+            {
+                var cnv = companion.GetComponent<ZNetView>();
+                if (cnv != null && cnv.IsValid() && !cnv.IsOwner())
+                {
+                    long was = cnv.GetZDO().GetOwner();
+                    cnv.ClaimOwnership();
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionInventory] {companion.companionName}: opened by {player.GetPlayerName()}: ZDO ownership claimed (was peer {was}), so bag edits are owner writes");
+                }
+            }
+
             try
             {
                 // CRITICAL: Enter UIInteraction state in the state controller
@@ -2165,15 +2194,8 @@ namespace FiresCore.Npc
                     stateController.TryEnterState(CompanionStateController.CompanionState.UIInteraction, 999f, "PlayerInteraction");
                 }
 
-                // Zero rigidbody velocity - only if NOT kinematic (Unity 6 doesn't allow setting velocity on kinematic bodies)
-                var rigidbody = companion.GetComponent<Rigidbody>();
-                bool isKinematic = rigidbody != null && rigidbody.isKinematic;
-
-                if (rigidbody != null && !isKinematic)
-                {
-                    rigidbody.linearVelocity = Vector3.zero;
-                    rigidbody.angularVelocity = Vector3.zero;
-                }
+                // No velocity write here. Entering the UIInteraction (frozen) state zeroes it once
+                // (CompanionStateController), and the authority's freeze sends SetMoveDir(0).
 
                 // Cancel any active idle behaviors (this also enters UIInteraction state)
                 var idleBehavior = companion.GetComponent<CompanionIdleBehavior>();
@@ -2199,15 +2221,16 @@ namespace FiresCore.Npc
                     combatMovement.LockMovement("PlayerInteraction", 999f);
                 }
 
-                // Face the player smoothly
+                // Face the player smoothly (vanilla SetLookDir: the body turns at its own turn speed)
                 Vector3 toPlayer = (player.transform.position - companion.transform.position);
                 toPlayer.y = 0;
-                if (toPlayer.sqrMagnitude > 0.01f)
+                var faceCharacter = companion.GetComponent<Character>();
+                if (toPlayer.sqrMagnitude > 0.01f && faceCharacter != null)
                 {
-                    companion.transform.rotation = Quaternion.LookRotation(toPlayer);
+                    faceCharacter.SetLookDir(toPlayer.normalized);
                 }
 
-                Debug.Log($"[CompanionPatches] Stopped {companion.companionName} for interaction via StateController");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Stopped {companion.companionName} for interaction via StateController");
             }
             catch (Exception ex)
             {
@@ -2390,7 +2413,7 @@ namespace FiresCore.Npc
             {
                 try
                 {
-                    // A stealthed character shows no bar or name except to its own party (Fire, 2026-09-28).
+                    // A stealthed character shows no bar or name except to its own party.
                     if (Archetypes.StatusEffects.Rogue.StealthSync.HidesHudFor(c)) return false;
 
                     // PERF: Use cached lookup
@@ -2602,7 +2625,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup - avoids GetComponent on every Character every frame
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true; // Not a companion, allow normal execution
-                if (companion.IsPossessed) return true; // 0.2.292: its driver's move (FiresValcast possession) always lands
+                if (companion.IsPossessed) return true; // its driver's move (FiresValcast possession) always lands
 
                 // Check if rigidbody is kinematic (Unity 6 compatibility)
                 var rigidbody = GetCachedRigidbody(__instance);
@@ -2632,8 +2655,10 @@ namespace FiresCore.Npc
                         && !authority.IsCurrentlyApplying
                         && authority.CurrentAuthority != Core.UnifiedMovementAuthority.MovementSource.None)
                     {
+                        Core.MovementGateConfig.NoteWrite(true);   // 0.2.965: proof count
                         return false; // external write while an owner holds movement — drop it
                     }
+                    Core.MovementGateConfig.NoteWrite(false);
                 }
 
                 return true;
@@ -2660,7 +2685,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true;
-                if (companion.IsPossessed) return true; // 0.2.292: its driver's motion, unbent (no exit / taming-guard steering)
+                if (companion.IsPossessed) return true; // its driver's motion, unbent (no exit / taming-guard steering)
 
                 var rigidbody = GetCachedRigidbody(__instance);
                 if (rigidbody != null && rigidbody.isKinematic)
@@ -2674,11 +2699,11 @@ namespace FiresCore.Npc
                     return false;
                 }
 
-                // 0.2.283: out of water and pits the bot's way (Swimming.ExitFor, Climb.Plan), whoever moves the companion: the move it
+                // Out of water and pits the bot's way (Swimming.ExitFor, Climb.Plan), whoever moves the companion: the move it
                 // was given (authority or vanilla pathfinding, both via SetMoveDir) is bent here, on the owner, before the motion runs.
                 Vector3 move = __instance.m_moveDir;
                 CompanionExits.Steer(__instance, companion.companionName, ref move);
-                // 0.2.286 (Fire, RIDEj: companions walked over and aggroed the lox being tamed): keep 10 m off a creature a player is taming.
+                // Keep 10 m off a creature a player is taming, so companions do not aggro it.
                 TamingGuard.KeepAway(__instance, companion.GetOwner(), companion.companionName, ref move);
                 __instance.m_moveDir = move;
 
@@ -2704,7 +2729,7 @@ namespace FiresCore.Npc
                 // PERF: Use cached lookup
                 var companion = GetCachedCompanion(__instance);
                 if (companion == null) return true;
-                if (companion.IsPossessed) return true; // 0.2.292: a driven body syncs as vanilla does
+                if (companion.IsPossessed) return true; // a driven body syncs as vanilla does
 
                 var rigidbody = GetCachedRigidbody(__instance);
                 if (rigidbody != null && rigidbody.isKinematic)
@@ -2778,9 +2803,20 @@ namespace FiresCore.Npc
         /// reaches the name test, whose verdict is cached per instance because reading go.name marshals a fresh
         /// string every read.
         /// </summary>
+        // 0.2.1182 (group C): UpdateVisuals and its nested guards ask this several times in a row for one body; one verdict per instance per frame. Key [Performance] One VisEquipment verdict per frame.
+        private static int s_verdictId, s_verdictFrame = -1; private static bool s_verdict;
         private static bool IsOurPrefab(GameObject go)
         {
             if (go == null) return false;
+            if (!FiresCore.Perf.SmallGains.VisVerdict) return IsOurPrefabNow(go);
+            int id = go.GetInstanceID(), frame = Time.frameCount;
+            if (id == s_verdictId && frame == s_verdictFrame) return s_verdict;
+            s_verdict = IsOurPrefabNow(go); s_verdictId = id; s_verdictFrame = frame;
+            return s_verdict;
+        }
+
+        private static bool IsOurPrefabNow(GameObject go)
+        {
             return go.GetComponent<CompanionController>() != null
                 || go.GetComponent<NpcVisEquipment>() != null
                 || FiresCore.Bridge.NpcInteractionBridge.HasInteractionController(go)
@@ -3199,6 +3235,16 @@ namespace FiresCore.Npc
             return false;
         }
 
+        // A portal teleport (and whether that portal allows all items) for the companions' portal rule
+        [HarmonyPatch(typeof(TeleportWorld), nameof(TeleportWorld.Teleport))]
+        [HarmonyPrefix]
+        public static void TeleportWorld_Teleport_Prefix(TeleportWorld __instance, Player player)
+        {
+            if (player == null || player != Player.m_localPlayer || __instance == null) return;
+            CompanionController.s_lastPortalTime = Time.time;
+            CompanionController.s_lastPortalAllowAll = __instance.m_allowAllItems;
+        }
+
         [HarmonyPatch(typeof(Player), nameof(Player.TeleportTo))]
         [HarmonyPrefix]
         public static void Player_TeleportTo_Prefix(Player __instance)
@@ -3235,6 +3281,11 @@ namespace FiresCore.Npc
                     Vector3 src = _teleportSourcePos;
                     float horizontalDistance = Vector2.Distance(new Vector2(src.x, src.z), new Vector2(pos.x, pos.z));
                     float dy  = Mathf.Abs(src.y - pos.y);
+                    // Teleport-with-player: followers this machine owns come along as soon as the player has
+                    // arrived (no leash snap, no OwnerTooFastToSnap wait). Stay companions are skipped inside.
+                    float jump = Vector3.Distance(src, pos);
+                    if (jump > 50f)
+                        CompanionController.StartTeleportFollowersWith(__instance, jump);
                     if (horizontalDistance > LongJumpThreshold || dy > LongJumpVertical)
                     {
                         isLongJump = true;
@@ -3251,7 +3302,7 @@ namespace FiresCore.Npc
                     // those local writes race with the destination zone
                     // load.
                     SuppressCompanionTeleportsUntil = Time.unscaledTime + SUPPRESS_DURATION_LONG_JUMP;
-                    Debug.Log($"[CompanionPatches] Long-jump teleport (engineFlag={distantTeleport}) - suppressing local CheckFollowTeleport for {SUPPRESS_DURATION_LONG_JUMP:F1}s; reconcile-on-arrival coroutine started.");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionPatches] Long-jump teleport (engineFlag={distantTeleport}) - suppressing local CheckFollowTeleport for {SUPPRESS_DURATION_LONG_JUMP:F1}s; reconcile-on-arrival coroutine started.");
 
                     // Player.TeleportTo reuses the existing player object,
                     // so Player.OnSpawned does NOT fire for wayshrine /

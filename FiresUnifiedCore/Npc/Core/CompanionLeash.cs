@@ -12,11 +12,11 @@ namespace FiresCore.Npc.Core
     public static class CompanionLeash
     {
         /// <summary>Beyond this the companion drops everything and runs back. Within it, normal AI-driven follow.</summary>
-        public const float LeashDistance = 50f;
+        public const float LeashDistance = 30f;   // was 50
 
         /// <summary>Hard ceiling: at/after this the companion snaps (teleports) to the owner. Also the server
         /// heartbeat's reel-in distance — a follower this far out is stranded, not catching up.</summary>
-        public const float SnapDistance = 80f;
+        public const float SnapDistance = 40f;   // was 80
 
         /// <summary>Post-arrival (portal / login / respawn) reel-in distance: bring followers this close when they
         /// materialise somewhere new. Tighter than the leash because it's an instant relocation, not a drift.</summary>

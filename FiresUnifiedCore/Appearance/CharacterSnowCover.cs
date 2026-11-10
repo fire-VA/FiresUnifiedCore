@@ -7,14 +7,14 @@ namespace FiresCore.Appearance
     /// Snow on a character's gear, on the hook Valheim 1.0 shipped and never wired up.
     ///
     /// VisEquipment exposes a public SnowLevel setter that clamps 0..1 and pushes _SnowCover to every renderer under
-    /// the character through MaterialMan (VisEquipment.cs:1134-1147 in the 1.0 decompile). Nothing in the assembly
+    /// the character through MaterialMan (vanilla VisEquipment, Valheim 1.0). Nothing in the assembly
     /// calls it - the property has no caller at all - so the shader work is present and inert. This drives it from the
     /// same conditions vanilla uses for building pieces, so a player crossing the Deep North whitens the way the
     /// structures around them do.
     ///
     /// The piece rules it mirrors, from WearNTear.UpdateWearNTear and CanHaveSnow:
     ///   * Deep North only. Accumulation sits inside `if (m_biome == DeepNorth)` (WearNTear.cs:407), so nowhere else
-    ///     in the world grows snow, and Fire declined a Mountain equivalent.
+    ///     in the world grows snow; there is deliberately no Mountain equivalent.
     ///   * Roofed means none, matching CanHaveSnow's `!m_haveRoof`.
     ///   * The rate is the environment's own snowfall, EnvMan.GetSnowBuildup() times Game.m_snowBuildupSpeed, so
     ///     gear and buildings whiten at the same speed under the same weather and a clear Deep North night adds
@@ -45,12 +45,15 @@ namespace FiresCore.Appearance
         {
             if (__instance == null || Application.isBatchMode) return;
             if (MaterialMan.instance == null) return;
+            // 0.2.950 (perf, round 45: 0.7 ms/s over every character): outside the Deep North a character this patch never covered has
+            // nothing to shed or gather - leave before the VisEquipment lookup
+            if (__instance.m_lastBiome != Heightmap.Biome.DeepNorth && !s_covered.Contains(__instance)) return;
 
             var visEquipment = VisOf(__instance);
             if (visEquipment == null) return;
 
             float level = visEquipment.SnowLevel;
-            // 0.2.305 (the lead 10-06, 1.8 fps fixed-step spiral): bare gear outside the Deep North (or with the setting off)
+            // Bare gear outside the Deep North (or with the setting off)
             // has nothing to gather or shed - the same answer the full path below reaches, without IsUnderRoof's cast. Every
             // input is still read every step, so snow that starts (entering the Deep North, the setting turned on) is seen.
             if (level <= NoCover && (!Enabled || __instance.m_lastBiome != Heightmap.Biome.DeepNorth)) return;
@@ -66,9 +69,13 @@ namespace FiresCore.Appearance
             float step = (target > level ? GatherRate() : ShedRate()) * dt;
             if (step <= NoCover) return;
             visEquipment.SnowLevel = Mathf.MoveTowards(level, target, step);
+            if (visEquipment.SnowLevel > NoCover) s_covered.Add(__instance); else s_covered.Remove(__instance);   // 0.2.950
         }
 
-        // 0.2.305: the VisEquipment per character, looked up once instead of a GetComponent every physics step for every character.
+        // 0.2.950: characters whose gear this patch has snow on (they still shed it after leaving the Deep North)
+        private static readonly System.Collections.Generic.HashSet<Character> s_covered = new System.Collections.Generic.HashSet<Character>();
+
+        // The VisEquipment per character, looked up once instead of a GetComponent every physics step for every character.
         // A destroyed one reads Unity-null and is looked up again; characters without one are remembered too. Destroyed keys are
         // swept once the table outgrows PruneAt.
         private const int PruneAt = 4096;

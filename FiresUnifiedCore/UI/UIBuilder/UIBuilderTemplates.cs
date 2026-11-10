@@ -342,7 +342,7 @@ namespace FiresCore.UI
                     UILayoutCodex.AddOrReplace(layout);
                     saved++;
 
-                    UnityEngine.Debug.Log($"[UIBuilderTemplates] Auto-captured template: {target.DisplayName} -> {fileName}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderTemplates] Auto-captured template: {target.DisplayName} -> {fileName}");
                 }
                 catch (Exception ex)
                 {
@@ -391,7 +391,7 @@ namespace FiresCore.UI
             layout.ModifiedTimestamp = layout.CreatedTimestamp;
 
             UILayoutSerializer.SaveToFile(layout, fileName);
-            UnityEngine.Debug.Log($"[UIBuilderTemplates] Created default template: {fileName}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIBuilderTemplates] Created default template: {fileName}");
         }
     }
 }

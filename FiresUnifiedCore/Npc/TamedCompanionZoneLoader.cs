@@ -13,6 +13,7 @@ namespace FiresCore.Npc
     /// FiresValcast's CameraZoneLoader. Only companions with isTamed and an owner qualify.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class TamedCompanionZoneLoader
     {
         // RPC name — namespaced so it can't collide with Valcast's analogous RPC.
@@ -47,7 +48,7 @@ namespace FiresCore.Npc
         private const float AllKnownScanInterval = 5f;
 
         // Vanilla loads zones every 0.1 s, at most one new zone per reference point per pass; the companions' keep-alive ran every
-        // frame instead (R39 dedi: 44 ms in one frame at a join). Every position is still visited each pass: CreateLocalZones also
+        // frame instead (a join could cost tens of ms in one frame on a dedicated server). Every position is still visited each pass: CreateLocalZones also
         // pokes the existing zones, which is what keeps them from expiring.
         private const float KeepAliveInterval = 0.1f;
         private static float _keepAliveTimer;
@@ -55,10 +56,30 @@ namespace FiresCore.Npc
         // Reusable lists to avoid GC churn — gathered fresh every tick.
         private static readonly List<Vector3> _localCompanionPositions = new List<Vector3>();
         private static readonly List<Vector3> _tempPositions = new List<Vector3>();
+        /// <summary>Server-held bodies (the Studio god clone) whose zones stay loaded like a player's, ALSO with no player
+        /// connected (no NoPlayersOnDedi gate). Set each frame by their owner code on the server; same keep-alive path.</summary>
+        public static readonly List<Vector3> ServerHeldPositions = new List<Vector3>();
         private static readonly List<ZDO> _companionZDOs = new List<ZDO>();
 
         // Reflected ZoneSystem internals — same private methods Valcast reflects.
         // Cached once at ZNet.Start since they never change.
+        // Hundreds of SpawnZone calls around parked companions with no peers grew memory by GBs: a
+        // dedicated server with NO players connected keeps no zones loaded for parked (offline-owner) companions. A fix: always on.
+        private static bool s_noPlayersLogged;
+        private static bool NoPlayersOnDedi()
+        {
+            var zn = ZNet.instance;
+            bool none = zn != null && zn.IsDedicated() && zn.GetPeers().Count == 0;
+            if (none != s_noPlayersLogged)
+            {
+                s_noPlayersLogged = none;
+                Debug.Log(none
+                    ? $"[FiresUnifiedCore] [Companions] dedicated server with no players: parked companions' zones are not kept loaded ({_allKnownCompanionPositions.Count} position(s))"
+                    : "[FiresUnifiedCore] [Companions] a player joined: parked companions' zones are kept loaded again");
+            }
+            return none;
+        }
+
         private static MethodInfo _createLocalZones;
         private static MethodInfo _createGhostZones;
 
@@ -121,11 +142,16 @@ namespace FiresCore.Npc
         //  Server: receive positions from clients
         // ────────────────────────────────────────────────────────────────────
 
+        private const int MaxReportedCompanions = 16;
+        private const float MaxReportedDistance = 300f;   // metres from the reporting client's character
         private static void RPC_OnCompanionPositions(long sender, ZPackage pkg)
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
 
             int count = pkg.ReadInt();
+            if (count < 0 || count > MaxReportedCompanions) { RpcGuard.Refuse("CompanionPositions", sender, $"{count} positions (max {MaxReportedCompanions})"); return; }
+            // A client reports the companions loaded around it, so every position must be near where the server sees that client
+            Possession.PossessionServer.PlayerIdOf(sender, out Vector3 senderPos);
             if (!_peerCompanionPositions.TryGetValue(sender, out var positions))
             {
                 positions = new List<Vector3>();
@@ -134,7 +160,11 @@ namespace FiresCore.Npc
             positions.Clear();
 
             for (int i = 0; i < count; i++)
-                positions.Add(pkg.ReadVector3());
+            {
+                Vector3 p = pkg.ReadVector3();
+                if (senderPos == Vector3.zero || Vector3.Distance(p, senderPos) > MaxReportedDistance) continue;
+                positions.Add(p);
+            }
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -150,19 +180,18 @@ namespace FiresCore.Npc
         {
             if (ZNet.GetConnectionStatus() != ZNet.ConnectionStatus.Connected) return;
 
-            _localCompanionPositions.Clear();
-            GatherLocalTamedCompanionPositions(_localCompanionPositions);
-
             // Client: throttled send to server. Sending while the local list is
             // empty is harmless but wasteful — skip when there's nothing to track.
-            if (_localCompanionPositions.Count > 0)
+            // 1076 ([ghost], Fire 10-31 event-driven / cache rule): the companion positions are gathered only when a send is due
+            // (they were rebuilt every frame and read once a second); with none to send, the next look is 0.25 s later. The
+            // positions sent are gathered the same frame they are sent, and a new companion is sent no later than before.
+            _sendTimer += Time.deltaTime;
+            if (_sendTimer >= SendInterval)
             {
-                _sendTimer += Time.deltaTime;
-                if (_sendTimer >= SendInterval)
-                {
-                    _sendTimer = 0f;
-                    SendCompanionPositions();
-                }
+                _localCompanionPositions.Clear();
+                GatherLocalTamedCompanionPositions(_localCompanionPositions);
+                if (_localCompanionPositions.Count > 0) { _sendTimer = 0f; SendCompanionPositions(); }
+                else _sendTimer = SendInterval - 0.25f;
             }
 
             // Server only. Keeping zones alive on the client held companion GameObjects across long jumps after
@@ -181,6 +210,7 @@ namespace FiresCore.Npc
                     if (keepAliveDue && kvp.Value.Count > 0)
                         LoadZonesForPositions(kvp.Value);
                 }
+                if (keepAliveDue && ServerHeldPositions.Count > 0) LoadZonesForPositions(ServerHeldPositions);
 
                 // Offline-player coverage. Refresh the cached snapshot
                 // periodically by walking ZDOMan (no client cooperation
@@ -197,7 +227,7 @@ namespace FiresCore.Npc
                         RefreshAllKnownCompanionPositions();
                     }
 
-                    if (keepAliveDue && _allKnownCompanionPositions.Count > 0)
+                    if (keepAliveDue && _allKnownCompanionPositions.Count > 0 && !NoPlayersOnDedi())
                         LoadZonesForPositions(_allKnownCompanionPositions);
                 }
                 else if (_allKnownCompanionPositions.Count > 0)
@@ -288,44 +318,71 @@ namespace FiresCore.Npc
         //  earmarks them and lets them survive the sweep.
         // ────────────────────────────────────────────────────────────────────
 
+        private static readonly HashSet<Vector2s> _zonesDone = new HashSet<Vector2s>();
+        private static float _nextDedupeLog;
+
         [HarmonyPatch(typeof(ZNetScene), "RemoveObjects")]
         [HarmonyPrefix]
         private static void RemoveObjects_Prefix(
             List<ZDO> currentNearObjects,
             List<ZDO> currentDistantObjects)
         {
+            _companionZDOs.Clear();
+            if (CollectKept(_companionZDOs) > 0)
+                currentNearObjects.AddRange(_companionZDOs);
+        }
+
+        /// <summary>
+        /// 0.2.1213 ([generator], [lead]/[fgn] 11-08): the ONE place the companion keep is decided, used by the RemoveObjects prefix above
+        /// and by <see cref="CompanionKeep"/> (FGN's sliced server removal). Appends to <paramref name="into"/> every ZDO vanilla's
+        /// FindSectorObjects returns around each companion position (one call per distinct zone, the synced simulation distance), which is
+        /// exactly the set the prefix has always added to vanilla's near list. Server only; returns how many were added.
+        /// </summary>
+        internal static int CollectKept(List<ZDO> into)
+        {
             // Server only. Earmarking on the client kept every sector around a companion's last position in memory
             // after a long jump (gigabytes of trees and pieces) and fed the teleport revert loop; the server's
             // keep-alive covers companions on its own.
-            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (ZNet.instance == null || !ZNet.instance.IsServer() || ZDOMan.instance == null) return 0;
+            int before = into.Count;
 
             _tempPositions.Clear();
             GatherLocalTamedCompanionPositions(_tempPositions);
 
             foreach (var kvp in _peerCompanionPositions)
                 _tempPositions.AddRange(kvp.Value);
+            _tempPositions.AddRange(ServerHeldPositions);
 
             bool keepOffline = FiresCore.Bridge.NpcConfigBridge.GetBool("KeepZonesLoadedForOfflinePlayers", true);
-            if (keepOffline && _allKnownCompanionPositions.Count > 0)
+            if (keepOffline && _allKnownCompanionPositions.Count > 0 && !NoPlayersOnDedi())
                 _tempPositions.AddRange(_allKnownCompanionPositions);
 
-            if (_tempPositions.Count == 0) return;
+            if (_tempPositions.Count == 0) return 0;
 
-            _companionZDOs.Clear();
             // Valheim 1.0 replaced the m_activeArea / m_activeDistantArea radii with the
             // server-synced SimulationDistance struct that FindSectorObjects now takes.
             SimulationDistance simDistance = ZNet.instance != null
                 ? ZNet.instance.GetSyncedSimulationDistance()
                 : new SimulationDistance(1, 1, true);
 
+            // One FindSectorObjects per DISTINCT zone - every call uses the same simDistance, so
+            // (zone, area) is unique per zone and the loaded set is identical
+            _zonesDone.Clear();
+            int calls = 0;
             for (int i = 0; i < _tempPositions.Count; i++)
             {
-                Vector2s camZone = ZoneSystem.GetZone(_tempPositions[i]);
-                ZDOMan.instance.FindSectorObjects(camZone, simDistance, _companionZDOs);
+                Vector2s camZone = FiresCore.World.RingZones.ObjectSector(_tempPositions[i]);   // halo ring: the ring object-sector id
+                if (!_zonesDone.Add(camZone)) continue;
+                ZDOMan.instance.FindSectorObjects(camZone, simDistance, into);
+                calls++;
             }
-
-            if (_companionZDOs.Count > 0)
-                currentNearObjects.AddRange(_companionZDOs);
+            if (Time.unscaledTime >= _nextDedupeLog)
+            {
+                _nextDedupeLog = Time.unscaledTime + 60f;
+                if (FiresCore.Logging.FiresLogger.DebugEnabled)
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionZoneLoader] {_tempPositions.Count} position(s) -> {calls} sector call(s) (distinct zones)");
+            }
+            return into.Count - before;
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -356,6 +413,67 @@ namespace FiresCore.Npc
             // player reconnects they'll be re-tracked via the next RPC tick.
             if (peer != null)
                 _peerCompanionPositions.Remove(peer.m_uid);
+        }
+    }
+
+    /// <summary>
+    /// 0.2.1213 ([generator], [lead]/[fgn] 11-08): the companion keep as data, for FGN's sliced server removal (FGN 1.6.60 fell back to the
+    /// whole vanilla RemoveObjects every 2 s, a 17-20 ms pass, because the keep lived only in <c>TamedCompanionZoneLoader.RemoveObjects_Prefix</c>).
+    /// The set is built by the SAME <c>TamedCompanionZoneLoader.CollectKept</c> the prefix uses (vanilla FindSectorObjects around each companion
+    /// zone), so it holds exactly the ZDOs the prefix keeps, including vanilla's near / distant split. The prefix is unchanged for every other caller.
+    /// Add-only, server only, main thread. Bind by reflection: type "FiresCore.Npc.CompanionKeep".
+    ///   Refresh() at the start of each removal pass (it costs what one prefix call costs); IsKept(zdo) per instance; Active says whether to use it.
+    /// </summary>
+    public static class CompanionKeep
+    {
+        private static readonly List<ZDO> s_buf = new List<ZDO>();
+        private static readonly HashSet<ZDO> s_kept = new HashSet<ZDO>();
+        private static bool s_active, s_prefixLive, s_saidOnce;
+        private static float s_prefixCheckAt = -1f;
+        private static int s_version;
+
+        /// <summary>True while this server's companion keep is on (the prefix is patched) and the last Refresh kept at least one ZDO.</summary>
+        public static bool Active => s_active;
+
+        /// <summary>Bumps each time a Refresh changes the kept count; cheap change hint for callers that cache derived data.</summary>
+        public static int Version => s_version;
+
+        /// <summary>Rebuilds the kept set; returns how many ZDOs it holds. Call once per removal pass, on the main thread.</summary>
+        public static int Refresh()
+        {
+            int before = s_kept.Count;
+            s_kept.Clear();
+            s_buf.Clear();
+            if (PrefixLive()) TamedCompanionZoneLoader.CollectKept(s_buf);
+            for (int i = 0; i < s_buf.Count; i++) if (s_buf[i] != null) s_kept.Add(s_buf[i]);
+            s_buf.Clear();
+            bool was = s_active;
+            s_active = s_prefixLive && s_kept.Count > 0;
+            if (s_kept.Count != before) s_version++;
+            if (!s_saidOnce && s_active) { s_saidOnce = true; FiresCore.Logging.FiresLogger.LogInfo($"[CompanionKeep] companion keep exposed as data: {s_kept.Count} ZDO(s) around tamed companions (same set as the RemoveObjects prefix)"); }
+            else if (was != s_active && FiresCore.Logging.FiresLogger.DebugEnabled) FiresCore.Logging.FiresLogger.LogDebug($"[CompanionKeep] {(s_active ? "on" : "off")}: {s_kept.Count} ZDO(s), prefix {(s_prefixLive ? "patched" : "not patched")}");
+            return s_kept.Count;
+        }
+
+        /// <summary>True if the last Refresh kept this ZDO (the prefix would add it to vanilla's near list).</summary>
+        public static bool IsKept(ZDO zdo) => zdo != null && s_kept.Contains(zdo);
+
+        // The Companions feature can leave the loader unpatched; then nothing is kept and Active stays false. Re-checked every 5 s, not per call.
+        private static bool PrefixLive()
+        {
+            if (Time.unscaledTime < s_prefixCheckAt) return s_prefixLive;
+            s_prefixCheckAt = Time.unscaledTime + 5f;
+            s_prefixLive = false;
+            try
+            {
+                var target = AccessTools.Method(typeof(ZNetScene), "RemoveObjects");
+                var info = target != null ? Harmony.GetPatchInfo(target) : null;
+                if (info != null)
+                    foreach (var p in info.Prefixes)
+                        if (p.PatchMethod != null && p.PatchMethod.DeclaringType == typeof(TamedCompanionZoneLoader)) { s_prefixLive = true; break; }
+            }
+            catch { s_prefixLive = false; }
+            return s_prefixLive;
         }
     }
 }

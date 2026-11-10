@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -11,7 +11,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
     /// Each archetype's emergency escape (Arcane Blink, Sanctuary Fade, Savage Leap, Shadow Escape, Disengage,
     /// Shield Charge, Divine Retreat, Wind Step, and the Pyromancer's Infernal Blink), triggered when swarmed, at
     /// low health, or through the API. A player's class evasion (FiresRPGClasses, in place of the dodge roll) runs
-    /// through <see cref="TryPlayerEvasion"/>. Who it hurts or heals follows ClassTargeting (Fire: damage only enemies,
+    /// through <see cref="TryPlayerEvasion"/>. Who it hurts or heals follows ClassTargeting (damage only enemies,
     /// heals only the party).
     /// </summary>
     public class EmergencyEvasionManager : MonoBehaviour
@@ -59,7 +59,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private float _resourceCost;
         private bool _usesEitr;
 
-        // A player's evasion goes where they pressed dodge (Fire, popup 2026-09-28 19:09); a companion's picks its own way.
+        // A player's evasion goes where they pressed dodge; a companion's picks its own way.
         private Vector3? _playerDirection;
         
         public static bool VerboseLogging = false;
@@ -79,7 +79,9 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             ShieldCharge,       // Tank - charge through + knockback
             DivineRetreat,      // Paladin - blind + reposition
             WindStep,           // Monk - rapid dodge + afterimages
-            InfernalBlink       // Pyromancer hybrid - teleport + Fader Fire AOE
+            InfernalBlink,      // Pyromancer hybrid - teleport + Fader Fire AOE
+            BeastPounce,        // Druid - beast roll + pounce
+            ShadowStep          // Necromancer - fade + blink
         }
         
         #endregion
@@ -124,7 +126,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         private void Update()
         {
             if (_companion == null || _companion.isDefeated) return;
-            if (_companion.IsPossessed) return;   // 0.2.292: a player is driving it
+            if (_companion.IsPossessed) return;   // a player is driving it
             if (_nview == null || !_nview.IsOwner()) return;
             if (_isEvading) return;
             if (_evasionType == EvasionType.None) return;
@@ -192,6 +194,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 case ArchetypeClass.Tank: return EvasionType.ShieldCharge;
                 case ArchetypeClass.Paladin: return EvasionType.DivineRetreat;
                 case ArchetypeClass.Monk: return EvasionType.WindStep;
+                case ArchetypeClass.Druid: return EvasionType.BeastPounce;
+                case ArchetypeClass.Necromancer: return EvasionType.ShadowStep;
                 default: return EvasionType.None;
             }
         }
@@ -210,6 +214,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 case EvasionType.ShieldCharge: cost = 35f; usesEitr = false; cooldown = 40f; return;
                 case EvasionType.DivineRetreat: cost = 30f; usesEitr = false; cooldown = 40f; return;
                 case EvasionType.WindStep: cost = 20f; usesEitr = false; cooldown = 25f; return;
+                case EvasionType.BeastPounce: cost = 30f; usesEitr = false; cooldown = 30f; return;
+                case EvasionType.ShadowStep: cost = 25f; usesEitr = true; cooldown = 35f; return;
                 default: cost = 0f; usesEitr = false; cooldown = BaseCooldown; return;
             }
         }
@@ -331,7 +337,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             _lastEvasionTime = Time.time;
             _isEvading = true;
             
-            Debug.Log($"[EmergencyEvasion] {_companion?.companionName} using {_evasionType}!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[EmergencyEvasion] {_companion?.companionName} using {_evasionType}!");
             
             StartCoroutine(ExecuteEvasion());
         }
@@ -346,7 +352,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             _lastEvasionTime = Time.time;
             _isEvading = true;
             
-            Debug.Log($"[EmergencyEvasion] {_companion?.companionName} FORCED {_evasionType}!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[EmergencyEvasion] {_companion?.companionName} FORCED {_evasionType}!");
             
             StartCoroutine(ExecuteEvasion());
             return true;
@@ -396,6 +402,14 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 case EvasionType.WindStep:
                     yield return ExecuteWindStep(originPos);
                     break;
+
+                case EvasionType.BeastPounce:
+                    yield return ExecuteBeastPounce(originPos);
+                    break;
+
+                case EvasionType.ShadowStep:
+                    yield return ExecuteShadowStep(originPos);
+                    break;
             }
 
             _isEvading = false;
@@ -404,8 +418,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
 
         /// <summary>
         /// A player's class evasion in place of the dodge roll (FiresRPGClasses). It is the archetype's evasion, in the
-        /// dodge direction, for Core's cost (stamina, or eitr for the casters) and cooldown (Fire, popup 2026-09-28
-        /// 19:09). Returns false when it isn't ready or the player can't pay, and the vanilla roll runs instead.
+        /// dodge direction, for Core's cost (stamina, or eitr for the casters) and cooldown. Returns false when it isn't
+        /// ready or the player can't pay, and the vanilla roll runs instead.
         /// </summary>
         public static bool TryPlayerEvasion(Player player, EvasionType type, Vector3 direction)
         {
@@ -431,7 +445,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             if (_usesEitr) player.UseEitr(_resourceCost);
             else player.UseStamina(_resourceCost);
 
-            direction.y = 0f;
+            direction = RingFlat(direction, transform.position);
             _playerDirection = direction.sqrMagnitude > 0.01f ? direction.normalized : player.transform.forward;
             _lastEvasionTime = Time.time;
             _isEvading = true;
@@ -559,7 +573,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             
             // Calculate jump direction
             Vector3 jumpDirection = (destination - origin).normalized;
-            jumpDirection.y = 0;
+            jumpDirection = RingFlat(jumpDirection, transform.position);
             if (jumpDirection.magnitude < 0.1f)
             {
                 jumpDirection = transform.forward;
@@ -573,7 +587,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 float forwardVelocity = LeapDistance / 0.5f; // Reach destination in ~0.5s
                 
                 // Face the jump direction
-                transform.rotation = Quaternion.LookRotation(jumpDirection);
+                transform.rotation = Quaternion.LookRotation(jumpDirection, RingUp(transform.position));
                 
                 // Trigger the jump using the game's built-in auto-jump system
                 _character.OnAutoJump(jumpDirection, upVelocity, forwardVelocity);
@@ -589,7 +603,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 var body = GetComponent<Rigidbody>();
                 if (body != null && !body.isKinematic)
                 {
-                    Vector3 jumpForce = jumpDirection * 12f + Vector3.up * 10f;
+                    Vector3 jumpForce = jumpDirection * 12f + RingUp(transform.position) * 10f;
                     body.AddForce(jumpForce, ForceMode.VelocityChange);
                 }
             }
@@ -688,7 +702,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 ? (origin - nearestEnemy.transform.position).normalized
                 : -transform.forward);
             
-            awayDir.y = 0;
+            awayDir = RingFlat(awayDir, transform.position);
             awayDir.Normalize();
             
             Vector3 destination = FindValidPosition(origin + awayDir * BackflipDistance);
@@ -703,7 +717,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 float backwardVelocity = BackflipDistance / 0.4f; // Reach destination in ~0.4s
                 
                 // Face away from enemy (so "forward" is our retreat direction)
-                transform.rotation = Quaternion.LookRotation(awayDir);
+                transform.rotation = Quaternion.LookRotation(awayDir, RingUp(transform.position));
                 
                 // Trigger the jump
                 _character.OnAutoJump(awayDir, upVelocity, backwardVelocity);
@@ -854,6 +868,57 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// <summary>
         /// Finds a safe position away from enemies.
         /// </summary>
+        /// <summary>
+        /// Beast Pounce - Druid evasion: a low, fast beast roll out of danger, no damage.
+        /// The same auto-jump as Savage Leap, flatter and shorter.
+        /// </summary>
+        private IEnumerator ExecuteBeastPounce(Vector3 origin)
+        {
+            Vector3 destination = FindSafePosition(origin, LeapDistance * 0.75f);
+            Vector3 dir = destination - origin;
+            dir = RingFlat(dir, transform.position);
+            if (dir.sqrMagnitude < 0.01f) dir = transform.forward;
+            dir.Normalize();
+
+            SpawnVFX("vfx_wolf_attack_hit", origin);
+            if (_character != null)
+            {
+                transform.rotation = Quaternion.LookRotation(dir, RingUp(transform.position));
+                _character.OnAutoJump(dir, 4f, (LeapDistance * 0.75f) / 0.35f);
+            }
+
+            float start = Time.time;
+            yield return new WaitForSeconds(0.1f);
+            while (Time.time - start < 0.6f && (_character == null || !_character.IsOnGround())) yield return null;
+
+            SpawnVFX("vfx_boar_hit", transform.position);
+            yield return new WaitForSeconds(0.1f);
+        }
+
+        /// <summary>
+        /// Shadow Step - Necromancer evasion: fade out, blink a short distance, fade back in.
+        /// </summary>
+        private IEnumerator ExecuteShadowStep(Vector3 origin)
+        {
+            Vector3 destination = FindSafePosition(origin, BlinkDistance);
+
+            SpawnVFX("vfx_ghost_death", origin);
+            CharacterVisibilityController visibility = null;
+            if (_character != null)
+            {
+                visibility = new CharacterVisibilityController(_character);
+                visibility.SetHidden(true);
+            }
+
+            yield return new WaitForSeconds(0.2f);
+            TeleportTo(destination);
+            SpawnVFX("vfx_ghost_death", destination);
+            yield return new WaitForSeconds(0.1f);
+
+            visibility?.Restore();
+            yield return new WaitForSeconds(0.1f);
+        }
+
         private Vector3 FindSafePosition(Vector3 origin, float distance)
         {
             if (_playerDirection.HasValue) return FindValidPosition(origin + _playerDirection.Value * distance);
@@ -888,7 +953,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             }
             
             // Ensure horizontal
-            awayDir.y = 0;
+            awayDir = RingFlat(awayDir, transform.position);
             awayDir.Normalize();
             
             return FindValidPosition(origin + awayDir * distance);
@@ -906,7 +971,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             if (owner != null && !owner.IsDead())
             {
                 Vector3 toOwner = (owner.transform.position - origin).normalized;
-                toOwner.y = 0;
+                toOwner = RingFlat(toOwner, transform.position);
                 return FindValidPosition(origin + toOwner * distance);
             }
             
@@ -961,7 +1026,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             
             // Get perpendicular direction for flank
             Vector3 toEnemy = (nearestEnemy.transform.position - origin).normalized;
-            Vector3 flankDir = Vector3.Cross(toEnemy, Vector3.up);
+            Vector3 flankDir = Vector3.Cross(toEnemy, RingUp(origin));
             
             // Randomly pick left or right
             if (UnityEngine.Random.value > 0.5f)
@@ -982,7 +1047,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             if (owner != null)
             {
                 Vector3 toOwner = (owner.transform.position - origin).normalized;
-                toOwner.y = 0;
+                toOwner = RingFlat(toOwner, transform.position);
                 return toOwner.normalized;
             }
             
@@ -1017,7 +1082,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             {
                 enemyCentroid /= count;
                 Vector3 awayDir = (origin - enemyCentroid).normalized;
-                awayDir.y = 0;
+                awayDir = RingFlat(awayDir, transform.position);
                 return awayDir.normalized;
             }
             
@@ -1036,7 +1101,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == _character) continue;
-                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // Fire: enemies only
+                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // enemies only
                 
                 float dist = Vector3.Distance(transform.position, character.transform.position);
                 if (dist < nearestDist)
@@ -1070,10 +1135,28 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// <summary>
         /// Finds a valid walkable position.
         /// </summary>
+        // Halo ring (FiresCore.World.GravityUp): flatten into the tangent plane / the local up. Outside every field these are
+        // exactly the old maths (v.y = 0, Vector3.up).
+        private static bool s_ringLogged;
+        private static Vector3 RingFlat(Vector3 v, Vector3 at)
+        {
+            if (!FiresCore.World.GravityUp.InField(at, out Vector3 up)) { v.y = 0f; return v; }
+            return Vector3.ProjectOnPlane(v, up);
+        }
+        private static Vector3 RingUp(Vector3 at) => FiresCore.World.GravityUp.At(at);
+
         private Vector3 FindValidPosition(Vector3 targetPos)
         {
+            if (FiresCore.World.GravityUp.InField(targetPos, out Vector3 up))
+            {
+                // halo ring: cast along the local up; no ground = stay at the caster's own height above the wall
+                if (!s_ringLogged) { s_ringLogged = true; Debug.Log($"[EmergencyEvasion] halo ring: directions in the tangent plane, ground cast along -up {up:F2}"); }
+                if (Physics.Raycast(targetPos + up * 5f, -up, out RaycastHit ringHit, 10f, LayerMask.GetMask("Default", "terrain", "static_solid")))
+                    return ringHit.point + up * 0.1f;
+                return targetPos + up * Vector3.Dot(transform.position - targetPos, up);
+            }
             // Raycast down to find ground
-            if (Physics.Raycast(targetPos + Vector3.up * 5f, Vector3.down, out RaycastHit hit, 10f, 
+            if (Physics.Raycast(targetPos + Vector3.up * 5f, Vector3.down, out RaycastHit hit, 10f,
                 LayerMask.GetMask("Default", "terrain", "static_solid")))
             {
                 return hit.point + Vector3.up * 0.1f;
@@ -1158,7 +1241,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 if (character == null || character.IsDead()) continue;
                 if (character == _character) continue;
                 
-                // Fire: damage only enemies (never the party, a player only when both have PvP on)
+                // Damage only enemies (never the party, a player only when both have PvP on)
                 if (!hitFriendlies && !ClassTargeting.IsEnemyTarget(_character, character)) continue;
                 
                 float dist = Vector3.Distance(position, character.transform.position);
@@ -1196,7 +1279,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
         /// </summary>
         private void HealAlliesInRange(Vector3 position, float radius, float healing)
         {
-            // Fire: heals only the party (the evader, its owner or companions, and group/guild allies with theirs).
+            // Heals only the party (the evader, its owner or companions, and group/guild allies with theirs).
             // Character.Heal goes to each target's owner.
             foreach (var character in Character.GetAllCharacters())
             {
@@ -1245,7 +1328,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             foreach (var character in Character.GetAllCharacters())
             {
                 if (character == null || character.IsDead()) continue;
-                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // Fire: enemies only
+                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // enemies only
                 
                 float dist = Vector3.Distance(position, character.transform.position);
                 if (dist <= radius)
@@ -1286,7 +1369,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == _character) continue;
-                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // Fire: enemies only
+                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // enemies only
                 
                 float dist = Vector3.Distance(position, character.transform.position);
                 if (dist <= radius)
@@ -1296,7 +1379,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                     if (body != null)
                     {
                         Vector3 knockDir = (character.transform.position - position).normalized;
-                        knockDir.y = 0.3f; // Slight upward
+                        knockDir = RingFlat(knockDir, character.transform.position) + RingUp(character.transform.position) * 0.3f; // Slight upward (halo ring: along the local up; off the ring = old knockDir.y = 0.3f)
                         body.AddForce(knockDir * 500f, ForceMode.Impulse);
                     }
                     
@@ -1315,7 +1398,7 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == _character) continue;
-                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // Fire: enemies only
+                if (!ClassTargeting.IsEnemyTarget(_character, character)) continue; // enemies only
                 
                 float dist = Vector3.Distance(position, character.transform.position);
                 if (dist <= radius)
@@ -1412,6 +1495,8 @@ namespace FiresCore.Npc.Combat.EmergencyEvasion
                 case EvasionType.ShieldCharge: return "Shield Charge";
                 case EvasionType.DivineRetreat: return "Divine Retreat";
                 case EvasionType.WindStep: return "Wind Step";
+                case EvasionType.BeastPounce: return "Beast Pounce";
+                case EvasionType.ShadowStep: return "Shadow Step";
                 default: return "None";
             }
         }

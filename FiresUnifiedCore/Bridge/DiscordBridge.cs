@@ -5,7 +5,7 @@ namespace FiresCore.Bridge
 {
     /// <summary>
     /// Raw Discord channel access for private tools, carried by Core so a public mod never reads folders outside the Valheim install
-    /// (Fire, 2026-09-29): the Discord integration (FDI, public) sets the delegates; a private tool (FDT: the stream's clip / Live-now
+    /// folder. The Discord integration (FDI, public) sets the delegates; a private tool (FDT: the stream's clip / Live-now
     /// outbox, the test-channel commands) calls them. Core does no I/O here: delegates and one event only. Beside
     /// <see cref="DiscordSink"/>, which carries the game's domain events.
     ///

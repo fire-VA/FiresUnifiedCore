@@ -43,7 +43,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private const float ScanRadius         = 40f;
         private const float InteractionRange   = 2.5f;
-        private const float RepairThreshold    = AI.ChoreBrain.PieceRepairBelow;  // Repair if health below 95% (one rule with the bot's base chores, 0.2.236)
+        private const float RepairThreshold    = AI.ChoreBrain.PieceRepairBelow;  // Repair if health below 95% (one rule with the bot's base chores)
         private const float RepairDuration     = 2.0f;   // Animation hold time
         private const float MaxRepairTime     = 180f;
         private const float ScanCacheDuration = 30f;
@@ -190,11 +190,13 @@ namespace FiresCore.Npc.IdleBehaviors
                 _commandedTarget = null;
             }
 
-            if (!CompanionBehaviorToggles.IsRepairEnabled(Companion)) return false;
+            // [ghost] 10-26 (Fire's trace round: "cannot start BuildingRepair" with no reason): every gate says why
+            if (FiresCore.Npc.Combat.HomesteadDefence.On && !FiresCore.Npc.Combat.HomesteadDefence.QuietForRepairs) { LogVerbose("CanStart: FALSE - a threat is still in the base (repairs wait until it is over + 30 s, Fire 10-27)"); return false; }
+            if (!CompanionBehaviorToggles.IsRepairEnabled(Companion)) { LogVerbose("CanStart: FALSE - repair toggled off (radial menu)"); return false; }
 
             // Only in stay mode
             bool isStaying = IdleBehavior != null && IdleBehavior.HasHomePosition && !Companion.ShouldBeFollowing;
-            if (!isStaying) return false;
+            if (!isStaying) { LogVerbose("CanStart: FALSE - not staying (no home point, or following)"); return false; }
 
             // Throttled damage scan
             if (!HasDamagedPiecesNearby())
@@ -525,9 +527,15 @@ namespace FiresCore.Npc.IdleBehaviors
                 LogVerbose($"Repaired piece ({_totalRepaired} total)");
                 AI.ChoreBrain.ChoreDone(Companion?.companionName, "repair", $"repaired {Utils.GetPrefabName(_currentPiece.gameObject)} (hp was {hpBefore:P0})");
             }
+            else if (_currentPiece.GetHealthPercentage() < 1f)
+            {
+                // Vanilla Repair refuses within 1 s of the last repair; still damaged, so it's picked again next pass.
+                _repairedPieces.Remove(_currentPiece);
+                LogVerbose($"RepairPiece returned false — still damaged, retried next pass");
+            }
             else
             {
-                LogVerbose($"RepairPiece returned false — skipping (won't retry)");
+                LogVerbose($"RepairPiece returned false — already full");
             }
 
             SetPhase(RepairPhase.FindingNextPiece);
@@ -639,7 +647,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
 
-        // One set of repair rules with the bot's base chores (0.2.237): ChoreBrain.DamagedPieces / PieceWantsRepair (loaded,
+        // One set of repair rules with the bot's base chores: ChoreBrain.DamagedPieces / PieceWantsRepair (loaded,
         // player-built, under PieceRepairBelow), most damaged first; this companion's wards on top.
         private List<WearNTear> ScanForDamagedPieces()
         {
@@ -850,7 +858,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (nview == null || !nview.IsValid()) return false;
             if (!ChestHelper.WardsAllow(wearNTear.transform.position, Companion)) return false;
 
-            // One copy with the bot's base chores (0.2.236): claim, vanilla Repair, the direct health write as the fallback.
+            // One copy with the bot's base chores: claim, vanilla Repair, the direct health write as the fallback.
             return AI.ChoreBrain.RepairPiece(wearNTear);
         }
 
@@ -861,7 +869,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private static int CountItems(Inventory inv, string prefabName)
         {
             int count = 0;
-            foreach (var item in inv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // Storage rows only
             {
                 if (item?.m_dropPrefab?.name == prefabName)
                     count += item.m_stack;
@@ -873,29 +881,17 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (CountItems(inv, prefabName) < needed) return false;
 
-            int remaining   = needed;
-            var items       = new List<ItemDrop.ItemData>(inv.GetAllItems());
-            var toRemove    = new List<ItemDrop.ItemData>();
-
-            foreach (var item in items)
+            // Vanilla Inventory.RemoveItem(item, amount), so the inventory's Changed (save, UI) fires. The raw
+            // m_stack write skipped it.
+            int remaining = needed;
+            foreach (var item in new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(inv))) // Storage rows only
             {
                 if (remaining <= 0) break;
                 if (item?.m_dropPrefab?.name != prefabName) continue;
-
-                if (item.m_stack <= remaining)
-                {
-                    remaining -= item.m_stack;
-                    toRemove.Add(item);
-                }
-                else
-                {
-                    item.m_stack -= remaining;
-                    remaining = 0;
-                }
+                int take = Mathf.Min(item.m_stack, remaining);
+                inv.RemoveItem(item, take);
+                remaining -= take;
             }
-
-            foreach (var item in toRemove)
-                inv.RemoveItem(item);
 
             return true;
         }

@@ -107,7 +107,7 @@ namespace FiresCore.UI
                 UIOverrideDragGhostManager.EnsureInstance();
 
             if (wired > 0)
-                Debug.Log($"[UIOverrideInventoryWiring] Wired {wired} inventory element(s)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired {wired} inventory element(s)");
 
             return wired;
         }
@@ -154,7 +154,7 @@ namespace FiresCore.UI
                 interaction.GridPosition = new Vector2Int(gridX, gridY);
             }
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired equipment slot '{go.name}' -> " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired equipment slot '{go.name}' -> " +
                 $"SlotID='{slotId}' Grid=({gridX},{gridY}) Interactive={interactive}");
             return true;
         }
@@ -200,7 +200,7 @@ namespace FiresCore.UI
             mirror.HotbarIndex = hotbarIndex;
             mirror.Interactive = interactive;
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired hotbar slot '{go.name}' -> " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired hotbar slot '{go.name}' -> " +
                 $"Index={hotbarIndex} Interactive={interactive}");
             return true;
         }
@@ -238,7 +238,7 @@ namespace FiresCore.UI
             mirror.HotbarIndex = hotbarIndex;
             mirror.Interactive = interactive;
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired tool hotbar slot '{go.name}' -> " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired tool hotbar slot '{go.name}' -> " +
                 $"Index={hotbarIndex} Interactive={interactive}");
             return true;
         }
@@ -252,7 +252,7 @@ namespace FiresCore.UI
             var preview = go.GetComponent<UIOverridePlayerPreview>();
             if (preview == null) preview = go.AddComponent<UIOverridePlayerPreview>();
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired player preview '{go.name}'");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired player preview '{go.name}'");
             return true;
         }
 
@@ -267,7 +267,7 @@ namespace FiresCore.UI
             if (wiring == null) wiring = go.AddComponent<UIOverrideContainerWiring>();
             wiring.Interactive = GetMetaBool(go, "interactive", true);
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired container panel '{go.name}'");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired container panel '{go.name}'");
             return true;
         }
 
@@ -282,7 +282,7 @@ namespace FiresCore.UI
             if (handler == null) handler = go.AddComponent<UIOverrideDropZoneHandler>();
             handler.DropToGround = GetMetaBool(go, "drop_to_ground", true);
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired drop zone '{go.name}'");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired drop zone '{go.name}'");
             return true;
         }
 
@@ -296,7 +296,7 @@ namespace FiresCore.UI
             var sync = go.GetComponent<UIOverrideStatusEffectSync>();
             if (sync == null) sync = go.AddComponent<UIOverrideStatusEffectSync>();
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired status effect container '{go.name}'");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired status effect container '{go.name}'");
             return true;
         }
 
@@ -310,7 +310,7 @@ namespace FiresCore.UI
             var wiring = go.GetComponent<UIOverrideCraftingWiring>();
             if (wiring == null) wiring = go.AddComponent<UIOverrideCraftingWiring>();
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired crafting panel '{go.name}'");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired crafting panel '{go.name}'");
             return true;
         }
 
@@ -324,7 +324,7 @@ namespace FiresCore.UI
             var wiring = go.GetComponent<UIOverrideSkillsWiring>();
             if (wiring == null) wiring = go.AddComponent<UIOverrideSkillsWiring>();
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired skills panel '{go.name}'");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired skills panel '{go.name}'");
             return true;
         }
 
@@ -338,7 +338,7 @@ namespace FiresCore.UI
             var wiring = go.GetComponent<UIOverrideMapWiring>();
             if (wiring == null) wiring = go.AddComponent<UIOverrideMapWiring>();
 
-            Debug.Log($"[UIOverrideInventoryWiring] Wired map display '{go.name}'");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideInventoryWiring] Wired map display '{go.name}'");
             return true;
         }
 

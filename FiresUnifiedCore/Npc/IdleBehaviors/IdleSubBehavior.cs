@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.Core;
 using FiresCore.Npc.AI;
@@ -81,6 +81,9 @@ namespace FiresCore.Npc.IdleBehaviors
         /// The priority is checked AFTER CanStart() returns true.
         /// </summary>
         public virtual int InventoryPriority => 0;
+
+        /// <summary>0.2.908: why <see cref="InventoryPriority"/> is raised right now (shown on the "[Chore] pick" line), or null.</summary>
+        public virtual string PriorityReason => null;
         
         /// <summary>
         /// Override to return true if this behavior requires inventory space to operate.
@@ -97,6 +100,8 @@ namespace FiresCore.Npc.IdleBehaviors
         public virtual float WanderRadiusMultiplier => 1.0f;
         
         public abstract string BehaviorName { get; }
+        /// <summary>0.2.844: the last CanStart refusal reason a chore gave (e.g. "no cooking stations nearby"), or null.</summary>
+        public string LastRefusal { get; protected set; }
         
         /// <summary>
         /// Gets the search center position for finding nearby objects.
@@ -108,6 +113,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             get
             {
+                if (IdleBehavior != null && IdleBehavior.HasWorkZone) return IdleBehavior.WorkZoneCenter;   // Fire 10-27: a zone run
                 // If we have a home position set (staying mode), search around home
                 if (IdleBehavior != null && IdleBehavior.HasHomePosition)
                 {
@@ -125,6 +131,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         protected float GetEffectiveSearchRadius(float baseRadius)
         {
+            if (IdleBehavior != null && IdleBehavior.HasWorkZone) return IdleBehavior.WorkZoneRadius;   // Fire 10-27: the zone's own radius
             if (IdleBehavior != null && IdleBehavior.HasHomePosition && Companion != null && !Companion.ShouldBeFollowing)
             {
                 float stayModeRadius = CompanionSettings.GetStayModeWorkSearchRadius(SearchCenter);
@@ -159,6 +166,15 @@ namespace FiresCore.Npc.IdleBehaviors
         /// every frame don't trigger a full A* query on each tick.
         /// Falls back to true when <see cref="Pathfinding.instance"/> is unavailable.
         /// </summary>
+        /// <summary>The strict navmesh path test, without IsReachable's close-and-clear fallback: for callers that
+        /// must know a point is off the navmesh (patrol's bridge snap).</summary>
+        protected bool IsNavmeshReachable(Vector3 targetPos)
+        {
+            if (Transform == null || Pathfinding.instance == null) return true;
+            _reachabilityBuffer.Clear();
+            return Pathfinding.instance.GetPath(Transform.position, targetPos, _reachabilityBuffer, Pathfinding.AgentType.Humanoid, cleanup: true);
+        }
+
         protected bool IsReachable(Vector3 targetPos)
         {
             if (Transform == null || Pathfinding.instance == null) return true;
@@ -174,6 +190,22 @@ namespace FiresCore.Npc.IdleBehaviors
                 _reachabilityBuffer,
                 Pathfinding.AgentType.Humanoid,
                 cleanup: true);
+            // 0.2.846: a query refused by the path budget is no answer: assume reachable for now and don't remember it
+            if (!ok && FiresCore.Npc.AI.PathBudget.Denied) return true;
+
+            // (The navmesh path query can fail on a built floor right beside a station, which
+            // hits haul / smelter / storage jobs in any player base): a target within 10 m with a clear line is reachable too;
+            // vanilla MoveTo walks straight there when close. Logged at Debug when this fallback decides.
+            if (!ok)
+            {
+                float dist = Vector3.Distance(Transform.position, targetPos);
+                if (dist <= 10f && !Physics.Linecast(Transform.position + Vector3.up * 0.8f, targetPos + Vector3.up * 0.8f,
+                        LayerMask.GetMask("Default", "static_solid", "terrain"), QueryTriggerInteraction.Ignore))
+                {
+                    ok = true;
+                    FiresCore.Logging.FiresLogger.LogDebug($"[{GetType().Name}] {Companion?.companionName}: no navmesh path to {targetPos:F1} ({dist:0.0} m) but close and clear; treated as reachable");
+                }
+            }
 
             _reachCache[key] = (ok, Time.time);
             return ok;
@@ -289,6 +321,54 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         protected CompanionAI CompanionAI { get; private set; }
         
+        private const float DropSweepRadius = 12f, DropSweepSeconds = 30f, DropReach = 1.5f;
+        private float _sweepPhaseStamp = -1f, _sweepStarted;
+        private Vector3 _sweepCentre;
+        private int _sweepSeen;
+        private static readonly Collider[] s_dropBuf = new Collider[128];
+        private static int s_itemMask = -1;
+
+        // [ghost] 10-26 (Fire: "companions should not leave loot on the ground when harvesting trees etc"): shared by every harvest
+        // chore (ResourceGathering, WoodGathering): walk to each drop the harvest left within DropSweepRadius of where it fell so the
+        // loot magnet (CompanionAutoPickup, 3 m) takes it, before moving on. Bounded by DropSweepSeconds per harvest.
+        /// <summary>True while it is still walking to drops left by the harvest; false when none are left (or the sweep timed out).</summary>
+        protected bool SweepHarvestDrops(Vector3 centre, float stamp)
+        {
+            if (Companion == null || !CompanionBehaviorToggles.IsLootEnabled(Companion)) return false;
+            if (_sweepPhaseStamp != stamp)
+            {
+                _sweepPhaseStamp = stamp; _sweepStarted = Time.time; _sweepSeen = 0;
+                _sweepCentre = centre;
+            }
+            if (s_itemMask == -1) s_itemMask = LayerMask.GetMask("item");
+            int n = Physics.OverlapSphereNonAlloc(_sweepCentre, DropSweepRadius, s_dropBuf, s_itemMask, QueryTriggerInteraction.Collide);
+            ItemDrop best = null; float bestD = float.MaxValue; int count = 0;
+            for (int i = 0; i < n; i++)
+            {
+                var drop = s_dropBuf[i] != null ? s_dropBuf[i].GetComponentInParent<ItemDrop>() : null;
+                if (drop == null || !drop.m_autoPickup || drop.IsPiece() || drop.InTar() || CompanionAutoPickup.IsPlayerDropped(drop)) continue;
+                var nv = drop.GetComponent<ZNetView>();
+                if (nv == null || !nv.IsValid()) continue;
+                if (Player.m_localPlayer != null && Vector3.Distance(Player.m_localPlayer.transform.position, drop.transform.position) < 3f) continue;   // the player's own magnet takes it (CompanionAutoPickup yields there)
+                count++;
+                float d = Vector3.Distance(Transform.position, drop.transform.position);
+                if (d < bestD) { bestD = d; best = drop; }
+            }
+            if (best == null || Time.time - _sweepStarted > DropSweepSeconds)
+            {
+                if (_sweepSeen > 0)
+                    FiresCore.Logging.FiresLogger.LogDebug($"[{BehaviorName}] {Companion.companionName} drop sweep at ({_sweepCentre.x:0}, {_sweepCentre.z:0}) done in {Time.time - _sweepStarted:0} s: {count} drop(s) left{(best != null ? " (timed out)" : "")}");
+                _sweepSeen = 0;
+                return false;
+            }
+            if (_sweepSeen == 0)
+                FiresCore.Logging.FiresLogger.LogDebug($"[{BehaviorName}] {Companion.companionName} collecting {count} drop(s) around ({_sweepCentre.x:0}, {_sweepCentre.z:0}) before moving on");
+            _sweepSeen = Mathf.Max(_sweepSeen, count);
+            if (bestD > DropReach) TryMoveToPosition(best.transform.position, walk: false, run: true);
+            return true;
+        }
+
+
         /// <summary>
         /// Requests pathfinding movement toward <paramref name="position"/> through CompanionAI. Returns true when the
         /// request was accepted, not on arrival; call every frame and check the distance yourself.
@@ -369,7 +449,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool TryMoveToPositionDirect(Vector3 position, bool walk, bool run)
         {
             // ALWAYS LOG movement attempts for debugging
-            Debug.Log($"[{BehaviorName}] {Companion?.companionName} TryMoveToPositionDirect (FALLBACK): dest={position}, walk={walk}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[{BehaviorName}] {Companion?.companionName} TryMoveToPositionDirect (FALLBACK): dest={position}, walk={walk}");
             
             if (MovementAuthority == null)
             {
@@ -391,7 +471,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             if (!MovementAuthority.TryAcquireAuthority(source, BehaviorName, 5f))
             {
-                Debug.Log($"[{BehaviorName}] {Companion?.companionName} TryMoveToPositionDirect - authority acquisition failed");
+                FiresCore.Logging.FiresLogger.LogDebug($"[{BehaviorName}] {Companion?.companionName} TryMoveToPositionDirect - authority acquisition failed");
                 return false;
             }
             
@@ -658,7 +738,6 @@ namespace FiresCore.Npc.IdleBehaviors
                 combatMovement?.ClearCommandPriority();
                 
                 // Also notify state controller: a run that ended with a FailureReason is a failed command, never "Success"
-                // (R67 gather: "couldn't reach the tree in 23 s", then "CompleteCommand … Success" with the bag unchanged).
                 var stateController = Companion?.GetComponent<Movement.CompanionStateController>();
                 if (FailureReason != null) stateController?.FailCommand(FailureReason);
                 else stateController?.CompleteCommand();

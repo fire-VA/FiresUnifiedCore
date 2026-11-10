@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -253,7 +253,7 @@ namespace FiresCore.Npc.Utilities
             // Apply ghost mode with specified alpha
             ApplyGhostMode(alpha);
             
-            Debug.Log($"[CharacterVisibilityController] {_character?.m_name} transparency set to {alpha:F2} (ghost mode)");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CharacterVisibilityController] {_character?.m_name} transparency set to {alpha:F2} (ghost mode)");
         }
         
         /// <summary>
@@ -380,7 +380,7 @@ namespace FiresCore.Npc.Utilities
                 }
             }
             
-            Debug.Log($"[CharacterVisibilityController] {_character?.m_name} ghost mode applied (alpha={alpha:F2}, usingGhostMat={ghostMatWithAlpha != null})");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CharacterVisibilityController] {_character?.m_name} ghost mode applied (alpha={alpha:F2}, usingGhostMat={ghostMatWithAlpha != null})");
         }
         
         /// <summary>

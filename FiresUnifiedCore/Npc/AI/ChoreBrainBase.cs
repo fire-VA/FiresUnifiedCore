@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using FiresCore.Npc;
@@ -9,8 +9,8 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// Base upkeep for any body (Core 0.2.234; Fire 23:0x: "a primary fix needs to be the 'one brain' thing we talked about earlier with
-    /// companions/bots because we have SO MANY working chores for companions and the bots suck at working around base"). The chores a
+    /// Base upkeep for any body (one brain for companions and bots, so the bots get the companions' working chores).
+    /// The chores a
     /// base-watching companion rotates through (CompanionIdleBehavior's sub-behaviours), handed out one <see cref="TaskOrder"/> at a time
     /// for any <see cref="ITaskBody"/> (the FDT bot's player body, a companion), on the Core helpers the companions use (ChestHelper,
     /// FarmingDataHelper, PieceDataHelper). In companion priority: fires, smelters / kilns, loose drops, crops and hives, replanting,
@@ -39,11 +39,11 @@ namespace FiresCore.Npc.AI
             Deposit = 64,
             /// <summary>Worn carried gear at a station (<see cref="NextRepair"/>).</summary>
             RepairGear = 128,
-            /// <summary>Cooking stations over a lit fire: done food off, raw food on (CompanionCookingBehavior; 0.2.235).</summary>
+            /// <summary>Cooking stations over a lit fire: done food off, raw food on (CompanionCookingBehavior).</summary>
             Cook = 256,
-            /// <summary>Worn weapons and armour upgraded at a base workbench / forge from the bag (CraftingUpgradeBehaviorV2; 0.2.235).</summary>
+            /// <summary>Worn weapons and armour upgraded at a base workbench / forge from the bag (CraftingUpgradeBehaviorV2).</summary>
             Upgrade = 512,
-            /// <summary>The owner's beds kept warm: vanilla lets a player lie down only inside a fire's Heat area (Bed.CheckFire); a fire_pit placed where its heat covers a cold bed (0.2.246).</summary>
+            /// <summary>The owner's beds kept warm: vanilla lets a player lie down only inside a fire's Heat area (Bed.CheckFire); a fire_pit placed where its heat covers a cold bed.</summary>
             BedHeat = 1024,
             All = Fuel | Smelters | Pickups | Harvest | Plant | RepairPieces | Deposit | RepairGear | Cook | Upgrade | BedHeat,
         }
@@ -138,7 +138,7 @@ namespace FiresCore.Npc.AI
             return TaskOrder.Done(did.Count > 0 ? $"did: {LastBaseActions}; base: nothing else to do" : "base: nothing to do");
         }
 
-        // ---- Shared target finders (0.2.237, the target-selection consolidation): which base targets exist and qualify, one set of
+        // ---- Shared target finders: which base targets exist and qualify, one set of
         // rules for the companions' sub-behaviours and the bot's base chores. What differs per body is passed in: where to search, who
         // is working (InteractableOccupancyManager reservations, so a bot and a companion never take the same station), how fuel is
         // found, which wards apply ----
@@ -230,9 +230,10 @@ namespace FiresCore.Npc.AI
         {
             var result = new List<Smelter>();
             var seen = new HashSet<Smelter>();
-            foreach (Collider collider in Physics.OverlapSphere(center, radius))
+            // 0.2.911 (round #29: every smelter run went to charcoal_kiln while the smelter at (296, 953) sat full of ore with 0 fuel): the
+            // loaded Smelter instances, not a physics overlap - EBM bakes building pieces into stand-ins, so the overlap missed the smelter
+            foreach (Smelter smelter in FiresCore.Npc.IdleBehaviors.ResourceGatheringBehavior.SmeltersNear(center, radius))
             {
-                Smelter smelter = collider == null ? null : collider.GetComponent<Smelter>() ?? collider.GetComponentInParent<Smelter>();
                 if (smelter == null || !seen.Add(smelter) || !PieceDataHelper.IsOperableStation(smelter)) continue;
                 if (!UsableBy(smelter.gameObject, worker)) continue;
                 result.Add(smelter);
@@ -240,7 +241,7 @@ namespace FiresCore.Npc.AI
             return result;
         }
 
-        // ---- Shared finders, slice 2 (0.2.239): loot, farming, the smelter attention score ----
+        // ---- Shared finders, slice 2: loot, farming, the smelter attention score ----
 
         /// <summary>
         /// How much a loose item is worth picking up first (LootPickupBehaviorV2's priority): trophies 100, metals and bars 80, other
@@ -273,9 +274,9 @@ namespace FiresCore.Npc.AI
                 if (drop == null || drop.m_itemData == null) continue;
                 if (Swimming.GoalInDeepWater(drop.transform.position, out float depth))
                 {
-                    // 0.2.240 evidence: once per item per two minutes (new for the companions in 0.2.239).
+                    // Evidence: once per item per two minutes.
                     if (LogDue(drop.gameObject.GetInstanceID(), 120f))
-                        Debug.Log($"[ChoreBrain] loot: {Utils.GetPrefabName(drop.gameObject)} at ({drop.transform.position.x:0}, {drop.transform.position.z:0}) " +
+                        FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] loot: {Utils.GetPrefabName(drop.gameObject)} at ({drop.transform.position.x:0}, {drop.transform.position.z:0}) " +
                                   $"skipped: in water {depth:0.0} m deep (no body wades in for it)");
                     continue;
                 }
@@ -316,12 +317,12 @@ namespace FiresCore.Npc.AI
             return crops;
         }
 
-        // 0.2.240 evidence (nearest-first farm targets, new for the companions in 0.2.239): once a minute per worker and kind.
+        // Evidence (nearest-first farm targets): once a minute per worker and kind.
         private static void NoteNearest(string worker, string kind, GameObject nearest, int count, Vector3 from)
         {
             if (worker == null || nearest == null || !LogDue((worker + kind).GetHashCode(), 60f)) return;
             Vector3 p = nearest.transform.position;
-            Debug.Log($"[ChoreBrain] {worker}: {count} {kind}; nearest first: {Utils.GetPrefabName(nearest)} at ({p.x:0}, {p.z:0}), {Vector3.Distance(from, p):0} m off");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {worker}: {count} {kind}; nearest first: {Utils.GetPrefabName(nearest)} at ({p.x:0}, {p.z:0}), {Vector3.Distance(from, p):0} m off");
         }
 
         private static readonly Dictionary<int, float> s_logDue = new Dictionary<int, float>();
@@ -335,7 +336,7 @@ namespace FiresCore.Npc.AI
             return true;
         }
 
-        /// <summary>How far round the base (m) free cultivated ground is looked for (FarmingBehavior's PlantingDetectionRange; 0.2.241: one radius).</summary>
+        /// <summary>How far round the base (m) free cultivated ground is looked for (FarmingBehavior's PlantingDetectionRange: one radius).</summary>
         public const float PlantSearchRadius = 20f;
 
         /// <summary>A cultivator, by its prefab name (FarmingBehavior.IsCultivator: any prefab with "cultivator" in it, so modded ones count).</summary>
@@ -367,7 +368,7 @@ namespace FiresCore.Npc.AI
             spot = Vector3.zero;
             if (storage == null || spots == null) return false;
             List<Vector3> nearest = spots.OrderBy(p => (p - from).sqrMagnitude).ToList();
-            foreach (ItemDrop.ItemData item in storage.GetAllItems())
+            foreach (ItemDrop.ItemData item in CompanionInventory.StorageItemsOf(storage))
             {
                 IReadOnlyList<FarmingDataHelper.CropSapling> saplings = FarmingDataHelper.SaplingsForSeed(item?.m_dropPrefab?.name);
                 foreach (FarmingDataHelper.CropSapling candidate in saplings.OrderBy(c => plantedCount != null ? plantedCount(c.Prefab.name) : 0))
@@ -411,6 +412,8 @@ namespace FiresCore.Npc.AI
             }
             Vector3 at = smelter.transform.position;
             List<Container> chests = ChestHelper.FindNearbyChests((at + workerPos) * 0.5f, chestRadius + Vector3.Distance(at, workerPos) * 0.5f);
+            // 0.2.916 (round #31 thrash): a chest no companion could reach lately is not "to hand"
+            chests = chests.Where(c => !FiresCore.Npc.Core.ChestReach.IsUnreachable(c)).ToList();
             bool Have(string prefab) => ChestHelper.GetAvailableItemCount(chests, prefab) > 0 || (carried != null && ChestHelper.CountPrefabInInventory(carried, prefab) > 0);
             if (room)
             {
@@ -420,7 +423,12 @@ namespace FiresCore.Npc.AI
                 string input = inputs.FirstOrDefault(Have);
                 if (input != null) { score += 1f; reasons.Add($"room and {input} to hand"); }
             }
-            if (needsFuel && smelter.m_fuelItem != null && Have(smelter.m_fuelItem.name)) { score += 0.5f; reasons.Add($"fuel {fuel:0}/{smelter.m_maxFuel} and {smelter.m_fuelItem.name} to hand"); }
+            // 0.2.911 (round #29: "queued 10/10, fuel 0/20" with 708 coal at base, and the kiln won every pick): ore waiting in a smelter with
+            // NO fuel is the most urgent thing a station can need - it will never produce until fuel goes in
+            bool starved = !PieceDataHelper.IsCharcoalKiln(smelter) && smelter.m_maxFuel > 0 && smelter.m_fuelItem != null && queued > 0 && fuel <= 0f;
+            if (starved && Have(smelter.m_fuelItem.name)) { score += 3f; reasons.Add($"STARVED: {queued} ore queued, no fuel, {smelter.m_fuelItem.name} to hand"); }
+            else if (starved) reasons.Add($"starved: {queued} ore queued, no fuel, but no {smelter.m_fuelItem.name} to hand");
+            else if (needsFuel && smelter.m_fuelItem != null && Have(smelter.m_fuelItem.name)) { score += 0.5f; reasons.Add($"fuel {fuel:0}/{smelter.m_maxFuel} and {smelter.m_fuelItem.name} to hand"); }
             if (empty && score > 0f) { score += 0.5f; reasons.Add("empty"); }
             why = string.Join(", ", reasons);
             return score;
@@ -437,7 +445,7 @@ namespace FiresCore.Npc.AI
 
         // Whether worker may use target (InteractableOccupancyManager.CanUseInteractable: nobody else holds it, nobody stands on it;
         // a null worker or target: yes). When another worker holds it, an always-on line says so once a minute per worker and target
-        // (0.2.238: the reservation proof, for bots and companions alike since both go through the shared finders).
+        // (for bots and companions alike since both go through the shared finders).
         private static bool UsableBy(GameObject target, Character worker)
         {
             if (worker == null || target == null || InteractableOccupancyManager.CanUseInteractable(target, worker)) return true;
@@ -450,7 +458,7 @@ namespace FiresCore.Npc.AI
             Vector3 p = target.transform.position;
             CompanionController companion = worker.GetComponent<CompanionController>();
             string who = companion != null ? companion.companionName : worker is Player player ? player.GetPlayerName() : worker.m_name;
-            Debug.Log($"[ChoreBrain] {who}: {Utils.GetPrefabName(target)} at ({p.x:0}, {p.z:0}) is taken by {occupant}; looking past it");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {who}: {Utils.GetPrefabName(target)} at ({p.x:0}, {p.z:0}) is taken by {occupant}; looking past it");
             return false;
         }
 
@@ -481,7 +489,7 @@ namespace FiresCore.Npc.AI
                 if (!s_moveSince.TryGetValue(target, out Vector2 since) || now - since.y > 5f) since = new Vector2(now, now);
                 if (now - since.x > MoveGiveUpSeconds)
                 {
-                    Debug.Log($"[ChoreBrain] {BodyName(body)}: gave up walking to {Utils.GetPrefabName(target)} after {MoveGiveUpSeconds:0} s ({reason}); skipping it {SkipSeconds:0} s");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: gave up walking to {Utils.GetPrefabName(target)} after {MoveGiveUpSeconds:0} s ({reason}); skipping it {SkipSeconds:0} s");
                     SkipBaseTarget(target);
                     return null;
                 }
@@ -499,7 +507,7 @@ namespace FiresCore.Npc.AI
             s_interactTries.TryGetValue(target, out int tries);
             if (tries >= InteractTries)
             {
-                Debug.Log($"[ChoreBrain] {BodyName(body)}: {Utils.GetPrefabName(target)} still there after {InteractTries} interacts ({reason}); skipping it {SkipSeconds:0} s");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: {Utils.GetPrefabName(target)} still there after {InteractTries} interacts ({reason}); skipping it {SkipSeconds:0} s");
                 SkipBaseTarget(target);
                 return null;
             }
@@ -516,7 +524,7 @@ namespace FiresCore.Npc.AI
             Inventory bag = body.Inventory;
             if (need <= 0 || !MayUse(body, station)) return null;
             Reserve(body, station);   // a companion picks another station meanwhile
-            if (bag.CountItems(sharedName) <= 0)
+            if (CompanionInventory.CountStorage(bag,sharedName) <= 0)
             {
                 Container chest = FindChestWith(basePos, radius, body.OwnerPlayerId, prefab);
                 int spare = chest == null || Skipped(chest.gameObject) ? 0 : InventoryTransferService.CountItem(chest, prefab) - reserve;
@@ -529,11 +537,11 @@ namespace FiresCore.Npc.AI
             if (Vector3.Distance(body.Position, station.transform.position) > BaseUseDistance)
                 return MoveOrder(body, station, station.transform.position, $"{state}: bringing {prefab}");
             s_moveSince.Remove(station);
-            int fed = feed(Mathf.Min(need, bag.CountItems(sharedName)));
+            int fed = feed(Mathf.Min(need, CompanionInventory.CountStorage(bag,sharedName)));
             Unreserve(body, station);
             if (fed <= 0) { SkipBaseTarget(station); return null; }
             action = $"{Utils.GetPrefabName(station)} +{fed} {prefab}";
-            Debug.Log($"[ChoreBrain] {BodyName(body)}: {state}: +{fed} {prefab}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: {state}: +{fed} {prefab}");
             return null;
         }
 
@@ -557,7 +565,7 @@ namespace FiresCore.Npc.AI
             return RelightStep(body, basePos, radius);
         }
 
-        // 0.2.248 ([seasons], overnight 05:05 "no burning fire within 20 m of base" while the fuel step said nothing to do): a vanilla
+        // A vanilla
         // fire with m_canTurnOff switches ITSELF off when wet (Fireplace.UpdateState: RPC_ToggleOn -> s_state 2) and stays off after
         // the rain with its fuel in it; IsBurning is false for state != 1. Such a fire, dry now and not smothered, is lit again the way
         // a player does it: the body's own interact (Fireplace.Interact with fuel in it toggles it on). One still wet is left off (vanilla
@@ -590,7 +598,7 @@ namespace FiresCore.Npc.AI
 
         /// <summary>
         /// The fires within <paramref name="radius"/> of <paramref name="center"/> the rain switched off that can be lit again now
-        /// (0.2.255, the companions' fire tending; the bot's relight pass uses the same rule): m_canTurnOff, fuel in it, switched off,
+        /// (the companions' fire tending; the bot's relight pass uses the same rule): m_canTurnOff, fuel in it, switched off,
         /// not smothered, dry now (<see cref="FireWet"/>), and free for <paramref name="worker"/> (InteractableOccupancyManager).
         /// Nearest to <paramref name="from"/> first.
         /// </summary>
@@ -611,10 +619,10 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// One always-on line per chore outcome (0.2.255, Fire's homestead test: "[Chore] &lt;who&gt;: &lt;chore&gt;: &lt;what&gt;"), the same tag
+        /// One always-on line per chore outcome ("[Chore] &lt;who&gt;: &lt;chore&gt;: &lt;what&gt;"), the same tag
         /// for every companion chore so a drill counts them per companion and chore.
         /// </summary>
-        public static void ChoreDone(string who, string chore, string what) => Debug.Log($"[Chore] {who ?? "?"}: {chore}: {what}");
+        public static void ChoreDone(string who, string chore, string what) => FiresCore.Logging.FiresLogger.LogDebug($"[Chore] {who ?? "?"}: {chore}: {what}");
 
         /// <summary>
         /// Vanilla's Fireplace.CheckWet for a fire at <paramref name="at"/> (cover tested <paramref name="coverOffset"/> above it): wind
@@ -648,10 +656,10 @@ namespace FiresCore.Npc.AI
             if (s_fireSaid.TryGetValue(fire.gameObject, out float at) && Time.time - at < BedSkipSeconds) return;
             if (s_fireSaid.Count > 64) s_fireSaid.Clear();
             s_fireSaid[fire.gameObject] = Time.time;
-            Debug.Log($"[ChoreBrain] {BodyName(body)}: {line}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: {line}");
         }
 
-        // ---- 1b. Warm beds ([seasons] 10-01: the overnight Coop1 got "no lit fire near the bed" every minute after "base: nothing to do") ----
+        // ---- 1b. Warm beds (vanilla refuses sleep without a lit fire near the bed) ----
 
         /// <summary>The fire placed to warm a cold bed (the game's campfire: 5 Stone, 2 Wood, no station).</summary>
         public const string BedFirePrefab = "fire_pit";
@@ -676,7 +684,10 @@ namespace FiresCore.Npc.AI
         public static List<Bed> SleepBeds(Vector3 center, float radius, long ownerId, bool localSpawn)
         {
             s_beds.Clear();
-            foreach (Bed bed in UnityEngine.Object.FindObjectsByType<Bed>(FindObjectsSortMode.None))
+            var sw = FiresCore.Npc.Core.SceneScanCensus.Start();   // 0.2.1221 [ghost]: registry, not a scene search
+            IList<Bed> all = FiresCore.Npc.Core.SceneScanCensus.UseRegistries ? (IList<Bed>)FiresCore.Npc.JobBoard.HomesteadStations.Live(FiresCore.Npc.JobBoard.HomesteadStations.Beds) : UnityEngine.Object.FindObjectsByType<Bed>(FindObjectsSortMode.None);
+            FiresCore.Npc.Core.SceneScanCensus.Note("ChoreBrainBase.SleepBeds", sw, all.Count);
+            foreach (Bed bed in all)
             {
                 if (bed == null || bed.m_nview == null || !bed.m_nview.IsValid()) continue;
                 if ((bed.transform.position - center).sqrMagnitude > radius * radius) continue;
@@ -724,7 +735,7 @@ namespace FiresCore.Npc.AI
         /// 0.3 m, at least 1.4 m from it, on dry footing, free of pieces and bodies, either under open sky or under a rain-proof roof with
         /// room over the flame (Fireplace.CheckUnderTerrain) and an open side for the smoke (a closed roof lets it build up), where the
         /// owner may build (wards, no-build locations) and, for a ground-only piece, on the terrain. A fire that switches itself off in
-        /// the rain (m_canTurnOff) takes the covered spot first, one that doesn't the open sky (0.2.248). Heat goes through walls, so a
+        /// the rain (m_canTurnOff) takes the covered spot first, one that doesn't the open sky. Heat goes through walls, so a
         /// spot just outside the wall by the bed counts. Then most margin, then nearest to <paramref name="from"/>. "" with the spot, or
         /// why there is none.
         /// </summary>
@@ -734,7 +745,7 @@ namespace FiresCore.Npc.AI
             if (!HeatOf(firePrefab, out Vector3 offset, out float radius)) return $"{Utils.GetPrefabName(firePrefab)} has no heat area";
             Piece piece = firePrefab.GetComponent<Piece>();
             Fireplace fireplace = firePrefab.GetComponent<Fireplace>();
-            // 0.2.248 ([seasons]): a fire with m_canTurnOff switches itself off in the rain without a roof (Fireplace.CheckWet), so for one
+            // A fire with m_canTurnOff switches itself off in the rain without a roof (Fireplace.CheckWet), so for one
             // a rain-proof spot ranks first: under a roof (70 % cover), nothing within 0.5 m over the flame (not smothered) and an open side
             // the smoke drifts out of; open sky second. A fire that stays lit in the rain takes open sky first.
             bool rainOff = fireplace != null && fireplace.m_canTurnOff;
@@ -798,8 +809,7 @@ namespace FiresCore.Npc.AI
         {
             action = null;
             bool localSpawn = body.Character != null && body.Character == Player.m_localPlayer;
-            // 0.2.250, Fire: "on return home they cannot sleep if there's not a lit fire nearby so they have to keep the fire fueled"
-            // (overnight: 81 bed refusals, 0 sleeps). From the afternoon on, the fire that warms each bed is topped up to full, not
+            // Bodies cannot sleep without a lit fire nearby. From the afternoon on, the fire that warms each bed is topped up to full, not
             // only under the fuel step's 70 %, so it lasts the night; one switched off is relit by the fuel step's relight pass.
             if (NightComing())
                 foreach (Bed bed in SleepBeds(basePos, radius, body.OwnerPlayerId, localSpawn))
@@ -828,7 +838,7 @@ namespace FiresCore.Npc.AI
                 Fireplace near = FiresNear(bedAt, heat + 1f).FirstOrDefault(f => !f.m_blocked);
                 if (near != null && !near.IsBurning())
                 {
-                    // 0.2.248: out of fuel / switched off and dry are the fuel step's (it ran first: no fuel to hand, or the relight is on
+                    // Out of fuel / switched off and dry are the fuel step's (it ran first: no fuel to hand, or the relight is on
                     // its way); one the rain keeps switched off can't warm the bed until it stops, so a rain-proof fire is placed for it.
                     string off = FireOffReason(near);
                     if (!off.StartsWith("switched off: wet"))
@@ -848,10 +858,15 @@ namespace FiresCore.Npc.AI
         }
 
         // The fires (any Fireplace) within reach of a point.
-        private static IEnumerable<Fireplace> FiresNear(Vector3 at, float reach) =>
-            UnityEngine.Object.FindObjectsByType<Fireplace>(FindObjectsSortMode.None)
-                .Where(f => f != null && (f.transform.position - at).sqrMagnitude <= reach * reach)
-                .OrderBy(f => (f.transform.position - at).sqrMagnitude);
+        private static IEnumerable<Fireplace> FiresNear(Vector3 at, float reach)
+        {
+            var sw = FiresCore.Npc.Core.SceneScanCensus.Start();   // 0.2.1221 [ghost]: registry, not a scene search
+            IList<Fireplace> all = FiresCore.Npc.Core.SceneScanCensus.UseFireRegistry ? (IList<Fireplace>)FiresCore.Npc.JobBoard.HomesteadStations.Live(FiresCore.Npc.JobBoard.HomesteadStations.Fires) : UnityEngine.Object.FindObjectsByType<Fireplace>(FindObjectsSortMode.None);
+            var r = all.Where(f => f != null && (f.transform.position - at).sqrMagnitude <= reach * reach)
+                .OrderBy(f => (f.transform.position - at).sqrMagnitude).ToList();
+            FiresCore.Npc.Core.SceneScanCensus.Note("ChoreBrainBase.FiresNear", sw, all.Count);
+            return r;
+        }
 
         // The fire for a cold bed: the piece's own cost from the bag, fetched from base chests first when bag and chests cover all of it
         // (never a part), a hammer that builds it carried (the bag or a chest), walked to, placed in reach the way Core places for a body
@@ -865,7 +880,7 @@ namespace FiresCore.Npc.AI
             if (piece == null) return null;
             Predicate<ItemDrop.ItemData> builds = i => i?.m_shared?.m_buildPieces != null && i.m_shared.m_buildPieces.m_pieces.Any(p => p != null && p.name == prefab.name);
             var cost = piece.m_resources.Where(r => r.m_resItem != null && !r.m_upgraderResource && r.m_amount > 0).ToList();
-            string shortOf = string.Join(", ", cost.Select(r => (r, have: bag.CountItems(r.m_resItem.m_itemData.m_shared.m_name)
+            string shortOf = string.Join(", ", cost.Select(r => (r, have: CompanionInventory.CountStorage(bag,r.m_resItem.m_itemData.m_shared.m_name)
                     + ChestHelper.FindNearbyChests(basePos, radius).Where(c => c != null && ChestHelper.OwnerMayWrite(c, owner)).Sum(c => InventoryTransferService.CountItem(c, r.m_resItem.gameObject.name))))
                 .Where(t => t.have < t.r.m_amount).Select(t => $"{t.r.m_resItem.gameObject.name} {t.have}/{t.r.m_amount}"));
             bool hammer = bag.GetAllItems().Any(i => builds(i));
@@ -879,7 +894,7 @@ namespace FiresCore.Npc.AI
             foreach (Piece.Requirement req in cost)
             {
                 string material = req.m_resItem.gameObject.name;
-                int missing = req.m_amount - bag.CountItems(req.m_resItem.m_itemData.m_shared.m_name);
+                int missing = req.m_amount - CompanionInventory.CountStorage(bag,req.m_resItem.m_itemData.m_shared.m_name);
                 if (missing <= 0) continue;
                 Container chest = FindChestWith(basePos, radius, owner, material);
                 if (chest == null || Skipped(chest.gameObject)) { SkipBaseTarget(bed.gameObject, BedSkipSeconds); return null; }
@@ -893,7 +908,9 @@ namespace FiresCore.Npc.AI
             if (Vector3.Distance(body.Position, spot) > PieceReach)
                 return MoveOrder(body, bed.gameObject, spot, $"bed-heat: {where} has no heat; placing {prefab.name} at ({spot.x:0}, {spot.z:0})");
             s_moveSince.Remove(bed.gameObject);
-            Quaternion facing = Quaternion.LookRotation(Flatten(bed.transform.position - spot));
+            Quaternion facing = FiresCore.World.GravityUp.InField(spot, out Vector3 bedUp)   // halo ring: face the bed in the ring plane
+                ? Quaternion.LookRotation(FiresCore.World.GravityUp.Flat(bed.transform.position - spot, spot), bedUp)
+                : Quaternion.LookRotation(Flatten(bed.transform.position - spot));
             if (PlacePiece(prefab.name, spot, facing, bag, owner, out string reason) == null)
             {
                 BedSay(body, bed, $"bed-heat: {where}: placing {prefab.name} at ({spot.x:0}, {spot.z:0}) refused: {reason}");
@@ -903,7 +920,7 @@ namespace FiresCore.Npc.AI
             HeatOf(prefab, out Vector3 offset, out float heat);
             action = $"{where} had no heat; placed {prefab.name} at ({spot.x:0}, {spot.z:0}), {Vector3.Distance(spot, bed.transform.position):0.0} m off " +
                      $"(heat reaches {heat - Vector3.Distance(spot + facing * offset, bed.transform.position):0.0} m past the bed)";
-            Debug.Log($"[ChoreBrain] {BodyName(body)}: bed-heat: {action}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: bed-heat: {action}");
             SkipBaseTarget(bed.gameObject, 10f);   // the fire lights on its start fuel; look again once it burns
             return null;
         }
@@ -920,7 +937,7 @@ namespace FiresCore.Npc.AI
             if (s_bedSaid.TryGetValue(bed.gameObject, out float at) && Time.time - at < BedSkipSeconds) return;
             if (s_bedSaid.Count > 64) s_bedSaid.Clear();
             s_bedSaid[bed.gameObject] = Time.time;
-            Debug.Log($"[ChoreBrain] {BodyName(body)}: {line}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: {line}");
         }
 
         // ---- 2. Smelters, kilns, charcoal ----
@@ -985,7 +1002,7 @@ namespace FiresCore.Npc.AI
             return null;
         }
 
-        // ---- One copy of the station actions (0.2.236): the companions' SmelterOperatorBehavior and the bot's base chores both call these ----
+        // ---- One copy of the station actions: the companions' SmelterOperatorBehavior and the bot's base chores both call these ----
 
         /// <summary>
         /// One unit of <paramref name="item"/> (the station's fuel) out of <paramref name="bag"/> into <paramref name="smelter"/>, the way
@@ -1024,7 +1041,7 @@ namespace FiresCore.Npc.AI
             int added = 0;
             while (added < units)
             {
-                ItemDrop.ItemData item = bag.GetAllItems().FirstOrDefault(i => i?.m_shared != null && i.m_shared.m_name == fuelName && i.m_stack > 0);
+                ItemDrop.ItemData item = CompanionInventory.StorageItemsOf(bag).FirstOrDefault(i => i?.m_shared != null && i.m_shared.m_name == fuelName && i.m_stack > 0);
                 if (item == null || !AddSmelterFuelOne(smelter, bag, item)) break;
                 added++;
             }
@@ -1036,7 +1053,7 @@ namespace FiresCore.Npc.AI
             int added = 0;
             while (added < units)
             {
-                ItemDrop.ItemData item = bag.GetAllItems().FirstOrDefault(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == orePrefab && i.m_stack > 0);
+                ItemDrop.ItemData item = CompanionInventory.StorageItemsOf(bag).FirstOrDefault(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == orePrefab && i.m_stack > 0);
                 if (item == null || !AddSmelterOreOne(smelter, bag, item)) break;
                 added++;
             }
@@ -1044,24 +1061,16 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// Repair <paramref name="piece"/> to full (the companions' BuildingRepairBehavior way, now one copy for every body, 0.2.236): claim
-        /// it so vanilla WearNTear.Repair's owner-side RPC_Repair runs here, try vanilla Repair (syncs to every peer); ownership isn't
-        /// instant, so fall back to the same write RPC_Repair does (the health ZDO key + RPC_HealthChanged to everybody). Wards are the
-        /// caller's to check. True when it was repaired (or written to full).
+        /// Repair <paramref name="piece"/> to full through vanilla WearNTear.Repair, as a player's hammer does (one copy for every
+        /// body). It sends RPC_Repair to the piece's owner, which writes the health and tells every peer. Vanilla method only:
+        /// no ownership claim and no fallback write of the health key. Repair refuses a full piece and one
+        /// repaired under 1 s ago, and the caller retries the next pass. Wards are the caller's to check. True when it was sent.
         /// </summary>
         public static bool RepairPiece(WearNTear piece)
         {
             ZNetView view = piece != null ? piece.GetComponent<ZNetView>() : null;
             if (view == null || !view.IsValid()) return false;
-            view.ClaimOwnership();
-            if (piece.Repair()) return true;
-            float max = piece.m_health;   // world-level-scaled max, the value RPC_Repair uses
-            if (max <= 0f) return false;
-            ZDO zdo = view.GetZDO();
-            if (zdo == null || zdo.GetFloat(ZDOVars.s_health, max) >= max) return false;
-            zdo.Set(ZDOVars.s_health, max);
-            view.InvokeRPC(ZNetView.Everybody, "RPC_HealthChanged", (object)max);
-            return true;
+            return piece.Repair();
         }
 
         // ---- 3. Loose drops ----
@@ -1129,12 +1138,12 @@ namespace FiresCore.Npc.AI
             if (!seeds && !ChestHolds(body, basePos, radius, seedHere)) return null;   // nothing to plant: no cultivator wanted either
             if (!cultivator && !ChestHolds(body, basePos, radius, IsCultivator))
             {
-                // None to carry or fetch: the bot crafts one through its planner's craft verb (FDT, [seasons]' ifstocked) on the shared
+                // None to carry or fetch: the bot crafts one through its planner's craft verb (FDT's ifstocked) on the shared
                 // CraftFromStock decision, not here (one craft path per body). The decision, once a minute, as evidence.
                 if (LogDue((BodyName(body) + "plant-craft").GetHashCode(), 60f))
                 {
                     string why = CraftFromStock("Cultivator", bag, body.Position, basePos, radius, body.OwnerPlayerId, out StockCraft plan);
-                    Debug.Log($"[ChoreBrain] {BodyName(body)}: plant: no cultivator in the bag or base chests; craft from stock: " +
+                    FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: plant: no cultivator in the bag or base chests; craft from stock: " +
                               (why == "" ? $"yes at {plan.StationName} ({plan.Cost}; fetch {plan.Fetch.Count} take(s))" : $"no ({why})"));
                 }
                 return null;
@@ -1152,7 +1161,7 @@ namespace FiresCore.Npc.AI
             s_planted.TryGetValue(crop.Prefab.name, out int planted);
             s_planted[crop.Prefab.name] = planted + 1;
             action = $"{crop.Prefab.name} at ({spot.x:0}, {spot.z:0})";
-            Debug.Log($"[ChoreBrain] {BodyName(body)}: planted {action}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: planted {action}");
             return null;
         }
 
@@ -1180,7 +1189,7 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// The one craft-from-stock decision for every body (0.2.242; the companions' farming, the FDT planner): can
+        /// The one craft-from-stock decision for every body (the companions' farming, the FDT planner): can
         /// <paramref name="itemPrefab"/> be made by its game recipe at a station of its kind and level within <paramref name="radius"/>
         /// of <paramref name="basePos"/> (<see cref="CraftStationRefusal"/>: level, roof, fire), paid from <paramref name="bag"/> plus the
         /// base chests <paramref name="mayUse"/> allows (null = all), with the whole cost covered (never a part, so nothing is fetched
@@ -1208,7 +1217,7 @@ namespace FiresCore.Npc.AI
             foreach (Piece.Requirement req in cost)
             {
                 string prefab = req.m_resItem.gameObject.name;
-                int inBag = bag.CountItems(req.m_resItem.m_itemData.m_shared.m_name);
+                int inBag = CompanionInventory.CountStorage(bag,req.m_resItem.m_itemData.m_shared.m_name);
                 int inChests = chests.Sum(c => InventoryTransferService.CountItem(c, prefab));
                 if (inBag + inChests < req.m_amount) { shortOf.Add($"{prefab} {inBag + inChests}/{req.m_amount} (bag {inBag}, chests {inChests})"); continue; }
                 int missing = req.m_amount - inBag;
@@ -1259,18 +1268,18 @@ namespace FiresCore.Npc.AI
                 }
                 if (taken.Count == 0) { SkipBaseTarget(chest.gameObject); continue; }
                 action = $"took {string.Join(", ", taken)} from {chestName}";
-                Debug.Log($"[ChoreBrain] {BodyName(body)}: {reason.Replace("fetching", "fetched")}: {action}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: {reason.Replace("fetching", "fetched")}: {action}");
                 return null;
             }
             return null;
         }
 
         private static int CountPrefab(Inventory bag, string prefab) =>
-            bag.GetAllItems().Where(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == prefab).Sum(i => i.m_stack);
+            CompanionInventory.StorageItemsOf(bag).Where(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == prefab).Sum(i => i.m_stack);
 
         private static void RemovePrefab(Inventory bag, string prefab, int amount)
         {
-            foreach (ItemDrop.ItemData item in bag.GetAllItems().Where(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == prefab).ToList())
+            foreach (ItemDrop.ItemData item in CompanionInventory.StorageItemsOf(bag).Where(i => i?.m_dropPrefab != null && i.m_dropPrefab.name == prefab).ToList())
             {
                 if (amount <= 0) break;
                 int take = Mathf.Min(amount, item.m_stack);
@@ -1320,13 +1329,13 @@ namespace FiresCore.Npc.AI
                 Unreserve(body, piece.gameObject);
                 if (!repaired) { SkipBaseTarget(piece.gameObject, 2f); continue; }
                 action = $"{name} -> repaired";
-                Debug.Log($"[ChoreBrain] {BodyName(body)}: repaired {name}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: repaired {name}");
                 return null;
             }
             return null;
         }
 
-        // ---- Cooking stations (0.2.235; CompanionCookingBehavior's rules: stations fed directly, not through an add-food switch) ----
+        // ---- Cooking stations (CompanionCookingBehavior's rules: stations fed directly, not through an add-food switch) ----
 
         private static readonly List<CookingStation> s_cookers = new List<CookingStation>();
         private static Vector3 s_cookerScanAt;
@@ -1396,7 +1405,7 @@ namespace FiresCore.Npc.AI
         private static string CookableIn(CookingStation station, Inventory bag)
         {
             foreach (CookingStation.ItemConversion conversion in station.m_conversion)
-                if (conversion?.m_from != null && bag.CountItems(conversion.m_from.m_itemData.m_shared.m_name) > 0)
+                if (conversion?.m_from != null && CompanionInventory.CountStorage(bag,conversion.m_from.m_itemData.m_shared.m_name) > 0)
                     return conversion.m_from.gameObject.name;
             return null;
         }
@@ -1411,7 +1420,7 @@ namespace FiresCore.Npc.AI
             return filled;
         }
 
-        // ---- Bench upgrades (0.2.235; CraftingUpgradeBehaviorV2 on ChoreBrain.FindBestUpgrade: what the body wears, materials from its bag) ----
+        // ---- Bench upgrades (CraftingUpgradeBehaviorV2 on ChoreBrain.FindBestUpgrade: what the body wears, materials from its bag) ----
 
         private static TaskOrder UpgradeStep(ITaskBody body, Vector3 basePos, float radius, out string action)
         {
@@ -1437,13 +1446,13 @@ namespace FiresCore.Npc.AI
             choice.Item.m_quality = choice.TargetQuality;
             choice.Item.m_durability = choice.Item.GetMaxDurability();
             action = $"{item} -> quality {choice.TargetQuality} at {stationName}";
-            Debug.Log($"[ChoreBrain] {BodyName(body)}: upgraded {action}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: upgraded {action}");
             return null;
         }
 
         // ---- 7. Stash the bag, 8. worn gear ----
 
-        // The companions' deposit rule (ChestHelper.SmartDeposit, 0.2.241): every item into a base chest that already holds it, so stacks
+        // The companions' deposit rule (ChestHelper.SmartDeposit): every item into a base chest that already holds it, so stacks
         // stay together; the rest into the smart-storage pick (FindBestDepositChest: chests near the matching station, then stacking,
         // then the nearest with room). A player body walks to each chest in turn: the nearest chest with work first.
         private static TaskOrder DepositStep(ITaskBody body, Vector3 basePos, float radius, out string action)
@@ -1484,7 +1493,7 @@ namespace FiresCore.Npc.AI
             }
             if (moved <= 0) { SkipBaseTarget(next.gameObject); return null; }
             action = $"{moved} item(s) into {chestName} ({string.Join(", ", plan[next])})";
-            Debug.Log($"[ChoreBrain] {BodyName(body)}: deposited {action}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChoreBrain] {BodyName(body)}: deposited {action}");
             return null;
         }
 

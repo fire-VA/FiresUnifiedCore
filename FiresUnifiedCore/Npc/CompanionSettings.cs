@@ -81,7 +81,7 @@ namespace FiresCore.Npc
         
         /// <summary>
         /// Radius (in meters) to search for chests when operating smelters, kilns, or depositing items.
-        /// Used by SmelterOperatorBehavior, FireTendingBehavior, ChestDepositBehavior, ResourceGatheringBehavior.
+        /// Used by SmelterOperatorBehavior, FireTendingBehaviorV2, ChestDepositBehaviorV2, ResourceGatheringBehavior.
         /// </summary>
         public static float ChestSearchRadius
         {
@@ -95,7 +95,7 @@ namespace FiresCore.Npc
         /// <summary>
         /// Radius (in meters) for auto-sorting items across multiple chests.
         /// When interacting with one chest, all chests within this radius are included in the sort.
-        /// Used by ChestDepositBehavior for organizing items.
+        /// Used by ChestDepositBehaviorV2 for organizing items.
         /// </summary>
         public static float ChestAutoSortRadius
         {
@@ -205,12 +205,12 @@ namespace FiresCore.Npc
         /// </summary>
         public static void LogSettings()
         {
-            Debug.Log($"[CompanionSettings] IdleWanderRadius: {IdleWanderRadius}m");
-            Debug.Log($"[CompanionSettings] ReturnHomeRadius: {ReturnHomeRadius}m");
-            Debug.Log($"[CompanionSettings] HardWanderLimit: {HardWanderLimit}m");
-            Debug.Log($"[CompanionSettings] StayModeWorkRadius: {StayModeWorkRadius}m");
-            Debug.Log($"[CompanionSettings] ChestSearchRadius: {ChestSearchRadius}m");
-            Debug.Log($"[CompanionSettings] ChestAutoSortRadius: {ChestAutoSortRadius}m");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionSettings] IdleWanderRadius: {IdleWanderRadius}m");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionSettings] ReturnHomeRadius: {ReturnHomeRadius}m");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionSettings] HardWanderLimit: {HardWanderLimit}m");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionSettings] StayModeWorkRadius: {StayModeWorkRadius}m");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionSettings] ChestSearchRadius: {ChestSearchRadius}m");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionSettings] ChestAutoSortRadius: {ChestAutoSortRadius}m");
         }
         
         #endregion

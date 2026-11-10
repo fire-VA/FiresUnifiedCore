@@ -1,7 +1,7 @@
 namespace FiresCore.Npc
 {
     /// <summary>
-    /// 0.2.292 ([ghost], Fire 10-02; [fgn]'s sweep): a Core NPC body a player is DRIVING. FiresValcast's creature possession
+    /// A Core NPC body a player is DRIVING. FiresValcast's creature possession
     /// writes ZDO long "valcast_possessed" = the possessor's playerID on the creature while a player controls it, and 0 when they
     /// let go (FGN 1.5.37+ keeps the possessor as the ZDO owner meanwhile). While it's set, Core's own brain stands down for that
     /// body: no leash reel-in or follow teleport, no ownership claim-back, no per-frame movement, facing, combat, evasion or

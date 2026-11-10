@@ -47,7 +47,7 @@ namespace FiresCore.Services
             }
             _built = true;
             stopwatch.Stop();
-            Debug.Log($"[FiresCore] VanillaMaterialCache: scanned {prefabs.Count} prefabs → {ByName.Count} vanilla materials in {stopwatch.ElapsedMilliseconds} ms (built ONCE, shared across all mods).");
+            if (FiresCore.Logging.FiresLogLevel.DebugOn) Debug.Log($"[FiresCore] VanillaMaterialCache: scanned {prefabs.Count} prefabs → {ByName.Count} vanilla materials in {stopwatch.ElapsedMilliseconds} ms (built ONCE, shared across all mods).");
         }
 
         private static void CacheFromPrefab(GameObject prefab)

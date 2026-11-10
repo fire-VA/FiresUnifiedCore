@@ -91,6 +91,7 @@ namespace FiresCore.Npc.Vault
                 {
                     if (companion == null) continue;
                     if (string.IsNullOrEmpty(companion.companionId)) continue;
+                    if (FiresCore.Npc.Studio.StudioClone.IsClone(companion.GetComponent<ZNetView>()?.GetZDO())) continue;   // the Studio god clone is never vaulted
                     if (companion.ownerPlayerId == 0) continue;
 
                     try
@@ -148,6 +149,7 @@ namespace FiresCore.Npc.Vault
                     if (companion == null) continue;
                     if (companion.ownerPlayerId != playerId) continue;
                     if (string.IsNullOrEmpty(companion.companionId)) continue;
+                    if (FiresCore.Npc.Studio.StudioClone.IsClone(companion.GetComponent<ZNetView>()?.GetZDO())) continue;   // the Studio god clone is never vaulted
 
                     try
                     {
@@ -270,7 +272,7 @@ namespace FiresCore.Npc.Vault
                 // longer blocks server-side saves (see AreCompanionTeleportsSuppressed).
                 companion.PersistAllToZDO();
 
-                Debug.Log($"[CompanionVault] Restored {companion.companionName} from vault and persisted to ZDO");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionVault] Restored {companion.companionName} from vault and persisted to ZDO");
 
                 return true;
             }
@@ -401,6 +403,11 @@ namespace FiresCore.Npc.Vault
                 saveData.EyeColorR = eyeColor.x;
                 saveData.EyeColorG = eyeColor.y;
                 saveData.EyeColorB = eyeColor.z;
+                saveData.HasBeardColor = CompanionAppearanceService.TryReadBeardColor(zdo, out Color beardColor);
+                saveData.BeardColorR = beardColor.r;
+                saveData.BeardColorG = beardColor.g;
+                saveData.BeardColorB = beardColor.b;
+                saveData.FccModel = zdo.GetString("fcc_model", "");   // FCC model
             }
         }
         
@@ -552,6 +559,7 @@ namespace FiresCore.Npc.Vault
                 zdo.Set(ZDOVars.s_hairColor, new Vector3(saveData.HairColorR, saveData.HairColorG, saveData.HairColorB));
                 zdo.Set(ZDOVars.s_skinColor, new Vector3(saveData.SkinColorR, saveData.SkinColorG, saveData.SkinColorB));
                 zdo.Set("companion_eyeColor", new Vector3(saveData.EyeColorR, saveData.EyeColorG, saveData.EyeColorB));
+                if (saveData.HasBeardColor) zdo.Set(CompanionAppearanceService.BeardColorKey, new Vector3(saveData.BeardColorR, saveData.BeardColorG, saveData.BeardColorB));
                 zdo.Set(ZDOVars.s_modelIndex, saveData.ModelIndex);
             }
             
@@ -610,6 +618,9 @@ namespace FiresCore.Npc.Vault
                 }
             }
             
+            // legacy vault equipment placed synchronously right after the bag load (idempotent)
+            inventory.CommitLegacyVaultEquipment("vault restore");
+
             // Apply visual equipment
             inventory.RecalculateEquipmentBonusesPublic();
         }

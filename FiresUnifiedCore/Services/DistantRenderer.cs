@@ -1,353 +1,125 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using HarmonyLib;
 using UnityEngine;
 
 namespace FiresCore.Services
 {
-    // Lets mods render chosen prefabs far beyond the active area. Vanilla only syncs a ZDO past that range when
-    // it was created Distant, so a driver spawned on the first Register call marks every registered prefab's
-    // ZDOs Distant on the server and force-sends them, while clients cache the in-range ones (per-prefab max
-    // distance) and a FindSectorObjects postfix hands them to vanilla's distant list for normal creation and
-    // cleanup. Nothing runs until something registers.
+    // 0.2.1217 ([generator], Fire 11-08: perf only in FGN / EBM / FiresFixes; FGN 1.6.64 FgnApi v9 owns distant rendering):
+    // the public API other mods compile against (FiresAdminPrefabs' DistantPieceRenderer) is unchanged, but Core no longer does the
+    // work. The rules are kept here (TryGetDistance / IsRegistered / Snapshot answer as before, and Core's FarBuildingDraw reads them),
+    // and every change is forwarded to FGN's own FgnApi.RegisterDistantPrefab / UnregisterDistantPrefab / RefreshDistantPrefabs, found
+    // by type name (no reference either way; FGN never reads Core). Without FGN 1.6.64+ nothing renders past the active area (one Info
+    // line says so). Registrations made before FGN's assembly loads are flushed once from CoreLateOwners.RunOnce (FlushToFgn).
+    // The old server scan, client cache, FindSectorObjects / CreateDestroyObjects patches and driver are gone; FGN runs its own.
     public static class DistantRenderer
     {
-        private const float ServerScanIntervalSeconds = 10f;
-        private const float ClientCacheIntervalSeconds = 2f;
-        private const string DriverGameObjectName = "FiresCore_DistantRendererDriver";
+        private const string FgnApiType = "FiresGhettoNetworkMod.Api.FgnApi";
+        private const int NeededVersion = 9;
 
-        private static readonly Dictionary<string, float> DistanceByPrefab
-            = new Dictionary<string, float>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, float> DistanceByPrefab = new Dictionary<string, float>(StringComparer.Ordinal);
 
-        private static readonly List<ZDO> ServerScanBuffer = new List<ZDO>();
-        private static readonly List<ZDO> ClientScanBuffer = new List<ZDO>();
-        private static readonly List<ZDO> CachedDistantZDOs = new List<ZDO>();
-        private static readonly HashSet<ZDO> DedupeSet = new HashSet<ZDO>();
-
-        private static bool _injectingForCreateDestroy;
-        private static GameObject _driverGameObject;
-        // Forces ONE client-cache rebuild ASAP — initial load + after any
-        // registration change. An EMPTY cache is a VALID steady state (no distant
-        // pieces in range), so it must NOT trigger a rebuild on its own; doing so
-        // re-scanned the entire ZDO database every CreateDestroyObjects (a per-frame
-        // stall that dominated zone streaming). The 2s timer handles movement.
-        private static bool _clientCacheDirty = true;
-
-        // Amortized rebuild state. A full rebuild scans every ZDO once PER prefab,
-        // so we spread it across frames (one prefab/frame) into _buildBuffer, then
-        // swap its contents into CachedDistantZDOs in a single step on completion —
-        // injection only ever sees a COMPLETE set, never a half-built one.
-        private static readonly List<ZDO> _buildBuffer = new List<ZDO>();
-        private static List<string> _scanPrefabs;
-        private static int  _scanPrefabIdx;
-        private static bool _scanActive;
+        private static Action<string, float> s_register;
+        private static Action<string> s_unregister;
+        private static Action s_refresh;
+        private static bool s_bound, s_saidMissing;
 
         // ─── Status ────────────────────────────────────────────────────
-
         public static int RegisteredCount => DistanceByPrefab.Count;
-
         public static bool HasAny => DistanceByPrefab.Count > 0;
 
-        // ─── Public registration API ───────────────────────────────────
-
-        // Add or update a distant-render rule. maxDistanceMeters is the
-        // farthest the prefab will render via this pipeline — anything
-        // beyond that is filtered out of the client cache and the ZDO
-        // will revert to vanilla sync gating (i.e. invisible at extreme
-        // range).
+        // ─── Public registration API (unchanged shape) ─────────────────
         public static void Register(string prefabName, float maxDistanceMeters)
         {
             if (string.IsNullOrEmpty(prefabName)) return;
-            if (maxDistanceMeters <= 0f)
-            {
-                Unregister(prefabName);
-                return;
-            }
-
+            if (maxDistanceMeters <= 0f) { Unregister(prefabName); return; }
             DistanceByPrefab[prefabName] = maxDistanceMeters;
-            _clientCacheDirty = true;
-            EnsureDriverSpawned();
+            if (Bind()) Call(() => s_register(prefabName, maxDistanceMeters));
         }
 
         public static bool Unregister(string prefabName)
         {
             if (string.IsNullOrEmpty(prefabName)) return false;
             bool removed = DistanceByPrefab.Remove(prefabName);
-            if (removed) { CachedDistantZDOs.Clear(); _clientCacheDirty = true; }
+            if (removed && Bind()) Call(() => s_unregister(prefabName));
             return removed;
         }
 
         public static bool TryGetDistance(string prefabName, out float maxDistanceMeters)
         {
-            if (string.IsNullOrEmpty(prefabName))
-            {
-                maxDistanceMeters = 0f;
-                return false;
-            }
+            if (string.IsNullOrEmpty(prefabName)) { maxDistanceMeters = 0f; return false; }
             return DistanceByPrefab.TryGetValue(prefabName, out maxDistanceMeters);
         }
 
-        public static bool IsRegistered(string prefabName)
-            => !string.IsNullOrEmpty(prefabName) && DistanceByPrefab.ContainsKey(prefabName);
+        public static bool IsRegistered(string prefabName) => !string.IsNullOrEmpty(prefabName) && DistanceByPrefab.ContainsKey(prefabName);
 
         public static IReadOnlyDictionary<string, float> Snapshot() => DistanceByPrefab;
 
-        // Consumer mods call this after batch-updating registrations.
-        // Drops the client cache (forces rebuild on next CreateDestroy tick)
-        // and runs an immediate server scan + ForceSendZDO so existing
-        // ZDOs reach far peers without waiting for the periodic timer.
+        // Consumer mods call this after batch-updating registrations: FGN re-marks and re-sends at once.
         public static void Invalidate()
         {
-            CachedDistantZDOs.Clear();
-            _clientCacheDirty = true;
-            TryServerMarkAndSendAll();
+            if (Bind()) Call(() => s_refresh());
         }
 
-        // ─── Driver lifecycle ──────────────────────────────────────────
-
-        // Spawns the hidden GameObject that runs the server-side periodic
-        // scan. Idempotent. Called automatically on first Register(); can
-        // also be called explicitly by a host plugin that wants to spawn
-        // the driver early (e.g. before any registrations land).
-        public static void EnsureDriverSpawned()
-        {
-            if (_driverGameObject != null) return;
-
-            _driverGameObject = new GameObject(DriverGameObjectName);
-            UnityEngine.Object.DontDestroyOnLoad(_driverGameObject);
-            _driverGameObject.hideFlags = HideFlags.HideAndDontSave;
-            _driverGameObject.AddComponent<DistantRendererDriver>();
-        }
+        // Kept for callers: FGN runs its own driver, so there is nothing to spawn here.
+        public static void EnsureDriverSpawned() { }
 
         public static void Clear()
         {
+            if (Bind()) foreach (var name in DistanceByPrefab.Keys) { var n = name; Call(() => s_unregister(n)); }
             DistanceByPrefab.Clear();
-            CachedDistantZDOs.Clear();
-            ClientScanBuffer.Clear();
-            ServerScanBuffer.Clear();
-            DedupeSet.Clear();
-            _injectingForCreateDestroy = false;
-
-            if (_driverGameObject != null)
-            {
-                UnityEngine.Object.Destroy(_driverGameObject);
-                _driverGameObject = null;
-            }
         }
 
-        // ─── Driver internals ──────────────────────────────────────────
-
-        private static void TryServerMarkAndSendAll()
+        /// <summary>Once from CoreLateOwners.RunOnce (every plugin's Awake has run): push what was registered before FGN's API could be found.</summary>
+        internal static void FlushToFgn()
         {
-            try
-            {
-                if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
-                if (ZDOMan.instance == null) return;
-                ServerMarkAndSendAll();
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[FiresCore.DistantRenderer] immediate server scan threw: {ex.Message}");
-            }
+            if (!Bind()) return;
+            foreach (var kv in DistanceByPrefab) { var n = kv.Key; var d = kv.Value; Call(() => s_register(n, d)); }
+            if (DistanceByPrefab.Count > 0) Call(() => s_refresh());
+            FiresCore.Logging.FiresLogger.LogInfo($"[DistantRenderer] {DistanceByPrefab.Count} distant prefab rule(s) handed to FGN (FgnApi.RegisterDistantPrefab); FGN does the distant rendering");
         }
 
-        private static void ServerMarkAndSendAll()
+        // ─── FGN binding (by type name, until found) ───────────────────
+        private static bool Bind()
         {
-            if (DistanceByPrefab.Count == 0) return;
-
-            foreach (var kvp in DistanceByPrefab)
+            if (s_bound) return true;
+            Type api = null;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                ServerScanBuffer.Clear();
-                int idx = 0;
-                while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(kvp.Key, ServerScanBuffer, ref idx)) { }
-
-                foreach (var zdo in ServerScanBuffer)
-                {
-                    if (zdo == null) continue;
-                    if (!zdo.Distant) zdo.SetDistant(true);
-                    ZDOMan.instance.ForceSendZDO(zdo.m_uid);
-                }
+                try { api = asm.GetType(FgnApiType, false); } catch { continue; }
+                if (api != null) break;
             }
-            ServerScanBuffer.Clear();
-        }
-
-        // ─── Amortized, double-buffered client cache rebuild ──────────────
-        // Begin snapshots the registered prefab list and resets the scratch
-        // buffer. Step processes ONE prefab's full world scan per call and
-        // distance-filters it into _buildBuffer; when the last prefab is done it
-        // swaps the scratch contents into the LIVE CachedDistantZDOs atomically.
-        // Injection therefore never sees a partially-built set — the hard-won
-        // distant-render-without-culling behaviour is unchanged; only the build
-        // cost is spread out (no per-frame, and no periodic, stall).
-
-        private static void BeginClientScan()
-        {
-            _buildBuffer.Clear();
-            ClientScanBuffer.Clear();
-            _scanPrefabs   = new List<string>(DistanceByPrefab.Keys);  // snapshot — immune to mid-scan (un)register
-            _scanPrefabIdx = 0;
-            _scanActive    = _scanPrefabs.Count > 0;
-            if (!_scanActive) CachedDistantZDOs.Clear();               // nothing registered → publish empty now
-        }
-
-        // Returns true once the whole rebuild finished (live cache swapped).
-        private static bool StepClientScan()
-        {
-            if (!_scanActive) return true;
-            if (ZDOMan.instance == null || ZNet.instance == null) { _scanActive = false; return true; }
-
-            Vector3 refPos = ZNet.instance.GetReferencePosition();
-
-            string prefab = _scanPrefabs[_scanPrefabIdx];
-            float maxDistSqr = DistanceByPrefab.TryGetValue(prefab, out var distance) ? distance * distance : 0f;
-
-            ClientScanBuffer.Clear();
-            int idx = 0;
-            while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(prefab, ClientScanBuffer, ref idx)) { }
-
-            for (int i = 0; i < ClientScanBuffer.Count; i++)
+            if (api == null) return false;   // FGN not loaded (yet): kept here, flushed by FlushToFgn
+            var vf = api.GetField("Version", BindingFlags.Public | BindingFlags.Static);
+            int version = vf != null && vf.FieldType == typeof(int) ? (int)vf.GetValue(null) : 0;
+            var reg = api.GetMethod("RegisterDistantPrefab", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string), typeof(float) }, null);
+            var unreg = api.GetMethod("UnregisterDistantPrefab", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string) }, null);
+            var refresh = api.GetMethod("RefreshDistantPrefabs", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
+            if (version < NeededVersion || reg == null || unreg == null || refresh == null)
             {
-                var zdo = ClientScanBuffer[i];
-                if (zdo == null) continue;
-                if ((refPos - zdo.GetPosition()).sqrMagnitude > maxDistSqr) continue;   // DistanceSqr — no sqrt
-                _buildBuffer.Add(zdo);
+                if (!s_saidMissing) { s_saidMissing = true; FiresCore.Logging.FiresLogger.LogInfo($"[DistantRenderer] FGN API v{version} has no distant-prefab hooks (needs v{NeededVersion}, FGN 1.6.64+): registered prefabs are not drawn past the active area"); }
+                return false;
             }
-            ClientScanBuffer.Clear();
-
-            _scanPrefabIdx++;
-            if (_scanPrefabIdx < _scanPrefabs.Count) return false;     // more prefabs next frame
-
-            // Done — atomically replace the live cache with the freshly-built set.
-            CachedDistantZDOs.Clear();
-            CachedDistantZDOs.AddRange(_buildBuffer);
-            _buildBuffer.Clear();
-            _scanActive = false;
+            s_register = (n, d) => { reg.Invoke(null, new object[] { n, d }); };
+            s_unregister = n => { unreg.Invoke(null, new object[] { n }); };
+            s_refresh = () => { refresh.Invoke(null, null); };
+            s_bound = true;
             return true;
         }
 
-        // ─── Harmony hooks ─────────────────────────────────────────────
-
-        [HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.CreateDestroyObjects))]
-        private static class CreateDestroyObjectsPatch
+        private static void Call(Action a)
         {
-            private static float _clientCacheTimer;
-
-            public static void Prefix()
-            {
-                if (DistanceByPrefab.Count == 0) return;
-                if (ZDOMan.instance == null || ZNet.instance == null) return;
-
-                _clientCacheTimer += Time.deltaTime;
-
-                // Kick a rebuild on the interval, or when flagged dirty (initial load
-                // / registration change) — NEVER just because the cache is empty
-                // (empty is a valid steady state; rebuilding on it scanned the whole
-                // ZDO DB every frame). A rebuild already running is left to finish.
-                if (!_scanActive && (_clientCacheDirty || _clientCacheTimer >= ClientCacheIntervalSeconds))
-                {
-                    _clientCacheDirty = false;
-                    _clientCacheTimer = 0f;
-                    BeginClientScan();
-                }
-
-                // Advance the amortized rebuild one prefab/frame; the live cache is
-                // swapped only on completion, so injection never sees a partial set.
-                if (_scanActive) StepClientScan();
-
-                _injectingForCreateDestroy = true;
-            }
-
-            public static Exception Finalizer(Exception __exception) =>
-                _injectingForCreateDestroy
-                    ? DisarmAndPassThrough(__exception)
-                    : __exception;
-
-            private static Exception DisarmAndPassThrough(Exception ex)
-            {
-                _injectingForCreateDestroy = false;
-                return ex;
-            }
+            try { a(); }
+            catch (Exception e) { FiresCore.Logging.FiresLogger.LogWarning("[DistantRenderer] FGN distant-prefab call threw: " + (e.InnerException ?? e).Message); }
         }
 
-        // Valheim 1.0 signature:
-        //   FindSectorObjects(Vector2s sector, SimulationDistance simulationDistance,
-        //                     List<ZDO> sectorObjects, List<ZDO> distantSectorObjects = null)
-        // The previous cross-version probe looked for a five-parameter
-        // (zone, int near, int far, List, List) shape under BOTH Vector2i and Vector2s.
-        // 1.0 collapsed the two int radii into SimulationDistance, so neither probe matched,
-        // TargetMethod returned null and Harmony threw a patching exception on attach.
-        [HarmonyPatch]
-        private static class FindSectorObjectsPatch
+        // Lets FgnHooksBridge-style callers know the missing case once at RunOnce.
+        internal static void SayIfNoFgn()
         {
-            static MethodBase TargetMethod()
-            {
-                return AccessTools.Method(typeof(ZDOMan), "FindSectorObjects", new Type[]
-                {
-                    typeof(Vector2s), typeof(SimulationDistance),
-                    typeof(List<ZDO>), typeof(List<ZDO>)
-                });
-            }
-
-            public static void Postfix(List<ZDO> distantSectorObjects)
-            {
-                if (!_injectingForCreateDestroy) return;
-                if (distantSectorObjects == null) return;
-                if (CachedDistantZDOs.Count == 0) return;
-
-                var zdoMan = ZDOMan.instance;
-                if (zdoMan == null) return;
-
-                DedupeSet.Clear();
-                for (int i = 0; i < distantSectorObjects.Count; i++)
-                {
-                    var sectorZdo = distantSectorObjects[i];
-                    if (sectorZdo != null) DedupeSet.Add(sectorZdo);
-                }
-
-                for (int i = 0; i < CachedDistantZDOs.Count; i++)
-                {
-                    var zdo = CachedDistantZDOs[i];
-                    if (zdo == null || !zdo.IsValid()) continue;
-                    // Hardened lookup: confirm the cached ZDO is STILL the
-                    // active entry in ZDOMan. A 2-second cache can drift —
-                    // if DestroyZDO replaced the entry between refresh and
-                    // here, vanilla's CreateObjects/RemoveObjects NREs deep
-                    // inside m_instances iteration. Skip stale entries.
-                    if (!ReferenceEquals(zdoMan.GetZDO(zdo.m_uid), zdo)) continue;
-                    if (!DedupeSet.Add(zdo)) continue;
-                    distantSectorObjects.Add(zdo);
-                }
-                DedupeSet.Clear();
-            }
-        }
-
-        // Periodic server scan + first-tick fast path. Attached to the
-        // hidden GameObject EnsureDriverSpawned creates.
-        private class DistantRendererDriver : MonoBehaviour
-        {
-            private float _serverScanTimer;
-            private bool _initialScanDone;
-
-            private void Update()
-            {
-                if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
-                if (ZDOMan.instance == null) return;
-                if (DistanceByPrefab.Count == 0) return;
-
-                if (!_initialScanDone)
-                {
-                    _serverScanTimer = 0f;
-                    _initialScanDone = true;
-                    TryServerMarkAndSendAll();
-                    return;
-                }
-
-                _serverScanTimer += Time.deltaTime;
-                if (_serverScanTimer < ServerScanIntervalSeconds) return;
-                _serverScanTimer = 0f;
-                TryServerMarkAndSendAll();
-            }
+            if (s_bound || s_saidMissing || DistanceByPrefab.Count == 0) return;
+            if (Bind()) return;
+            s_saidMissing = true;
+            FiresCore.Logging.FiresLogger.LogInfo($"[DistantRenderer] FGN not installed: {DistanceByPrefab.Count} distant prefab rule(s) kept, but nothing is drawn past the active area (FGN does distant rendering)");
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -344,7 +344,7 @@ namespace FiresCore.Npc
       {
           // The companion object exists from a previous session's ZDO.
           // Teleport it to the player and wait for CompanionController to initialize.
-          Debug.Log($"[CompanionRespawnManager] Companion {savedData.CompanionName} exists as ZDO object - teleporting instead of spawning duplicate");
+          FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] Companion {savedData.CompanionName} exists as ZDO object - teleporting instead of spawning duplicate");
 
           Vector3 spawnPos = GetSpawnPositionNearPlayer(player);
           existingGO.transform.position = spawnPos;
@@ -646,7 +646,9 @@ if (prefab == null)
                   zdo.Set(ZDOVars.s_hairColor, new Vector3(savedData.HairColorR, savedData.HairColorG, savedData.HairColorB));
                   zdo.Set(ZDOVars.s_skinColor, new Vector3(savedData.SkinColorR, savedData.SkinColorG, savedData.SkinColorB));
                   zdo.Set("companion_eyeColor", new Vector3(savedData.EyeColorR, savedData.EyeColorG, savedData.EyeColorB));
+                  if (savedData.HasBeardColor) zdo.Set(CompanionAppearanceService.BeardColorKey, new Vector3(savedData.BeardColorR, savedData.BeardColorG, savedData.BeardColorB));
                   zdo.Set(ZDOVars.s_modelIndex, savedData.ModelIndex);
+                  if (!string.IsNullOrEmpty(savedData.FccModel)) { zdo.Set("fcc_model", savedData.FccModel); FiresCore.Logging.FiresLogger.LogDebug("[Companions] respawn carried fcc_model '" + savedData.FccModel + "'"); }
                   
                   if (VerboseLogging)
                   {
@@ -699,6 +701,9 @@ if (prefab == null)
                     }
                 }
 
+                // Legacy vault equipment placed synchronously right after the bag load (idempotent)
+                inventory.CommitLegacyVaultEquipment("respawn restore");
+
    // Apply visual equipment
          inventory.RecalculateEquipmentBonusesPublic();
             }
@@ -723,21 +728,21 @@ if (prefab == null)
             
             // CRITICAL: Apply scale using CompanionRandomLoadout's method for consistency
             // This ensures scale is applied the same way as when wild companions are first created
-            Debug.Log($"[CompanionRespawnManager] RestoreCompanionFromVaultData SCALE CHECK: {savedData.CompanionName} - vault scale={savedData.Scale:F2}, isGiant={savedData.IsGiant}, isDwarf={savedData.IsDwarf}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] RestoreCompanionFromVaultData SCALE CHECK: {savedData.CompanionName} - vault scale={savedData.Scale:F2}, isGiant={savedData.IsGiant}, isDwarf={savedData.IsDwarf}");
             
             if (Mathf.Abs(savedData.Scale - 1.0f) > 0.01f || savedData.IsGiant || savedData.IsDwarf)
             {
                 var randomLoadoutForScale = controller.GetComponent<CompanionRandomLoadout>();
                 if (randomLoadoutForScale != null)
                 {
-                    Debug.Log($"[CompanionRespawnManager] Calling ApplyScale({savedData.Scale:F2}) on {savedData.CompanionName} via CompanionRandomLoadout");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] Calling ApplyScale({savedData.Scale:F2}) on {savedData.CompanionName} via CompanionRandomLoadout");
                     
                     // Use the same ApplyScale method that's used when wild companions are created
                     // Pass skipHealthAdjustment: true because health will be restored from vault separately
                     randomLoadoutForScale.ApplyScale(savedData.Scale, skipHealthAdjustment: true);
                     
                     // Verify scale was applied
-                    Debug.Log($"[CompanionRespawnManager] After ApplyScale: localScale={controller.transform.localScale}, GetScale()={randomLoadoutForScale.GetScale():F2}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] After ApplyScale: localScale={controller.transform.localScale}, GetScale()={randomLoadoutForScale.GetScale():F2}");
                 }
                 else
                 {
@@ -748,7 +753,7 @@ if (prefab == null)
             }
             else
             {
-                Debug.Log($"[CompanionRespawnManager] No scale to apply for {savedData.CompanionName} (scale={savedData.Scale:F2}, isGiant={savedData.IsGiant}, isDwarf={savedData.IsDwarf})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] No scale to apply for {savedData.CompanionName} (scale={savedData.Scale:F2}, isGiant={savedData.IsGiant}, isDwarf={savedData.IsDwarf})");
             }
             
             // CRITICAL: Restore progression, stats, skills, and kill tracker data
@@ -900,7 +905,7 @@ if (prefab == null)
      if (!string.Equals(existing.companionId, data.CompanionId, StringComparison.Ordinal)) continue;
      bool deadCorpse = existing.isDefeated || (existing.GetCharacter()?.IsDead() ?? false);
      if (deadCorpse) continue;
-     Debug.Log($"[CompanionRespawnManager] {data.CompanionId} is already live in the world — skipping duplicate respawn (I1 single-instance guard).");
+     FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] {data.CompanionId} is already live in the world — skipping duplicate respawn (I1 single-instance guard).");
      _pendingRespawns.Remove(data.CompanionId);
      yield break;
  }
@@ -929,7 +934,7 @@ if (prefab == null)
      // is a static world coordinate independent of the owner being online.
      spawnPos = new Vector3(savedData.HomePositionX, savedData.HomePositionY, savedData.HomePositionZ);
 
-     Debug.Log($"[CompanionRespawnManager] Stay-mode companion {data.CompanionId} respawning at home position {spawnPos}");
+     FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] Stay-mode companion {data.CompanionId} respawning at home position {spawnPos}");
  }
  else
  {
@@ -1221,7 +1226,9 @@ if (prefab == null)
                    zdo.Set(ZDOVars.s_hairColor, new Vector3(savedData.HairColorR, savedData.HairColorG, savedData.HairColorB));
                    zdo.Set(ZDOVars.s_skinColor, new Vector3(savedData.SkinColorR, savedData.SkinColorG, savedData.SkinColorB));
                    zdo.Set("companion_eyeColor", new Vector3(savedData.EyeColorR, savedData.EyeColorG, savedData.EyeColorB));
+                   if (savedData.HasBeardColor) zdo.Set(CompanionAppearanceService.BeardColorKey, new Vector3(savedData.BeardColorR, savedData.BeardColorG, savedData.BeardColorB));
                    zdo.Set(ZDOVars.s_modelIndex, savedData.ModelIndex);
+                   if (!string.IsNullOrEmpty(savedData.FccModel)) { zdo.Set("fcc_model", savedData.FccModel); FiresCore.Logging.FiresLogger.LogDebug("[Companions] respawn carried fcc_model '" + savedData.FccModel + "'"); }
                    
                    if (VerboseLogging)
                    {
@@ -1261,7 +1268,7 @@ if (prefab == null)
                {
         var pkg = new ZPackage(savedData.StorageInventoryData);
   storageInv.Load(pkg);
-             Debug.Log($"[CompanionRespawnManager] Restored storage inventory with {storageInv.GetAllItems().Count} items");
+             FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] Restored storage inventory with {storageInv.GetAllItems().Count} items");
      }
         }
            catch (Exception ex)
@@ -1269,6 +1276,9 @@ if (prefab == null)
         Debug.LogWarning($"[CompanionRespawnManager] Failed to restore storage inventory: {ex.Message}");
    }
           }
+
+            // Legacy vault equipment placed synchronously right after the bag load (idempotent)
+            inventory.CommitLegacyVaultEquipment("respawn restore");
 
    // Apply visual equipment
        inventory.RecalculateEquipmentBonusesPublic();
@@ -1294,14 +1304,14 @@ if (prefab == null)
             
             // CRITICAL: Apply scale using CompanionRandomLoadout's method for consistency
             // This ensures scale is applied the same way as when wild companions are first created
-            Debug.Log($"[CompanionRespawnManager] RestoreCompanionFromVault SCALE CHECK: {savedData.CompanionName} - vault scale={savedData.Scale:F2}, isGiant={savedData.IsGiant}, isDwarf={savedData.IsDwarf}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] RestoreCompanionFromVault SCALE CHECK: {savedData.CompanionName} - vault scale={savedData.Scale:F2}, isGiant={savedData.IsGiant}, isDwarf={savedData.IsDwarf}");
             
             if (Mathf.Abs(savedData.Scale - 1.0f) > 0.01f || savedData.IsGiant || savedData.IsDwarf)
             {
                 var randomLoadout = controller.GetComponent<CompanionRandomLoadout>();
                 if (randomLoadout != null)
                 {
-                    Debug.Log($"[CompanionRespawnManager] Calling ApplyScale({savedData.Scale:F2}) on respawned {savedData.CompanionName} via CompanionRandomLoadout");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] Calling ApplyScale({savedData.Scale:F2}) on respawned {savedData.CompanionName} via CompanionRandomLoadout");
                     
                     // Use the same ApplyScale method that's used when wild companions are created
                     // This properly updates internal state (_companionScale, _isGiant, _isDwarf)
@@ -1310,7 +1320,7 @@ if (prefab == null)
                     randomLoadout.ApplyScale(savedData.Scale, skipHealthAdjustment: true);
                     
                     // Verify scale was applied
-                    Debug.Log($"[CompanionRespawnManager] After ApplyScale on respawn: localScale={controller.transform.localScale}, GetScale()={randomLoadout.GetScale():F2}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] After ApplyScale on respawn: localScale={controller.transform.localScale}, GetScale()={randomLoadout.GetScale():F2}");
                 }
                 else
                 {
@@ -1321,7 +1331,7 @@ if (prefab == null)
             }
             else
             {
-                Debug.Log($"[CompanionRespawnManager] No scale to apply for respawned {savedData.CompanionName} (scale={savedData.Scale:F2}, isGiant={savedData.IsGiant}, isDwarf={savedData.IsDwarf})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] No scale to apply for respawned {savedData.CompanionName} (scale={savedData.Scale:F2}, isGiant={savedData.IsGiant}, isDwarf={savedData.IsDwarf})");
             }
             
             // CRITICAL: Restore progression, stats, skills, and kill tracker data
@@ -1395,7 +1405,7 @@ if (prefab == null)
                             companionAI.SetShouldFollow(true);
                         }
 
-                        Debug.Log($"[CompanionRespawnManager] Restored follow state for {controller.companionName} - following {owner.GetPlayerName()}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] Restored follow state for {controller.companionName} - following {owner.GetPlayerName()}");
                     }
                     else
                     {
@@ -1451,7 +1461,7 @@ if (prefab == null)
                         companionAI.SetStayPosition(stayPos);
                     }
 
-                    Debug.Log($"[CompanionRespawnManager] Restored STAY state for {controller.companionName} at {stayPos} (owner-set intent preserved across death)");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] Restored STAY state for {controller.companionName} at {stayPos} (owner-set intent preserved across death)");
                 }
             }
 
@@ -1567,7 +1577,7 @@ if (prefab == null)
                     }
                 }
                 
-                Debug.Log($"[CompanionRespawnManager] Restored progression/stats data for {savedData.CompanionName}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] Restored progression/stats data for {savedData.CompanionName}");
             }
             catch (Exception ex)
             {
@@ -1656,7 +1666,7 @@ private Vector3 GetSpawnPositionNearPlayer(Player player)
                 rigidbody.mass = baseMass * massMultiplier;
             }
             
-            Debug.Log($"[CompanionRespawnManager] Applied scale {scale:F2} to companion, localScale={companionObj.transform.localScale}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] Applied scale {scale:F2} to companion, localScale={companionObj.transform.localScale}");
         }
 
  #endregion
@@ -1724,12 +1734,12 @@ private Vector3 GetSpawnPositionNearPlayer(Player player)
                 // Override spawn position - will spawn near the given position
                 instance.StartCoroutine(instance.RespawnCompanionAtPosition(data, respawnPosition));
                 
-                Debug.Log($"[CompanionRespawnManager] Immediate respawn requested for {companionId} at {respawnPosition}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] Immediate respawn requested for {companionId} at {respawnPosition}");
             }
             else
             {
                 // No pending respawn - try to find companion data in vault and spawn
-                Debug.Log($"[CompanionRespawnManager] No pending respawn for {companionId}, checking vault...");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionRespawnManager] No pending respawn for {companionId}, checking vault...");
                 instance.StartCoroutine(instance.TryRespawnFromVault(companionId, respawnPosition));
             }
         }

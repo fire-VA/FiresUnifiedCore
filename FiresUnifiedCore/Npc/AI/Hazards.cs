@@ -4,8 +4,8 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// Ground that hurts to stand on (Core 0.2.220; R90: the bot's terrain route ran through the base campfire and it burned from
-    /// 25 to 16 HP, "hit by EnemyHit for 10.0 (fire)"). A hazard is a static Aoe that deals damage: a campfire's or hearth's flames,
+    /// Ground that hurts to stand on, so a terrain route never runs through a campfire.
+    /// A hazard is a static Aoe that deals damage: a campfire's or hearth's flames,
     /// cinder fire, a trap. Those are what hurt; torches and heat areas don't, so they don't count (a wall torch by a door must not
     /// close the doorway). The walkers keep <see cref="Margin"/> clear: TerrainPlanner refuses cells inside one, PathWalker drops a
     /// navmesh path through one, and a goal inside one moves to its edge (<see cref="SafeGoal"/>).

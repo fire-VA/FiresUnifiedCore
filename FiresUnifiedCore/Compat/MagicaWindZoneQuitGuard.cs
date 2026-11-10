@@ -7,7 +7,7 @@ using UnityEngine;
 namespace FiresCore.Compat
 {
     /// <summary>
-    /// A vanilla error at quit (Fire: "that's a vanilla error and if we can fix it we should"; [fgn]'s trace, 2026-09-30).
+    /// A vanilla error at quit.
     ///
     /// The game's MagicaCloth 2 is set up once at SubsystemRegistration, and MagicaManager.OnAppQuitting (Application.quitting) sets
     /// its managers to null. EnvMan's GameObject carries a MagicaWindZone, and its Awake/OnEnable call MagicaManager.Wind.AddWind /
@@ -26,8 +26,8 @@ namespace FiresCore.Compat
 
         private static bool Prepare()
         {
-            Type zone = AccessTools.TypeByName("MagicaCloth2.MagicaWindZone");
-            s_manager = AccessTools.TypeByName("MagicaCloth2.MagicaManager");
+            Type zone = FiresCore.Compat.OptionalTypes.Find("MagicaCloth2.MagicaWindZone");
+            s_manager = FiresCore.Compat.OptionalTypes.Find("MagicaCloth2.MagicaManager");
             if (zone == null || s_manager == null) return false;
             PropertyInfo prop = AccessTools.Property(s_manager, "Wind");
             if (prop != null && prop.GetGetMethod(true)?.IsStatic == true) s_wind = () => prop.GetValue(null);
@@ -42,7 +42,7 @@ namespace FiresCore.Compat
 
         private static IEnumerable<MethodBase> TargetMethods()
         {
-            Type zone = AccessTools.TypeByName("MagicaCloth2.MagicaWindZone");
+            Type zone = FiresCore.Compat.OptionalTypes.Find("MagicaCloth2.MagicaWindZone");
             if (zone == null) yield break;
             foreach (string name in new[] { "Awake", "OnEnable" })
             {

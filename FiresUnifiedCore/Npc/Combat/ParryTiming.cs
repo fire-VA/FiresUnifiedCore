@@ -5,14 +5,15 @@ using UnityEngine;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// When an attacker's swing lands, learned from the swings themselves (COMBAT_TACTICS §1; Fire, R72: "time his blocks to
-    /// stagger sometimes so he can capitalize"). Vanilla parries a hit that lands less than 0.25 s after the block was RAISED
+    /// When an attacker's swing lands, learned from the swings themselves (COMBAT_TACTICS §1: time blocks to stagger the
+    /// attacker and capitalize). Vanilla parries a hit that lands less than 0.25 s after the block was RAISED
     /// (Humanoid.BlockAttack: m_blockTimer &lt; 0.25 with a blocker whose timedBlockBonus &gt; 1), and staggers the attacker. So the
     /// block has to go up just before the hit, not be held. A swing starts when the attacker's animator enters an attack state
     /// (Humanoid.InAttack, synced to every peer); it ends when a hit from it arrives on this peer (Core's RPC_Damage prefix). The
     /// delay per (creature, attack state) is a running mean; <see cref="Predict"/> answers when the open swing will land.
     /// Counted per body (TacticStats): parries, the staggers they caused, blocks, and hits landed on a staggering foe.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.NpcBrain)]
     public static class ParryTiming
     {
         /// <summary>Raise the block this long before the predicted hit (inside vanilla's 0.25 s window, with margin both ways).</summary>
@@ -104,10 +105,10 @@ namespace FiresCore.Npc.Combat
             float mean = d.n == 0 ? delay : d.mean + (delay - d.mean) / n;
             s_delays[swing.Key] = (mean, d.n + 1);
             if (d.n + 1 <= 3 || (d.n + 1) % 10 == 0)
-                Debug.Log($"[ParryTiming] {swing.Key}: hit landed {delay:0.00} s after the wind-up (mean {mean:0.00} s, n {d.n + 1})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ParryTiming] {swing.Key}: hit landed {delay:0.00} s after the wind-up (mean {mean:0.00} s, n {d.n + 1})");
             // A hit that lands on a body whose parry was planned but whose block wasn't up: the raise came late.
             if (s_planned.TryGetValue(victim, out float raiseAt) && Mathf.Abs(Time.time - raiseAt) < 0.6f && !victim.IsBlocking())
-                Debug.Log($"[ParryTiming] {victim.m_name}: block: {Utils.GetPrefabName(attacker.gameObject)} hit landed unblocked (no parry: late; raise was planned {Time.time - raiseAt:+0.00;-0.00} s ago)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ParryTiming] {victim.m_name}: block: {Utils.GetPrefabName(attacker.gameObject)} hit landed unblocked (no parry: late; raise was planned {Time.time - raiseAt:+0.00;-0.00} s ago)");
         }
 
         private static readonly Dictionary<Character, float> s_planned = new Dictionary<Character, float>();
@@ -152,12 +153,12 @@ namespace FiresCore.Npc.Combat
                     c.Parries++;
                     bool staggers = attacker != null && attacker.m_staggerWhenBlocked;
                     if (staggers) c.Staggers++;
-                    Debug.Log($"[ParryTiming] {__instance.m_name}: parry: {foe} (block raised {__state.since:0.00} s before the hit){(staggers ? " -> stagger" : "; it doesn't stagger")}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[ParryTiming] {__instance.m_name}: parry: {foe} (block raised {__state.since:0.00} s before the hit){(staggers ? " -> stagger" : "; it doesn't stagger")}");
                 }
                 else
                 {
                     string why = !__state.bonus ? "no bonus (this blocker can't parry)" : __state.since < 0f ? "held (no raise)" : "early";
-                    Debug.Log($"[ParryTiming] {__instance.m_name}: block: {foe} held (no parry: {why}; raised {__state.since:0.00} s before)");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[ParryTiming] {__instance.m_name}: block: {foe} held (no parry: {why}; raised {__state.since:0.00} s before)");
                 }
             }
         }

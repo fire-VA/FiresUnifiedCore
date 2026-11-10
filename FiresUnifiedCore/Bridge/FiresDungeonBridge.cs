@@ -83,6 +83,18 @@ namespace FiresCore.Bridge
             catch (Exception ex) { Warn(ex); return 0; }
         }
 
+        /// <summary>0.2.1094: id for <see cref="Stamped{T}"/> / <see cref="DestroyDungeonById"/>.</summary>
+        public static long NewDungeonId() => FiresDungeonTeardown.NewId();
+
+        /// <summary>0.2.1094: runs a synchronous spawn; every ZDO it creates carries the id. Exceptions reach the caller.</summary>
+        public static T Stamped<T>(long id, Func<T> spawn) => FiresDungeonTeardown.Stamped(id, spawn);
+
+        /// <summary>0.2.1094: server only; destroys every ZDO carrying the id except keep. Returns the count.</summary>
+        public static int DestroyDungeonById(long id, ZDOID keep)
+        {
+            try { return FiresDungeonTeardown.DestroyById(id, keep); }
+            catch (Exception ex) { Warn(ex); return 0; }
+        }
         /// <summary>Start the server-side coroutine host (stale-heal / deferred actions). No-op off the server.</summary>
         public static void EnsureService()
         {

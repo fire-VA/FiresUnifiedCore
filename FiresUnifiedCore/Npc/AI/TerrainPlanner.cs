@@ -4,10 +4,10 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// A coarse route over the terrain for a walking body (Core 0.2.201, Fire: "pathfinding around terrain features … need work").
+    /// A coarse route over the terrain for a walking body.
     ///
     /// The navmesh lets a humanoid agent up faces far steeper than a player's 38°, and SlopeGuide only sees the ground 2.4 m ahead.
-    /// So the bot walked straight at ridges, banks and pockets and got boxed in (Tools\NAV_FAILURE_CATALOGUE.md #1-8, #11, #13-14).
+    /// So the bot walked straight at ridges, banks and pockets and got boxed in.
     /// This plans across them: A* over a <see cref="Cell"/> m grid in a box round the start and goal.
     ///
     /// Heights come from the loaded terrain (Heightmap, with digs and raises). Unloaded ground uses the world generator's height,
@@ -23,7 +23,7 @@ namespace FiresCore.Npc.AI
     /// </summary>
     public static class TerrainPlanner
     {
-        /// <summary>The coarsest grid (m, long walks); short walks plan finer, down to <see cref="FineCell"/> m (0.2.202: a 4 m U of walls needs it).</summary>
+        /// <summary>The coarsest grid (m, long walks); short walks plan finer, down to <see cref="FineCell"/> m (a 4 m U of walls needs it).</summary>
         public const float Cell = 4f, Sample = 2f, FineCell = 1f;
         /// <summary>A plan whose goal cell is refused ends at a cell this near (m) with the goal in sight, the goal one step on.</summary>
         public const float NearGoalMetres = 1.5f;
@@ -35,14 +35,14 @@ namespace FiresCore.Npc.AI
         public const float SwimCost = 3f, WadeDepth = 1.2f;
         private const float IndoorsHeight = 3000f;
         private const int MaxExpanded = 12000;
-        /// <summary>0.2.285 (HR5c hall: "searched 6668 cells in 265 ms", re-planned every 6 s on the main thread): a search stops here (ms).</summary>
+        /// <summary>A search stops here (ms); large halls could take hundreds of ms per plan on the main thread.</summary>
         private const long MaxSearchMs = 40;
         private const float StartFreeRadius = 1.5f;
 
         private static int s_obstacleMask;
         private static int ObstacleMask => s_indoors ? (s_obstacleMaskIn != 0 ? s_obstacleMaskIn : (s_obstacleMaskIn = LayerMask.GetMask("static_solid", "piece", "Default")))
             : s_obstacleMask != 0 ? s_obstacleMask : (s_obstacleMask = LayerMask.GetMask("static_solid", "piece"));
-        // Indoors (a dungeon, far above the world): its floors and walls are on the Default layer (R77 Crypt4: "dirtfloor (Default; DG_ForestCrypt)").
+        // Indoors (a dungeon, far above the world): its floors and walls are on the Default layer.
         private static bool s_indoors;
         private static int s_obstacleMaskIn, s_surfaceMaskIn;
 
@@ -65,7 +65,7 @@ namespace FiresCore.Npc.AI
         private static int SurfaceMask => s_terrainOnly ? (s_terrainMask != 0 ? s_terrainMask : (s_terrainMask = LayerMask.GetMask("terrain")))
             : s_indoors ? (s_surfaceMaskIn != 0 ? s_surfaceMaskIn : (s_surfaceMaskIn = LayerMask.GetMask("terrain", "static_solid", "piece", "Default")))
             : s_surfaceMask != 0 ? s_surfaceMask : (s_surfaceMask = LayerMask.GetMask("terrain", "static_solid", "piece"));
-        // The ridge check reads the ground only (0.2.206, R79 l_corner: its surface ray landed on a 2 m woodwall's top and called it a
+        // The ridge check reads the ground only (a surface ray could land on a wall's top and call it a
         // "49° ridge", which sent a plain corner walk to the planner).
         private static bool s_terrainOnly;
         private static int s_terrainMask;
@@ -76,14 +76,14 @@ namespace FiresCore.Npc.AI
         /// <summary>
         /// Plans a walkable way for <paramref name="body"/> from <paramref name="from"/> to <paramref name="goal"/>. On success
         /// <paramref name="route"/> holds the waypoints (the last one is the goal) and <paramref name="why"/> describes it; on failure
-        /// <paramref name="why"/> says why. Indoors too: a dungeon is planned over its floors (0.2.202).
+        /// <paramref name="why"/> says why. Indoors too: a dungeon is planned over its floors.
         /// </summary>
         public static bool Plan(Character body, Vector3 from, Vector3 goal, List<Vector3> route, out string why) =>
             Plan(body, from, goal, route, out why, null, 0f, DefaultClearanceWeight);
 
         /// <summary>
-        /// <see cref="Plan(Character, Vector3, Vector3, List{Vector3}, out string)"/> for a retry (0.2.206, Fire R79: "just gonna try the same
-        /// shit that failed?"): ground within <paramref name="avoidRadius"/> of each <paramref name="avoid"/> point costs <see cref="AvoidCost"/>
+        /// <see cref="Plan(Character, Vector3, Vector3, List{Vector3}, out string)"/> for a retry, so it does not repeat the route that
+        /// failed: ground within <paramref name="avoidRadius"/> of each <paramref name="avoid"/> point costs <see cref="AvoidCost"/>
         /// times more (where earlier routes stalled), and nearness to walls weighs <paramref name="clearanceWeight"/>.
         /// </summary>
         public static bool Plan(Character body, Vector3 from, Vector3 goal, List<Vector3> route, out string why,
@@ -91,7 +91,7 @@ namespace FiresCore.Npc.AI
             Plan(body, from, goal, route, out why, avoid, avoidRadius, clearanceWeight, null);
 
         /// <summary>
-        /// 0.2.287 (the lead: the bot ran into the hall wall twice, "its way crosses StandInCollider ..., a wall the grid didn't see"):
+        /// Walls the grid can miss (e.g. a non-convex collider):
         /// <paramref name="hardWalls"/> are colliders a walker's leg check found across an earlier route for this goal; a cell against one
         /// (within <see cref="HardWallGap"/> at chest height) or a step through one is blocked, whatever the cell test made of it.
         /// </summary>
@@ -105,14 +105,14 @@ namespace FiresCore.Npc.AI
             s_start = from;
             s_hardGoal = goal;
             s_terrainOnly = false;
-            // A goal in a fire's damage goes to its edge (0.2.220, R90: the route's first waypoint was the base campfire).
+            // A goal in a fire's damage goes to its edge.
             Vector3 asked = goal;
             goal = Hazards.SafeGoal(goal, from, out string goalHazard);
             string goalNote = goalHazard != null ? $"goal ({asked.x:0}, {asked.z:0}) moved out of {goalHazard}; " : "";
             route.Clear();
             why = null;
             if (body == null) { why = "no body"; return false; }
-            // Indoors too (0.2.202, R77 Crypt4: "no terrain way round … indoors (no terrain)", stuck under the exit ledge): a dungeon is
+            // Indoors too (a body could get stuck under a dungeon ledge otherwise): a dungeon is
             // all colliders, and the surface ray, the wall casts and the jumpable-rise rule work on its floors as on the ground.
             s_indoors = from.y > IndoorsHeight || goal.y > IndoorsHeight;
             s_limit = SlopeGuide.Limit(body);
@@ -168,7 +168,7 @@ namespace FiresCore.Npc.AI
                     int next = mz * s_w + mx;
                     if (s_closed.Contains(next)) continue;
                     // The goal cell is never refused for an obstacle (the goal itself may be a piece or sit by a rock).
-                    // Round the start the cell buffer is skipped (0.2.202: wedged in a corner of the mausoleum Facade every neighbour lay within
+                    // Round the start the cell buffer is skipped (wedged in a corner every neighbour can lie within
                     // its 0.8 m and nothing was open); the per-step wall test still refuses a step into the wall itself.
                     // The neighbour's floor is found from THIS cell's floor level (a stair, a ledge, the next storey up), not from
                     // the start's: level by level, the way a body would climb.
@@ -185,14 +185,14 @@ namespace FiresCore.Npc.AI
                     Push(cand + Heuristic(next, end), next);
                 }
             }
-            // The goal cell itself refused (a goal against a wall, in a dead end: R85 corridor "nearest reached 1.0 m from the goal"):
-            // a cell within NearGoalMetres with the goal in plain sight is the way's end, the goal one step on (0.2.214).
+            // The goal cell itself refused (a goal against a wall, in a dead end):
+            // a cell within NearGoalMetres with the goal in plain sight is the way's end, the goal one step on.
             bool nearEnd = false;
             string nearWhy = null;
             if (!found && closestNode >= 0 && closest <= NearGoalMetres && closestNode != start)
             {
                 Vector3 near = NodePos(closestNode);
-                // A hit on the goal's own spot (within 0.4 m of it) doesn't count (0.2.218).
+                // A hit on the goal's own spot (within 0.4 m of it) doesn't count.
                 if (!Physics.Linecast(near + Vector3.up * 1f, goal + Vector3.up * 1f, out RaycastHit block, ObstacleMask, QueryTriggerInteraction.Ignore)
                     || Flat(block.point, goal) < 0.4f)
                 {
@@ -200,7 +200,7 @@ namespace FiresCore.Npc.AI
                     found = true;
                     nearEnd = true;
                 }
-                // Which cell was nearest and what stood between (R88 corridor, "nearest reached 1.0 m from the goal" with no more said):
+                // Which cell was nearest and what stood between:
                 // inside the corridor's cap or outside it.
                 else nearWhy = $"; the nearest cell ({near.x:0.0}, {near.z:0.0}) has {block.collider.name} at ({block.point.x:0.0}, {block.point.z:0.0}) between it and the goal";
             }
@@ -383,15 +383,15 @@ namespace FiresCore.Npc.AI
             if (s_height.Count > 60000) { s_height.Clear(); s_loaded.Clear(); s_blocked.Clear(); }
             bool loaded = Heightmap.GetHeight(new Vector3(x, 0f, z), out h);
             float generated = WorldGenerator.instance != null ? WorldGenerator.instance.GetHeight(x, z) : 0f;
-            // The surface a body would stand on (0.2.202): a ray down onto terrain (voxel chunks included: R77's course is voxel
+            // The surface a body would stand on: a ray down onto terrain (voxel chunks included: voxel
             // ground, which the heightmap doesn't cover), rock or built pieces (steps, floors), from just under head height above
             // the heightmap ground (or the walker's feet level where there is none). A wall taller than that isn't hit from the
             // inside, so its cell reads as the ground beside it and the wall test blocks it.
             // Indoors from the level walked on (a dungeon's world-generator height is the ground far below it); outdoors from the
             // heightmap ground, or the higher of the level and the generated height on voxel ground.
-            // Outdoors never below the level walked on (0.2.211, R82 nav_course on the voxel-levelled pad at y 55: the heightmap under
+            // Outdoors never below the level walked on (on voxel-levelled ground the heightmap under
             // the voxel fill lies lower, the ray started inside the fill and read the heightmap, and the cell test at 1.85 m above that
-            // sat in the fill: "39 blocked cell", no way out of the U).
+            // sat in the fill and blocked every cell).
             float probeTop = (s_indoors ? nearY : Mathf.Max(nearY, loaded ? h : generated)) + ProbeAbove;
             if (Physics.Raycast(new Vector3(x, probeTop, z), Vector3.down, out RaycastHit ground, ProbeAbove + ProbeBelow, SurfaceMask, QueryTriggerInteraction.Ignore)
                 && !(ground.collider.attachedRigidbody != null && ground.collider.attachedRigidbody.GetComponent<Character>() != null))
@@ -416,11 +416,11 @@ namespace FiresCore.Npc.AI
         private static Vector3 Surface(Vector3 p) => new Vector3(p.x, Height(p.x, p.z, p.y), p.z);
 
         // A rock or a building across the cell at chest height (loaded ground only: nothing is known of unloaded ground).
-        // ---- Clearance (0.2.202, Fire: "they have a giant field here … why is it trying to use the shortest possible path") ----
+        // ---- Clearance (prefer open ground over the shortest path hugging walls) ----
 
         /// <summary>Routes keep this far (m) off walls, rocks and buildings where there is room; closer costs more, down to the cell buffer.</summary>
         public const float WantedClearance = 3f;
-        /// <summary>How much nearness to walls weighs by default (0.2.206: 4, was 1.5, which let "clearance 0 m" routes win in open ground).</summary>
+        /// <summary>How much nearness to walls weighs by default (lower values let zero-clearance routes win in open ground).</summary>
         public const float DefaultClearanceWeight = 4f;
         /// <summary>Ground near a point where an earlier route for the same goal stalled costs this many times more.</summary>
         public const float AvoidCost = 15f;
@@ -472,7 +472,7 @@ namespace FiresCore.Npc.AI
         private static int s_rejWall, s_rejRise, s_rejDrop, s_rejBlocked, s_rejHazard;
 
         // What stands across the flat line a→b at knee and chest height: nothing (0), only a door the body may pass (DoorCost:
-        // 0.2.205, R78 doorway: a closed gate read as a wall and the plan went 26 m round it), or a wall (infinity).
+        // a closed gate must not read as a wall), or a wall (infinity).
         private static float Crossing(Vector3 a, Vector3 b)
         {
             float length = Flat(a, b);
@@ -482,7 +482,7 @@ namespace FiresCore.Npc.AI
             foreach (float up in WallHeights)
             {
                 Vector3 from = new Vector3(a.x, baseY + up, a.z), to = new Vector3(b.x, baseY + up, b.z);
-                // Stopping short of both ends (0.2.206): a face just beyond the next cell (the 2 m ledge behind the last riser) is not a wall across this
+                // Stopping short of both ends: a face just beyond the next cell (the 2 m ledge behind the last riser) is not a wall across this
                 // step, and a thinner sphere doesn't reach it from the cell centre.
                 int n = length > 0.3f ? Physics.SphereCastNonAlloc(from + (to - from) / length * 0.15f, 0.15f, (to - from) / length, s_hits, length - 0.3f, ObstacleMask, QueryTriggerInteraction.Ignore) : 0;
                 for (int i = 0; i < n; i++)
@@ -506,11 +506,11 @@ namespace FiresCore.Npc.AI
         private static readonly float[] WallHeights = { 0.6f, 1.4f };
 
         // The cell test's capsule: from just over a jumpable lip to just under a door lintel (m above the floor), this wide.
-        // 0.3 m (was 0.4, 0.2.212): on a 1 m grid a 1.8 m corridor off the grid's alignment had no free cell (R83 corridor: "no walkable way", 7878 cells).
+        // 0.3 m: on a 1 m grid a 1.8 m corridor off the grid's alignment needs a free cell.
         private const float CellCheckRadius = 0.3f, CellCheckLow = Jumping.MaxLip + 0.05f + CellCheckRadius, CellCheckHigh = 1.85f;
 
-        /// <summary>0.2.285 (the lead: the hall's StandInCollider "a wall the grid didn't see", twice): what kind of collider it is (a thick
-        /// non-convex mesh reads as open floor from inside, R80 Crypt4) and its layer.</summary>
+        /// <summary>What kind of collider it is (a thick
+        /// non-convex mesh reads as open floor from inside) and its layer.</summary>
         public static string Describe(Collider c)
         {
             if (c == null) return "no collider";
@@ -518,7 +518,7 @@ namespace FiresCore.Npc.AI
             return $"{kind} on layer {LayerMask.LayerToName(c.gameObject.layer)}, bounds {c.bounds.size.x:0.0} x {c.bounds.size.y:0.0} x {c.bounds.size.z:0.0} m";
         }
 
-        /// <summary>0.2.285: what the grid makes of the point <paramref name="p"/> (looked up from its level): the floor it reads, whether the
+        /// <summary>What the grid makes of the point <paramref name="p"/> (looked up from its level): the floor it reads, whether the
         /// cell test calls it blocked, and what the cell capsule overlaps.</summary>
         public static string CellReport(Vector3 p)
         {
@@ -539,19 +539,19 @@ namespace FiresCore.Npc.AI
             blocked = false;
             if (IsLoaded(p))
             {
-                // Above jump height only (0.2.205, R78 jump_steps: a capsule from 0.1 m up hit the next riser, so every cell beside a step read
-                // as blocked and "no walkable way" came back for a stair of 0.5 / 0.5 / 1.0 m). Anything lower is a rise (the step rule in
+                // Above jump height only (a capsule from 0.1 m up hits the next riser, so every cell beside a step would read
+                // as blocked). Anything lower is a rise (the step rule in
                 // EdgeCost) or a wall across the step (the knee / chest casts in Crossing).
                 int n = Physics.OverlapCapsuleNonAlloc(p + Vector3.up * CellCheckLow, p + Vector3.up * CellCheckHigh, CellCheckRadius, s_overlap, ObstacleMask, QueryTriggerInteraction.Ignore);
                 for (int i = 0; i < n && !blocked; i++)
-                    if (s_overlap[i] != null && !PassableDoor(s_overlap[i])) blocked = true;   // a doorway cell stays open (0.2.205)
+                    if (s_overlap[i] != null && !PassableDoor(s_overlap[i])) blocked = true;   // a doorway cell stays open
             }
-            if (!blocked && AgainstHardWall(p)) blocked = true;   // 0.2.287
+            if (!blocked && AgainstHardWall(p)) blocked = true;
             s_blocked[key] = blocked;
             return blocked;
         }
 
-        // ---- 0.2.287: hard walls (what a walker's leg check found that the cell test missed) ----
+        // ---- Hard walls (what a walker's leg check found that the cell test missed) ----
 
         /// <summary>A cell this close (m, at chest height) to a hard wall is blocked.</summary>
         public const float HardWallGap = 0.5f;
@@ -590,14 +590,14 @@ namespace FiresCore.Npc.AI
         {
             float length = Flat(a, b);
             int steps = Mathf.Max(1, Mathf.CeilToInt(length / s_sample));
-            // A wall across the step itself (0.2.202: a 0.2 m woodwall between two cell centres was invisible to the cell test); a door the
-            // body may pass costs DoorCost instead (0.2.205).
+            // A wall across the step itself (a thin wall between two cell centres is invisible to the cell test); a door the
+            // body may pass costs DoorCost instead.
             float cost = IsLoaded(a) && IsLoaded(b) ? Crossing(a, b) : 0f;
             if (float.IsInfinity(cost)) { s_rejWall++; return cost; }
             Vector3 prev = a;
-            // 0.2.283 (HR5c pit, Fire: "It's not trying to jump or climb out of the pit at all"): a jumpable lip is ONE rise up to MaxLip.
-            // Steep rises sample after sample add up: the 2.5 m voxel pit wall over two or three 0.5 m samples was 1.2 m "lips" each,
-            // so the grid planned "open ground" out of it and the bot walked the bottom.
+            // A jumpable lip is ONE rise up to MaxLip.
+            // Steep rises sample after sample add up: a 2.5 m pit wall over two or three 0.5 m samples would read as 1.2 m "lips" each,
+            // so the grid would plan "open ground" out of it.
             // A cell centre half way up the wall splits it in two edges: the steep rise just behind a carries in.
             float steepRise = 0f;
             Vector3 along = new Vector3(b.x - a.x, 0f, b.z - a.z);
@@ -611,9 +611,9 @@ namespace FiresCore.Npc.AI
             {
                 Vector3 q = Vector3.Lerp(a, b, i / (float)steps);
                 Vector3 p = Surface(q);
-                // Through a fire's damage never (0.2.220), a smoothed shortcut included; round the start the body may be walking out of one.
+                // Through a fire's damage never, a smoothed shortcut included; round the start the body may be walking out of one.
                 if (Flat(p, s_start) > StartFreeRadius && Hazards.Inside(p, out _)) { s_rejHazard++; return float.PositiveInfinity; }
-                // 0.2.287: never a step through a hard wall (the leg check found it across an earlier route).
+                // Never a step through a hard wall (the leg check found it across an earlier route).
                 if (s_hardWalls != null && AgainstHardWall(p)) { s_rejWall++; return float.PositiveInfinity; }
                 float run = Flat(prev, p);
                 float rise = p.y - prev.y;
@@ -651,7 +651,7 @@ namespace FiresCore.Npc.AI
             int steps = Mathf.Max(1, Mathf.CeilToInt(length / s_sample));
             // A shortcut keeps the room its ends have: no cutting back along a wall the grid route kept clear of.
             float ca = Clearance(a), cb = Clearance(b);
-            // At least 1 m unless both ends are tighter (0.2.206: a start by a wall let every shortcut hug it).
+            // At least 1 m unless both ends are tighter (a start by a wall would let every shortcut hug it).
             float need = Mathf.Max(Mathf.Min(ca, cb), Mathf.Min(1f, Mathf.Max(ca, cb)));
             for (int i = 1; i < steps; i++)
             {

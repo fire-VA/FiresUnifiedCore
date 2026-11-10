@@ -66,7 +66,7 @@ namespace FiresCore.Recipes
             }
             RemoveCustomRecipesNotIn(db, liveCustomNames);
             RefreshOpenCraftingPanel();
-            FiresLogger.LogInfo($"[RecipeOverrides] applied {applied} override(s) to ObjectDB");
+            FiresLogger.LogDebug($"[RecipeOverrides] applied {applied} override(s) to ObjectDB");
         }
 
         public static RecipeOverride Describe(Recipe recipe) => DescribeFields(recipe.name, recipe.m_item, recipe.m_enabled,

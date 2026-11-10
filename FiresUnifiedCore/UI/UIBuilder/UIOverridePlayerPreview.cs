@@ -166,7 +166,7 @@ namespace FiresCore.UI
             _rawImage.texture = _renderTexture;
             _rawImage.color = Color.white;
 
-            Debug.Log($"[UIOverridePlayerPreview] Created preview camera (layer mask: {_camera.cullingMask})");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverridePlayerPreview] Created preview camera (layer mask: {_camera.cullingMask})");
         }
 
         private static int FirstLayerInMask(int mask)

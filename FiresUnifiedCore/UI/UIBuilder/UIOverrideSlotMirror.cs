@@ -48,6 +48,9 @@ namespace FiresCore.UI
         private Transform _noteleportOverlay;
         private Transform _selectedOverlay;
         private TMP_Text _bindingLabel;
+        // 1074 ([generator] event-driven/cache): overlay components, cached on first use (see SyncOverlays)
+        private GuiBar _durabilityBar;
+        private TMP_Text _qualityLabel;
 
         private bool _initialized;
         private int _lastUpdateFrame = -1;
@@ -179,7 +182,9 @@ namespace FiresCore.UI
                 _durabilityOverlay.gameObject.SetActive(show);
                 if (show)
                 {
-                    var bar = _durabilityOverlay.GetComponent<GuiBar>();
+                    // 1074 ([generator] event-driven/cache): looked up once, again only while missing/destroyed
+                    if (_durabilityBar == null) _durabilityBar = _durabilityOverlay.GetComponent<GuiBar>();
+                    var bar = _durabilityBar;
                     if (bar != null && item.m_shared.m_maxDurability > 0)
                         bar.SetValue(item.m_durability / item.m_shared.m_maxDurability);
                 }
@@ -199,7 +204,8 @@ namespace FiresCore.UI
                 _qualityOverlay.gameObject.SetActive(show);
                 if (show)
                 {
-                    var label = _qualityOverlay.GetComponent<TMP_Text>();
+                    if (_qualityLabel == null) _qualityLabel = _qualityOverlay.GetComponent<TMP_Text>();   // 1074 ([generator] event-driven/cache): as above
+                    var label = _qualityLabel;
                     if (label != null) label.text = item.m_quality.ToString();
                 }
             }

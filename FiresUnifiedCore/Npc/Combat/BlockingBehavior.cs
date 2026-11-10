@@ -112,6 +112,8 @@ namespace FiresCore.Npc.Combat
         /// Whether currently blocking.
         /// </summary>
         public bool IsBlocking => _isBlocking;
+        // [ghost] 11-03, Fire: "roll in attack sidestep the monsters attack instead of just holding block". A block stops the swing (CompanionCombat), so it answers only a swing that is coming when no roll is ready.
+        public System.Func<bool> RollReady;
         
         /// <summary>
         /// Whether we're committed to the current block (can't drop yet).
@@ -362,6 +364,8 @@ weaponType == CompanionCombat.WeaponType.Staff)
                 StartBlocking();
                 return;
             }
+
+            if (!target.InAttack() || (RollReady != null && RollReady())) return;
             
             // ==========================================
             // USE ENEMY ATTACK RECOGNITION
@@ -727,6 +731,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
             _isBlocking = true;
             _blockStartTime = Time.time;
             _blockCommitEndTime = Time.time + MinBlockDuration;
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionBlock] {_context.Character?.m_name}: block up, foe attacking {_context.Agent?.Target?.InAttack()}");
 
             // Set animation
             if (_context.ZAnim != null)
@@ -775,6 +780,7 @@ weaponType == CompanionCombat.WeaponType.Staff)
 
         private void StopBlockingInternal(string reason)
         {
+            if (_isBlocking) { float held = Time.time - _blockStartTime; FiresCore.Logging.FiresLogger.LogDebug($"[CompanionBlock] {_context.Character?.m_name}: block down after {held:0.0} s ({reason})"); CombatLoopStats.NoteBlock(_context.Character, held); }
             _isBlocking = false;
             _lastBlockStopTime = Time.time;
 

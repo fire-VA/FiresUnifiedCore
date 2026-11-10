@@ -53,7 +53,7 @@ namespace FiresCore.IO
                 interval.SettingChanged += (_, __) => FileWatchHub.IntervalSeconds = interval.Value;
                 fold.SettingChanged += (_, __) => FileWatchHub.FoldIntoConfigRoot = fold.Value;
 
-                if (!FileWatchHub.Install(harmony, message => FiresUnifiedCore.Log.LogInfo(LogPrefix + message),
+                if (!FileWatchHub.Install(harmony, message => FiresCore.Logging.FiresLogger.LogDebug(LogPrefix + message),
                                           message => FiresUnifiedCore.Log.LogWarning(LogPrefix + message)))
                     return;
             }

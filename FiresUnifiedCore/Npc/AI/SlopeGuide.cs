@@ -3,8 +3,8 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// Keeps a walking body off ground too steep for it (Fire, 2026-09-29: the bot "keeps wandering into steep hills", on paths and
-    /// on the loot walk to a kill). Vanilla slides a body whose ground tilts past its slide angle (Character.GetSlideAngle: 38° for
+    /// Keeps a walking body off ground too steep for it, on paths and
+    /// on the loot walk to a kill. Vanilla slides a body whose ground tilts past its slide angle (Character.GetSlideAngle: 38° for
     /// players, 90° for monsters, 45° with a rider), whatever way it walks, so the ground AHEAD is checked before stepping on it:
     /// the tilt of the surface <see cref="Near"/> and <see cref="Far"/> m along the wanted heading. Too steep: the nearest heading
     /// round it (±30° steps up to ±<see cref="MaxTurn"/>°) whose ground is walkable, keeping to one side for a while so it follows
@@ -20,8 +20,8 @@ namespace FiresCore.Npc.AI
         public static float PlayerAllowance;
 
         private static int s_mask;
-        // Only ground a body can slide on: terrain and rock. Never building pieces, doors or dungeon walls (R75 Crypt4: the
-        // hallway's walls and door read as 47-80° "slopes" and the bot turned back and forth in an open corridor).
+        // Only ground a body can slide on: terrain and rock. Never building pieces, doors or dungeon walls (a
+        // hallway's walls and door read as 47-80° slopes and the body turned back and forth in an open corridor).
         private static int Mask => s_mask != 0 ? s_mask : (s_mask = LayerMask.GetMask("terrain", "static_solid"));
         private static int s_terrainLayer = -1;
         private static int TerrainLayer => s_terrainLayer >= 0 ? s_terrainLayer : (s_terrainLayer = LayerMask.NameToLayer("terrain"));
@@ -73,9 +73,9 @@ namespace FiresCore.Npc.AI
 
             Vector3 feet = body.transform.position;
             float ahead = Steepest(feet, flat);
-            // A contour is held until the body has gone ContourCommitMetres along it AND the straight way is walkable (R75: a 90°
-            // sidestep alternating with a re-path back up the slope flip-flopped the heading 5 times in 8 s).
-            // 0.2.203 (R77 obstacle_field z: "contour: holding R until clear" dithered 5 s beside a stump): the straight way walkable
+            // A contour is held until the body has gone ContourCommitMetres along it AND the straight way is walkable (a 90°
+            // sidestep alternating with a re-path back up the slope flip-flopped the heading).
+            // A hold can dither beside a stump, so the straight way walkable
             // for ClearChecksToRelease checks in a row ends the hold early, unless the dither guard froze the side.
             _clearChecks = ahead <= limit ? _clearChecks + 1 : 0;
             bool holding = _side != 0f && (FlatDistance(feet, _contourFrom) < ContourCommitMetres || now < _freezeUntil)
@@ -99,7 +99,7 @@ namespace FiresCore.Npc.AI
                 return Keep(want, false);
             }
 
-            // What rises ahead (Fire: "make sure that doesn't ruin its ability to jump up the exit stair"): a lip the body can jump
+            // What rises ahead (must not stop it jumping up an exit stair): a lip the body can jump
             // (a step, a ledge, a stair) is jumped, straight at it; a face Jumping calls a wall is not a slope to contour round
             // (the path, or going round the thing, handles it); only a continuous steep ground slope is contoured.
             JumpAdvice rise = Jumping.Check(body, flat, false);
@@ -145,8 +145,8 @@ namespace FiresCore.Npc.AI
 
         /// <summary>Forget the side and the cached answer (a new walk).</summary>
         /// <summary>
-        /// Keep the contour side for <paramref name="seconds"/> whatever the distance walked (PathWalker's dither guard: R76, the
-        /// side still flipped L/R after "committing to the path").
+        /// Keep the contour side for <paramref name="seconds"/> whatever the distance walked (PathWalker's dither guard: the
+        /// side could still flip L/R after committing to the path).
         /// </summary>
         public void HoldSide(float seconds)
         {
@@ -206,13 +206,13 @@ namespace FiresCore.Npc.AI
             if (!Physics.Raycast(from, Vector3.down, out RaycastHit hit, CastAbove + FallSafe + 0.5f, Mask, QueryTriggerInteraction.Ignore))
                 return DropOff;
             if (hit.collider.attachedRigidbody != null && hit.collider.attachedRigidbody.GetComponent<Character>() != null) return 0f;
-            // A narrow rock or stump isn't a slope to contour along (0.2.203): the walker goes round it (slide, PlanRound, the planner).
+            // A narrow rock or stump isn't a slope to contour along: the walker goes round it (slide, PlanRound, the planner).
             if (hit.collider.gameObject.layer != TerrainLayer
                 && hit.collider.bounds.size.x < NarrowSolid && hit.collider.bounds.size.z < NarrowSolid) return 0f;
             // The first surface under the cast must be the ground at about the body's own level: a hit well above the feet is an
             // overhang or a ceiling, not the slope ahead.
             if (hit.point.y > feetY + 2.5f) return 0f;
-            // Going DOWN (R76: boxed in on a hilltop, every heading down a 45-54° face refused, a rescue teleport): a player runs or
+            // Going DOWN (refusing every steep heading down boxes a body in on a hilltop): a player runs or
             // slides down a steep face; the slide angle only stops climbing. Downhill is walkable unless it is a drop-off.
             if (hit.point.y < feetY - FallSafe) return DropOff;
             if (hit.point.y < feetY - 0.2f) return 0f;

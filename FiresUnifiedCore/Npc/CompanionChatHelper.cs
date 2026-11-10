@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 
 namespace FiresCore.Npc
@@ -88,7 +88,7 @@ namespace FiresCore.Npc
             if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
             if (!ShouldSendMessage(companion, message)) return;
 
-            // The owner's peer speaks for the companion; everyone within range sees it (0.2.184: before, only the owner did).
+            // The owner's peer speaks for the companion; everyone within range sees it.
             var owner = companion.GetOwner();
             if (owner == null || owner != Player.m_localPlayer) return;
 
@@ -101,7 +101,7 @@ namespace FiresCore.Npc
 
                 // Offset 2 m above the head, cull 20 m, TTL = duration.
                 if (!Speech.Send(companion.gameObject, formattedMessage, duration, 20f, 2f)) return;
-                Debug.Log($"[CompanionChatHelper] {companion.companionName} says \"{message}\" (to everyone within 20 m)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionChatHelper] {companion.companionName} says \"{message}\" (to everyone within 20 m)");
 
                 RecordMessageSent(companion, message);
             }
@@ -296,7 +296,7 @@ namespace FiresCore.Npc
                 
                 // 2.2 m up (slightly higher), cull 25 m, shown until the next update; routed to everyone within range.
                 if (Speech.Send(companion.gameObject, formattedText, StatusUpdateInterval - 0.5f, 25f, 2.2f))
-                    Debug.Log($"[CompanionChatHelper] {companion.companionName} status \"{displayText}\" (to everyone within 25 m)");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionChatHelper] {companion.companionName} status \"{displayText}\" (to everyone within 25 m)");
             }
             catch (System.Exception ex)
             {

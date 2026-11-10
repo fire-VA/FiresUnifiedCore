@@ -7,7 +7,7 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// The co-op party between two bodies driven by the one brain (Core 0.2.219, COOP_BOTS §7.2 / LONGFORM_COOP_STREAM): the regroup
+    /// The co-op party between two bodies driven by the one brain: the regroup
     /// before heading home (wait up to 60 s for the partner to come within 15 m, meeting halfway) and the leash on trips. Each body
     /// runs it for itself with the other as its partner; nothing is networked, both read the same positions.
     /// </summary>
@@ -47,7 +47,7 @@ namespace FiresCore.Npc.AI
                 if (gap <= meet) return RegroupState.Together;
                 wait = new Wait { Since = Time.time, Why = why };
                 s_waits[self] = wait;
-                Debug.Log($"[Party] {Name(self)}: regrouping with {Name(partner)} before {why} ({gap:0} m apart)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Party] {Name(self)}: regrouping with {Name(partner)} before {why} ({gap:0} m apart)");
             }
             float waited = Time.time - wait.Since;
             if (gap <= meet)
@@ -85,7 +85,7 @@ namespace FiresCore.Npc.AI
             if (over && !was)
             {
                 s_leashed.Add(self);
-                Debug.Log($"[Party] {Name(self)}: leash: {distance:0} m from {Name(partner)} (leash {leash:0} m), heading back");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Party] {Name(self)}: leash: {distance:0} m from {Name(partner)} (leash {leash:0} m), heading back");
             }
             else if (!over && was && distance < leash * 0.75f) s_leashed.Remove(self);
             return over;
@@ -96,7 +96,7 @@ namespace FiresCore.Npc.AI
         private static void Finish(Character self, string line)
         {
             s_waits.Remove(self);
-            Debug.Log($"[Party] {Name(self)}: {line}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[Party] {Name(self)}: {line}");
         }
 
         private static string Name(Character c) => c is Player p ? p.GetPlayerName() : c != null ? c.m_name : "?";
@@ -110,7 +110,7 @@ namespace FiresCore.Npc.AI
     }
 
     /// <summary>
-    /// The party's home: one named base point per world (Core 0.2.219, LONGFORM_COOP_STREAM "RETURN to base"), persisted on each body's
+    /// The party's home: one named base point per world, persisted on each body's
     /// client like ResourceMemory (BepInEx\config\FiresCore\WorldMemory\&lt;world&gt;_&lt;seed&gt;.base.json), and the long walk home:
     /// <see cref="NextLeg"/> hands the walker legs of at most <see cref="LegMetres"/> m, so each navmesh ask stays inside tiles that are
     /// built around it (vanilla bakes 32 m tiles lazily round the start and the goal).
@@ -143,7 +143,7 @@ namespace FiresCore.Npc.AI
             s_data.Name = string.IsNullOrEmpty(name) ? "base" : name;
             s_data.Set = true;
             Save();
-            Debug.Log($"[HomeBase] base '{s_data.Name}' set at ({pos.x:0}, {pos.y:0}, {pos.z:0})");
+            FiresCore.Logging.FiresLogger.LogInfo($"[HomeBase] base '{s_data.Name}' set at ({pos.x:0}, {pos.y:0}, {pos.z:0})");
         }
 
         /// <summary>This world's base point, if one was set.</summary>
@@ -186,7 +186,7 @@ namespace FiresCore.Npc.AI
             if (Time.time >= s_legLogAt)
             {
                 s_legLogAt = Time.time + 10f;
-                Debug.Log($"[HomeBase] going home to '{name}': {remaining:0} m left; next leg to ({p.x:0}, {p.z:0})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[HomeBase] going home to '{name}': {remaining:0} m left; next leg to ({p.x:0}, {p.z:0})");
             }
             return true;
         }

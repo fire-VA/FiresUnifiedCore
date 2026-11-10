@@ -33,6 +33,8 @@ namespace FiresCore.Npc.Archetypes
         public const string ZdoArchetypeOverride = "companion_archetype_override";
         /// <summary>Hybrid sub-archetype the player picked in the radial menu; honored from HYBRID_UNLOCK_LEVEL.</summary>
         public const string ZdoSubArchetypeOverride = "companion_sub_archetype_override";
+        /// <summary>Studio God panel: the override above is forced (held whatever the gear) while this equals it.</summary>
+        public const string ZdoArchetypeForced = "companion_archetype_forced";
         private const float CritChancePerLevel = 0.005f;
         private const float PaladinBlockPriorityScale = 0.8f;
         private const float RangerAttackRange = 18f;
@@ -124,7 +126,7 @@ namespace FiresCore.Npc.Archetypes
         /// <summary>Current assigned archetype class (primary).</summary>
         public ArchetypeClass CurrentArchetypeClass => _currentArchetype;
 
-        // A test's archetype (0.2.204, [ghost]'s synergy step): held against the equipment re-evaluation until released with None.
+        // A test's archetype: held against the equipment re-evaluation until released with None.
         private ArchetypeClass _testArchetype = ArchetypeClass.None;
 
         /// <summary>
@@ -147,10 +149,29 @@ namespace FiresCore.Npc.Archetypes
                 SetArchetype(archetype);
                 why = $"archetype {archetype} (held for the test)";
             }
-            Debug.Log($"[ArchetypeController] {_companion.companionName}: {why}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeController] {_companion.companionName}: {why}");
             return true;
         }
         
+        /// <summary>
+        /// Studio God panel (Fire 10-30: "there are no rules"): gives this companion <paramref name="archetype"/> whatever its gear,
+        /// SAVED - written to the radial menu's own override key plus <see cref="ZdoArchetypeForced"/>, so it holds after a reload.
+        /// None clears both (the equipment decides again). A later radial-menu pick replaces it. Owner only.
+        /// </summary>
+        public bool SetArchetypeForced(ArchetypeClass archetype, out string why)
+        {
+            if (_companion == null) { why = "not a companion"; return false; }
+            if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) { why = "not owner"; return false; }
+            var zdo = _nview.GetZDO();
+            zdo.Set(ZdoArchetypeOverride, (int)archetype);
+            zdo.Set(ZdoArchetypeForced, (int)archetype);
+            _testArchetype = archetype;
+            if (archetype == ArchetypeClass.None) { why = "forced archetype cleared; the equipment decides again"; EvaluateArchetype(); }
+            else { SetArchetype(archetype); why = $"archetype {archetype} forced and saved"; }
+            Debug.Log($"[ArchetypeController] {_companion.companionName}: {why}");
+            return true;
+        }
+
         /// <summary>Secondary archetype class based on alternate weapons in inventory.</summary>
         public ArchetypeClass SubArchetypeClass => _subArchetype;
         
@@ -179,18 +200,21 @@ namespace FiresCore.Npc.Archetypes
         public bool IsDPS => _currentArchetype == ArchetypeClass.Berserker || 
                             _currentArchetype == ArchetypeClass.Rogue ||
                             _currentArchetype == ArchetypeClass.Ranger ||
-                            _currentArchetype == ArchetypeClass.Mage;
+                            _currentArchetype == ArchetypeClass.Mage ||
+                            IsPossessionClass;
         
         /// <summary>True if this companion is a melee fighter.</summary>
         public bool IsMelee => _currentArchetype == ArchetypeClass.Tank ||
                               _currentArchetype == ArchetypeClass.Paladin ||
                               _currentArchetype == ArchetypeClass.Berserker ||
-                              _currentArchetype == ArchetypeClass.Rogue;
+                              _currentArchetype == ArchetypeClass.Rogue ||
+                              (IsPossessionClass && !HoldsStaff);
         
         /// <summary>True if this companion is a ranged fighter.</summary>
         public bool IsRanged => _currentArchetype == ArchetypeClass.Ranger ||
                                _currentArchetype == ArchetypeClass.Mage ||
-                               _currentArchetype == ArchetypeClass.Healer;
+                               _currentArchetype == ArchetypeClass.Healer ||
+                               (IsPossessionClass && HoldsStaff);
         
         /// <summary>True if berserk mode is currently active.</summary>
         public bool IsBerserkActive => _isBerserkActive;
@@ -265,7 +289,7 @@ namespace FiresCore.Npc.Archetypes
         }
         
         // A copy on another peer read level and archetype choice once, at load: SetLevel / the archetype override made on the owner
-        // stayed invisible there ([wishbone] R60: Fire's copy showed "level 0" and a Rogue). Re-read both from the ZDO now and then.
+        // stayed invisible there. Re-read both from the ZDO now and then.
         private const float RemoteRefreshInterval = 2f;
         private float _nextRemoteRefresh;
         private int _lastSeenOverride = int.MinValue;
@@ -313,6 +337,8 @@ namespace FiresCore.Npc.Archetypes
                     UpdateRogueBehavior();
                     break;
                 case ArchetypeClass.Monk:
+                case ArchetypeClass.Druid:
+                case ArchetypeClass.Necromancer:
                     ApplyDpsDirective();
                     break;
                 case ArchetypeClass.Ranger:
@@ -366,6 +392,15 @@ namespace FiresCore.Npc.Archetypes
             if (_companion == null || _companion.ownerPlayerId == 0) return;
 
             var chosen = ReadArchetypeChoice(ZdoArchetypeOverride);
+            // Studio God panel pick (SetArchetypeForced): held whatever the gear, also after a reload, while it is still the saved choice
+            if (chosen != ArchetypeClass.None && ReadArchetypeChoice(ZdoArchetypeForced) == chosen)
+            {
+                _testArchetype = chosen;
+                if (chosen != _currentArchetype) SetArchetype(chosen);
+                return;
+            }
+            if (_testArchetype != ArchetypeClass.None && ReadArchetypeChoice(ZdoArchetypeForced) != ArchetypeClass.None && ReadArchetypeChoice(ZdoArchetypeForced) != chosen)
+                _testArchetype = ArchetypeClass.None;   // a later radial-menu pick replaced the forced one: normal rules again
             if (chosen != ArchetypeClass.None && IsArchetypeStillValid(chosen))
             {
                 if (chosen != _currentArchetype) SetArchetype(chosen);
@@ -435,6 +470,9 @@ namespace FiresCore.Npc.Archetypes
         /// Checks if the current archetype is still valid based on equipped items.
         /// Returns false if equipment has fundamentally changed (e.g., shield removed for tank).
         /// </summary>
+        private bool IsPossessionClass => _currentArchetype == ArchetypeClass.Druid || _currentArchetype == ArchetypeClass.Necromancer;
+        private bool HoldsStaff => HasOffensiveStaff() || HasSupportStaffEquipped();
+
         private bool IsArchetypeStillValid(ArchetypeClass archetype)
         {
             switch (archetype)
@@ -467,6 +505,14 @@ namespace FiresCore.Npc.Archetypes
                 case ArchetypeClass.Monk:
                     // Monk uses unarmed or clubs
                     return HasUnarmedOrClubs();
+
+                case ArchetypeClass.Druid:
+                    // Club/mace without a shield, or the elemental staff (CLASSES_DRUID_NECROMANCER.md section 8)
+                    return HasOffensiveStaff() || (!HasShield() && _inventory?.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_skillType == Skills.SkillType.Clubs);
+
+                case ArchetypeClass.Necromancer:
+                    // Blood-magic staff or knives
+                    return HasSupportStaffEquipped() || HasKnives();
                     
                 default:
                     return true;
@@ -497,7 +543,7 @@ namespace FiresCore.Npc.Archetypes
             // 1. SUPPORT STAFF EQUIPPED -> HEALER (highest priority for support role)
             if (HasSupportStaffEquipped())
             {
-                Debug.Log($"[Archetype] {_companion?.companionName} detected as HEALER (support staff equipped)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} detected as HEALER (support staff equipped)");
                 return ArchetypeClass.Healer;
             }
             
@@ -511,25 +557,25 @@ namespace FiresCore.Npc.Archetypes
                 // Giants strongly favor Tank
                 if (ArchetypeUtils.IsGiant(_companion))
                 {
-                    Debug.Log($"[Archetype] {_companion?.companionName} detected as TANK (giant with shield+melee)");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} detected as TANK (giant with shield+melee)");
                     return ArchetypeClass.Tank;
                 }
                 
                 // Paladin if has mace/club
                 if (rightHand?.m_shared?.m_skillType == Skills.SkillType.Clubs)
                 {
-                    Debug.Log($"[Archetype] {_companion?.companionName} detected as PALADIN (shield+club)");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} detected as PALADIN (shield+club)");
                     return ArchetypeClass.Paladin;
                 }
                 
-                Debug.Log($"[Archetype] {_companion?.companionName} detected as TANK (shield+melee)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} detected as TANK (shield+melee)");
                 return ArchetypeClass.Tank;
             }
             
             // 3. OFFENSIVE STAFF EQUIPPED -> MAGE
             if (HasOffensiveStaff())
             {
-                Debug.Log($"[Archetype] {_companion?.companionName} detected as MAGE (offensive staff equipped)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} detected as MAGE (offensive staff equipped)");
                 return ArchetypeClass.Mage;
             }
             
@@ -541,28 +587,28 @@ namespace FiresCore.Npc.Archetypes
             
             if (bowEquipped)
             {
-                Debug.Log($"[Archetype] {_companion?.companionName} detected as RANGER (bow equipped)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} detected as RANGER (bow equipped)");
                 return ArchetypeClass.Ranger;
             }
             
             // 5. KNIVES EQUIPPED -> ROGUE
             if (rightHand?.m_shared?.m_skillType == Skills.SkillType.Knives)
             {
-                Debug.Log($"[Archetype] {_companion?.companionName} detected as ROGUE (knives equipped)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} detected as ROGUE (knives equipped)");
                 return ArchetypeClass.Rogue;
             }
             
             // 6. UNARMED OR CLUBS (fists) -> MONK
             if (HasUnarmedOrClubs())
             {
-                Debug.Log($"[Archetype] {_companion?.companionName} detected as MONK (unarmed/clubs)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} detected as MONK (unarmed/clubs)");
                 return ArchetypeClass.Monk;
             }
             
             // 7. TWO-HANDED OR OTHER MELEE -> BERSERKER
             if (HasTwoHandedWeapon() || HasMeleeWeapon())
             {
-                Debug.Log($"[Archetype] {_companion?.companionName} detected as BERSERKER (melee weapon)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} detected as BERSERKER (melee weapon)");
                 return ArchetypeClass.Berserker;
             }
             
@@ -581,7 +627,7 @@ namespace FiresCore.Npc.Archetypes
                     return ArchetypeClass.Berserker;
             }
             
-            Debug.Log($"[Archetype] {_companion?.companionName} defaulting to NONE (no weapons detected)");
+            FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} defaulting to NONE (no weapons detected)");
             return ArchetypeClass.None;
         }
         
@@ -697,7 +743,7 @@ namespace FiresCore.Npc.Archetypes
                 {
                     subInfo = $" (hybrid unlocks at L{AbilityUnlockSystem.HYBRID_UNLOCK_LEVEL})";
                 }
-                Debug.Log($"[Archetype] ASSIGNED: {_companion?.companionName} => {newArchetype}{subInfo} (was {oldArchetype})");
+                FiresCore.Logging.FiresLogger.LogInfo($"[Archetype] ASSIGNED: {_companion?.companionName} => {newArchetype}{subInfo} (was {oldArchetype})");
                 
                 // Announce via chat bubble
                 ArchetypeChatManager.AnnounceArchetypeAssigned(_companion, newArchetype, oldArchetype);
@@ -800,7 +846,7 @@ namespace FiresCore.Npc.Archetypes
             var storage = _inventory.GetStorageInventory();
             if (storage != null)
             {
-                foreach (var item in storage.GetAllItems())
+                foreach (var item in _inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag now)
                 {
                     if (item?.m_shared == null) continue;
                     
@@ -895,7 +941,7 @@ namespace FiresCore.Npc.Archetypes
         {
             _subArchetype = sub;
             _subDefinition = ArchetypeRegistry.GetDefinition(sub);
-            Debug.Log($"[Archetype] {_companion?.companionName} sub-archetype: {_subArchetype} ({reason})");
+            FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] {_companion?.companionName} sub-archetype: {_subArchetype} ({reason})");
 
             try
             {
@@ -1273,7 +1319,7 @@ namespace FiresCore.Npc.Archetypes
                 var storage = _inventory.GetStorageInventory();
                 if (storage != null)
                 {
-                    foreach (var item in storage.GetAllItems())
+                    foreach (var item in _inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag now)
                     {
                         if (item?.m_shared?.m_itemType == ItemDrop.ItemData.ItemType.Shield)
                         {
@@ -1584,7 +1630,7 @@ namespace FiresCore.Npc.Archetypes
             // ALWAYS log taunts - they're significant combat events that help diagnose tank behavior
             if (tauntedCount > 0)
             {
-                Debug.Log($"[Archetype] TAUNT: {_companion?.companionName} taunted {tauntedCount} enemies for {tauntDuration}s with {(useTauntShockwave ? "shockwave" : "basic taunt")}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Archetype] TAUNT: {_companion?.companionName} taunted {tauntedCount} enemies for {tauntDuration}s with {(useTauntShockwave ? "shockwave" : "basic taunt")}");
             }
             
             // Reset taunting state after duration
@@ -1707,7 +1753,7 @@ namespace FiresCore.Npc.Archetypes
                 var storage = _inventory.GetStorageInventory();
                 if (storage != null)
                 {
-                    foreach (var item in storage.GetAllItems())
+                    foreach (var item in _inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag now)
                     {
                         if (ArchetypeUtils.IsSupportStaff(item))
                         {

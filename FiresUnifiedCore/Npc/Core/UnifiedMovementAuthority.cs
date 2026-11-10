@@ -218,7 +218,7 @@ namespace FiresCore.Npc.Core
         
         private void Update()
         {
-            // 0.2.292: a player is driving this body (FiresValcast possession); no SetMoveDir of ours until they let go.
+            // a player is driving this body (FiresValcast possession); no SetMoveDir of ours until they let go.
             if (_companion != null && _companion.IsPossessed) return;
 
             // Check authority timeout
@@ -227,7 +227,7 @@ namespace FiresCore.Npc.Core
                 if (Time.time >= _authorityTimeoutTime)
                 {
                     if (VerboseLogging)
-                        Debug.Log($"[MovementAuthority] {_companion?.companionName} authority timeout for {CurrentAuthorityOwner}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} authority timeout for {CurrentAuthorityOwner}");
                     ReleaseAuthority(CurrentAuthorityOwner);
                 }
             }
@@ -287,7 +287,7 @@ namespace FiresCore.Npc.Core
                 // Throttle DENIED logs
                 if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DeniedLogInterval)
                 {
-                    Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - movement frozen ({_freezeReason})");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - movement frozen ({_freezeReason})");
                     _lastDeniedSource = source;
                     _lastDeniedOwner = owner;
                     _lastDeniedLogTime = Time.time;
@@ -304,7 +304,7 @@ namespace FiresCore.Npc.Core
             {
                 if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DeniedLogInterval)
                 {
-                    Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - band suspended below {_suspendFloor} by {_suspendResumer}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - band suspended below {_suspendFloor} by {_suspendResumer}");
                     _lastDeniedSource = source;
                     _lastDeniedOwner = owner;
                     _lastDeniedLogTime = Time.time;
@@ -312,13 +312,25 @@ namespace FiresCore.Npc.Core
                 return false;
             }
 
+            // A companion in state Following could be repeatedly denied by its own stale Combat claim:
+            //
+            // an owner asking for a LOWER source than the one it holds itself has left that state - its own stale claim must not
+            // out-rank it. The claim is released and the request goes on below (the stop + grant path). Other owners are unchanged.
+            // Only once the companion's state has really left Combat - a lower request DURING a fight (reposition, tether,
+            // flee) keeps the Combat claim, so fight steps are unchanged.
+            if ((int)source < (int)CurrentAuthority && owner == CurrentAuthorityOwner && !string.IsNullOrEmpty(owner)
+                && CurrentAuthority == MovementSource.Combat
+                && _stateController != null && _stateController.CurrentState != FiresCore.Npc.Movement.CompanionStateController.CompanionState.Combat)
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {owner}: released its own stale {CurrentAuthority} claim for {source} (state {_stateController.CurrentState})");
+            }
             // Check priority
-            if ((int)source < (int)CurrentAuthority)
+            else if ((int)source < (int)CurrentAuthority)
             {
                 // Throttle DENIED logs - only log once per 5 seconds for same source/owner
                 if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DeniedLogInterval)
                 {
-                    Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - {CurrentAuthorityOwner} ({CurrentAuthority}) has higher priority");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - {CurrentAuthorityOwner} ({CurrentAuthority}) has higher priority");
                     _lastDeniedSource = source;
                     _lastDeniedOwner = owner;
                     _lastDeniedLogTime = Time.time;
@@ -336,7 +348,7 @@ namespace FiresCore.Npc.Core
             {
                 if (source != _lastDeniedSource || owner != _lastDeniedOwner || Time.time - _lastDeniedLogTime > DeniedLogInterval)
                 {
-                    Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - {CurrentAuthorityOwner} already holds same-priority {CurrentAuthority} authority (no equal-priority preemption)");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {owner} ({source}) DENIED - {CurrentAuthorityOwner} already holds same-priority {CurrentAuthority} authority (no equal-priority preemption)");
                     _lastDeniedSource = source;
                     _lastDeniedOwner = owner;
                     _lastDeniedLogTime = Time.time;
@@ -377,7 +389,7 @@ namespace FiresCore.Npc.Core
             // line behind VerboseLogging like every other diagnostic in this class.
             if (VerboseLogging && (previousSource != source || previousOwner != owner))
             {
-                Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} ACQUIRED {source} authority" +
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {owner} ACQUIRED {source} authority" +
                     (previousOwner != "" ? $" (from {previousOwner})" : ""));
             }
             
@@ -413,7 +425,7 @@ namespace FiresCore.Npc.Core
             }
             
             if (VerboseLogging)
-                Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} released {CurrentAuthority} authority");
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {owner} released {CurrentAuthority} authority");
             
             // Stop movement before releasing
             StopMovementImmediate();
@@ -438,7 +450,7 @@ namespace FiresCore.Npc.Core
             if (CurrentAuthority == MovementSource.None) return;
             
             if (VerboseLogging)
-                Debug.Log($"[MovementAuthority] {_companion?.companionName} FORCE release from {CurrentAuthorityOwner}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} FORCE release from {CurrentAuthorityOwner}");
             
             StopMovementImmediate();
             
@@ -524,7 +536,7 @@ namespace FiresCore.Npc.Core
             _authorityTimeoutTime = duration > 0 ? Time.time + duration : float.MaxValue;
 
             if (VerboseLogging)
-                Debug.Log($"[MovementAuthority] {_companion?.companionName} {newOwner} ({newSource}) SUSPENDED below {floor}" +
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {newOwner} ({newSource}) SUSPENDED below {floor}" +
                     (_suspendedOwner != "" ? $", saved slot {_suspendedSource}/{_suspendedOwner}" : ", nothing to save"));
 
             OnAuthorityChanged?.Invoke(previousSource, newSource);
@@ -554,7 +566,7 @@ namespace FiresCore.Npc.Core
             CurrentMoveDirection = Vector3.zero;
 
             if (VerboseLogging)
-                Debug.Log($"[MovementAuthority] {_companion?.companionName} RESUMED slot {CurrentAuthority}/{CurrentAuthorityOwner} (from {previousSource}/{owner})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} RESUMED slot {CurrentAuthority}/{CurrentAuthorityOwner} (from {previousSource}/{owner})");
 
             _suspendedSource = MovementSource.None;
             _suspendedOwner = "";
@@ -595,7 +607,7 @@ namespace FiresCore.Npc.Core
             {
                 // Only log denied calls once per owner change to avoid spam
                 if (VerboseLogging)
-                    Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} SetMoveDirection DENIED - current owner is '{CurrentAuthorityOwner}'");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {owner} SetMoveDirection DENIED - current owner is '{CurrentAuthorityOwner}'");
                 return;
             }
             
@@ -615,7 +627,7 @@ namespace FiresCore.Npc.Core
                 
                 if (shouldLog)
                 {
-                    Debug.Log($"[MovementAuthority] {_companion?.companionName} moving: dir={direction}, walk={walk}, run={run}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} moving: dir={direction}, walk={walk}, run={run}");
                     _lastLoggedDirection = direction;
                     _lastDirectionLogTime = Time.time;
                 }
@@ -624,7 +636,7 @@ namespace FiresCore.Npc.Core
             {
                 // Log when stopping
                 if (VerboseLogging)
-                    Debug.Log($"[MovementAuthority] {_companion?.companionName} stopping");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} stopping");
                 _lastLoggedDirection = Vector3.zero;
             }
             
@@ -645,13 +657,13 @@ namespace FiresCore.Npc.Core
             if (CurrentAuthorityOwner != owner)
             {
                 if (VerboseLogging)
-                    Debug.Log($"[MovementAuthority] {_companion?.companionName} {owner} SetMoveDestination DENIED");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} {owner} SetMoveDestination DENIED");
                 return;
             }
             
             // Only log new destinations
             if (VerboseLogging)
-                Debug.Log($"[MovementAuthority] {_companion?.companionName} destination set: {destination}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} destination set: {destination}");
             
             HasDestination = true;
             CurrentDestination = destination;
@@ -738,7 +750,7 @@ namespace FiresCore.Npc.Core
             StopMovementImmediate();
             
             if (VerboseLogging)
-                Debug.Log($"[MovementAuthority] {_companion?.companionName} movement frozen: {reason}" +
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} movement frozen: {reason}" +
                     (duration > 0 ? $" ({duration:F1}s)" : ""));
         }
         
@@ -762,7 +774,7 @@ namespace FiresCore.Npc.Core
             if (!_isMovementFrozen) return;
 
             if (VerboseLogging)
-                Debug.Log($"[MovementAuthority] {_companion?.companionName} movement unfrozen (was: {_freezeReason})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} movement unfrozen (was: {_freezeReason})");
             
             _isMovementFrozen = false;
             _freezeReason = null;
@@ -865,7 +877,7 @@ namespace FiresCore.Npc.Core
             CurrentMovementState = newState;
             
             if (VerboseLogging && _companion?.isTamed == true)
-                Debug.Log($"[MovementAuthority] {_companion?.companionName} state: {oldState} -> {newState}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} state: {oldState} -> {newState}");
             
             OnMovementStateChanged?.Invoke(oldState, newState);
         }
@@ -897,7 +909,7 @@ namespace FiresCore.Npc.Core
                 if (distToDest < _destinationReachedThreshold)
                 {
                     if (VerboseLogging)
-                        Debug.Log($"[MovementAuthority] {_companion?.companionName} reached destination");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} reached destination");
                     HasDestination = false;
                     _targetMoveDirection = Vector3.zero;
                     CurrentMoveDirection = Vector3.zero;
@@ -978,7 +990,7 @@ namespace FiresCore.Npc.Core
         /// THE ONLY METHOD THAT SHOULD CALL Character.SetMoveDir()
         /// All other code paths should go through the authority system.
         /// </summary>
-        // Local obstacle steering (Fire, 2026-09-29: "register what is around them for objects in order to properly avoid them").
+        // Local obstacle steering.
         // BaseAI's navmesh path ignores rocks, stumps and pieces it wasn't baked with, so the companion snagged on them the way the
         // bot did. AI.Steering (the bot's walk uses the same) is sampled every SteerInterval and its turn held in between; it stays
         // off near the destination, so a companion still walks up to the tree it is about to chop.
@@ -989,7 +1001,7 @@ namespace FiresCore.Npc.Core
         private float _steerTurn;
         private float _nextSteerLog;
 
-        // Jumping (Fire: "they get stuck in holes and on hills … they need to know to jump when they're going uphill"): the same
+        // Jumping (getting out of holes and up hills): the same
         // AI.Steering.ShouldJump the bot uses, asked with each steering sample. "Stuck" = under StuckProgress metres in StuckWindow
         // seconds while trying to move.
         private const float StuckWindow = 1.5f;
@@ -1016,8 +1028,8 @@ namespace FiresCore.Npc.Core
         private const float JumpCooldown = 1.2f;
         private float _nextJump;
 
-        // A lip the body can't clear (R68: "jump: stuck uphill (lip 1.5 m …)" every 1.2 s for 40 s, then "couldn't reach the
-        // tree"): JumpBudget jumps within JumpSpotRadius of one spot inside JumpSpotWindow s, still stuck -> stop jumping there
+        // A lip the body can't clear (repeated jumps that never get the companion past it):
+        // JumpBudget jumps within JumpSpotRadius of one spot inside JumpSpotWindow s, still stuck -> stop jumping there
         // and back out at ±BackOutTurn off the wanted way for BackOutSeconds (sides alternate), so the path finds another line.
         private const int JumpBudget = 3;
         private const float JumpSpotRadius = 1.5f, JumpSpotWindow = 15f, BackOutSeconds = 3f, BackOutTurn = 60f;
@@ -1036,7 +1048,7 @@ namespace FiresCore.Npc.Core
             {
                 _backOutUntil = Time.time + BackOutSeconds;
                 _backOutSide = -_backOutSide;
-                Debug.Log($"[MovementAuthority] {_companion?.companionName} gave up jumping at ({_jumpSpot.x:0}, {_jumpSpot.z:0}) after "
+                FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} gave up jumping at ({_jumpSpot.x:0}, {_jumpSpot.z:0}) after "
                           + $"{_jumpTries} tries: backing out {BackOutSeconds:0} s at {BackOutTurn * _backOutSide:+0;-0} deg");
                 _jumpTries = 0;
                 _stuck = false;
@@ -1054,13 +1066,33 @@ namespace FiresCore.Npc.Core
                 _jumpSpotSince = Time.time;
                 _jumpTries = 1;
             }
-            Debug.Log($"[MovementAuthority] {_companion?.companionName} jump: {(jump.ForStuck ? "stuck uphill" : "lip ahead")} "
+            FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} jump: {(jump.ForStuck ? "stuck uphill" : "lip ahead")} "
                       + $"(lip {jump.LipHeight:0.0} m at {jump.LipDistance:0.0} m, slope {jump.SlopeDegrees:0} deg)");
+            // Diagnostics for being stuck uphill: why it is stuck and whether the jump
+            // left the ground): what it was walking to, how fast it moved, the jump force, and (below) the height gained 0.4 s later.
+            Vector3 v = _character.GetVelocity();
+            FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} jump detail: at ({transform.position.x:0.0}, {transform.position.y:0.00}, {transform.position.z:0.0}), "
+                      + $"{(HasDestination ? $"destination {Vector3.Distance(transform.position, CurrentDestination):0.0} m away" : "no destination")}, wanted ({wanted.x:0.00}, {wanted.z:0.00}), "
+                      + $"speed {new Vector2(v.x, v.z).magnitude:0.00} m/s, jump force {_character.m_jumpForce:0.0}, try {_jumpTries}/{JumpBudget} at this spot, "
+                      + $"back-out {(Time.time < _backOutUntil ? "on" : "off")}");
+            _jumpCheckAt = Time.time + 0.4f;
+            _jumpFromY = transform.position.y;
+        }
+
+        private float _jumpCheckAt = -1f, _jumpFromY;
+
+        // the height the last jump reached 0.4 s on (about its apex), logged once per jump.
+        private void CheckJumpResult()
+        {
+            if (_jumpCheckAt < 0f || Time.time < _jumpCheckAt) return;
+            _jumpCheckAt = -1f;
+            FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} jump result: rose {transform.position.y - _jumpFromY:0.00} m in 0.4 s, on ground {_character.IsOnGround()}");
         }
 
         private Vector3 SteerAround(Vector3 wanted)
         {
             if (_character == null || wanted.sqrMagnitude < 0.01f) return wanted;
+            CheckJumpResult();
             if (Time.time < _backOutUntil) return Quaternion.AngleAxis(BackOutTurn * _backOutSide, Vector3.up) * -wanted;
             TrackProgress();
             if (Time.time >= _nextSteer) TryJump(wanted);
@@ -1078,7 +1110,7 @@ namespace FiresCore.Npc.Core
                 if (_steerTurn != 0f && Time.time >= _nextSteerLog)
                 {
                     _nextSteerLog = Time.time + SteerLogInterval;
-                    Debug.Log($"[MovementAuthority] {_companion?.companionName} steering {_steerTurn:+0;-0} deg round "
+                    FiresCore.Logging.FiresLogger.LogDebug($"[MovementAuthority] {_companion?.companionName} steering {_steerTurn:+0;-0} deg round "
                               + $"{(steer.Blocker != null ? steer.Blocker.name : "?")} at {steer.BlockerDistance:0.0} m");
                 }
             }

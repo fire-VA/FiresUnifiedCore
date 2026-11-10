@@ -11,7 +11,12 @@ namespace FiresCore.Terrain
     {
         private const string Tag = "[HeightmapOverride]";
 
-        public static readonly string[] PatchedMethods = { "LevelTerrain", "RaiseTerrain", "ApplyToHeightmap" };
+        public static readonly string[] PatchedMethods = { "LevelTerrain", "RaiseTerrain", "ApplyToHeightmap", HeightmapLevelTerrain };
+
+        // 0.2.971: Heightmap.LevelTerrain (TerrainModifier / location proxy levelling, every heightmap rebuild) has its own +/-8 m clamp
+        internal const string HeightmapLevelTerrain = "Heightmap.LevelTerrain";
+        private static System.Type TypeOf(string method) => method == HeightmapLevelTerrain ? typeof(Heightmap) : typeof(TerrainComp);
+        private static string NameOf(string method) => method == HeightmapLevelTerrain ? "LevelTerrain" : method;
 
         private static readonly Dictionary<string, ClampCount> s_found = new Dictionary<string, ClampCount>();
 
@@ -39,10 +44,10 @@ namespace FiresCore.Terrain
         {
             var patched = new List<string>();
             foreach (var method in PatchedMethods)
-                if (ReportMethod(method)) patched.Add($"{method} ({s_found[method].Lower} clamp(s))");
+                if (ReportMethod(method)) patched.Add($"{(method == HeightmapLevelTerrain ? method : "TerrainComp." + method)} ({s_found[method].Lower} clamp(s))");
 
             if (patched.Count > 0)
-                FiresLogger.LogInfo($"{Tag} Patched TerrainComp.{string.Join(", ", patched)}.");
+                FiresLogger.LogDebug($"{Tag} Patched {string.Join(", ", patched)}.");
         }
 
         /// <summary>Logs the limits currently in force and why.</summary>
@@ -54,6 +59,12 @@ namespace FiresCore.Terrain
                 return;
             }
 
+            if (!HeightmapOverrideLimits.ServerAllows())
+            {
+                FiresLogger.LogInfo($"{Tag} Enabled here, but the server has not sent Core's config (a vanilla server, or not synced yet) - vanilla +/-{HeightmapOverrideLimits.VanillaClamp} m until it does.");
+                return;
+            }
+
             string suppressor = HeightmapOverrideLimits.ActiveSuppressor();
             if (suppressor != null)
             {
@@ -61,24 +72,24 @@ namespace FiresCore.Terrain
                 return;
             }
 
-            FiresLogger.LogInfo($"{Tag} Active - terrain may rise {HeightmapOverrideLimits.Max()} m and sink "
+            FiresLogger.LogDebug($"{Tag} Active - terrain may rise {HeightmapOverrideLimits.Max()} m and sink "
                 + $"{HeightmapOverrideLimits.MinAbs()} m from its generated height.");
         }
 
-        // 0.2.266 (a user's log: all three "was never transpiled" at Error level): a warning that says why, once per method. Nothing
+        // A warning that says why, once per method. Nothing
         // breaks either way: the method stays vanilla, so terrain keeps vanilla's +/-8 m limit from its generated height there.
         private static bool ReportMethod(string method)
         {
             if (!s_found.TryGetValue(method, out var count))
             {
-                FiresLogger.LogWarning($"{Tag} TerrainComp.{method} not patched ({WhyNotTranspiled(method)}); "
+                FiresLogger.LogWarning($"{Tag} {(method == HeightmapLevelTerrain ? method : "TerrainComp." + method)} not patched ({WhyNotTranspiled(method)}); "
                     + $"terrain keeps vanilla's +/-{HeightmapOverrideLimits.VanillaClamp} m height limit there.");
                 return false;
             }
 
             if (count.IsPaired) return true;
 
-            FiresLogger.LogWarning($"{Tag} TerrainComp.{method}: expected paired +/-{HeightmapOverrideLimits.VanillaClamp} m "
+            FiresLogger.LogWarning($"{Tag} {(method == HeightmapLevelTerrain ? method : "TerrainComp." + method)}: expected paired +/-{HeightmapOverrideLimits.VanillaClamp} m "
                 + $"bounds, found {count.Lower} lower / {count.Upper} upper. Left VANILLA (+/-{HeightmapOverrideLimits.VanillaClamp} m). "
                 + $"Valheim's terrain code has changed, or another mod already replaced these bounds{OtherPatchers(method)}.");
             return false;
@@ -89,10 +100,10 @@ namespace FiresCore.Terrain
         private static string WhyNotTranspiled(string method)
         {
             System.Reflection.MethodInfo original;
-            try { original = HarmonyLib.AccessTools.DeclaredMethod(typeof(TerrainComp), method); }
-            catch (System.Reflection.AmbiguousMatchException) { return $"this Valheim build has more than one TerrainComp.{method}, so the patch could not pick one"; }
-            if (original == null) return $"this Valheim build has no TerrainComp.{method}";
-            return $"its patch class did not attach - look for \"Harmony patch class 'FiresCore.Terrain.HeightmapOverridePatches+{method}Patch' failed to attach\" "
+            try { original = HarmonyLib.AccessTools.DeclaredMethod(TypeOf(method), NameOf(method)); }
+            catch (System.Reflection.AmbiguousMatchException) { return $"this Valheim build has more than one {TypeOf(method).Name}.{NameOf(method)}, so the patch could not pick one"; }
+            if (original == null) return $"this Valheim build has no {TypeOf(method).Name}.{NameOf(method)}";
+            return $"its patch class did not attach - look for \"Harmony patch class 'FiresCore.Terrain.HeightmapOverridePatches+{(method == HeightmapLevelTerrain ? "HeightmapLevelTerrain" : method)}Patch' failed to attach\" "
                 + $"above{OtherPatchers(method)}";
         }
 
@@ -101,14 +112,14 @@ namespace FiresCore.Terrain
         {
             try
             {
-                var original = HarmonyLib.AccessTools.DeclaredMethod(typeof(TerrainComp), method);
+                var original = HarmonyLib.AccessTools.DeclaredMethod(TypeOf(method), NameOf(method));
                 var info = original != null ? HarmonyLib.Harmony.GetPatchInfo(original) : null;
                 if (info == null) return "";
                 var others = new List<string>();
                 void Add(IEnumerable<HarmonyLib.Patch> patches, string kind)
                 {
                     foreach (var p in patches)
-                        if (p.owner != FiresUnifiedCore.PluginGUID) others.Add($"{p.owner} ({kind})");
+                        if (p.owner != global::FiresCore.FiresUnifiedCore.PluginGUID) others.Add($"{p.owner} ({kind})");
                 }
                 Add(info.Prefixes, "prefix");
                 Add(info.Transpilers, "transpiler");

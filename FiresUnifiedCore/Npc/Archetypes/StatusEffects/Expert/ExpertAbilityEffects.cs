@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
@@ -96,7 +96,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
                 float dist = Vector3.Distance(GroundPosition, character.transform.position);
                 if (dist > Radius) continue;
 
-                // Fire: heal the caster's party, damage enemies (it used to heal any player or tame and hit anything else)
+                // heal the caster's party, damage enemies (it used to heal any player or tame and hit anything else)
                 if (IsParty(character))
                 {
                     if (character.GetHealthPercentage() < 1f)
@@ -279,7 +279,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Expert
                     SpawnVFX("vfx_MeadBzerker", m_character.transform.position);
                 }
                 
-                Debug.Log($"[RampageEffect] {m_character?.m_name} Rampage stack: {CurrentStacks}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[RampageEffect] {m_character?.m_name} Rampage stack: {CurrentStacks}");
             }
         }
         

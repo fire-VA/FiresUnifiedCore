@@ -14,13 +14,15 @@ namespace FiresCore.Movement
     /// in liquid, attached (ridden, seated), and any body code moved up more than 3 m in one step (void rescue, goto, teleports):
     /// its fall height starts again from where it was put.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Movement)]
     public static class MonsterFallDamage
     {
         public enum Mode { Auto, On, Off }
 
         private const float SafeDrop = 4f, FullDrop = 16f, FullDamage = 100f, TeleportRise = 3f;
 
-        private static ConfigEntry<Mode> s_mode;
+        // 1086 ([generator], Fire 11-01: configs live in their own mods): [Movement] Monster fall damage = the owner's (Monster Overhaul) value via CoreSettings.Get, fallback Off
+        private static Mode ModeNow => FiresCore.Config.CoreSettings.Get("Movement", "Monster fall damage", Mode.Off);
         private static int s_resolvedFor = -1;
         private static bool s_enabled;
 
@@ -34,24 +36,20 @@ namespace FiresCore.Movement
 
         internal static void Bind(ConfigFile config, FiresCore.Sync.ConfigSync configSync)
         {
-            s_mode = config.Bind("Movement", "Monster fall damage", Mode.Off,
-                "SERVER. Non-player characters (monsters, tames, NPCs) take the same fall damage players do: none up to 4 m, rising to 100 at 20 m. "
-                + "Auto: off (no feature mod asks for it yet). On / Off: always.");
-            configSync?.AddConfigEntry(s_mode);
-            s_mode.SettingChanged += (sender, args) => s_resolvedFor = -1;
+            // 1086 ([generator], Fire 11-01: configs live in their own mods): [Movement] Monster fall damage is the owner's (Monster Overhaul, it syncs); no Core bind
         }
 
         public static bool Enabled
         {
             get
             {
-                if (s_mode == null) return false;
-                if (s_resolvedFor == Time.frameCount || s_resolvedFor == -2) return s_enabled;
-                bool was = s_enabled;
-                s_enabled = s_mode.Value == Mode.On;   // Auto resolves Off
-                if (s_resolvedFor == -1 || was != s_enabled)
-                    FiresCore.Logging.FiresLogger.LogDebug($"[FallDamage] monster fall damage {(s_enabled ? "ON" : "OFF")} ({s_mode.Value})");
-                s_resolvedFor = -2;
+                if (s_resolvedFor == Time.frameCount) return s_enabled;   // 1086: re-read once per frame (a getter provider has no change event)
+                bool was = s_enabled, first = s_resolvedFor == -1;
+                Mode mode = ModeNow;
+                s_enabled = mode == Mode.On;   // Auto resolves Off
+                if (first || was != s_enabled)
+                    FiresCore.Logging.FiresLogger.LogDebug($"[FallDamage] monster fall damage {(s_enabled ? "ON" : "OFF")} ({mode})");
+                s_resolvedFor = Time.frameCount;
                 return s_enabled;
             }
         }
@@ -78,7 +76,10 @@ namespace FiresCore.Movement
                 {
                     int id = __instance.GetInstanceID();
                     float y = __instance.transform.position.y;
-                    if (s_lastY.TryGetValue(id, out float lastY) && y - lastY > TeleportRise)
+                    // 0.2.824 ([seasons]' audit): on a halo ring world y changes as a body walks along the wall; Core's ring fall tracking
+                    // (RingGravityPatches, run first) already hands m_maxAirAltitude over in its frame, so the world-y "moved up" reset is skipped
+                    bool ring = FiresCore.World.GravityUp.Active && FiresCore.World.GravityUp.InField(__instance.transform.position);
+                    if (!ring && s_lastY.TryGetValue(id, out float lastY) && y - lastY > TeleportRise)
                     {
                         MaxAirAltitude(__instance) = y;   // moved up by code: the fall starts here
                         if (Time.time >= s_nextSkipLog)

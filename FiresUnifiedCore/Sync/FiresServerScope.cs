@@ -47,10 +47,17 @@ namespace FiresCore.Sync
         }
 
         /// <summary>baseDir/&lt;key&gt;, or baseDir/"unknown" when the server isn't resolved.</summary>
+        private static readonly System.Collections.Generic.HashSet<string> s_logged = new System.Collections.Generic.HashSet<string>();
+
         public static string ScopedDir(string baseDir)
         {
             string key = Key();
-            return Path.Combine(baseDir, string.IsNullOrEmpty(key) ? "unknown" : key);
+            // Config profiles stay small: a per-server copy is a cache, so a base inside
+            // BepInEx\config\FiresRPGmaker resolves under <BepInEx>\cache\FiresRPGmaker with the same relative path.
+            string scoped = Path.Combine(FiresCore.Storage.FiresConfigPaths.ToCacheTree(baseDir), string.IsNullOrEmpty(key) ? "unknown" : key);
+            if (s_logged.Add(scoped))
+                FiresCore.FiresUnifiedCore.Log?.LogDebug("[FiresServerScope] per-server folder for '" + baseDir + "' -> '" + scoped + "'");
+            return scoped;
         }
 
         /// <summary>Best-effort delete of legacy (profile-global) cache files. No-op once gone.</summary>

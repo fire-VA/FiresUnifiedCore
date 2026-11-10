@@ -9,6 +9,7 @@ namespace FiresCore.UI.GroupHud
     /// controller is parented under the HUD and dies with it.
     /// </summary>
     [HarmonyPatch(typeof(Hud), "Awake")]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.GroupHud)]
     internal static class GroupHudInit
     {
         private static void Postfix() => GroupHudController.Initialize();

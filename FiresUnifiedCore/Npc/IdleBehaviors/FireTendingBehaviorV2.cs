@@ -103,9 +103,24 @@ namespace FiresCore.Npc.IdleBehaviors
             };
         }
         
+        private const float UnreachableFireSeconds = 600f;   // 0.2.930
         protected override TendPhase OnPhaseTimeout(TendPhase timedOutPhase)
         {
-            LogWarning($"Phase {timedOutPhase} timed out");
+            // [ghost] 11-08 ([lead]): was a player-visible Warning. A phase timeout is a handled, repeating gameplay outcome (the chore
+            // ends; an unreached fire is skipped for UnreachableFireSeconds), so it logs at Debug with the WHY, one line per timeout.
+            // 0.2.930: a fire not reached is skipped by every companion (and the homestead needs) for UnreachableFireSeconds
+            if (timedOutPhase == TendPhase.MovingToFire && _targetFireplace != null)
+            {
+                Vector3 p = _targetFireplace.transform.position;
+                string why = $"not reached in time by {Companion?.companionName} ({Vector3.Distance(Transform.position, p):0.0} m short, {p.y - Transform.position.y:+0.0;-0.0} m up/down)";
+                FiresCore.Npc.Core.ChestReach.MarkUnreachable(_targetFireplace, UnreachableFireSeconds, why);
+                FiresCore.Logging.FiresLogger.LogDebug($"[FireTending] {Companion?.companionName}: phase MovingToFire timed out after {GetPhaseTimeout(timedOutPhase):0} s: can't reach {Utils.GetPrefabName(_targetFireplace.gameObject)} at ({p.x:0}, {p.y:0}, {p.z:0}) - {why}; skipping it for {UnreachableFireSeconds:0} s (every companion, and the homestead needs)");
+            }
+            else
+            {
+                string target = _targetFireplace != null ? Utils.GetPrefabName(_targetFireplace.gameObject) : _targetCookingStation != null ? Utils.GetPrefabName(_targetCookingStation.gameObject) : "none";
+                FiresCore.Logging.FiresLogger.LogDebug($"[FireTending] {Companion?.companionName}: phase {timedOutPhase} timed out after {GetPhaseTimeout(timedOutPhase):0} s (target {target}); chore ended");
+            }
             return TendPhase.Complete;
         }
         
@@ -145,7 +160,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 LogVerbose($"CanStart: TRUE - found fire needing {fireplace.m_fuelItem.gameObject.name}, have fuel available");
                 return true;
             }
-            // 0.2.255: a fire the rain switched off (fuel still in it) is lit again (the bot's relight rule, ChoreBrain.FiresToRelight).
+            // A fire the rain switched off (fuel still in it) is lit again (the bot's relight rule, ChoreBrain.FiresToRelight).
             if (FindFireToRelight() != null) return true;
             
             var cookingStation = FindNearbyCookingStation();
@@ -305,6 +320,7 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 LogVerbose($"Found {_fuelItemName} in chest at {_fuelChest.transform.position} - going to get it");
                 SetPhase(TendPhase.MovingToChest);
+                InteractTarget = _fuelChest != null ? _fuelChest.gameObject : null;   // [ghost] 10-26: arrive within interaction reach (an overhead chest)
                 
                 Vector3 chestInteractionPoint = InteractionPointHelper.GetContainerInteractionPoint(
                     _fuelChest, Transform.position, InteractionDistance);
@@ -476,6 +492,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     if (_fuelChest != null)
                     {
                         SetPhase(TendPhase.MovingToChest);
+                        InteractTarget = _fuelChest != null ? _fuelChest.gameObject : null;   // [ghost] 10-26: arrive within interaction reach (an overhead chest)
                         Vector3 chestInteractionPoint = InteractionPointHelper.GetContainerInteractionPoint(
                             _fuelChest, Transform.position, InteractionDistance);
                         MoveToPosition(chestInteractionPoint);
@@ -565,7 +582,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         private bool CompleteAndNotify()
         {
-            // 0.2.255: the outcome, always on.
+            // The outcome, always on.
             if (_fuelAdded > 0 && _targetFireplace != null)
             {
                 var view = _targetFireplace.GetComponent<ZNetView>();
@@ -594,7 +611,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var storage = GetStorageInventory();
             if (storage == null) return false;
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storage))
             {
                 if (item == null) continue;
                 if ((item.m_dropPrefab?.name ?? "").Equals(fuelName, System.StringComparison.OrdinalIgnoreCase))
@@ -610,7 +627,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private Container FindChestWithFuel(string fuelName)
         {
-            // 0.2.256 ([ghost]): CanStart asks here before any Start has filled the chest list, so a companion carrying no fuel never saw
+            // CanStart asks here before any Start has filled the chest list, so a companion carrying no fuel never saw
             // the base chests' wood. A throttled refresh (5 s / 5 m), as ChestDepositV2's CanStart does.
             Resources.RefreshNearbyChests();
             foreach (var chest in Resources.NearbyChests)
@@ -628,33 +645,11 @@ namespace FiresCore.Npc.IdleBehaviors
             var chestInv = chest.GetInventory();
             var storage = GetStorageInventory();
             if (chestInv == null || storage == null) return 0;
-            // A chest this machine doesn't own reverts the edit (ChestHelper.cs:128-130); claim it first like every other chest write.
-            if (!ChestHelper.TryClaimForWrite(chest, Companion)) return 0;
+            // The shared withdraw (InventoryTransferService.PullItem: claims the chest for the companion that owns this
+            // storage, since an unowned chest reverts the edit, then moves stacks with ChestHelper.MoveItem) in place of a
+            // Clone + AddItem + RemoveOneItem per unit.
+            int pulled = AI.ChoreBrain.Withdraw(chest, storage, _fuelItemName, amount, 0L);
 
-            int pulled = 0;
-            var items = new List<ItemDrop.ItemData>(chestInv.GetAllItems());
-            
-            foreach (var item in items)
-            {
-                if (item == null || pulled >= amount) continue;
-                
-                string prefab = item.m_dropPrefab?.name ?? "";
-                if (!prefab.Equals(_fuelItemName, System.StringComparison.OrdinalIgnoreCase)) continue;
-                
-                int toPull = Mathf.Min(item.m_stack, amount - pulled);
-                for (int i = 0; i < toPull; i++)
-                {
-                    var clone = item.Clone();
-                    clone.m_stack = 1;
-                    if (storage.AddItem(clone))
-                    {
-                        chestInv.RemoveOneItem(item);
-                        pulled++;
-                    }
-                    else break;
-                }
-            }
-            
             if (pulled > 0)
                 Inventory?.SaveToZDO();
             
@@ -668,7 +663,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             if (GetStorageInventory() == null) return false;
 
-            // One copy with the bot's base chores (0.2.236): ChoreBrain.AddFuel takes one unit out of the storage this body carries
+            // One copy with the bot's base chores: ChoreBrain.AddFuel takes one unit out of the storage this body carries
             // (CompanionTaskBody.Inventory) and sends RPC_AddFuel to the fire's owner, claiming an unowned fire first.
             int added = AI.ChoreBrain.AddFuel(new AI.CompanionTaskBody(Companion), _targetFireplace, 1, out string why);
             if (added <= 0) return false;
@@ -678,7 +673,7 @@ namespace FiresCore.Npc.IdleBehaviors
             return true;
         }
         
-        // One rule with the bot's base chores (0.2.237): ChoreBrain.FireWantsFuel (refillable, finite, under ChoreBrain.RefuelBelow).
+        // One rule with the bot's base chores: ChoreBrain.FireWantsFuel (refillable, finite, under ChoreBrain.RefuelBelow).
         private bool NeedsFuel(Fireplace fireplace) => AI.ChoreBrain.FireWantsFuel(fireplace);
         
         private void NotifyNoFuelAvailable()
@@ -695,7 +690,7 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Fire Finding
         
-        // One set of fire rules with the bot's base chores (0.2.237): ChoreBrain.FiresToFuel (FireWantsFuel, this companion's
+        // One set of fire rules with the bot's base chores: ChoreBrain.FiresToFuel (FireWantsFuel, this companion's
         // reservations, fuel it can get from storage or a nearby chest), nearest on the ground plane first.
         private bool _relight;
 
@@ -703,7 +698,8 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (Transform == null) return null;
             var fires = AI.ChoreBrain.FiresToRelight(SearchCenter, GetEffectiveSearchRadius(FireDetectionRange), Transform.position, Character);
-            return fires.Count > 0 ? fires[0] : null;
+            var reachable = fires.Find(x => !FiresCore.Npc.Core.ChestReach.IsUnreachable(x));   // 0.2.930: fires not reached lately are skipped
+            return reachable;
         }
 
         // The player's E on a switched-off fire with fuel in it (Fireplace.Interact toggles it on); checked again at the fire.
@@ -722,7 +718,8 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (Transform == null) return null;
             var fires = AI.ChoreBrain.FiresToFuel(SearchCenter, GetEffectiveSearchRadius(FireDetectionRange), Transform.position, Character, CanGetFuel);
-            return fires.Count > 0 ? fires[0] : null;
+            var reachable = fires.Find(x => !FiresCore.Npc.Core.ChestReach.IsUnreachable(x));   // 0.2.930: fires not reached lately are skipped
+            return reachable;
         }
 
         private CookingStation FindNearbyCookingStation()
@@ -775,7 +772,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var storage = GetStorageInventory();
             if (storage == null) return false;
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storage))
                 if (CompanionCookingBehavior.IsRawFor(station, item)) return true;
             return false;
         }
@@ -786,15 +783,14 @@ namespace FiresCore.Npc.IdleBehaviors
             var storage = GetStorageInventory();
             if (storage == null) return;
             
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storage))
             {
                 if (CompanionCookingBehavior.IsRawFor(_targetCookingStation, item))
                 {
+                    // Vanilla CookItem takes it from user.GetInventory(), which IS this storage. Return
+                    // right after: the item list just changed under this foreach.
                     if (_targetCookingStation.UseItem(Humanoid, item))
-                    {
-                        storage.RemoveOneItem(item);
                         LogVerbose($"Added {item.m_shared.m_name} to cooking station");
-                    }
                     return;
                 }
             }

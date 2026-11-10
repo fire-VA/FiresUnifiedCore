@@ -4,9 +4,9 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// A way through a dungeon by its own layout (Core 0.2.207; Fire, R79 Crypt4: "walking into fucking walls trying to get to enemies
-    /// because it tries the shortest route rather than the actual open hallways"). The navmesh inside the crypt didn't join its rooms
-    /// ("the path ended 21.7 m short"), so the walker jogged straight at a Ghost through the walls.
+    /// A way through a dungeon by its own layout, so a walker follows the open hallways instead of
+    /// the shortest line into walls. The navmesh inside a crypt doesn't always join its rooms, so a path can end short and leave
+    /// the walker heading straight at a target through the walls.
     ///
     /// Vanilla places a dungeon as rooms (<see cref="Room"/>: a box of m_size round its transform) joined at doorways (a
     /// <see cref="RoomConnection"/> of one room sitting on one of the next: TestContact, 0.1 m). <see cref="Route"/> finds the room

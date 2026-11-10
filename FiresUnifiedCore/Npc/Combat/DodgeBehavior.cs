@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections;
 using FiresCore.Npc.Core;
 
@@ -39,7 +39,38 @@ namespace FiresCore.Npc.Combat
         private const float PostDodgeShootWindow = 3f;
 
         // Standard dodge cooldown - throttled to prevent spam rolling
-        private const float DodgeCooldown = 3.0f;
+        private const float DodgeCooldown = 3f;   // [ghost] 11-02 fix 3: back to the 3 s it was before 0.2.735 (1.5 s copied from FiresTestBot); rolls + fast swings emptied the stamina bar
+        // React ONCE on the foe's wind-up (rising edge of InAttack), every other one a roll - FiresTestBot.Duel's React()
+        private Character _windUpFoe;
+        private bool _foeWasAttacking;
+        private int _windUps;
+        // [ghost] 11-02 fix 3: the old long swing hold, for rolling only. No melee roll for the weapon's attack duration from the start of a swing (real swing timing stays as it is since 0.2.938)
+        private bool _wasAttacking;
+        private float _swingLockUntil;
+        private bool _swingLockLogged;
+        // [ghost] 11-02, LOG ONLY: where a roll really goes
+        private Vector3 _rollFrom, _rollWanted, _rollFoeFrom; private Character _rollThreat; private float _rollStartDist;
+        private const float SwingAnswerDelay = 0.2f, SwingAnswerLead = 0.35f, StepOutSeconds = 0.7f, EngageRollMin = 4.5f, EngageRollMax = 8f, EngageRollReset = 12f, SwingScanSeconds = 0.1f, SwingOwedSeconds = 6f, BossSwingReach = 10f;
+        private float _answerSwingAt, _nextSwingScan, _swingOwedUntil; private bool _swingOwed; private Character _answerFoe, _engageRollFoe;
+        private readonly System.Collections.Generic.HashSet<Character> _swingsSeen = new System.Collections.Generic.HashSet<Character>();
+        private readonly System.Collections.Generic.List<Character> _nearFoes = new System.Collections.Generic.List<Character>();
+
+        private void ScanSwings()
+        {
+            Vector3 at = _context.Transform.position;
+            _nearFoes.Clear();
+            Character.GetCharactersInRange(at, BossSwingReach, _nearFoes);
+            _swingsSeen.RemoveWhere(c => c == null || !c.InAttack());
+            foreach (var foe in _nearFoes)
+            {
+                if (foe == null || foe == _context.Character || foe.IsDead() || !foe.InAttack() || !BaseAI.IsEnemy(_context.Character, foe) || !_swingsSeen.Add(foe)) continue;
+                Vector3 fromFoe = at - foe.transform.position; fromFoe.y = 0f;
+                if (fromFoe.magnitude > (foe.IsBoss() ? BossSwingReach : DangerRange) || Vector3.Dot(foe.transform.forward, fromFoe.normalized) <= 0.2f) continue;
+                if (_answerFoe != null) continue;
+                _answerFoe = foe;
+                _answerSwingAt = ParryTiming.Predict(foe, out float hitAt, out _, out _) ? Mathf.Max(Time.time, hitAt - SwingAnswerLead) : Time.time + SwingAnswerDelay;
+            }
+        }
 
    // Strafe state
         private bool _isStrafing;
@@ -160,9 +191,11 @@ private float _strafeTimer;
                 }
             }
 
+            // [ghost] 11-03, Fire "they roll in and then can't do anything": stalled fights spent more on rolls than swings; a roll leaves the next two swings paid for
+            float swingCost = 2f * ((_context?.Character as Humanoid)?.GetCurrentWeapon()?.m_shared?.m_attack?.m_attackStamina ?? 0f);
             // Fallback: Check CompanionStats if StaminaManager not available
             var stats = _context?.Agent?.Stamina;
-            if (stats != null && !stats.HasStamina(GetDodgeStaminaCost()))
+            if (stats != null && !stats.HasStamina(GetDodgeStaminaCost() + swingCost))
             {
                 return false;
             }
@@ -203,6 +236,15 @@ private float _strafeTimer;
 
   public void Update(bool isAttacking, CompanionCombat.WeaponType weaponType, System.Action cancelBowDraw = null)
         {
+            if (isAttacking && !_wasAttacking)
+            {
+                _swingOwed = false;
+                var fighter = CompanionController.TryGet(_context?.Character, out var me) ? me.EquipmentData : null;
+                _swingLockUntil = Time.time + (fighter != null ? fighter.GetWeaponAttackDuration() : 2f);
+                _swingLockLogged = false;
+            }
+            _wasAttacking = isAttacking;
+
             UpdateStateTimers();
             UpdateMovementCommitment();
 
@@ -286,8 +328,7 @@ private float _strafeTimer;
         }
 
         // Positioning (strafe, step in, step back) used to take Animation priority every 0.2 s, above the companion's own combat
-        // moves, so a kiting healer or a strafing fighter never got back to attacking (R61: the bot's companions "CompanionAI
-        // (Combat) DENIED - CompanionDodge (Animation)" through a whole pack fight, 0 hits). Only an URGENT step away (the target
+        // moves, so a kiting healer or a strafing fighter never got back to attacking. Only an URGENT step away (the target
         // swinging within DangerRange) keeps Animation priority, at most once per UrgentMoveCooldown; everything else competes at
         // Combat priority, so combat decides.
         private const float UrgentMoveCooldown = 2f;
@@ -476,7 +517,18 @@ FaceTarget(target);
 
         private void UpdateMeleeBehavior(Character target, float distToTarget, bool isAttacking)
         {
-            if (isAttacking) return;
+            if (isAttacking || Time.time < _swingLockUntil)
+            {
+                // keep the foe's swing edge current, so a swing already under way when the lock ends is not read as a new wind-up
+                bool foeSwinging = target.InAttack();
+                if (foeSwinging && !(_windUpFoe == target && _foeWasAttacking) && !_swingLockLogged)
+                {
+                    _swingLockLogged = true;
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDodge] {_context?.Character?.m_name}: no roll from {target.m_name}'s swing, own swing lock {Mathf.Max(0f, _swingLockUntil - Time.time):0.0} s left");
+                }
+                _windUpFoe = target; _foeWasAttacking = foeSwinging;
+                return;
+            }
 
             // Get level-based combat modifiers
             float levelDodgeBonus = 0f;
@@ -512,28 +564,47 @@ FaceTarget(target);
                 }
             }
 
+            // [ghost] 11-03, Fire "they don't try to avoid getting hit" / "most of eiks attacks are televised": any foe's swing aimed here is answered once, timed
+            // from its learned wind-up when known: the roll if allowed, else a step out of reach. A boss's reach is wider and its swing may always be rolled.
+            if (Time.time >= _nextSwingScan)
+            {
+                _nextSwingScan = Time.time + SwingScanSeconds;
+                ScanSwings();
+            }
+            if (_answerFoe != null && (_answerFoe.IsDead() || !_answerFoe.InAttack())) _answerFoe = null;
+            if (_answerFoe != null && Time.time >= _answerSwingAt)
+            {
+                Character foe = _answerFoe;
+                _answerFoe = null;
+                Vector3 fromFoe = _context.Transform.position - foe.transform.position; fromFoe.y = 0f;
+                bool mustSwingFirst = !foe.IsBoss() && _swingOwed && Time.time < _swingOwedUntil;
+                if (!mustSwingFirst && CanDodge(false))
+                {
+                    ExecuteDodge(foe);
+                    _combatExperience?.OnDodgeAttempt(true);
+                    return;
+                }
+                if (!mustSwingFirst || distToTarget > _context.AttackRange)
+                {
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDodge] {_context.Character?.m_name}: steps out of {foe.m_name}'s swing at {fromFoe.magnitude:0.0} m (no roll ready)");
+                    CommitMovement(fromFoe.normalized, StepOutSeconds, urgent: true);
+                    return;
+                }
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDodge] {_context.Character?.m_name}: stays to swing through {foe.m_name}'s swing (a swing is owed since the last roll)");
+            }
+
+            // Fire 11-03 "roll in attack sidestep": once per approach, and a stagger is for swinging
+            if (_engageRollFoe == target && distToTarget > EngageRollReset) _engageRollFoe = null;
+            if (_engageRollFoe != target && !target.InAttack() && !target.IsStaggering() && distToTarget > EngageRollMin && distToTarget < EngageRollMax && CanDodge(false))
+            {
+                _engageRollFoe = target;
+                ExecuteEngageRoll(target, distToTarget);
+                return;
+            }
+
             // Check for incoming attack - consider dodging
             if (distToTarget < _context.DodgeThreatRange)
             {
-                if (target.InAttack())
-                {
-                    // Base dodge chance + level bonus, modified by threat analysis
-                    float effectiveDodgeChance = (_context.DodgeChance + levelDodgeBonus) * dodgeChanceModifier;
-                    
-                    // In defensive/survival mode, always try to dodge attacks
-                    if (shouldDodgeMore)
-                    {
-                        effectiveDodgeChance = Mathf.Max(effectiveDodgeChance, 0.6f);
-                    }
-                    
-                    if (Random.value < effectiveDodgeChance && CanDodge(false))
-                    {
-                        ExecuteDodge(target);
-                        _combatExperience?.OnDodgeAttempt(true);
-                        return;
-                    }
-                }
-
                 // Strafe when close but not dodging
                 if (distToTarget < _context.AttackRange * 1.5f)
                 {
@@ -642,14 +713,13 @@ FaceTarget(target);
         /// Execute a melee dodge - always to the SIDE.
         /// Uses CombatExperience for optimal direction at higher levels.
         /// </summary>
-        // The archetype's dodge count (ArchetypeStatistics.SuccessfulDodges): never fed before, so companion_test's skills step
-        // read 0 dodges for every fighter (R58).
+        // The archetype's dodge count (ArchetypeStatistics.SuccessfulDodges).
         // Who the next dodge is from, for its log line (set by the dodge entry points).
         private string _dodgeFrom = "a threat";
 
         private void NoteDodgeForArchetype()
         {
-            Debug.Log($"[CompanionDodge] {_context?.Character?.m_name} dodged {_dodgeFrom} (cooldown {DodgeCooldown:0} s)");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDodge] {_context?.Character?.m_name} dodged {_dodgeFrom} (cooldown {DodgeCooldown:0} s)");
             _context?.Character?.GetComponent<CompanionController>()?.GetArchetypeController()?.OnDodgePerformed(true);
         }
 
@@ -657,6 +727,7 @@ FaceTarget(target);
         {
             _dodgeFrom = threat != null ? threat.m_name : "a threat";
             if (_isDodging) return;
+            CombatLoopStats.NoteDodge(_context?.Character);
             if (!CanDodge(false)) return;
 
             if (_context != null && !_context.TryLockAnimation("dodge", DodgeAnimationDuration, CombatContext.AnimationPriority.Dodge))
@@ -730,8 +801,16 @@ FaceTarget(target);
                 dodgeDir = -_context.Transform.forward;
             }
 
-            PlayDodgeAnimation();
-            ApplyDodgeForce(dodgeDir, 3f);
+            // [ghost] 11-03, Fire: "away from them or away from their attacks": every melee roll carries back from the foe, a sidestep included
+            dodgeDir = (dodgeDir.normalized - threatDir * 0.7f).normalized;
+            var ground = _owner.GetComponent<TerrainAwareness>();
+            if (ground != null && !ground.IsDirectionSafe(dodgeDir)) dodgeDir = Vector3.Reflect(dodgeDir, Vector3.Cross(threatDir, Vector3.up).normalized);
+            if (ground != null && !ground.IsDirectionSafe(dodgeDir)) dodgeDir = -threatDir;
+
+
+            _rollFrom = _context.Transform.position; _rollThreat = threat; _rollStartDist = Vector3.Distance(_rollFrom, threat.transform.position);
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDodge] {_context.Character?.m_name}: roll starts, foe {_rollStartDist:0.0} m, wanted direction vs foe {Vector3.Angle(dodgeDir, threatDir):0} deg (0 = into it), foe attacking {threatAttackingUs}");
+            BeginRoll(dodgeDir);
 
             if (CompanionCombat.VerboseLogging)
                 Debug.Log($"[DodgeBehavior] Melee dodge from {threat.m_name}, direction: {dodgeDir}");
@@ -787,12 +866,12 @@ FaceTarget(target);
             }
        dodgeDir.Normalize();
 
-       // Lock out further dodges until we shoot
+       _rollFrom = _context.Transform.position; _rollThreat = threat; _rollStartDist = Vector3.Distance(_rollFrom, threat.transform.position);
+            // Lock out further dodges until we shoot
             _mustShootBeforeNextDodge = true;
       _postDodgeShootWindowEnd = Time.time + DodgeAnimationDuration + PostDodgeShootWindow;
 
-        PlayDodgeAnimation();
-            ApplyDodgeForce(dodgeDir, 5f);
+        BeginRoll(dodgeDir);
 
             if (CompanionCombat.VerboseLogging)
             Debug.Log($"[DodgeBehavior] Ranged retreat dodge from {threat.m_name}, direction: {dodgeDir}");
@@ -812,32 +891,66 @@ FaceTarget(target);
          }
         }
 
-        private void ApplyDodgeForce(Vector3 direction, float multiplier)
+        // [ghost] 11-03, Fire "roll into the enemy": vanilla's Player.UpdateDodge turns the body to the roll direction, then the clip's root motion carries it
+        // and InDodge stops steering. The old one-frame AddForce was cancelled by UpdateWalking and the body kept facing and walking at the foe.
+        private void BeginRoll(Vector3 direction)
         {
-            if (_context.Character == null) return;
-
-            // Ensure direction is valid and normalized
-            if (direction.sqrMagnitude < 0.01f)
-            {
-                Debug.LogWarning("[DodgeBehavior] Dodge direction is zero! Using backward direction.");
-                direction = -_context.Transform.forward;
-            }
+            direction.y = 0f;
+            if (direction.sqrMagnitude < 0.01f) direction = -_context.Transform.forward;
             direction.Normalize();
+            _rollWanted = direction;
+            _rollFoeFrom = _rollThreat != null ? _rollThreat.transform.position : Vector3.zero;
 
-            Vector3 dodgeVelocity = direction * _context.DodgeDistance * multiplier;
+            var authority = GetAuthority();
+            if (authority != null && authority.TryAcquireAuthority(UnifiedMovementAuthority.MovementSource.Animation, DodgeAuthorityOwner, DodgeAnimationDuration))
+                authority.SetMoveDirection(DodgeAuthorityOwner, Vector3.zero);
+            _context.Agent?.TryFaceThrough(DodgeAuthorityOwner, _context.Transform.position + direction * 5f, Agent.CombatFacingPriority.Animation, DodgeAnimationDuration);
+
+            _context.Transform.rotation = Quaternion.LookRotation(direction);
             var body = _owner.GetComponent<Rigidbody>();
-            
-            // Only apply force if rigidbody is NOT kinematic
-            // Unity 6 doesn't allow AddForce on kinematic bodies
-            if (body != null && !body.isKinematic)
-            {
-                body.AddForce(dodgeVelocity, ForceMode.VelocityChange);
-            }
+            if (body != null) body.rotation = _context.Transform.rotation;
+
+            _swingOwed = true; _swingOwedUntil = Time.time + SwingOwedSeconds;
+            CompanionRoll.Begin(_context.Character);
+            PlayDodgeAnimation();
         }
+
+        private void EndRoll()
+        {
+            if (_context?.Transform != null && _rollThreat != null)
+            {
+                Vector3 moved = _context.Transform.position - _rollFrom; moved.y = 0f;
+                Vector3 toFoe = _rollFoeFrom - _rollFrom; toFoe.y = 0f;
+                Vector3 foeMoved = _rollThreat.transform.position - _rollFoeFrom; foeMoved.y = 0f;
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDodge] {_context.Character?.m_name}: roll ended, moved {moved.magnitude:0.0} m at {(moved.sqrMagnitude > 0.01f ? Vector3.Angle(moved, toFoe) : -1f):0} deg vs foe (wanted {Vector3.Angle(_rollWanted, toFoe):0}; 0 = into it), off wanted {(moved.sqrMagnitude > 0.01f ? Vector3.Angle(moved, _rollWanted) : -1f):0} deg, foe travelled {foeMoved.magnitude:0.0} m, foe now {Vector3.Distance(_context.Transform.position, _rollThreat.transform.position):0.0} m (was {_rollStartDist:0.0}), facing off wanted {Vector3.Angle(_context.Transform.forward, _rollWanted):0} deg, InDodge {_context.Character != null && _context.Character.InDodge()}");
+            }
+            _rollThreat = null;
+            CompanionRoll.End(_context?.Character);
+            GetAuthority()?.ReleaseAuthority(DodgeAuthorityOwner);
+        }
+
+        // Fire 11-03: "roll in attack sidestep": one roll toward a foe still out of reach. Its own timer, so the sidestep stays ready.
+        private void ExecuteEngageRoll(Character target, float dist)
+        {
+            if (_context != null && !_context.TryLockAnimation("dodge", DodgeAnimationDuration, CombatContext.AnimationPriority.Dodge)) return;
+            _staminaManager?.OnDodgePerformed();
+            _context?.Agent?.Stamina?.UseStamina(GetDodgeStaminaCost());
+            _isDodging = true;
+            StopStrafing();
+            StopMovement();
+            _dodgeFrom = target.m_name + " (roll in)";
+            _rollFrom = _context.Transform.position; _rollThreat = target; _rollStartDist = dist;
+            Vector3 toFoe = target.transform.position - _context.Transform.position;
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDodge] {_context.Character?.m_name}: roll in, foe {dist:0.0} m");
+            BeginRoll(toFoe);
+            _dodgeCoroutine = _owner.StartCoroutine(FinishDodgeCoroutine(DodgeAnimationDuration));
+        }
+
 
         private IEnumerator FinishDodgeCoroutine(float delay)
         {
         yield return new WaitForSeconds(delay);
+            EndRoll();
    _isDodging = false;
     _dodgeCoroutine = null;
       _context?.ReleaseAnimationLock();
@@ -846,6 +959,7 @@ FaceTarget(target);
     private IEnumerator FinishDodgeWithShootRequirementCoroutine(float delay)
         {
         yield return new WaitForSeconds(delay);
+            EndRoll();
             _isDodging = false;
        _dodgeCoroutine = null;
      _context?.ReleaseAnimationLock();
@@ -978,8 +1092,7 @@ FaceTarget(target);
                 perpendicular = _context.Transform.right;
             }
             
-            PlayDodgeAnimation();
-            ApplyDodgeForce(perpendicular, 4f);
+            BeginRoll(perpendicular);
 
             if (CompanionCombat.VerboseLogging)
             {

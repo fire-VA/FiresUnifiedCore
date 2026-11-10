@@ -39,8 +39,8 @@ namespace FiresCore.Npc.AI
     }
 
     /// <summary>
-    /// When a walking body should jump (Fire, 2026-09-29: the bots "get stuck in holes and on hills constantly. They need to know to
-    /// jump when they're going uphill"). The ground ahead along the walk is sampled every <see cref="SampleStep"/> m out to
+    /// When a walking body should jump, so it doesn't get stuck in holes and on hills.
+    /// The ground ahead along the walk is sampled every <see cref="SampleStep"/> m out to
     /// <see cref="LookAhead"/> m (terrain and solid things, rays straight down): a lip that rises more than a step
     /// (<see cref="Perception.StepHeight"/>) but no more than <see cref="MaxLip"/> within <see cref="LipReach"/> m is a jump; so is a
     /// thing in the way that is jumpable but not steppable (a low rock, a log); and a body that is stuck while the way ahead goes up
@@ -56,8 +56,8 @@ namespace FiresCore.Npc.AI
         public const float SlopeRun = 1.2f;
         public const float StuckRise = 0.2f;
         /// <summary>
-        /// Rays start this far above the feet (R61: from feet + 2.4 m a 3 m hole wall read as a 1.2-1.4 m "lip", because the ray
-        /// started below the rim and hit the steep wall face; the bot jumped at it six times).
+        /// Rays start this far above the feet: from feet + 2.4 m a 3 m hole wall read as a 1.2-1.4 m lip, because the ray
+        /// started below the rim and hit the steep wall face.
         /// </summary>
         public const float CastAbove = 6f;
         /// <summary>A hit whose normal is steeper than this (its y below) is a wall face, not ground to land on.</summary>
@@ -110,7 +110,7 @@ namespace FiresCore.Npc.AI
                 if (d <= SlopeRun + 0.001f) slopeRise = rise;
                 if (rise > totalRise) totalRise = rise;
                 // A lip is an abrupt rise between two neighbouring samples; a walkable slope rises a little at each step and must
-                // not make the body hop all the way up a hill ([generator] review).
+                // not make the body hop all the way up a hill.
                 float step = h - previous;
                 previous = h;
                 if (step > advice.LipHeight)
@@ -130,7 +130,7 @@ namespace FiresCore.Npc.AI
         }
 
         /// <summary>
-        /// The way out of a hole or a pocket (R61: the bot jumped six times at the same 3 m wall and never tried another heading).
+        /// The way out of a hole or a pocket, so a body tries another heading instead of jumping at the same wall.
         /// <paramref name="headings"/> directions round <paramref name="self"/> are each scanned out to <see cref="ExitReach"/> m for
         /// the rim (the highest ground within reach along that heading); the heading with the LOWEST rim is the way out. Jumpable
         /// when that rim is at most <see cref="MaxLip"/> above the feet. No allocations.

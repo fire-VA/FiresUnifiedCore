@@ -60,6 +60,29 @@ namespace FiresCore.Materials
         // renderers that still hold the fallback or the previous capture in one pass.
         public static event Action<Material> MaterialCaptured;
 
+        // 0.2.1074 ([worldgen], Fire's event-driven GO): raised whenever the material GetCurrentMaterial hands out changes - a capture
+        // (null -> set), a recapture reset (set -> null; the fallback is handed out until the next capture) and a shader override put
+        // on the cached material. Every write of s_cachedMaterial goes through SetCached; nothing else in Core writes it.
+        public static event Action MaterialChanged;
+
+        private static void SetCached(Material mat)
+        {
+            if (s_cachedMaterial == mat) return;
+            s_cachedMaterial = mat;
+            RaiseMaterialChanged();
+        }
+
+        private static void RaiseMaterialChanged()
+        {
+            var handlers = MaterialChanged;
+            if (handlers == null) return;
+            foreach (Action handler in handlers.GetInvocationList())
+            {
+                try { handler(); }
+                catch (Exception ex) { FiresLogger.LogWarning($"{LogPrefix} MaterialChanged handler {handler.Method.DeclaringType?.FullName}.{handler.Method.Name} threw: {ex.Message}"); }
+            }
+        }
+
         // A replacement for the shared material's shader. Its property names must match the vanilla heightmap
         // shader so the captured textures and values carry over. Applied on the next GetCurrentMaterial.
         public static void SetShaderOverride(Shader shader) => s_shaderOverride = shader;
@@ -96,7 +119,7 @@ namespace FiresCore.Materials
 
         public static int ForceRecaptureFromScene()
         {
-            s_cachedMaterial = null;
+            SetCached(null);
             return ForceCaptureFromScene();
         }
 
@@ -116,9 +139,9 @@ namespace FiresCore.Materials
 
             var mat = CloneAndConfigure(source);
             UnityEngine.Object.DontDestroyOnLoad(mat);
-            s_cachedMaterial = mat;
+            SetCached(mat);
 
-            FiresLogger.LogInfo(
+            FiresLogger.LogDebug(
                 $"{LogPrefix} Captured heightmap material from {heightmap.name} | " +
                 $"shader='{source.shader.name}' (per-instance m_material clone). " +
                 $"Meadows defaults applied.");
@@ -192,9 +215,10 @@ namespace FiresCore.Materials
         {
             if (s_shaderOverride == null || mat.shader == s_shaderOverride) return;
             mat.shader = s_shaderOverride;
+            if (mat == s_cachedMaterial) RaiseMaterialChanged();
             if (s_loggedShaderOverride == s_shaderOverride) return;
             s_loggedShaderOverride = s_shaderOverride;
-            FiresLogger.LogInfo($"{LogPrefix} Shared terrain material now uses shader '{s_shaderOverride.name}'.");
+            FiresLogger.LogDebug($"{LogPrefix} Shared terrain material now uses shader '{s_shaderOverride.name}'.");
         }
 
         private static void DisableLodHideDistance(Material mat)

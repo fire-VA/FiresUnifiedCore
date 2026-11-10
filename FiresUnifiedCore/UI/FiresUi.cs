@@ -7,7 +7,7 @@ using UnityEngine.UI;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// The Fires UI roots, so Core can fix what every Fires window shares. Scroll speed (Fire, 2026-09-29, "Core, Fires UIs only"):
+    /// The Fires UI roots, so Core can fix what every Fires window shares. Scroll speed (Fires UIs only):
     /// a ScrollRect nobody set stays at Unity's default sensitivity of 1, and Valheim hands the UI a small wheel delta, so those lists
     /// crawled. Under a registered root, a ScrollRect still at exactly 1 gets vanilla's Skills-list sensitivity x [UI] UI scroll speed.
     /// Vanilla, other mods' and deliberately tuned lists are never touched. Mods call <see cref="Register"/> on their window roots.
@@ -81,9 +81,63 @@ namespace FiresCore.UI
             s_installed = true;
             harmony.Patch(AccessTools.Method(typeof(ScrollRect), "OnEnable"),
                 postfix: new HarmonyMethod(typeof(FiresUi), nameof(ScrollRectOnEnable)));
+            harmony.Patch(AccessTools.Method(typeof(ScrollRect), nameof(ScrollRect.OnScroll)),
+                prefix: new HarmonyMethod(typeof(FiresUi), nameof(ScrollRectOnScroll)));
         }
 
         private static void ScrollRectOnEnable(ScrollRect __instance) => Apply(__instance);
+
+        // ---- Scroll lists scrolled far too slowly: EVERY scroll list in OUR
+        // UIs is brought up to the normalized speed, no opt-in: a list under a registered root, under vanilla's InventoryGui (inventory,
+        // crafting: VAInventory's screens), or with any Fires-family component above it (Core kit windows, NPC book, FATI, Dressing...).
+        // A FLOOR, applied on the list's first wheel tick (after whatever its mod set at build time): a faster tuned list is kept;
+        // third-party mods' and pure vanilla screens are never touched. One Debug line per list, plus the running count.
+        private static readonly HashSet<int> s_scrollSeen = new HashSet<int>();
+        private static HashSet<System.Reflection.Assembly> s_firesAssemblies;
+        private static int s_normalized;
+
+        private static void ScrollRectOnScroll(ScrollRect __instance)
+        {
+            if (__instance == null || !s_scrollSeen.Add(__instance.GetInstanceID())) return;
+            try
+            {
+                if (!IsOurs(__instance.transform)) return;
+                float target = ScrollSensitivity, was = __instance.scrollSensitivity;
+                if (was >= target) return;
+                __instance.scrollSensitivity = target;
+                s_normalized++;
+                FiresCore.Logging.FiresLogger.LogDebug($"[Scroll] '{PathOf(__instance.transform)}' {was:0.#} -> {target:0.#} ({s_normalized} list(s) normalized so far)");
+            }
+            catch { }
+        }
+
+        private static bool IsOurs(Transform t)
+        {
+            if (IsFiresUi(t)) return true;
+            if (InventoryGui.instance != null && t.IsChildOf(InventoryGui.instance.transform)) return true;
+            if (s_firesAssemblies == null)
+            {
+                s_firesAssemblies = new HashSet<System.Reflection.Assembly> { typeof(FiresUi).Assembly };
+                foreach (var kv in BepInEx.Bootstrap.Chainloader.PluginInfos)
+                {
+                    var inst = kv.Value?.Instance;
+                    string guid = kv.Key ?? "";
+                    if (inst != null && (guid.StartsWith("com.Fire", System.StringComparison.OrdinalIgnoreCase) || guid.IndexOf("Fires", System.StringComparison.OrdinalIgnoreCase) >= 0 || guid.IndexOf("VerdantsAscent", System.StringComparison.OrdinalIgnoreCase) >= 0))
+                        s_firesAssemblies.Add(inst.GetType().Assembly);
+                }
+            }
+            for (var at = t; at != null; at = at.parent)
+                foreach (var mb in at.GetComponents<MonoBehaviour>())
+                    if (mb != null && s_firesAssemblies.Contains(mb.GetType().Assembly)) return true;
+            return false;
+        }
+
+        private static string PathOf(Transform t)
+        {
+            string p = t.name;
+            for (var at = t.parent; at != null && p.Length < 120; at = at.parent) p = at.name + "/" + p;
+            return p;
+        }
 
         private static void Apply(ScrollRect scroll)
         {

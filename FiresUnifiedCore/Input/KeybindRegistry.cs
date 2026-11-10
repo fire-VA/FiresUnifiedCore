@@ -22,6 +22,19 @@ namespace FiresCore.Input
         private const string UnknownGuid = "unknown";
         private const string UnknownModName = "Mod";
 
+        // A mod whose
+        // keys only act in one mode gets that mode, so they stop "clashing" with gameplay keys. Matched by the mod's display name.
+        private static BindingContext ContextForMod(string modName)
+        {
+            switch (modName)
+            {
+                case "FiresValcast": return BindingContext.Possessed;        // its keys act while possessing a creature
+                case "FiresMiniGames": return BindingContext.Minigame;       // WASD / mouse / Enter inside a minigame
+                case "Infinity Hammer": return BindingContext.Building;      // with the hammer in hand
+                default: return BindingContexts.Default;
+            }
+        }
+
         private static readonly List<KeyBinding> s_coreBindings = new List<KeyBinding>();
         private static readonly List<KeybindEntry> s_entries = new List<KeybindEntry>();
         private static readonly HashSet<ConfigFile> s_watchedFiles = new HashSet<ConfigFile>();
@@ -296,7 +309,7 @@ namespace FiresCore.Input
                     Section = descriptor.Section,
                     Name = descriptor.Key,
                     Label = descriptor.Label,
-                    Context = BindingContexts.Default,
+                    Context = ContextForMod(descriptor.ModName),
                     Match = match,
                     Key = key,
                     Modifiers = modifiers,

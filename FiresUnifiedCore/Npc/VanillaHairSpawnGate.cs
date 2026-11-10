@@ -11,6 +11,7 @@ namespace FiresCore.Npc
     /// vanilla creatures are untouched.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public static class VanillaHairSpawnGate
     {
         // One log per body per session - the suppression itself runs silently every frame.

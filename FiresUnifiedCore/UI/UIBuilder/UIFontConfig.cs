@@ -632,11 +632,11 @@ public static readonly UITextStyle TabText = new UITextStyle
             try
             {
               var allFonts = Resources.FindObjectsOfTypeAll<TMP_FontAsset>();
-     Debug.Log($"[UIFontConfig] Available TMP Fonts ({allFonts.Length}):");
+     FiresCore.Logging.FiresLogger.LogDebug($"[UIFontConfig] Available TMP Fonts ({allFonts.Length}):");
            foreach (var font in allFonts)
         {
      if (font != null)
-             Debug.Log($"  - {font.name}");
+             FiresCore.Logging.FiresLogger.LogDebug($"  - {font.name}");
              }
  }
           catch (System.Exception ex)

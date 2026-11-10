@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 using FiresCore.Npc;
@@ -74,6 +74,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // Target tracking
         private GameObject _commandedTarget;
+        private GameObject _commandedTargetAtStart;   // For the refusal reason
         private ResourceDataHelper.ResourceData _targetResource;
         private Vector3 _targetPosition;
         private Vector3 _lastTreePosition;
@@ -135,7 +136,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
         #region CanStart
 
-        // 0.2.257 ([ghost]): the autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
+        // The autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
         // the next CanStart read it as a player command and skipped the gather toggle and the full-bag gate (an old, maybe far tree).
         private GameObject _autoPick;
 
@@ -192,15 +193,20 @@ namespace FiresCore.Npc.IdleBehaviors
             // Autonomous mode - find trees near home
             if (IdleBehavior != null && IdleBehavior.HasHomePosition && !Companion.ShouldBeFollowing)
             {
-                var tree = FindNearbyTree(IdleBehavior.HomePosition, CompanionSettings.GetStayModeWorkSearchRadius(IdleBehavior.HomePosition));
+                float radius = IdleBehavior.WorkRadius(IdleBehavior.HomePosition);   // Fire 10-27: a designated logging zone wins (one board run)
+                var tree = FindNearbyTree(IdleBehavior.WorkCenter, radius);
                 if (tree != null && HasAxeAvailable())
                 {
                     _commandedTarget = tree;
                     _autoPick = tree;
                     return true;
                 }
+                // [ghost] 10-26 (Fire's trace round: "cannot start WoodGathering" with no reason): say which gate refused
+                LogVerbose(tree == null ? $"CanStart: FALSE - no tree within {radius:0} m of home" : "CanStart: FALSE - no axe carried or in a base chest");
+                return false;
             }
 
+            LogVerbose("CanStart: FALSE - not staying (no home point, or following)");
             return false;
         }
 
@@ -223,6 +229,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (_commandedTarget != null)
             {
+                _commandedTargetAtStart = _commandedTarget;
                 _targetResource = ResourceDataHelper.GetResourceData(_commandedTarget);
                 _commandedTarget = null;
 
@@ -256,9 +263,19 @@ namespace FiresCore.Npc.IdleBehaviors
                         else
                         {
                             Debug.LogWarning($"[WoodGathering] {Companion?.companionName} cannot gather - no axe available");
-                            CompanionChatHelper.QuickMessages.CantDoTask(Companion, "I need an axe");
+                            CompanionChatHelper.QuickMessages.CantDoTask(Companion, "no axe");
+                            EndWith("no axe");
                             SetPhase(GatherPhase.Complete);
                         }
+                    }
+                    else if (_inventory != null && _inventory.FindTool(ResourceDataHelper.ToolType.Axe, _targetResource.MinToolTier, out _, out int bestTier, "chop") == null
+                             && !TryFindAxeInNearbyChests() && !TryPlanAxeCraft(_targetResource.MinToolTier))
+                    {
+                        // An axe is carried but too weak for this tree, and no better one is reachable
+                        string why = CompanionInventory.ToolRefusal(ResourceDataHelper.ToolType.Axe, bestTier, _wasTargetingTree ? "tree" : "log");
+                        CompanionChatHelper.QuickMessages.CantDoTask(Companion, why);
+                        EndWith(why);
+                        SetPhase(GatherPhase.Complete);
                     }
                     else
                     {
@@ -273,8 +290,11 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 else
                 {
-                    Debug.LogWarning($"[WoodGathering] {Companion?.companionName} - Invalid target resource");
-                    EndWith("the commanded target isn't a gatherable tree or log");
+                    // Say why (the type test, never the axe): ResourceDataHelper.WhyNotGatherable
+                    string why = ResourceDataHelper.WhyNotGatherable(_commandedTargetAtStart);
+                    Debug.LogWarning($"[WoodGathering] {Companion?.companionName} - Invalid target resource: {why}");
+                    CompanionChatHelper.QuickMessages.CantDoTask(Companion, "that's not a tree or log");
+                    EndWith($"that's not a tree or log ({why})");
                 }
             }
             else
@@ -350,12 +370,12 @@ namespace FiresCore.Npc.IdleBehaviors
             base.Cancel();
         }
 
-        // Why the run ended, for the always-on end line (R60 gather FAIL: "started WoodGatheringBehavior", then "CompleteCommand
-        // … Success" with no chop and nothing in between to say why).
+        // Why the run ended, for the always-on end line (otherwise a failed run reports Success with nothing
+        // in between to say why).
         private string _endReason;
         private bool _chopLogged;
 
-        // Every EndWith is a failed run: a commanded one reports FailCommand(reason), never "Success" (R67).
+        // Every EndWith is a failed run: a commanded one reports FailCommand(reason), never "Success".
         private void EndWith(string reason)
         {
             if (_endReason == null) _endReason = reason;
@@ -364,8 +384,8 @@ namespace FiresCore.Npc.IdleBehaviors
         }
 
         // Where to stand and what to measure reach against for the current target: its hit point (the trunk, a log's nearest
-        // collider point) snapped to the navmesh, not its pivot, which sits inside the navmesh carve-out (R67: "couldn't reach the
-        // tree in 23 s (8.5 m away)"). Cached per target, refreshed every 2 s as the body moves round it.
+        // collider point) snapped to the navmesh, not its pivot, which sits inside the navmesh carve-out.
+        // Cached per target, refreshed every 2 s as the body moves round it.
         private Vector3 _approach, _hit;
         private string _approachMethod = "";
         private GameObject _approachFor;
@@ -389,7 +409,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             StopCraftingPose();
             var axe = GetEquippedAxe();
-            Debug.Log($"[WoodGathering] {Companion?.companionName} ended in {_currentPhase}: {_endReason ?? "done"} "
+            FiresCore.Logging.FiresLogger.LogDebug($"[WoodGathering] {Companion?.companionName} ended in {_currentPhase}: {_endReason ?? "done"} "
                       + $"(gathered {_resourcesGathered}, target {(_targetResource != null ? _targetResource.Name : "none")}, "
                       + $"axe {(axe != null ? axe.m_shared.m_name : "none")})");
             _endReason = null;
@@ -746,11 +766,6 @@ namespace FiresCore.Npc.IdleBehaviors
             _combatMovement?.LockMovement("WaitingForLogs", LogCheckWait + 2f);
             StopMovement();
 
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
 
             FaceTarget(_lastTreePosition);
 
@@ -820,12 +835,16 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool UpdateWaitingForDrops()
         {
-            StopMovement();
-
             if (Time.time - _phaseStartTime < 2f)
             {
+                StopMovement();
                 return false;
             }
+
+            // [ghost] 10-26 (Fire: "companions should not leave loot on the ground when harvesting trees"): collect the drops first
+            // (the wait above stops it; the sweep walks, so the stop no longer runs every frame of this phase)
+            if (SweepHarvestDrops(_lastTreePosition != Vector3.zero ? _lastTreePosition : Transform.position, _phaseStartTime)) return false;
+            StopMovement();
 
             NotifyOwner();
             SetPhase(GatherPhase.Complete);
@@ -1025,7 +1044,7 @@ namespace FiresCore.Npc.IdleBehaviors
             int currentTier = GetEquippedAxe()?.m_shared?.m_toolTier ?? 0;
             int requiredTier = _targetResource?.MinToolTier ?? 1;
 
-            Debug.Log($"[WoodGathering] {Companion?.companionName} tool tier {currentTier} < required {requiredTier} - looking for upgrade or easier target");
+            FiresCore.Logging.FiresLogger.LogDebug($"[WoodGathering] {Companion?.companionName} tool tier {currentTier} < required {requiredTier} - looking for upgrade or easier target");
 
             // 1. Try to find a better axe in nearby chests.
             if (TryFindBetterAxeInChests(requiredTier))
@@ -1050,7 +1069,7 @@ namespace FiresCore.Npc.IdleBehaviors
             var easierTree = FindWeakerNearbyTree(currentTier);
             if (easierTree != null)
             {
-                Debug.Log($"[WoodGathering] {Companion?.companionName} switching to easier tree '{easierTree.Name}' (tier {easierTree.MinToolTier})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[WoodGathering] {Companion?.companionName} switching to easier tree '{easierTree.Name}' (tier {easierTree.MinToolTier})");
                 _targetResource = easierTree;
                 _wasTargetingTree = true;
                 _lastTreePosition = easierTree.InteractionPosition;
@@ -1060,7 +1079,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             // 4. Nothing we can do — finish up.
-            Debug.Log($"[WoodGathering] {Companion?.companionName} no upgrade or easier tree found - stopping");
+            FiresCore.Logging.FiresLogger.LogDebug($"[WoodGathering] {Companion?.companionName} no upgrade or easier tree found - stopping");
             SetPhase(GatherPhase.Complete);
         }
 
@@ -1112,8 +1131,8 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         private ResourceDataHelper.ResourceData FindWeakerNearbyTree(int axeTier)
         {
-            var homePos      = IdleBehavior?.HomePosition ?? Transform.position;
-            float searchRadius = CompanionSettings.GetStayModeWorkSearchRadius(homePos);
+            var homePos      = IdleBehavior != null ? IdleBehavior.WorkCenter : Transform.position;
+            float searchRadius = IdleBehavior != null ? IdleBehavior.WorkRadius(homePos) : CompanionSettings.GetStayModeWorkSearchRadius(homePos);
 
             return ResourceDataHelper.FindNearestResource(
                 Transform.position,
@@ -1138,33 +1157,10 @@ namespace FiresCore.Npc.IdleBehaviors
             CompanionInventory.EquipmentSlot.LeftBack
         };
 
+        /// <summary>The shared lookup (hands, then the Tools pouch, then storage).</summary>
         private bool HasAxeEquippedOrInInventory()
         {
-            // Check equipped weapon
-            var weapon = GetEquippedAxe();
-            if (weapon != null) return true;
-
-            // Check equipment slots
-            if (_inventory != null)
-            {
-                foreach (var slot in AxeCarrySlots)
-                {
-                    var item = _inventory.GetEquippedItem(slot);
-                    if (IsAxe(item)) return true;
-                }
-
-                // Check storage
-                var storage = _inventory.GetStorageInventory();
-                if (storage != null)
-                {
-                    foreach (var item in storage.GetAllItems())
-                    {
-                        if (IsAxe(item)) return true;
-                    }
-                }
-            }
-
-            return false;
+            return _inventory != null && _inventory.FindTool(ResourceDataHelper.ToolType.Axe, 0, "chop") != null;
         }
 
         private bool TryFindAxeInNearbyChests()
@@ -1248,52 +1244,35 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
 
-            // Transfer
-            var clone = _toolToPull.Clone();
-            chestInv.RemoveOneItem(_toolToPull);
-
-            if (storage.AddItem(clone))
+            // Dupe fix: claim the chest first, like every other chest write, then move the axe with the shared move.
+            // Unclaimed, the removal ran on a machine that didn't own the chest: the owner's copy kept the axe and the companion
+            // had one too. The claim can reload the chest's items, so the axe is found again after it.
+            if (!ChestHelper.TryClaimForWrite(_toolChest, Companion)) return false;
+            chestInv = _toolChest.GetInventory();
+            var axe = ChestHelper.FindSameItem(chestInv, _toolToPull);
+            if (axe == null || ChestHelper.MoveItem(chestInv, storage, axe, axe.m_stack) == 0)
             {
-                _inventory.SaveToZDO();
-                LogVerbose($"Pulled {clone.m_shared?.m_name} from chest");
-                CompanionEvents.FireItemPulled(Companion, clone.m_dropPrefab?.name ?? "axe", 1);
-                return true;
-            }
-            else
-            {
-                chestInv.AddItem(_toolToPull);
                 Debug.LogWarning($"[WoodGathering] {Companion?.companionName} couldn't add axe to storage");
                 return false;
             }
+            _inventory.SaveToZDO();
+            LogVerbose($"Pulled {axe.m_shared?.m_name} from chest");
+            CompanionEvents.FireItemPulled(Companion, axe.m_dropPrefab?.name ?? "axe", 1);
+            return true;
         }
 
         private bool TryEquipAxeFromStorage()
         {
             if (_inventory == null) return false;
-
-            var storage = _inventory.GetStorageInventory();
-            if (storage == null) return false;
-
-            ItemDrop.ItemData bestAxe = null;
-
-            foreach (var item in storage.GetAllItems())
-            {
-                if (IsAxe(item) && ResourceDataHelper.IsBetterTool(item, bestAxe, ResourceDataHelper.ToolType.Axe))
-                    bestAxe = item;
-            }
-
+            // The shared lookup (hands, pouch, storage); the axe moves into the right-hand cell
+            var bestAxe = _inventory.FindTool(ResourceDataHelper.ToolType.Axe, _targetResource?.MinToolTier ?? 0, "chop");
             if (bestAxe == null) return false;
-
-            if (!ResourceDataHelper.TryEquipInRightHand(_inventory, bestAxe, null, holsterWeaponOnBack: false))
+            if (!_inventory.EquipToolInHand(bestAxe, "chop"))
             {
-                LogVerbose($"No room in storage for {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
+                LogVerbose($"No room for {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
                 return false;
             }
-
-            _inventory.ApplyVisualEquipment();
-            _inventory.SaveToZDO();
-
-            LogVerbose($"Equipped {bestAxe.m_shared?.m_name} from storage");
+            LogVerbose($"Equipped {bestAxe.m_shared?.m_name}");
             return true;
         }
 
@@ -1301,40 +1280,16 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (_inventory == null) return;
 
-            ItemDrop.ItemData bestAxe = null;
-            CompanionInventory.EquipmentSlot? bestSlot = null;
-
-            foreach (var slot in AxeCarrySlots)
-            {
-                var equipped = _inventory.GetEquippedItem(slot);
-                if (IsAxe(equipped) && ResourceDataHelper.IsBetterTool(equipped, bestAxe, ResourceDataHelper.ToolType.Axe))
-                {
-                    bestAxe = equipped;
-                    bestSlot = slot;
-                }
-            }
-
-            var storage = _inventory.GetStorageInventory();
-            if (storage != null)
-            {
-                foreach (var item in storage.GetAllItems())
-                {
-                    if (IsAxe(item) && ResourceDataHelper.IsBetterTool(item, bestAxe, ResourceDataHelper.ToolType.Axe))
-                    {
-                        bestAxe = item;
-                        bestSlot = null;
-                    }
-                }
-            }
-
+            // The shared lookup (hands, then the Tools pouch, then storage)
+            var bestAxe = _inventory.FindTool(ResourceDataHelper.ToolType.Axe, _targetResource?.MinToolTier ?? 0, "chop")
+                          ?? _inventory.FindTool(ResourceDataHelper.ToolType.Axe, 0, "chop");
             if (bestAxe == null)
             {
                 LogVerbose("No axe found to equip");
                 return;
             }
 
-            // Already equipped in right hand
-            if (bestSlot == CompanionInventory.EquipmentSlot.RightHand)
+            if (_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand) == bestAxe)
             {
                 LogVerbose($"Already have {bestAxe.m_shared?.m_name} equipped");
                 return;
@@ -1343,15 +1298,11 @@ namespace FiresCore.Npc.IdleBehaviors
             // Holster left hand item if needed
             HolsterLeftHand();
 
-            if (!ResourceDataHelper.TryEquipInRightHand(_inventory, bestAxe, bestSlot, holsterWeaponOnBack: true))
+            if (!_inventory.EquipToolInHand(bestAxe, "chop"))
             {
                 LogVerbose($"No room to put away {_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.RightHand)?.m_shared?.m_name} - keeping it equipped");
                 return;
             }
-
-            _inventory.RecalculateEquipmentBonusesPublic();
-            _inventory.ApplyVisualEquipment();
-            _inventory.SaveToZDO();
 
             LogVerbose($"Equipped {bestAxe.m_shared?.m_name} (tier {bestAxe.m_shared.m_toolTier})");
         }
@@ -1440,7 +1391,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
 
             _inventory.SaveToZDO();
-            Debug.Log($"[WoodGathering] {Companion?.companionName} crafted {_craftRecipe.m_item.name}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[WoodGathering] {Companion?.companionName} crafted {_craftRecipe.m_item.name}");
             return true;
         }
 
@@ -1477,6 +1428,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 // A tree no reachable axe can cut (a tier-2 birch nearest home) would block chopping for good.
                 if (target == null || !ResourceDataHelper.CanChop(target, axeTier)) continue;
+                if (FiresCore.World.ResourceHealth.Skip(target, "wood")) continue;   // 0.2.902: no hit can fell an infinite-health tree
 
                 float dist = Vector3.Distance(position, target.transform.position);
                 if (dist < closestDist)
@@ -1523,6 +1475,9 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private void OnStumpDestroyed(Vector3 stumpPosition, string stumpName)
         {
+            // 0.2.890 (Fire 10-27): in a logging camp the companion replants from its tree seeds by Farming skill (no free sapling)
+            if (IdleBehavior != null && IdleBehavior.HasWorkZone) { ZoneReplant.AfterHarvest(Companion, IdleBehavior, false, stumpPosition); return; }
+
             // 70% chance to spawn sapling
             if (Random.value > 0.70f)
             {
@@ -1568,7 +1523,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (sapling != null)
             {
-                Debug.Log($"[WoodGathering] {Companion?.companionName} planted a {prefabName}!");
+                FiresCore.Logging.FiresLogger.LogDebug($"[WoodGathering] {Companion?.companionName} planted a {prefabName}!");
 
                 var owner = Companion?.GetOwner();
                 if (owner != null && owner == Player.m_localPlayer)
@@ -1600,11 +1555,6 @@ namespace FiresCore.Npc.IdleBehaviors
             base.StopMovement();
             _combatMovement?.ClearMoveDestination();
 
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
         }
 
         private void FaceTarget(Vector3 targetPos)
@@ -1623,8 +1573,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            dir.Normalize();
-            Transform.rotation = Quaternion.LookRotation(dir);
+            // Vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            _character?.SetLookDir(dir.normalized);
         }
 
         private void NotifyOwner()

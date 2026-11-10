@@ -38,7 +38,7 @@ namespace FiresCore.UI
         private static bool _rpcsRegistered;
 
         // Track which ZRoutedRpc instance we registered against. After a plugin
-        // hot-reload (r2modman / dnSpy) our static `_rpcsRegistered` resets to
+        // hot-reload (r2modman / a script reloader) our static `_rpcsRegistered` resets to
         // false, but Valheim's ZRoutedRpc.instance survives — the names are
         // STILL in its handler dict. Without this guard, EnsureRpcsRegistered
         // tries to re-add and every call throws "An item with the same key has
@@ -72,6 +72,84 @@ namespace FiresCore.UI
             public int ReceivedChunks;
             public bool IsCompressed;
             public long SenderUid;
+            public DateTime StartedUtc;
+            public bool[] Got;
+        }
+
+        //  Input checks for everything received over the network
+        private const int MaxPayloadBytes = 16 * 1024 * 1024;     // a layout file (or its gzip) never exceeds this
+        private const int MaxManifestEntries = 4096;
+        private const int MaxFolderLevels = 4;
+
+        /// <summary>The content gate: a received layout is written only when it fits the cap and parses as a UI layout.</summary>
+        private static bool LayoutContentOk(string relativePath, string json)
+        {
+            if (json.Length > MaxPayloadBytes) return Refuse(relativePath, "content over the size cap");
+            try { var def = UILayoutSerializer.Deserialize(json); if (def != null) return true; }
+            catch { }
+            return Refuse(relativePath, "content is not a UI layout");
+        }
+        private static readonly TimeSpan PendingExpiry = TimeSpan.FromSeconds(120);
+
+        /// <summary>
+        /// The one gate for every layout file path that came from the network: a relative ".json" path with no ".." segment, no drive or
+        /// root, no invalid characters, that resolves INSIDE the layouts folder. False (logged, dropped) for anything else.
+        /// </summary>
+        internal static bool SafeLayoutPath(string relativePath, out string fullPath)
+        {
+            fullPath = null;
+            try
+            {
+                if (string.IsNullOrEmpty(relativePath) || relativePath.Length > 260) return Refuse(relativePath, "empty or too long");
+                if (relativePath.IndexOfAny(Path.GetInvalidPathChars()) >= 0 || relativePath.IndexOf('\0') >= 0 || relativePath.IndexOf(':') >= 0) return Refuse(relativePath, "invalid characters");
+                if (Path.IsPathRooted(relativePath) || relativePath.StartsWith("/") || relativePath.StartsWith("\\")) return Refuse(relativePath, "rooted");
+                foreach (string seg in relativePath.Split('/', '\\'))
+                    if (seg == ".." || seg == "." || seg.Length == 0 || seg.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return Refuse(relativePath, "bad segment");
+                if (!relativePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) return Refuse(relativePath, "not .json");
+                if (!System.Text.RegularExpressions.Regex.IsMatch(relativePath, @"^[A-Za-z0-9_\-./\\ '()+,]+$")) return Refuse(relativePath, "name has characters outside the allowed set");
+                if (relativePath.Split('/', '\\').Length > MaxFolderLevels + 1) return Refuse(relativePath, "too many folder levels");
+                string root = Path.GetFullPath(UILayoutsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                string full = Path.GetFullPath(Path.Combine(root, relativePath));
+                if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return Refuse(relativePath, "outside the layouts folder");
+                fullPath = full;
+                return true;
+            }
+            catch (Exception ex) { return Refuse(relativePath, ex.GetType().Name); }
+        }
+
+        private static bool Refuse(string relativePath, string why)
+        {
+            Debug.LogWarning($"[UILayoutSyncRPC] dropped a layout path ({why}): {(relativePath == null ? "null" : relativePath.Length > 80 ? relativePath.Substring(0, 80) + "..." : relativePath)}");
+            return false;
+        }
+
+        /// <summary>Client side: true only when the message came from the server we are connected to.</summary>
+        private static bool FromServer(long sender, string what)
+        {
+            if (ZNet.instance == null || ZNet.instance.IsServer() || ZRoutedRpc.instance == null) return false;
+            if (sender == ZRoutedRpc.instance.GetServerPeerID()) return true;
+            Debug.LogWarning($"[UILayoutSyncRPC] {what} from peer {sender}, not the server: dropped");
+            return false;
+        }
+
+        /// <summary>Bounds of one received chunk header; false (logged) when any of them is out of range.</summary>
+        private static bool ChunkHeaderOk(int totalSize, int totalChunks, int chunkIndex, int chunkLength, byte[] chunkData, string what)
+        {
+            int need = totalSize <= 0 ? 0 : (int)((totalSize + (long)ChunkSize - 1) / ChunkSize);
+            bool ok = totalSize > 0 && totalSize <= MaxPayloadBytes && totalChunks == need
+                      && chunkIndex >= 0 && chunkIndex < totalChunks && chunkData != null
+                      && chunkLength >= 0 && chunkLength <= ChunkSize && chunkLength <= chunkData.Length
+                      && (long)chunkIndex * ChunkSize + chunkLength <= totalSize;
+            if (!ok) Debug.LogWarning($"[UILayoutSyncRPC] {what}: chunk header out of range (size {totalSize}, chunks {totalChunks}, index {chunkIndex}, length {chunkLength}): dropped");
+            return ok;
+        }
+
+        private static void ExpirePending()
+        {
+            if (_pendingData.Count == 0) return;
+            var now = DateTime.UtcNow; List<string> old = null;
+            foreach (var kv in _pendingData) if (now - kv.Value.StartedUtc > PendingExpiry) (old ?? (old = new List<string>())).Add(kv.Key);
+            if (old != null) foreach (var k in old) _pendingData.Remove(k);
         }
 
         /// <summary>
@@ -240,7 +318,7 @@ namespace FiresCore.UI
                     pkg.Write(0); // totalSize = 0 means delete
                     pkg.Write(new byte[0]);
                     SafeRoutedRpc.InvokeSafe(RpcPush, pkg);
-                    Debug.Log($"[UILayoutSyncRPC] Pushed layout delete to server: {relativePath}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutSyncRPC] Pushed layout delete to server: {relativePath}");
                     return;
                 }
 
@@ -269,7 +347,7 @@ namespace FiresCore.UI
                     pkg.Write(dataToSend);
                     SafeRoutedRpc.InvokeSafe(RpcPush, pkg);
 
-                    Debug.Log($"[UILayoutSyncRPC] Pushed layout to server: {relativePath} " +
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutSyncRPC] Pushed layout to server: {relativePath} " +
                         $"({totalSize} bytes, compressed={isCompressed}, raw={rawBytes.Length})");
                 }
                 else
@@ -300,7 +378,7 @@ namespace FiresCore.UI
                         });
                     }
 
-                    Debug.Log($"[UILayoutSyncRPC] Queued {totalChunks} chunks to push to server: {relativePath} " +
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutSyncRPC] Queued {totalChunks} chunks to push to server: {relativePath} " +
                         $"({totalSize} bytes, compressed={isCompressed}, raw={rawBytes.Length})");
                 }
             }
@@ -386,7 +464,7 @@ namespace FiresCore.UI
                         });
                     }
 
-                    Debug.Log($"[UILayoutSyncRPC] Queued {totalChunks} chunks to send to peer {peerUid}: {relativePath} " +
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutSyncRPC] Queued {totalChunks} chunks to send to peer {peerUid}: {relativePath} " +
                         $"({totalSize} bytes, compressed={isCompressed}, raw={rawBytes.Length})");
                 }
             }
@@ -413,6 +491,8 @@ namespace FiresCore.UI
                 bool isCompressed = pkg.ReadBool();
                 int totalSize = pkg.ReadInt();
                 byte[] data = pkg.ReadByteArray();
+                if (totalSize < 0 || totalSize > MaxPayloadBytes || (data != null && data.Length > MaxPayloadBytes)) { Debug.LogWarning($"[UILayoutSyncRPC] push from {sender}: size out of range: dropped"); return; }
+                if (!SafeLayoutPath(relativePath, out _)) return;
 
                 string jsonContent = DecodePayload(data, isCompressed, totalSize);
                 ApplyLayoutOnServer(relativePath, jsonContent, sender);
@@ -442,8 +522,11 @@ namespace FiresCore.UI
                 int chunkLength = pkg.ReadInt();
                 byte[] chunkData = pkg.ReadByteArray();
 
+                if (!ChunkHeaderOk(totalSize, totalChunks, chunkIndex, chunkLength, chunkData, $"push chunk from {sender}") || !SafeLayoutPath(relativePath, out _)) return;
+                ExpirePending();
                 string key = $"push_{sender}_{relativePath}";
-                if (!_pendingData.TryGetValue(key, out var pending))
+                if (_pendingData.TryGetValue(key, out var pending) && (pending.TotalSize != totalSize || pending.TotalChunks != totalChunks)) { _pendingData.Remove(key); pending = null; }
+                if (pending == null)
                 {
                     pending = new PendingChunkedData
                     {
@@ -452,13 +535,17 @@ namespace FiresCore.UI
                         TotalChunks = totalChunks,
                         ReceivedChunks = 0,
                         IsCompressed = isCompressed,
-                        SenderUid = sender
+                        SenderUid = sender,
+                        StartedUtc = DateTime.UtcNow,
+                        Got = new bool[totalChunks]
                     };
                     _pendingData[key] = pending;
                 }
 
+                if (pending.Got[chunkIndex]) return;   // a repeated chunk is ignored, never counted twice
                 int offset = chunkIndex * ChunkSize;
                 Array.Copy(chunkData, 0, pending.Data, offset, chunkLength);
+                pending.Got[chunkIndex] = true;
                 pending.ReceivedChunks++;
 
                 if (pending.ReceivedChunks >= pending.TotalChunks)
@@ -466,7 +553,7 @@ namespace FiresCore.UI
                     _pendingData.Remove(key);
                     string jsonContent = DecodePayload(pending.Data, pending.IsCompressed, pending.TotalSize);
                     ApplyLayoutOnServer(relativePath, jsonContent, sender);
-                    Debug.Log($"[UILayoutSyncRPC] Assembled push from {sender} in {pending.TotalChunks} chunks: {relativePath}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutSyncRPC] Assembled push from {sender} in {pending.TotalChunks} chunks: {relativePath}");
                 }
             }
             catch (Exception ex)
@@ -479,12 +566,14 @@ namespace FiresCore.UI
 
         private static void RPC_OnUpdate(long sender, ZPackage pkg)
         {
+            if (!FromServer(sender, "layout update")) return;
             try
             {
                 string relativePath = pkg.ReadString();
                 bool isCompressed = pkg.ReadBool();
                 int totalSize = pkg.ReadInt();
                 byte[] data = pkg.ReadByteArray();
+                if (totalSize < 0 || totalSize > MaxPayloadBytes || (data != null && data.Length > MaxPayloadBytes)) { Debug.LogWarning("[UILayoutSyncRPC] layout update: size out of range: dropped"); return; }
 
                 string content = DecodePayload(data, isCompressed, totalSize);
                 ApplyLayoutLocally(relativePath, content);
@@ -500,6 +589,7 @@ namespace FiresCore.UI
 
         private static void RPC_OnUpdateChunk(long sender, ZPackage pkg)
         {
+            if (!FromServer(sender, "layout update chunk")) return;
             try
             {
                 string relativePath = pkg.ReadString();
@@ -510,8 +600,11 @@ namespace FiresCore.UI
                 int chunkLength = pkg.ReadInt();
                 byte[] chunkData = pkg.ReadByteArray();
 
-                string key = $"update_{relativePath}";
-                if (!_pendingData.TryGetValue(key, out var pending))
+                if (!ChunkHeaderOk(totalSize, totalChunks, chunkIndex, chunkLength, chunkData, "layout update chunk") || !SafeLayoutPath(relativePath, out _)) return;
+                ExpirePending();
+                string key = $"update_{sender}_{relativePath}";
+                if (_pendingData.TryGetValue(key, out var pending) && (pending.TotalSize != totalSize || pending.TotalChunks != totalChunks)) { _pendingData.Remove(key); pending = null; }
+                if (pending == null)
                 {
                     pending = new PendingChunkedData
                     {
@@ -519,13 +612,18 @@ namespace FiresCore.UI
                         TotalSize = totalSize,
                         TotalChunks = totalChunks,
                         ReceivedChunks = 0,
-                        IsCompressed = isCompressed
+                        IsCompressed = isCompressed,
+                        SenderUid = sender,
+                        StartedUtc = DateTime.UtcNow,
+                        Got = new bool[totalChunks]
                     };
                     _pendingData[key] = pending;
                 }
 
+                if (pending.Got[chunkIndex]) return;   // a repeated chunk is ignored, never counted twice
                 int offset = chunkIndex * ChunkSize;
                 Array.Copy(chunkData, 0, pending.Data, offset, chunkLength);
+                pending.Got[chunkIndex] = true;
                 pending.ReceivedChunks++;
 
                 if (pending.ReceivedChunks >= pending.TotalChunks)
@@ -533,7 +631,7 @@ namespace FiresCore.UI
                     _pendingData.Remove(key);
                     string content = DecodePayload(pending.Data, pending.IsCompressed, pending.TotalSize);
                     ApplyLayoutLocally(relativePath, content);
-                    Debug.Log($"[UILayoutSyncRPC] Assembled layout update in {pending.TotalChunks} chunks: {relativePath}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutSyncRPC] Assembled layout update in {pending.TotalChunks} chunks: {relativePath}");
                 }
             }
             catch (Exception ex)
@@ -560,7 +658,7 @@ namespace FiresCore.UI
         {
             try
             {
-                string fullPath = Path.Combine(UILayoutsDir, relativePath);
+                if (!SafeLayoutPath(relativePath, out string fullPath)) return;
                 string dir = Path.GetDirectoryName(fullPath);
                 if (!string.IsNullOrEmpty(dir))
                     Directory.CreateDirectory(dir);
@@ -574,6 +672,8 @@ namespace FiresCore.UI
                     }
                     return;
                 }
+
+                if (!LayoutContentOk(relativePath, jsonContent)) return;
 
                 // Content-hash short-circuit: skip the write + reload if the on-disk copy
                 // is already byte-identical. Avoids rewriting 5 MB JSON on every login.
@@ -625,13 +725,13 @@ namespace FiresCore.UI
         {
             try
             {
-                string fullPath = Path.Combine(UILayoutsDir, relativePath);
+                if (!SafeLayoutPath(relativePath, out string fullPath)) return;
                 string dir = Path.GetDirectoryName(fullPath);
                 if (!string.IsNullOrEmpty(dir))
                     Directory.CreateDirectory(dir);
 
                 // Mark as admin-synced so FileWatcher excludes the sender from broadcast
-                UIBuilderHost.MarkFileAdminSynced?.Invoke("UILayouts", relativePath, senderUid);
+                UIBuilderHost.MarkAdminSynced("UILayouts", relativePath, senderUid); // every mod's watcher
 
                 if (string.IsNullOrEmpty(jsonContent))
                 {
@@ -641,6 +741,7 @@ namespace FiresCore.UI
                 }
                 else
                 {
+                    if (!LayoutContentOk(relativePath, jsonContent)) return;
                     File.WriteAllText(fullPath, jsonContent);
                     Debug.Log($"[UILayoutSyncRPC] Admin {senderUid} saved layout: {relativePath} ({jsonContent.Length} chars)");
                 }
@@ -750,9 +851,8 @@ namespace FiresCore.UI
         // Server - client
         private static void RPC_OnRequestManifest(long sender, ZPackage pkg)
         {
-            // Only clients respond; a server receiving this (e.g. loopback) can ignore it.
-            if (ZNet.instance != null && ZNet.instance.IsServer()) return;
-            if (ZRoutedRpc.instance == null) return;
+            // Only clients respond, and only to the server they are connected to.
+            if (!FromServer(sender, "manifest request")) return;
 
             try
             {
@@ -783,6 +883,7 @@ namespace FiresCore.UI
             try
             {
                 int count = pkg.ReadInt();
+                if (count < 0 || count > MaxManifestEntries) { Debug.LogWarning($"[UILayoutSyncRPC] manifest from {sender}: {count} entries is out of range: dropped"); return; }
                 var dict = new Dictionary<string, string>(count, StringComparer.OrdinalIgnoreCase);
                 for (int i = 0; i < count; i++)
                 {
@@ -792,7 +893,7 @@ namespace FiresCore.UI
                         dict[rel] = sha;
                 }
                 lock (_manifestLock) { _peerManifests[sender] = dict; }
-                Debug.Log($"[UILayoutSyncRPC] Received manifest from peer {sender}: {dict.Count} file(s)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutSyncRPC] Received manifest from peer {sender}: {dict.Count} file(s)");
             }
             catch (Exception ex)
             {
@@ -877,6 +978,7 @@ namespace FiresCore.UI
                     while ((bytesRead = gzip.Read(buffer, 0, buffer.Length)) > 0)
                     {
                         output.Write(buffer, 0, bytesRead);
+                        if (output.Length > MaxPayloadBytes) { Debug.LogWarning("[UILayoutSyncRPC] decompressed layout exceeds the size cap: dropped"); return null; }
                     }
                     return output.ToArray();
                 }

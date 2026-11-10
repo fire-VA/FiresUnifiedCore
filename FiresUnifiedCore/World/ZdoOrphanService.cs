@@ -118,7 +118,7 @@ namespace FiresCore.World
                 {
                     if (!ValidateInWorld(args)) return;
                     DispatchCommand(args, mode: 1);
-                });
+                }, isCheat: true /* 0.2.1159 Fire rule */);
 
             // Takes a list, because a retired mod orphans one hash per prefab and
             // clearing it a hash at a time means dozens of identical commands —
@@ -154,7 +154,7 @@ namespace FiresCore.World
                         return;
                     }
                     DispatchCommand(args, mode: 2, filterHashes: hashes);
-                });
+                }, isCheat: true /* 0.2.1159 Fire rule */);
         }
 
         /// <summary>
@@ -172,7 +172,7 @@ namespace FiresCore.World
                 current.Register<ZPackage>(RpcRequest, RPC_OnRequest);
                 current.Register<ZPackage>(RpcResult, RPC_OnResult);
                 _rpcsRegisteredOn = current;
-                FiresCore.Logging.FiresLogger.LogInfo("[ZDO Cleanup] RPCs registered");
+                FiresCore.Logging.FiresLogger.LogDebug("[ZDO Cleanup] RPCs registered");
             }
             catch (Exception ex)
             {
@@ -289,6 +289,7 @@ namespace FiresCore.World
 
             int mode = pkg.ReadInt();
             int hashCount = pkg.ReadInt();
+            if (hashCount < 0 || hashCount > 65536) return;
             var hashes = new List<int>(hashCount);
             for (int i = 0; i < hashCount; i++) hashes.Add(pkg.ReadInt());
             bool destroy = mode > 0;

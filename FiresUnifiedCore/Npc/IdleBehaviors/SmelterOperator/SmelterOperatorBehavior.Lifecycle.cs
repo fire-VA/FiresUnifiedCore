@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.IdleBehaviors
 {
@@ -121,6 +121,7 @@ namespace FiresCore.Npc.IdleBehaviors
         public override void Start()
         {
             base.Start();
+            RunBegin();   // 0.2.902: per-run smelting line
             
             _currentPhase = OperatePhase.FindingStation;
             _phaseStartTime = Time.time;
@@ -244,7 +245,29 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Update
         
+        // 0.2.1104 (lead, [CompanionIdle] timer: worst 40.1 ms in this behaviour): Debug, the slowest phase every 10 s and the total per phase, to name the cost.
+        private static readonly System.Collections.Generic.Dictionary<OperatePhase, double> s_phaseMs = new System.Collections.Generic.Dictionary<OperatePhase, double>();
+        private static double s_phaseWorst; private static OperatePhase s_phaseWorstAt; private static float s_phaseSayAt;
         public override bool Update()
+        {
+            var phase = _currentPhase;
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            bool result = UpdatePhases();
+            double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            s_phaseMs.TryGetValue(phase, out double sum); s_phaseMs[phase] = sum + ms;
+            if (ms > s_phaseWorst) { s_phaseWorst = ms; s_phaseWorstAt = phase; }
+            if (Time.unscaledTime >= s_phaseSayAt)
+            {
+                s_phaseSayAt = Time.unscaledTime + 10f;
+                var parts = new System.Collections.Generic.List<string>();
+                foreach (var kv in s_phaseMs) if (kv.Value >= 1.0) parts.Add($"{kv.Key} {kv.Value:0}");
+                if (parts.Count > 0) FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] last 10 s: worst {s_phaseWorst:0.0} ms in {s_phaseWorstAt}; ms per phase: {string.Join(", ", parts)}");
+                s_phaseMs.Clear(); s_phaseWorst = 0;
+            }
+            return result;
+        }
+
+        private bool UpdatePhases()
         {
             if (!IsActive) return true;
             
@@ -258,7 +281,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // This happens when CheckResourceAvailability() determined we need to gather materials
             if (_needsResourceGathering)
             {
-                Debug.Log($"[SmelterOperator] {Companion?.companionName} transitioning to resource gathering for {_resourceGatheringMaterial}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} transitioning to resource gathering for {_resourceGatheringMaterial}");
                 
                 // Release smelter occupancy so we can come back later
                 if (_targetSmelter != null)
@@ -280,7 +303,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // Show current status above companion's head
             ShowCurrentStatus();
 
-            // 0.2.257 ([ghost]): every phase handler ends with SetPhase(Complete) + return true in the same tick, so the Complete case
+            // Every phase handler ends with SetPhase(Complete) + return true in the same tick, so the Complete case
             // below never ran and the idle loop dropped the behaviour as it was: the smelter and kiln stayed reserved against every other
             // companion for MaxOperateTime (NotifyOwner releases them), the behaviour stayed active, and the "[Chore] … smelter:" line
             // (in Complete) never printed. Finish here; after Complete IsActive is false, so nothing runs twice.
@@ -411,6 +434,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             NotifyOwner();
             SayOutcome("cancelled");
+            RunEnd("cancelled");   // 0.2.902
             base.Cancel();
         }
 
@@ -418,10 +442,11 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             ReleaseStationVisuals();
             SayOutcome("done");
+            RunEnd("done");   // 0.2.902
             base.Complete();
         }
 
-        // 0.2.255 (Fire's homestead test): one always-on line per smelter / kiln session with what it did.
+        // One always-on line per smelter / kiln session with what it did.
         private void SayOutcome(string how)
         {
             if (_itemsAdded <= 0 && _itemsCollected <= 0 && _itemsDeposited <= 0) return;

@@ -1,199 +1,251 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace FiresCore.Npc.Archetypes.Effects
 {
     /// <summary>
-    /// A vanilla CircleProjector rebuilt as a pooled, emissive, pattern-driven ability ring. Vanilla raycasts every
-    /// segment every frame; this samples a fixed height profile around the circle and refreshes a couple of samples
-    /// per frame, so a dozen rings cost about what one vanilla build circle does.
+    /// The ability / AoE marker every Fires mod draws through <see cref="GroundRingManager"/>.
+    /// One solid disc mesh that lies on the ground, a translucent fill plus a solid rim in the kind's palette colour. A cast's disc
+    /// grows from the centre to its full radius (ease-out); an aiming preview (re-shown while the player aims) is full size at
+    /// once. The ground is sampled on a polar grid at the full radius when the ring is configured and refreshed a few points
+    /// a frame, so a growing disc follows slopes without a raycast per vertex per frame.
     /// </summary>
     public class GroundRing : MonoBehaviour
     {
-        private const float RingHeightOffset = 0.05f;
-        private const float FadeInSeconds = 0.2f;
-        private const float FadeOutSeconds = 0.4f;
-        private const float PulsePeriodSeconds = 1.2f;
-        private const float PulseDepth = 0.25f;
-        private const float BaseEmissionIntensity = 2.2f;
-        private const float RippleSeconds = 1.1f;
-        private const int RippleSegmentCount = 16;
-        private const float RippleOpacityScale = 0.7f;
-        private const int CrossTickSegmentsPerTick = 2;
-        // Dash sizes (m), 0.2.203: thin dashes with gaps, not the workbench's 1 m segments end to end (R77: solid black slabs).
-        private const float DashWidth = 0.12f, MaxDashLength = 0.9f, MinDashLength = 0.15f, DashShare = 0.55f;
-        private const float RippleDashWidth = 0.08f, RippleDashLength = 0.35f, CrossTickLength = 0.6f;
-        private static readonly HashSet<GroundRingKind> s_reported = new HashSet<GroundRingKind>(), s_rippleReported = new HashSet<GroundRingKind>();
-        private const int GroundSamplesPerFrame = 2;
+        private const float HeightOffset = 0.06f;
+        private const float FadeInSeconds = 0.15f;
+        private const float FadeOutSeconds = 0.35f;
+        private const float MaxGrowSeconds = 0.75f, MinGrowSeconds = 0.2f, GrowShareOfDuration = 0.6f;
+        private const float RimAlpha = 0.95f;   // the fill's alpha is the player's Ring Fill Opacity
+        private const float RimWidth = 0.18f, MinRimShare = 0.04f, MaxRimShare = 0.25f;
+        private const float PulsePeriodSeconds = 1.2f, PulseDepth = 0.12f;
+        private const int GroundSamplesPerFrame = 4;
         private const float MinimumDuration = 0.1f;
-
-        private readonly List<Transform> _mainSegments = new List<Transform>();
-        private readonly List<Transform> _rippleSegments = new List<Transform>();
-        private readonly List<Transform> _tickSegments = new List<Transform>();
-        private readonly List<float> _groundHeights = new List<float>();
+        private static readonly HashSet<GroundRingKind> s_reported = new HashSet<GroundRingKind>();
 
         private GroundRingKind _kind;
-        private GroundRingPattern _pattern;
-        private Material _mainMaterial;
-        private Material _rippleMaterial;
+        private Material _material;
+        private Mesh _mesh;
+        private MeshFilter _filter;
         private Vector3 _center;
-        private float _radius;
-        private float _duration;
-        private float _startTime;
-        private float _opacityScale;
+        private float _radius, _duration, _startTime, _opacityScale, _growSeconds;
         private long _casterPlayerId;
-        private int _nextSampleIndex;
-        private bool _built;
+        private bool _grows;
+
+        // polar grid: ring fractions of the full radius (0 = centre) x spokes; heights sampled at the FULL radius
+        private int _spokes;
+        private float[] _fractions;           // vertex rings, last two = rim inner edge and the outer edge
+        private float[,] _heights;            // [ring, spoke] ground y at fraction * full radius
+        private int _nextSample;
+        private Vector3[] _verts;
+        private float _lastGrowth = -1f;
 
         public bool Aiming { get; set; }
+
+        /// <summary>The disc's height samples hit only terrain and build pieces (floors), never rocks / trees /
+        /// other static colliders. Set it before <see cref="Configure"/> or call <see cref="SetCenter"/> after. Add-only.</summary>
+        public bool GroundOnly { get; set; }
+
+        /// <summary>Moves a live ring to <paramref name="center"/> and re-samples its heights WITHOUT restarting its
+        /// timeline or fade (Configure restarts them). Add-only.</summary>
+        public void SetCenter(Vector3 center)
+        {
+            _center = center;
+            SetFrame();
+            if (_heights == null) return;
+            SampleAllHeights();
+            _lastGrowth = -1f;   // the mesh is rebuilt on the next update at the current growth
+        }
+
+        // Halo ring (FiresCore.World.GravityUp): inside a field the disc lies in the tangent plane at the centre and its heights are
+        // offsets along the local up; outside every field _onRing is false and every path below is the old world-y one.
+        private bool _onRing;
+        private Vector3 _up = Vector3.up, _e1 = Vector3.right, _e2 = Vector3.forward;
+        private static bool s_ringLogged;
+        private void SetFrame()
+        {
+            _onRing = FiresCore.World.GravityUp.InField(_center, out Vector3 up);
+            if (!_onRing) { _up = Vector3.up; _e1 = Vector3.right; _e2 = Vector3.forward; return; }
+            _up = up;
+            Quaternion frame = Quaternion.FromToRotation(Vector3.up, up);
+            _e1 = frame * Vector3.right; _e2 = frame * Vector3.forward;
+            if (!s_ringLogged) { s_ringLogged = true; Debug.Log($"[GroundRing] halo ring: disc at {_center:F0} lies in the tangent plane, up {up:F2}"); }
+        }
+        private Vector3 Spoke(float a) => _e1 * Mathf.Sin(a) + _e2 * Mathf.Cos(a);
+
         public long CasterPlayerId => _casterPlayerId;
         public float StartTime => _startTime;
 
-        /// <summary>Rebuilds the segment sets when the kind changes and restarts the ring's timeline.</summary>
+        /// <summary>Restarts the ring's timeline at <paramref name="center"/> (the same call the dashed ring had).</summary>
         public void Configure(GroundRingKind kind, Vector3 center, float radius, float duration,
             long casterPlayerId, bool aiming, float opacityScale)
         {
-            bool kindChanged = !_built || _kind != kind;
             _kind = kind;
-            _pattern = GroundRingPalette.PatternFor(kind);
             _center = center;
-            _radius = Mathf.Max(radius, Mathf.Epsilon);
+            SetFrame();
+            _radius = Mathf.Max(radius, 0.05f);
             _duration = Mathf.Max(duration, MinimumDuration);
             _casterPlayerId = casterPlayerId;
             _opacityScale = opacityScale;
             Aiming = aiming;
             _startTime = Time.time;
-            _nextSampleIndex = 0;
+            _grows = !aiming;
+            _growSeconds = Mathf.Clamp(_duration * GrowShareOfDuration, MinGrowSeconds, MaxGrowSeconds);
+            transform.position = Vector3.zero;   // the mesh is built in world space
+            transform.rotation = Quaternion.identity;
 
-            transform.position = center;
-
-            if (kindChanged)
-            {
-                BuildSegments();
-                _built = true;
-            }
-
-            ApplyPaletteColor();
-            // Each dash is DashShare of its slice of the circumference (a gap between every two), whatever the radius.
-            float dash = Mathf.Clamp(2f * Mathf.PI * _radius / Mathf.Max(1, _pattern.SegmentCount) * DashShare, MinDashLength, MaxDashLength);
-            for (int i = 0; i < _mainSegments.Count; i++)
-                if (_mainSegments[i] != null) _mainSegments[i].localScale = new Vector3(DashWidth, 1f, dash);
-            SampleWholeGroundProfile();
-            PlaceSegments(0f, 1f);
-            ReportOnce(dash);
+            BuildGrid();
+            SampleAllHeights();
+            _lastGrowth = -1f;
+            UpdateMesh(_grows ? 0.05f : 1f);
+            ApplyColor(Envelope(0f), 0f);
+            ReportOnce();
         }
 
-        // Evidence, once per kind a session (fx_ground judges it): shader, the colour read back from the material, dash sizes.
-        private void ReportOnce(float dash)
+        private void EnsureRenderer()
         {
-            if (!s_reported.Add(_kind) || _mainMaterial == null) return;
-            Color set = _mainMaterial.HasProperty("_Color") ? _mainMaterial.GetColor("_Color") : Color.clear;
-            Debug.Log($"[GroundRing] {_kind} ring r={_radius:0.0} m: {_mainSegments.Count} dash(es) {dash:0.00} x {DashWidth:0.00} m (gaps between), " +
-                      $"material {_mainMaterial.name} / {GroundRingSegmentSource.ShaderName}, colour {set.r:0.00},{set.g:0.00},{set.b:0.00} alpha {set.a:0.00} " +
-                      $"(palette {(GroundRingConfig.UseColorBlindPalette ? "colour-blind" : "standard")}, ring opacity {GroundRingConfig.Opacity:0.00})");
+            if (_filter != null) return;
+            _filter = gameObject.GetComponent<MeshFilter>() ?? gameObject.AddComponent<MeshFilter>();
+            var renderer = gameObject.GetComponent<MeshRenderer>() ?? gameObject.AddComponent<MeshRenderer>();
+            renderer.shadowCastingMode = ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+            renderer.lightProbeUsage = LightProbeUsage.Off;
+            renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
+            if (_material == null) _material = GroundRingSegmentSource.CloneSegmentMaterial();
+            renderer.sharedMaterial = _material;
+            _mesh = new Mesh { name = "FiresGroundDisc" };
+            _mesh.MarkDynamic();
+            _filter.sharedMesh = _mesh;
         }
 
-        private void BuildSegments()
+        // Spokes and fill rings scale with the radius; the rim is a fixed ~0.18 m band (a share of the radius on small rings).
+        private void BuildGrid()
         {
-            ClearSegments();
+            EnsureRenderer();
+            int spokes = Mathf.Clamp(Mathf.RoundToInt(_radius * 10f), 32, 96);
+            int fillRings = Mathf.Clamp(Mathf.RoundToInt(_radius * 1.5f), 3, 12);
+            float rimShare = Mathf.Clamp(RimWidth / _radius, MinRimShare, MaxRimShare);
+            float rimInner = 1f - rimShare;
 
-            if (_mainMaterial == null) _mainMaterial = GroundRingSegmentSource.CloneSegmentMaterial();
-            if (_rippleMaterial == null) _rippleMaterial = GroundRingSegmentSource.CloneSegmentMaterial();
-            if (_mainMaterial == null || _rippleMaterial == null) return;
+            var fr = new List<float> { 0f };
+            for (int j = 1; j <= fillRings; j++) fr.Add(rimInner * j / fillRings);
+            fr.Add(1f);
+            bool rebuild = _fractions == null || _spokes != spokes || _fractions.Length != fr.Count;
+            _spokes = spokes;
+            _fractions = fr.ToArray();
+            if (!rebuild) { ApplyVertexAlpha(); return; }
 
-            for (int i = 0; i < _pattern.SegmentCount; i++)
+            // vertices: the centre once; each fill ring; the rim inner edge again (rim colour) and the outer edge
+            int fillCount = 1 + fillRings * spokes;
+            int vertCount = fillCount + 2 * spokes;
+            _verts = new Vector3[vertCount];
+            _fillCount = fillCount;
+
+            var tris = new List<int>(spokes * (fillRings * 2 + 2) * 3);
+            for (int s = 0; s < spokes; s++)
             {
-                bool visible = _pattern.DashStride <= 1 || (i % _pattern.DashStride) != 0;
-                var segment = CreateSegment(_mainMaterial, new Vector3(DashWidth, 1f, MaxDashLength));
-                if (segment == null) return;
-                segment.gameObject.SetActive(visible);
-                _mainSegments.Add(segment);
+                int n = (s + 1) % spokes;
+                tris.Add(0); tris.Add(1 + n); tris.Add(1 + s);   // centre fan
             }
-
-            if (_pattern.Ripple != GroundRingRipple.None)
-            {
-                for (int i = 0; i < RippleSegmentCount; i++)
+            for (int j = 1; j < fillRings; j++)
+                for (int s = 0; s < spokes; s++)
                 {
-                    var segment = CreateSegment(_rippleMaterial, new Vector3(RippleDashWidth, 1f, RippleDashLength));
-                    if (segment == null) return;
-                    _rippleSegments.Add(segment);
+                    int n = (s + 1) % spokes;
+                    int a = 1 + (j - 1) * spokes + s, b = 1 + (j - 1) * spokes + n, c = 1 + j * spokes + s, d = 1 + j * spokes + n;
+                    tris.Add(a); tris.Add(b); tris.Add(d); tris.Add(a); tris.Add(d); tris.Add(c);
                 }
-            }
-
-            int tickSegments = _pattern.CrossTickCount * CrossTickSegmentsPerTick;
-            for (int i = 0; i < tickSegments; i++)
+            int rimIn = fillCount, rimOut = fillCount + spokes;
+            for (int s = 0; s < spokes; s++)
             {
-                var segment = CreateSegment(_mainMaterial, new Vector3(DashWidth, 1f, CrossTickLength));
-                if (segment == null) return;
-                _tickSegments.Add(segment);
+                int n = (s + 1) % spokes;
+                int a = rimIn + s, b = rimIn + n, c = rimOut + s, d = rimOut + n;
+                tris.Add(a); tris.Add(b); tris.Add(d); tris.Add(a); tris.Add(d); tris.Add(c);
             }
+            // drawn from above and below (the shader may cull back faces)
+            int t = tris.Count;
+            for (int i = 0; i < t; i += 3) { tris.Add(tris[i]); tris.Add(tris[i + 2]); tris.Add(tris[i + 1]); }
 
-            _groundHeights.Clear();
-            for (int i = 0; i < _pattern.SegmentCount; i++) _groundHeights.Add(_center.y);
+            _mesh.Clear();
+            _mesh.vertices = _verts;
+            _mesh.triangles = tris.ToArray();
+            _heights = new float[_fractions.Length, spokes];
+            _appliedFill = -1f;
+            ApplyVertexAlpha();
         }
 
-        private Transform CreateSegment(Material material, Vector3 localScale)
+        // fill vs rim through vertex alpha; the fill follows the player's Ring Fill Opacity, live
+        private int _fillCount;
+        private float _appliedFill = -1f;
+        private void ApplyVertexAlpha()
         {
-            var segment = GroundRingSegmentSource.CreateSegment(transform);
-            if (segment == null) return null;
-
-            segment.transform.localScale = localScale;
-            var renderers = segment.GetComponentsInChildren<Renderer>(true);
-            for (int i = 0; i < renderers.Length; i++)
-                if (renderers[i] != null) renderers[i].sharedMaterial = material;
-
-            return segment.transform;
+            if (_verts == null || _mesh == null) return;
+            float fill = Mathf.Clamp01(GroundRingConfig.FillOpacity);
+            if (Mathf.Approximately(fill, _appliedFill)) return;
+            var colors = new Color[_verts.Length];
+            for (int i = 0; i < colors.Length; i++) colors[i] = new Color(1f, 1f, 1f, i < _fillCount ? fill : RimAlpha);
+            _mesh.colors = colors;
+            _appliedFill = fill;
         }
 
-        private void ClearSegments()
+        private void SampleAllHeights()
         {
-            DestroyAll(_mainSegments);
-            DestroyAll(_rippleSegments);
-            DestroyAll(_tickSegments);
+            for (int j = 0; j < _fractions.Length; j++)
+                for (int s = 0; s < _spokes; s++) SampleHeight(j, s);
+            _nextSample = 0;
         }
 
-        private static void DestroyAll(List<Transform> segments)
+        private void SampleHeight(int j, int s)
         {
-            for (int i = 0; i < segments.Count; i++)
+            float a = s * Mathf.PI * 2f / _spokes, r = _fractions[j] * _radius;
+            if (_onRing)
             {
-                if (segments[i] == null) continue;
-                segments[i].gameObject.SetActive(false);
-                Destroy(segments[i].gameObject);
+                // halo ring: the spoke lies in the tangent plane; the height is the offset along the local up from the centre
+                Vector3 hit = GroundHeightSampler.SamplePoint(_center + Spoke(a) * r, GroundOnly ? GroundHeightSampler.GroundOnlyMask : GroundHeightSampler.SolidMask, out _);
+                _heights[j, s] = Vector3.Dot(hit - _center, _up);
+                return;
             }
-            segments.Clear();
+            Vector3 p = _center + new Vector3(Mathf.Sin(a) * r, 0f, Mathf.Cos(a) * r);
+            _heights[j, s] = GroundOnly ? GroundHeightSampler.Sample(p, _center.y, GroundHeightSampler.GroundOnlyMask) : GroundHeightSampler.Sample(p, _center.y);
         }
 
-        private void ApplyPaletteColor()
+        // ground y at fraction f (of the full radius) on spoke s, linear between the sampled rings
+        private float HeightAt(float f, int s)
         {
-            Color color = GroundRingPalette.ColorFor(_kind, GroundRingConfig.UseColorBlindPalette);
-            FxTint.ApplyToMaterial(_mainMaterial, color, BaseEmissionIntensity);
-            FxTint.ApplyToMaterial(_rippleMaterial, color, BaseEmissionIntensity);
+            int last = _fractions.Length - 1;
+            if (f <= 0f) return _heights[0, s];
+            for (int j = 1; j <= last; j++)
+                if (f <= _fractions[j])
+                {
+                    float span = _fractions[j] - _fractions[j - 1];
+                    float k = span > 1e-5f ? (f - _fractions[j - 1]) / span : 0f;
+                    return Mathf.Lerp(_heights[j - 1, s], _heights[j, s], k);
+                }
+            return _heights[last, s];
         }
 
-        private void SampleWholeGroundProfile()
+        private void UpdateMesh(float growth)
         {
-            for (int i = 0; i < _groundHeights.Count; i++) SampleGroundAt(i);
+            if (_mesh == null || _verts == null) return;
+            int fillRings = _fractions.Length - 2;
+            _verts[0] = _onRing ? _center + _up * (HeightAt(0f, 0) + HeightOffset) : new Vector3(_center.x, HeightAt(0f, 0) + HeightOffset, _center.z);
+            int v = 1;
+            for (int j = 1; j <= fillRings; j++) v = WriteRing(v, _fractions[j] * growth);
+            v = WriteRing(v, _fractions[fillRings] * growth);   // rim inner edge (rim colour)
+            WriteRing(v, growth);                              // outer edge
+            _mesh.vertices = _verts;
+            _mesh.RecalculateBounds();
         }
 
-        private void SampleGroundAt(int index)
+        private int WriteRing(int v, float f)
         {
-            if (index < 0 || index >= _groundHeights.Count) return;
-            float angle = index * Mathf.PI * 2f / _groundHeights.Count;
-            Vector3 point = _center + new Vector3(Mathf.Sin(angle) * _radius, 0f, Mathf.Cos(angle) * _radius);
-            _groundHeights[index] = GroundHeightSampler.Sample(point, _center.y);
-        }
-
-        private float GroundHeightAtAngle(float angle)
-        {
-            int count = _groundHeights.Count;
-            if (count == 0) return _center.y;
-
-            float normalized = angle / (Mathf.PI * 2f) * count;
-            int lower = Mathf.FloorToInt(normalized);
-            float fraction = normalized - lower;
-            int lowerIndex = ((lower % count) + count) % count;
-            int upperIndex = (lowerIndex + 1) % count;
-            return Mathf.Lerp(_groundHeights[lowerIndex], _groundHeights[upperIndex], fraction);
+            float r = f * _radius;
+            for (int s = 0; s < _spokes; s++)
+            {
+                float a = s * Mathf.PI * 2f / _spokes;
+                _verts[v++] = _onRing ? _center + Spoke(a) * r + _up * (HeightAt(f, s) + HeightOffset) : new Vector3(_center.x + Mathf.Sin(a) * r, HeightAt(f, s) + HeightOffset, _center.z + Mathf.Cos(a) * r);
+            }
+            return v;
         }
 
         private void Update()
@@ -205,20 +257,25 @@ namespace FiresCore.Npc.Archetypes.Effects
                 return;
             }
 
-            RefreshGroundSamples();
+            // a few ground points a frame (pieces placed or destroyed under the ring)
+            int total = _fractions.Length * _spokes;
+            for (int i = 0; i < GroundSamplesPerFrame && total > 0; i++)
+            {
+                SampleHeight(_nextSample / _spokes, _nextSample % _spokes);
+                _nextSample = (_nextSample + 1) % total;
+            }
 
-            float envelope = Envelope(elapsed);
-            PlaceSegments(elapsed, envelope);
+            float growth = _grows ? Grow(elapsed) : 1f;
+            UpdateMesh(growth);
+            _lastGrowth = growth;
+            ApplyColor(Envelope(elapsed), elapsed);
         }
 
-        private void RefreshGroundSamples()
+        // ease-out from a small dot to the full circle
+        private float Grow(float elapsed)
         {
-            if (_groundHeights.Count == 0) return;
-            for (int i = 0; i < GroundSamplesPerFrame; i++)
-            {
-                SampleGroundAt(_nextSampleIndex);
-                _nextSampleIndex = (_nextSampleIndex + 1) % _groundHeights.Count;
-            }
+            float t = Mathf.Clamp01(elapsed / _growSeconds);
+            return Mathf.Lerp(0.05f, 1f, 1f - (1f - t) * (1f - t));
         }
 
         private float Envelope(float elapsed)
@@ -229,104 +286,33 @@ namespace FiresCore.Npc.Archetypes.Effects
             return 1f;
         }
 
-        private void PlaceSegments(float elapsed, float envelope)
+        // Vertex alpha gives fill vs rim; the material colour carries the kind's colour and the fade (alpha only).
+        private void ApplyColor(float envelope, float elapsed)
         {
-            float spin = elapsed * _pattern.TurnsPerSecond * Mathf.PI * 2f;
-            float pulse = 1f + PulseDepth * Mathf.Sin(elapsed / PulsePeriodSeconds * Mathf.PI * 2f);
-            float opacity = envelope * _opacityScale * GroundRingConfig.Opacity;
-
-            PlaceMainRing(spin);
-            PlaceRipple(elapsed, spin, opacity);
-            PlaceCrossTicks(spin);
-
-            Color color = GroundRingPalette.ColorFor(_kind, GroundRingConfig.UseColorBlindPalette);
-            FxTint.ApplyToMaterial(_mainMaterial, ScaleColor(color, opacity), BaseEmissionIntensity * pulse);
+            if (_material == null) return;
+            ApplyVertexAlpha();   // live: Ring Fill Opacity
+            Color c = GroundRingConfig.ColorFor(_kind);   // the player's colour (or the colour-blind palette)
+            float k = Mathf.Max(0f, GroundRingConfig.Intensity);   // Ring Intensity: above 1 the bloom makes it glow
+            float pulse = 1f - PulseDepth * 0.5f * (1f + Mathf.Sin(elapsed / PulsePeriodSeconds * Mathf.PI * 2f));
+            float a = Mathf.Clamp01(envelope * _opacityScale * GroundRingConfig.Opacity * pulse);
+            FxTint.ApplyToMaterial(_material, new Color(c.r * k, c.g * k, c.b * k, a), 1f);
         }
 
-        private void PlaceMainRing(float spin)
+        // Evidence, once per kind a session: the disc's size, grow time, colour and shader.
+        private void ReportOnce()
         {
-            int count = _mainSegments.Count;
-            for (int i = 0; i < count; i++)
-            {
-                var segment = _mainSegments[i];
-                if (segment == null) continue;
-
-                float angle = spin + i * Mathf.PI * 2f / count;
-                float segmentRadius = _radius * (1f - (i % 2) * _pattern.SawtoothFraction);
-                PlaceSegmentOnCircle(segment, angle, segmentRadius, false);
-            }
-        }
-
-        private void PlaceRipple(float elapsed, float spin, float opacity)
-        {
-            if (_rippleSegments.Count == 0) return;
-
-            float phase = Mathf.Repeat(elapsed, RippleSeconds) / RippleSeconds;
-            float rippleRadius = _pattern.Ripple == GroundRingRipple.Inward
-                ? _radius * (1f - phase)
-                : _radius * phase;
-            float rippleFade = Mathf.Sin(phase * Mathf.PI) * RippleOpacityScale;
-
-            for (int i = 0; i < _rippleSegments.Count; i++)
-            {
-                var segment = _rippleSegments[i];
-                if (segment == null) continue;
-                float angle = -spin + i * Mathf.PI * 2f / _rippleSegments.Count;
-                PlaceSegmentOnCircle(segment, angle, rippleRadius, false);
-            }
-
-            Color color = GroundRingPalette.ColorFor(_kind, GroundRingConfig.UseColorBlindPalette);
-            FxTint.ApplyToMaterial(_rippleMaterial, ScaleColor(color, opacity * rippleFade), BaseEmissionIntensity);
-            // Evidence, once per kind a session, mid-expansion (R77 Fire: "a black one that starts in the center and expands out").
-            if (phase >= 0.5f && s_rippleReported.Add(_kind) && _rippleMaterial != null)
-            {
-                Color set = _rippleMaterial.HasProperty("_Color") ? _rippleMaterial.GetColor("_Color") : Color.clear;
-                Debug.Log($"[GroundRing] {_kind} ripple ({_pattern.Ripple}) at r={rippleRadius:0.0} of {_radius:0.0} m: {_rippleSegments.Count} dash(es) " +
-                          $"{RippleDashLength:0.00} x {RippleDashWidth:0.00} m, material {_rippleMaterial.name} / {GroundRingSegmentSource.ShaderName}, " +
-                          $"colour {set.r:0.00},{set.g:0.00},{set.b:0.00} alpha {set.a:0.00} (fades by alpha only)");
-            }
-        }
-
-        private void PlaceCrossTicks(float spin)
-        {
-            if (_tickSegments.Count == 0) return;
-
-            for (int tick = 0; tick < _pattern.CrossTickCount; tick++)
-            {
-                float angle = spin + tick * Mathf.PI * 2f / _pattern.CrossTickCount;
-                int baseIndex = tick * CrossTickSegmentsPerTick;
-                if (baseIndex + 1 >= _tickSegments.Count) return;
-
-                PlaceSegmentOnCircle(_tickSegments[baseIndex], angle, _radius, false);
-                PlaceSegmentOnCircle(_tickSegments[baseIndex + 1], angle, _radius, true);
-            }
-        }
-
-        private void PlaceSegmentOnCircle(Transform segment, float angle, float segmentRadius, bool radialFacing)
-        {
-            if (segment == null) return;
-
-            float sin = Mathf.Sin(angle);
-            float cos = Mathf.Cos(angle);
-            Vector3 position = _center + new Vector3(sin * segmentRadius, 0f, cos * segmentRadius);
-            position.y = GroundHeightAtAngle(Mathf.Repeat(angle, Mathf.PI * 2f)) + RingHeightOffset;
-            segment.position = position;
-
-            Vector3 tangent = new Vector3(cos, 0f, -sin);
-            Vector3 radial = new Vector3(sin, 0f, cos);
-            segment.rotation = Quaternion.LookRotation(radialFacing ? radial : tangent, Vector3.up);
-        }
-
-        // Fades through alpha only (0.2.203): multiplying the colour darkened the dashes toward black instead of letting the ground through.
-        private static Color ScaleColor(Color color, float factor)
-        {
-            return new Color(color.r, color.g, color.b, color.a * factor);
+            if (!s_reported.Add(_kind) || _material == null) return;
+            Color c = GroundRingConfig.ColorFor(_kind);
+            Debug.Log($"[GroundRing] {_kind} disc r={_radius:0.0} m: fill {GroundRingConfig.FillOpacity:0.00} + rim {RimAlpha:0.00}, intensity {GroundRingConfig.Intensity:0.00} " +
+                      $"({_spokes} spokes, {_fractions.Length} rings), {(_grows ? $"grows from the centre in {_growSeconds:0.00} s" : "full size (aiming)")}, " +
+                      $"colour {c.r:0.00},{c.g:0.00},{c.b:0.00}, {GroundRingSegmentSource.ShaderName} " +
+                      $"(palette {(GroundRingConfig.UseColorBlindPalette ? "colour-blind" : "standard")}, ring opacity {GroundRingConfig.Opacity:0.00})");
         }
 
         private void OnDestroy()
         {
-            if (_mainMaterial != null) Destroy(_mainMaterial);
-            if (_rippleMaterial != null) Destroy(_rippleMaterial);
+            if (_material != null) Destroy(_material);
+            if (_mesh != null) Destroy(_mesh);
         }
     }
 }

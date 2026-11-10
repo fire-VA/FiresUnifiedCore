@@ -137,12 +137,25 @@ namespace FiresCore.Creatures
             // m_drops too, with neither patch declaring a priority — so for a creature that had
             // both a preset and an override, which one survived depended on which mod Harmony
             // happened to run last. It now answers through the bridge instead.
+            // A fault in the override lookup (an NRE here once stopped a whole drop list) must never stop vanilla's drops.
+            // Vanilla's own list is kept, and the first
+            // fault logs its full stack once so the cause can be named.
+            private static bool s_faultLogged;
+
             [HarmonyPrefix]
             private static void Prefix(CharacterDrop __instance)
             {
-                if (FiresCore.Bridge.MonsterPresetBridge.TryApplyInstanceDrops(__instance)) return;
-                if (TryGetActive(__instance.gameObject, out CreatureOverride entry) && entry.OverrideDrops)
-                    __instance.m_drops = BuildDrops(entry);
+                if (__instance == null) return;
+                try
+                {
+                    if (FiresCore.Bridge.MonsterPresetBridge.TryApplyInstanceDrops(__instance)) return;
+                    if (TryGetActive(__instance.gameObject, out CreatureOverride entry) && entry != null && entry.OverrideDrops)
+                        __instance.m_drops = BuildDrops(entry);
+                }
+                catch (Exception e)
+                {
+                    if (!s_faultLogged) { s_faultLogged = true; FiresLogger.LogWarning($"[CreatureOverrides] drop override skipped for {(__instance != null ? __instance.name : "?")} (vanilla drops kept): {e}"); }
+                }
             }
         }
 
@@ -293,8 +306,10 @@ namespace FiresCore.Creatures
         private static List<CharacterDrop.Drop> BuildDrops(CreatureOverride entry)
         {
             var drops = new List<CharacterDrop.Drop>();
+            if (entry?.Drops == null) return drops;
             foreach (CreatureDropOverride line in entry.Drops)
             {
+                if (line == null || string.IsNullOrEmpty(line.Item)) continue;   // GetPrefab(null) throws (it hashes the name)
                 GameObject prefab = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(line.Item) : null;
                 if (prefab == null)
                 {

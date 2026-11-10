@@ -112,4 +112,29 @@ namespace FiresCore.UI
             }
         }
     }
+    /// <summary>0.2.1146 (player report: "you can click thru the config menu ... almost quit and hit save once by accident"): an IMGUI window does not stop uGUI clicks, so the pause menu under it still took them. While an owner holds it, a
+    /// transparent full-screen canvas over all uGUI takes the clicks; IMGUI draws and reads input on its own, so the window itself still works. Separate from InputBlock.Block because uGUI modals use that and would be shielded too.</summary>
+    public static class UiClickShield
+    {
+        private static readonly System.Collections.Generic.HashSet<string> s_owners = new System.Collections.Generic.HashSet<string>();
+        private static GameObject s_go;
+        public static void Set(string owner, bool on)
+        {
+            if (string.IsNullOrEmpty(owner)) return;
+            if (on) s_owners.Add(owner); else s_owners.Remove(owner);
+            if (s_go == null && s_owners.Count > 0)
+            {
+                s_go = new GameObject("FiresUiClickShield", typeof(Canvas), typeof(UnityEngine.UI.GraphicRaycaster), typeof(UnityEngine.UI.Image));
+                Object.DontDestroyOnLoad(s_go);
+                var canvas = s_go.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.sortingOrder = short.MaxValue;
+                var image = s_go.GetComponent<UnityEngine.UI.Image>(); image.color = new Color(0f, 0f, 0f, 0f); image.raycastTarget = true;
+                var rect = (RectTransform)s_go.transform; rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one; rect.offsetMin = rect.offsetMax = Vector2.zero;
+            }
+            if (s_go != null && s_go.activeSelf != s_owners.Count > 0)
+            {
+                s_go.SetActive(s_owners.Count > 0);
+                FiresCore.Logging.FiresLogger.LogDebug($"[UI] click shield {(s_owners.Count > 0 ? "up" : "down")} for {owner}: uGUI under an IMGUI window takes no clicks");
+            }
+        }
+    }
 }

@@ -47,7 +47,7 @@ namespace FiresCore.Diagnostics
                 _skipDoneReal = -1f;
                 _nextProgressLog = _skipStartReal + 2f;
                 double eta = speed > 0.01 ? skip / speed : -1.0;
-                Debug.Log($"[SleepDiag] SkipToMorning: now={total:F0}s skipAmount={skip:F0} game-sec speed={speed:F1}x fixedDt={Time.fixedDeltaTime:F4} → expected real duration ≈ {eta:F1}s (dayLen={__instance.m_dayLengthSec})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[SleepDiag] SkipToMorning: now={total:F0}s skipAmount={skip:F0} game-sec speed={speed:F1}x fixedDt={Time.fixedDeltaTime:F4} → expected real duration ≈ {eta:F1}s (dayLen={__instance.m_dayLengthSec})");
             }
             catch (Exception ex) { Debug.LogWarning("[SleepDiag] SkipToMorning postfix failed: " + ex.Message); }
         }
@@ -69,7 +69,7 @@ namespace FiresCore.Diagnostics
                         double total = D(FTotalSeconds, __instance);
                         double remain = D(FSkipTime, __instance);
                         double rate = (total - _skipStartTotal) / Math.Max(0.001f, now - _skipStartReal);
-                        Debug.Log($"[SleepDiag] skipping… advanced={(total - _skipStartTotal):F0} game-sec in {(now - _skipStartReal):F1} real-s (rate={rate:F0} gs/s) remaining={remain:F0}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[SleepDiag] skipping… advanced={(total - _skipStartTotal):F0} game-sec in {(now - _skipStartReal):F1} real-s (rate={rate:F0} gs/s) remaining={remain:F0}");
                     }
                 }
                 else
@@ -77,7 +77,7 @@ namespace FiresCore.Diagnostics
                     _skipActive = false;
                     _skipDoneReal = now;
                     _nextStallLog = now + 2f;
-                    Debug.Log($"[SleepDiag] time-skip COMPLETE after {(now - _skipStartReal):F1} real-s (advanced {(D(FTotalSeconds, __instance) - _skipStartTotal):F0} game-sec)");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SleepDiag] time-skip COMPLETE after {(now - _skipStartReal):F1} real-s (advanced {(D(FTotalSeconds, __instance) - _skipStartTotal):F0} game-sec)");
                 }
             }
             catch { }
@@ -93,9 +93,9 @@ namespace FiresCore.Diagnostics
                 try { sleeping = (bool)(FSleeping?.GetValue(__instance) ?? false); } catch { }
                 float now = Time.realtimeSinceStartup;
                 if (sleeping && !_wasSleeping)
-                    Debug.Log("[SleepDiag] Game.m_sleeping = TRUE (sleep started)");
+                    FiresCore.Logging.FiresLogger.LogDebug("[SleepDiag] Game.m_sleeping = TRUE (sleep started)");
                 else if (!sleeping && _wasSleeping)
-                    Debug.Log($"[SleepDiag] Game.m_sleeping = FALSE (woke up){(_skipDoneReal >= 0f ? $" — {(now - _skipDoneReal):F1} real-s AFTER the skip completed" : "")}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SleepDiag] Game.m_sleeping = FALSE (woke up){(_skipDoneReal >= 0f ? $" — {(now - _skipDoneReal):F1} real-s AFTER the skip completed" : "")}");
                 else if (sleeping && !_skipActive && _skipDoneReal >= 0f && now >= _nextStallLog)
                 {
                     _nextStallLog = now + 2f;

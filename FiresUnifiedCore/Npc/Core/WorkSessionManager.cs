@@ -336,7 +336,7 @@ namespace FiresCore.Npc.Core
             if (_currentSession.IsTimedOut)
             {
                 Debug.LogWarning($"[WorkSessionManager] Session timed out: {_currentSession.BehaviorName} " +
-                    $"after {_currentSession.ActiveTime:F0}s");
+                    $"after {_currentSession.ActiveTime:F0}s; it was: {(_currentBehavior != null ? _currentBehavior.GetStatusDescription() : "no behaviour")}");
                 
                 OnSessionTimeout?.Invoke(_currentSession);
                 

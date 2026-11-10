@@ -6,7 +6,7 @@ using UnityEngine;
 namespace FiresCore.Building
 {
     /// <summary>
-    /// 0.2.312c (Fire 10-06): vanilla's placement rotation (Player.m_placeRotation, 22.5 degree steps from world north) is a world
+    /// Vanilla's placement rotation (Player.m_placeRotation, 22.5 degree steps from world north) is a world
     /// heading kept across piece changes, so a freshly picked piece may face back at the player and Infinity Hammer's forward/back/
     /// left/right moves (along the piece's own axes) then feel reversed. With "[Building] New piece faces away from you" on (default
     /// OFF: builders keep vanilla), each time the build tool is taken out and each time a DIFFERENT piece is picked, the rotation is
@@ -14,20 +14,18 @@ namespace FiresCore.Building
     /// keys afterwards is kept while the same piece stays selected. An Infinity Hammer selection of an existing object, location or
     /// room (IH sets the rotation from it) is left alone. Local player only.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Building)]
     internal static class NewPieceFacesAway
     {
         private const string Tag = "[Building] ";
-        private static ConfigEntry<bool> s_enabled;
+        private static readonly FiresCore.Config.OwnedSetting<bool> s_enabled = new FiresCore.Config.OwnedSetting<bool>("Building", "New piece faces away from you", false);   // 1086 ([generator], Fire 11-01: configs live in their own mods): owner FiresAdminPrefabs
         private static string s_lastPiece;
         private static readonly AccessTools.FieldRef<Player, int> PlaceRotation = AccessTools.FieldRefAccess<Player, int>("m_placeRotation");
         private static readonly AccessTools.FieldRef<Player, float> PlaceRotationDegrees = AccessTools.FieldRefAccess<Player, float>("m_placeRotationDegrees");
 
         internal static void Bind(ConfigFile config)
         {
-            s_enabled = config.Bind("Building", "New piece faces away from you", false,
-                "When the build tool is taken out and whenever a different piece is picked, the piece is turned to face the way the camera "
-                + "looks, so forward/back/left/right moves (e.g. Infinity Hammer's arrow keys) go away/toward/left/right. Rotating it yourself "
-                + "is kept while you stay on the same piece. Off: vanilla (the last rotation is kept for every piece).");
+            // 1086 ([generator], Fire 11-01: configs live in their own mods): [Building] New piece faces away from you is FiresAdminPrefabs'; no Core bind
         }
 
         [HarmonyPatch(typeof(Player), "SetupPlacementGhost")]

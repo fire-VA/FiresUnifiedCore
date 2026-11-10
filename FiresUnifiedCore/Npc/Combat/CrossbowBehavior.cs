@@ -569,7 +569,14 @@ SetPhase(CrossbowPhase.Approaching);
      private void SpawnBoltProjectile(Character target)
   {
             // Vanilla crossbows carry no projectile of their own: the bolt brings it, and adds its damage.
-            var ammo = Context.Inventory?.FindAmmoFor(Context.CurrentWeapon);
+            // A shot spends 1 real bolt (Ammo pouch first, then storage; never an equip cell). No bolt, no shot.
+            bool ammoFromPouch = false;
+            var ammo = CompanionAmmo.FindShotAmmo(Context.Inventory, Context.CurrentWeapon, out ammoFromPouch);
+            if (ammo == null && Context.Inventory != null && CompanionAmmo.NeedsAmmo(Context.CurrentWeapon))
+            {
+                CompanionAmmo.OutOfAmmo(Context, Context.CurrentWeapon);
+                return;
+            }
             GameObject projectilePrefab = ammo?.m_shared.m_attack.m_attackProjectile ?? GetBoltProjectile();
             if (projectilePrefab == null)
             {
@@ -584,6 +591,7 @@ SetPhase(CrossbowPhase.Approaching);
     
          Quaternion rotation = Quaternion.LookRotation(direction);
             GameObject projectileObj = Object.Instantiate(projectilePrefab, spawnPos, rotation);
+            CombatLoopStats.NoteAttack(Context.Character, 0);   // [ghost] 11-02: ranged shots never reached the melee path, so [CombatFight] read 0 swings; log only
      
    var projectile = projectileObj.GetComponent<Projectile>();
             if (projectile != null)
@@ -601,6 +609,8 @@ SetPhase(CrossbowPhase.Approaching);
             Context.CurrentWeapon
                 );
         }
+
+            if (ammo != null) CompanionAmmo.ConsumeShot(Context, Context.CurrentWeapon, ammo, ammoFromPouch);
             
      Context.CompanionSkills?.RaiseSkill(global::Skills.SkillType.Crossbows, 1f);
         }

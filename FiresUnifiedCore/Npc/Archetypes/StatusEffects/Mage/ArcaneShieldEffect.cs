@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Mage
 {
@@ -144,7 +144,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Mage
             
             seman.AddStatusEffect(effect, true);
             
-            Debug.Log($"[ArcaneShieldEffect] Applied to {target.m_name}, shield={shieldHealth}HP, hasIcon={icon != null}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArcaneShieldEffect] Applied to {target.m_name}, shield={shieldHealth}HP, hasIcon={icon != null}");
             
             return true;
         }

@@ -30,6 +30,10 @@ namespace FiresCore.Bridge
         /// <summary>Set when the source knows this one can never be earned in the current session, and why.</summary>
         public string Blocked = "";
 
+        /// <summary>Add-only: the source's kind of achievement (RPGmaker: its trigger type, e.g. "MonstersKilled") for a
+        /// per-kind glyph or grouping. Null = none.</summary>
+        public string Kind;
+
         public bool HasProgress => Target > 0;
 
         public static readonly Color DefaultAccent = new Color(190f / 255f, 190f / 255f, 190f / 255f, 1f);
@@ -48,6 +52,16 @@ namespace FiresCore.Bridge
     /// CLIENT-side. A catalogue reader may touch <c>Player.m_localPlayer</c> and vanilla GUI state, so
     /// registration is the owner's job to gate on headless.
     /// </summary>
+    /// <summary>Add-only: one catalogue's totals for a stats header. Supplied by the owner through
+    /// <see cref="AchievementBridge.SetCatalogueStats"/>, else counted from its rows (Score = Earned).</summary>
+    public sealed class AchievementStats
+    {
+        public int Earned;
+        public int Total;
+        public int Score;
+        public Dictionary<string, int> ByKind;
+    }
+
     public static class AchievementBridge
     {
         private class Catalogue
@@ -56,6 +70,7 @@ namespace FiresCore.Bridge
             public string DisplayName = "";
             public Func<IReadOnlyList<AchievementRow>> Read;
             public int Order;
+            public Func<AchievementStats> Stats;   // optional
         }
 
         private static readonly List<Catalogue> Catalogues = new List<Catalogue>();
@@ -137,6 +152,33 @@ namespace FiresCore.Bridge
                     + $"({ex.GetType().Name}: {ex.Message}).");
                 return Empty;
             }
+        }
+
+        /// <summary>Add-only: attach a stats provider to a registered catalogue (null clears it). Call after RegisterCatalogue.</summary>
+        public static void SetCatalogueStats(string sourceId, Func<AchievementStats> stats)
+        {
+            Catalogue catalogue = Find(sourceId);
+            if (catalogue == null) { Debug.LogWarning($"[AchievementBridge] SetCatalogueStats: no catalogue '{sourceId}' (register it first)"); return; }
+            catalogue.Stats = stats;
+            Debug.Log($"[AchievementBridge] stats provider {(stats != null ? "set" : "cleared")} for '{sourceId}'");
+            Raise();
+        }
+
+        /// <summary>The catalogue's stats - its provider's when set (a throw falls back), else counted from the rows.</summary>
+        public static AchievementStats Stats(string sourceId)
+        {
+            Catalogue catalogue = Find(sourceId);
+            if (catalogue == null) return new AchievementStats();
+            if (catalogue.Stats != null)
+            {
+                try { var s = catalogue.Stats(); if (s != null) return s; }
+                catch (Exception ex) { Debug.LogWarning($"[AchievementBridge] {sourceId} stats provider threw ({ex.GetType().Name}: {ex.Message}); counting rows"); }
+            }
+            var rows = Read(sourceId);
+            var st = new AchievementStats { Total = rows.Count };
+            for (int i = 0; i < rows.Count; i++) if (rows[i] != null && rows[i].Earned) st.Earned++;
+            st.Score = st.Earned;
+            return st;
         }
 
         public static int EarnedCount(string sourceId)

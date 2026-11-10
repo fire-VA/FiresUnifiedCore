@@ -76,27 +76,14 @@ namespace FiresCore.Npc.Combat
             _hitNormalizedTime = hitNormalizedTime;
             _attackAnimationName = animationName ?? "";
             _attackAnimationHash = !string.IsNullOrEmpty(animationName) ? Animator.StringToHash(animationName) : 0;
-            _fallbackHitTime = Time.time + fallbackDelay;
-            
-            if (_animator != null && !string.IsNullOrEmpty(animationName))
-            {
-                _monitoringAnimation = true;
-                
-                if (CompanionCombat.VerboseLogging)
-                {
-                    Debug.Log($"[CompanionAttackBridge] Monitoring animation '{animationName}' for hit at {hitNormalizedTime:P0} progress");
-                }
-            }
-            else
-            {
-                // No animator or no animation name - use fallback timer
-                _useFallbackTimer = true;
-                
-                if (CompanionCombat.VerboseLogging)
-                {
-                    Debug.Log($"[CompanionAttackBridge] Using fallback timer: {fallbackDelay:F3}s");
-                }
-            }
+            // 0.2.938 (Fire 10-27: hits "the second they swing"): no animator-progress trigger any more - right after Attack.Start the
+            // animator still shows the PREVIOUS swing's clip, already past its hit point, so it fired at once. Vanilla's animation event
+            // delivers the hit (the attack is the Humanoid's m_currentAttack now); this only fires late, as a safety net for a clip with no
+            // hit event, and never after vanilla has hit (CombatHitTrace.WasTriggered).
+            _fallbackHitTime = Time.time + Mathf.Max(0.8f, fallbackDelay * 3f);
+            _useFallbackTimer = true;
+            if (CompanionCombat.VerboseLogging)
+                Debug.Log($"[CompanionAttackBridge] '{animationName}': vanilla anim event delivers the hit; safety timer at {_fallbackHitTime - Time.time:F2}s");
         }
         
         /// <summary>
@@ -137,6 +124,8 @@ namespace FiresCore.Npc.Combat
             // Already triggered by us
             if (_attackTriggered)
                 return;
+            // 0.2.938: vanilla's anim event already hit with this attack
+            if (CombatHitTrace.WasTriggered(_activeAttack)) { _vanillaTriggered = true; return; }
             
             // Check if vanilla system already triggered the attack
             // We can detect this by checking if the attack has transitioned past the trigger point

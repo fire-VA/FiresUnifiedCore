@@ -43,7 +43,7 @@ namespace FiresCore.World
     public enum FightOutcome { Won, Fled, Died }
 
     /// <summary>
-    /// Who is where (Core 0.2.219, AUTOPLAY_PROGRESSION §7.13, COOP_BOTS §8): every foe seen or fought, by prefab, star level and place
+    /// Who is where: every foe seen or fought, by prefab, star level and place
     /// (32 m spots), with the time of day, group size and fight outcomes. It is ResourceMemory's twin and persists the same way, per
     /// world on the recording body's own client: BepInEx\config\FiresCore\WorldMemory\&lt;world&gt;_&lt;seed&gt;.enemies.json. Fights also
     /// feed the shared <see cref="Danger"/> store.
@@ -90,7 +90,7 @@ namespace FiresCore.World
             if (IsNight()) e.Night++;
             e.LastSeen = GameTime();
             if (e.Sightings == 1)
-                Debug.Log($"[EnemyMemory] seen {prefab} {Stars(level)} x{count} at ({pos.x:0}, {pos.z:0}) ({(Heightmap.Biome)e.Biome}{(place != null ? ", " + place : "")}{(IsNight() ? ", night" : "")})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[EnemyMemory] seen {prefab} {Stars(level)} x{count} at ({pos.x:0}, {pos.z:0}) ({(Heightmap.Biome)e.Biome}{(place != null ? ", " + place : "")}{(IsNight() ? ", night" : "")})");
             MarkDirty();
         }
 
@@ -110,7 +110,7 @@ namespace FiresCore.World
             e.DamageTakenPerSec = e.Fights == 1 ? damageTakenPerSec : Mathf.Lerp(e.DamageTakenPerSec, damageTakenPerSec, 0.3f);
             if (hitsToKill > 0) e.HitsToKill = e.HitsToKill <= 0f ? hitsToKill : Mathf.Lerp(e.HitsToKill, hitsToKill, 0.3f);
             e.LastSeen = GameTime();
-            Debug.Log($"[EnemyMemory] foe: {prefab} {Stars(level)} at ({pos.x:0}, {pos.z:0}){(place != null ? " in " + place : "")}{(IsNight() ? " (night)" : "")}: " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[EnemyMemory] foe: {prefab} {Stars(level)} at ({pos.x:0}, {pos.z:0}){(place != null ? " in " + place : "")}{(IsNight() ? " (night)" : "")}: " +
                       $"{outcome}, took {damageTakenPerSec:0} dmg/s{(hitsToKill > 0 ? $", {hitsToKill} hits/kill" : "")}{(byWhom != null ? $" ({byWhom})" : "")}");
             if (outcome == FightOutcome.Died) Danger.Record(prefab, level, DangerEvent.Died, 1f, pos, byWhom);
             else if (lowestHealthShare < Danger.NearDeathShare) Danger.Record(prefab, level, DangerEvent.NearDeath, 1f - lowestHealthShare, pos, byWhom);
@@ -120,8 +120,8 @@ namespace FiresCore.World
         private static readonly Dictionary<string, float> s_lastDeath = new Dictionary<string, float>();
 
         /// <summary>
-        /// A body killed by <paramref name="killer"/> (0.2.221, Core's own death record; R90 run 4: the bot's death to a Skeleton ★2
-        /// was never written, so nothing learned from it): the foe's spot gains a fight lost to death, and World.Danger a death with
+        /// A body killed by <paramref name="killer"/> (Core's own death record, so deaths
+        /// are always written and learned from): the foe's spot gains a fight lost to death, and World.Danger a death with
         /// the killing hit's share of <paramref name="maxHealth"/> (≥ 1 from full health is a one-shot). Once per killer and victim
         /// within a few seconds, whoever else reports the same death.
         /// </summary>
@@ -141,7 +141,7 @@ namespace FiresCore.World
             e.LastSeen = GameTime();
             float share = maxHealth > 0f ? hitDamage / maxHealth : 1f;
             bool oneShot = maxHealth > 0f && healthBefore >= maxHealth * 0.99f && hitDamage >= healthBefore;
-            Debug.Log($"[EnemyMemory] foe: {prefab} {Stars(level)} at ({pos.x:0}, {pos.z:0}){(IsNight() ? " (night)" : "")}: Died, " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[EnemyMemory] foe: {prefab} {Stars(level)} at ({pos.x:0}, {pos.z:0}){(IsNight() ? " (night)" : "")}: Died, " +
                       $"last hit {hitDamage:0} vs hp {healthBefore:0} of {maxHealth:0}{(oneShot ? " (one-shot)" : "")} ({who})");
             Danger.Record(prefab, level, DangerEvent.Died, oneShot ? 1f : Mathf.Min(0.99f, share), victim.transform.position, who);
             Danger.NoteHit(prefab, level, hitDamage);
@@ -149,7 +149,7 @@ namespace FiresCore.World
         }
 
         /// <summary>
-        /// How dangerous the ground round <paramref name="at"/> is, 0..1 (0.2.221; for the grave walk, trip targets and the haul): the
+        /// How dangerous the ground round <paramref name="at"/> is, 0..1 (for the grave walk, trip targets and the haul): the
         /// worst remembered foe spot within <paramref name="radius"/> m by World.Danger's level for its kind★, at least 0.6 where that
         /// kind killed a body. <paramref name="why"/> names it, and says when one of that kind is there right now.
         /// </summary>
@@ -157,7 +157,7 @@ namespace FiresCore.World
 
         /// <summary>
         /// <see cref="DangerAt(Vector3, float, out string)"/> with <paramref name="liveNow"/>: how many of the worst spot's kind★ are within
-        /// <paramref name="radius"/> + 10 m of <paramref name="at"/> right now (0.2.222, [seasons]: so callers don't parse <paramref name="why"/>).
+        /// <paramref name="radius"/> + 10 m of <paramref name="at"/> right now (so callers don't parse <paramref name="why"/>).
         /// </summary>
         public static float DangerAt(Vector3 at, float radius, out string why, out int liveNow)
         {
@@ -283,7 +283,7 @@ namespace FiresCore.World
             if (s_data == null) s_data = new FileData { World = world.m_name, Seed = world.m_seed };
             if (s_data.Enemies == null) s_data.Enemies = new List<Entry>();
             if (s_data.Danger == null) s_data.Danger = new List<Danger.Entry>();
-            Debug.Log($"[EnemyMemory] loaded {s_data.Enemies.Count} foe spot(s) and {s_data.Danger.Count} danger record(s) for {world.m_name} (seed {world.m_seed})");
+            FiresCore.Logging.FiresLogger.LogInfo($"[EnemyMemory] loaded {s_data.Enemies.Count} foe spot(s) and {s_data.Danger.Count} danger record(s) for {world.m_name} (seed {world.m_seed})");
             return true;
         }
 
@@ -311,7 +311,7 @@ namespace FiresCore.World
     public enum DangerEvent { Hit, NearDeath, Died }
 
     /// <summary>
-    /// How dangerous each foe kind is, ONE store for the world (Core 0.2.219, AUTOPLAY_PROGRESSION §7.13 1b): deaths, near-deaths,
+    /// How dangerous each foe kind is, ONE store for the world: deaths, near-deaths,
     /// one-shots and the biggest hit, per prefab and star level, written by every body (bot, tester, companions) and read the same way.
     /// Kept in the world's enemies file (<see cref="EnemyMemory"/>). Core owns the flee curve: <see cref="FleeBelow"/>.
     /// </summary>
@@ -327,7 +327,7 @@ namespace FiresCore.World
             public string Prefab;
             public int Level, Deaths, NearDeaths, OneShots, Hits;
             public float BiggestHitShare;
-            /// <summary>The biggest hit it landed, in health (0.2.221; 0 in older records): compared with a body's health today, so a
+            /// <summary>The biggest hit it landed, in health (0 in older records): compared with a body's health today, so a
             /// foe that one-shot a 25 hp body isn't a one-hit threat forever once the body has 100.</summary>
             public float BiggestHit;
             public string LastBy;
@@ -355,7 +355,7 @@ namespace FiresCore.World
             r.BiggestHitShare = Mathf.Max(r.BiggestHitShare, Mathf.Clamp01(damageShare));
             if (byWhom != null) r.LastBy = byWhom;
             if (kind != DangerEvent.Hit)
-                Debug.Log($"[Danger] {prefab} {EnemyMemory.Stars(level)}: {kind}{(byWhom != null ? $" ({byWhom})" : "")} at ({pos.x:0}, {pos.z:0}) -> danger {Level(prefab, level, out _):0.00}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Danger] {prefab} {EnemyMemory.Stars(level)}: {kind}{(byWhom != null ? $" ({byWhom})" : "")} at ({pos.x:0}, {pos.z:0}) -> danger {Level(prefab, level, out _):0.00}");
             EnemyMemory.MarkDirty();
         }
 
@@ -387,7 +387,7 @@ namespace FiresCore.World
 
         /// <summary>
         /// The biggest hit <paramref name="prefab"/> ★<paramref name="level"/>-1 has landed in this world as a share of the body's max
-        /// health: 1 when it has one-shot a body, 0 without a record (0.2.221; ThreatLevel weighs it as a learned one-hit threat).
+        /// health: 1 when it has one-shot a body, 0 without a record (ThreatLevel weighs it as a learned one-hit threat).
         /// </summary>
         public static float BiggestHitShare(string prefab, int level)
         {
@@ -405,7 +405,7 @@ namespace FiresCore.World
             return r != null ? r.BiggestHit : 0f;
         }
 
-        // A landed hit's size (0.2.221): kept as the biggest for its kind★.
+        // A landed hit's size: kept as the biggest for its kind★.
         internal static void NoteHit(string prefab, int level, float damage)
         {
             List<Entry> records = EnemyMemory.DangerRecords();

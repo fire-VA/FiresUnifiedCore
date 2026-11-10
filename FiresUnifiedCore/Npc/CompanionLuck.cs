@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using System.Globalization;
 using FiresCore.Classes;
@@ -311,7 +311,7 @@ namespace FiresCore.Npc
                 _vaultDataRestored = true;
                 SaveToZDO();
 
-                Debug.Log($"[CompanionLuck] Restored luck {EffectiveLuck:F0} from vault for {_companion?.companionName}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionLuck] Restored luck {EffectiveLuck:F0} from vault for {_companion?.companionName}");
             }
             catch (Exception ex)
             {

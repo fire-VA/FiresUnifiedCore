@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 
 namespace FiresCore.Npc.IdleBehaviors
@@ -571,11 +571,11 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (data == null)
             {
-                Debug.Log($"[PieceDataHelper] {context} - No piece data");
+                FiresCore.Logging.FiresLogger.LogDebug($"[PieceDataHelper] {context} - No piece data");
                 return;
             }
             
-            Debug.Log($"[PieceDataHelper] {context} - Piece: {data.Name}\n" +
+            FiresCore.Logging.FiresLogger.LogDebug($"[PieceDataHelper] {context} - Piece: {data.Name}\n" +
                 $"  Category: {data.Category}, Comfort: {data.Comfort} ({data.ComfortGroup})\n" +
                 $"  IsCraftingStation: {data.IsCraftingStation} ({data.CraftingStationType})\n" +
                 $"  IsChair: {data.IsChair}, IsBed: {data.IsBed}\n" +

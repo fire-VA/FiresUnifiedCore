@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -237,6 +237,8 @@ public bool IsRanged;
         /// </summary>
         private void EvaluateStaffSwap()
         {
+            if (_supportStaff != null && _offensiveStaff == null) { EvaluateSupportFight(); return; }
+
             // Need both staff types to swap between them
             if (_supportStaff == null || _offensiveStaff == null) return;
             
@@ -298,6 +300,7 @@ public bool IsRanged;
             var owner = _companion.GetOwner();
             if (owner != null && !owner.IsDead())
             {
+                if (owner.GetHealthPercentage() < 0.7f || (_character != null && _character.GetHealthPercentage() < 0.5f)) return true;
                 float dist = Vector3.Distance(myPos, owner.transform.position);
                 if (dist <= checkRange && !HasAnyShieldBuff(owner))
                 {
@@ -374,11 +377,51 @@ public bool IsRanged;
         /// <summary>
         /// Executes a staff swap from current to the specified staff.
         /// </summary>
+        // [ghost] 11-03, Fire "healers need a secondary weapon to be useful in fights": nobody needs the support staff and enemies are near: the carried weapon,
+        // fists when none. Back to the staff when someone needs it.
+        public bool FightsWithoutStaff { get; private set; }
+        private bool _partyNeedsSupport;
+
+        private void EvaluateSupportFight()
+        {
+            if (Time.time - _lastStaffSwapTime < StaffSwapCooldown) return;
+            if (Time.time - _lastPartyBuffCheck >= PartyBuffCheckInterval)
+            {
+                _lastPartyBuffCheck = Time.time;
+                _partyNeedsSupport = CheckIfPartyNeedsBuffs();
+            }
+            var leftHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftHand);
+            bool holdingSupport = leftHand != null && Archetypes.ArchetypeUtils.IsSupportStaff(leftHand);
+            if (holdingSupport && !_partyNeedsSupport && HasActiveEnemiesNearby())
+            {
+                _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.LeftHand);
+                if (_inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftBack) == null) _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.LeftBack, leftHand);
+                else _inventory.GetStorageInventory()?.AddItem(leftHand);
+                FightsWithoutStaff = true;
+                _lastStaffSwapTime = Time.time;
+                _lastScanTime = -100f;
+                ScanAvailableWeapons();
+                string with = _meleeWeapon != null ? _meleeWeapon.PrefabName : _rangedWeapon != null ? _rangedWeapon.PrefabName : "fists";
+                FiresCore.Logging.FiresLogger.LogDebug($"[WeaponSwapManager] {_companion?.companionName}: nobody needs the support staff, fights with {with}");
+                if (_meleeWeapon != null) ExecuteSwapToMelee();
+                else if (_rangedWeapon != null) ExecuteSwapToRanged();
+                else FinalizeWeaponSwap();
+            }
+            else if (!holdingSupport && FightsWithoutStaff && _partyNeedsSupport)
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[WeaponSwapManager] {_companion?.companionName}: back to the support staff, someone needs it");
+                FightsWithoutStaff = false;
+                if (_meleeWeapon != null && IsWeaponInHand(_meleeWeapon)) MoveWeaponToBack(_meleeWeapon);
+                ExecuteStaffSwap(_supportStaff, isSupport: true);
+            }
+            else if (holdingSupport) FightsWithoutStaff = false;
+        }
+
         private void ExecuteStaffSwap(CachedWeaponInfo targetStaff, bool isSupport)
         {
             if (targetStaff == null) return;
             
-            Debug.Log($"[WeaponSwapManager] {_companion?.companionName} swapping to {(isSupport ? "SUPPORT" : "OFFENSIVE")} staff: {targetStaff.PrefabName}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[WeaponSwapManager] {_companion?.companionName} swapping to {(isSupport ? "SUPPORT" : "OFFENSIVE")} staff: {targetStaff.PrefabName}");
             
             // Move current staff to back/storage
             var currentLeftHand = _inventory.GetEquippedItem(CompanionInventory.EquipmentSlot.LeftHand);
@@ -491,6 +534,8 @@ public bool IsRanged;
             
             foreach (var item in storageInv.GetAllItems())
             {
+                // Worn gear sits in the bag's equip cells; those are scanned as equipment slots, not storage.
+                if (_inventory.IsWorn(item)) continue;
                 if (!CompanionCombat.IsCombatWeapon(item)) continue;
 
                 // Skip tools (pickaxes, axes) - they're for gathering, not combat
@@ -537,7 +582,8 @@ public bool IsRanged;
                 bool isRanged = IsRangedItem(item);
                 
                 // Only record if we don't already have this type from equipped slots
-                if (isRanged && _rangedWeapon == null)
+                // A bow or crossbow with no matching ammo in the pouch/storage is not a ranged option.
+                if (isRanged && _rangedWeapon == null && CompanionAmmo.HasAmmoFor(_inventory, item))
                 {
                     _rangedWeapon = new CachedWeaponInfo
                     {
@@ -674,7 +720,7 @@ public bool IsRanged;
                 StorageItem = null
             };
 
-            if (isRanged && _rangedWeapon == null)
+            if (isRanged && _rangedWeapon == null && CompanionAmmo.HasAmmoFor(_inventory, item))
             {
                 _rangedWeapon = info;
             }
@@ -733,8 +779,8 @@ public bool IsRanged;
             var pick = GatePick(target, assessment.recommendation, distToTarget, out string why);
             bool gated = why != "weighed";
 
-            // The target's resistances (one rule with the bot's CombatAdvisor.Effectiveness; R74 Crypt4: a Club on a blunt-immune
-            // Ghost): the other weapon gets more than twice as much through -> that one, whatever the weighing says.
+            // The target's resistances (one rule with the bot's CombatAdvisor.Effectiveness): the other weapon gets more than
+            // twice as much through -> that one, whatever the weighing says.
             float meleeEff = Effectiveness(_meleeWeapon, target, out string meleeNote);
             float rangedEff = Effectiveness(_rangedWeapon, target, out string rangedNote);
             if (currentlyRanged && meleeEff > rangedEff * 2f && CompanionBrain.CanFight(_character, target, 2f, false))
@@ -755,7 +801,7 @@ public bool IsRanged;
             {
                 if (gated || assessment.rangedScore >= swapConfidenceThreshold)
                 {
-                    Debug.Log($"[WeaponSwapManager] {name}: wield ranged: ranged {assessment.rangedScore:0.00} / melee {assessment.meleeScore:0.00}, {distToTarget:0.0} m, because {why}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[WeaponSwapManager] {name}: wield ranged: ranged {assessment.rangedScore:0.00} / melee {assessment.meleeScore:0.00}, {distToTarget:0.0} m, because {why}");
                     ExecuteSwapToRanged();
                 }
             }
@@ -763,7 +809,7 @@ public bool IsRanged;
             {
                 if (gated || assessment.meleeScore >= swapConfidenceThreshold)
                 {
-                    Debug.Log($"[WeaponSwapManager] {name}: wield melee: ranged {assessment.rangedScore:0.00} / melee {assessment.meleeScore:0.00}, {distToTarget:0.0} m, because {why}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[WeaponSwapManager] {name}: wield melee: ranged {assessment.rangedScore:0.00} / melee {assessment.meleeScore:0.00}, {distToTarget:0.0} m, because {why}");
                     ExecuteSwapToMelee();
                 }
             }
@@ -904,7 +950,7 @@ public bool IsRanged;
             var opening = rangedScore > meleeScore ? WeaponRecommendation.Ranged : WeaponRecommendation.Melee;
             var gatedOpening = GatePick(target, opening, distToTarget, out string why);
             if (gatedOpening != opening)
-                Debug.Log($"[WeaponSwapManager] {name}: open with {gatedOpening} (weighed {opening}), {distToTarget:0.0} m, because {why}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[WeaponSwapManager] {name}: open with {gatedOpening} (weighed {opening}), {distToTarget:0.0} m, because {why}");
             return gatedOpening;
         }
 
@@ -1328,15 +1374,13 @@ if (Time.time - _targetUnreachableStartTime > unreachableCheckTime)
             }
 
             // Determine correct hand slot
-            CompanionInventory.EquipmentSlot handSlot;
-            if (weapon.IsRanged)
-            {
-                handSlot = CompanionInventory.EquipmentSlot.LeftHand;
-            }
-            else
-            {
-                handSlot = CompanionInventory.EquipmentSlot.RightHand;
-            }
+            // 0.2.982 ([ghost], Fire 10-29: the mage fought with fists - "FiresStaff_Sunfire does not fit LeftHand"): staves count as
+            // ranged but are two-handed RIGHT-hand items; only left-hand items (bows: Bow / TwoHandedWeaponLeft) go to the left hand
+            var it = item.m_shared.m_itemType;
+            bool leftHanded = it == ItemDrop.ItemData.ItemType.Bow || it == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft;
+            CompanionInventory.EquipmentSlot handSlot = leftHanded ? CompanionInventory.EquipmentSlot.LeftHand : CompanionInventory.EquipmentSlot.RightHand;
+            if (weapon.IsRanged && !leftHanded)
+                FiresCore.Logging.FiresLogger.LogDebug($"[WeaponSwap] {weapon.PrefabName}: ranged but {it} - goes to the right hand (not the left)");
             
             // Check if hand slot is occupied by something else (different weapon)
             var existingHandItem = _inventory.GetEquippedItem(handSlot);

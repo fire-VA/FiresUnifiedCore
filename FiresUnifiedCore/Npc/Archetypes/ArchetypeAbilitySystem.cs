@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc;
 using FiresCore.Npc.Archetypes.StatusEffects;
@@ -153,7 +153,7 @@ namespace FiresCore.Npc.Archetypes
         
         /// <summary>Gets the companion's current level for ability unlock checks.</summary>
         // Progression starts at level 0, but the Starter abilities unlock at 1: a new companion could use none of its kit until
-        // it levelled once (R59: "Healer … Level:0", 0 casts). Unlocks read level 1 at least.
+        // it levelled once. Unlocks read level 1 at least.
         private int CompanionLevel => Mathf.Max(1, _progression != null ? _progression.Level : 1);
         
         private void Awake()
@@ -251,6 +251,12 @@ namespace FiresCore.Npc.Archetypes
                 case ArchetypeClass.Monk:
                     UpdateMonkAbilities();
                     break;
+                case ArchetypeClass.Druid:
+                    UpdateDruidAbilities();
+                    break;
+                case ArchetypeClass.Necromancer:
+                    UpdateNecromancerAbilities();
+                    break;
                 case ArchetypeClass.Ranger:
                     UpdateRangerAbilities();
                     break;
@@ -300,7 +306,7 @@ namespace FiresCore.Npc.Archetypes
         }
         
         /// <summary>
-        /// Test hook (0.2.204, [ghost]'s synergy step): casts <paramref name="ability"/> ("Fortify", "BerserkRage", "LayOnHands", …: the
+        /// Test hook: casts <paramref name="ability"/> ("Fortify", "BerserkRage", "LayOnHands", …: the
         /// name after "Use") now, through its real Use method: the effect RPC, the skill XP, the chat line and the synergy report
         /// (OnAbilityUsed). The AI's own gates (unlock level, the decision cooldowns) are skipped so a test can cast on demand. A
         /// targeted ability takes the AI's target (an enemy), or for a heal the owner / the most hurt party member. Owner peer only.
@@ -333,7 +339,7 @@ namespace FiresCore.Npc.Archetypes
             try { method.Invoke(this, args); }
             catch (System.Reflection.TargetInvocationException ex) { why = $"{method.Name} threw: {ex.InnerException?.Message ?? ex.Message}"; return false; }
             why = $"cast {method.Name.Substring(3)}{(args.Length > 0 ? " on " + ((Character)args[0]).m_name : "")}";
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName}: TryCastForTest: {why}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName}: TryCastForTest: {why}");
             return true;
         }
 
@@ -384,7 +390,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Fortify");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} used FORTIFY!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} used FORTIFY!");
         }
         
         private void UseImmortalStance()
@@ -404,7 +410,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "ImmortalStance");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "ImmortalStance");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} activated IMMORTAL STANCE!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} activated IMMORTAL STANCE!");
         }
         
         #endregion
@@ -509,7 +515,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "HolySmite");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} used HOLY SMITE!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} used HOLY SMITE!");
         }
         
         private void UseDivineProtection()
@@ -532,7 +538,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "DivineProtection");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} used DIVINE PROTECTION on {count} allies!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} used DIVINE PROTECTION on {count} allies!");
         }
         
         private void UseAvatarOfLight()
@@ -547,7 +553,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "AvatarOfLight");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "AvatarOfLight");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} became AVATAR OF LIGHT!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} became AVATAR OF LIGHT!");
         }
         
         private void UseLayOnHands(Character target)
@@ -563,7 +569,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "LayOnHands");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "LayOnHands");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} used LAY ON HANDS on {target.m_name}!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} used LAY ON HANDS on {target.m_name}!");
         }
         
         private void UseDivineShield()
@@ -578,7 +584,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "DivineShield");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "DivineShield");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} activated DIVINE SHIELD!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} activated DIVINE SHIELD!");
         }
         
         private void UseConsecration()
@@ -593,7 +599,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "Consecration");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Consecration");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} created CONSECRATION!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} created CONSECRATION!");
         }
         
         #endregion
@@ -660,7 +666,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "BerserkRage");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} entered BERSERK RAGE!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} entered BERSERK RAGE!");
         }
         
         private void UseWarcry()
@@ -683,7 +689,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Warcry");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} used WARCRY buffing {count} allies!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} used WARCRY buffing {count} allies!");
         }
         
         private void UseAvatarOfWar()
@@ -698,7 +704,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "AvatarOfWar");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "AvatarOfWar");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} became AVATAR OF WAR!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} became AVATAR OF WAR!");
         }
         
         #endregion
@@ -783,7 +789,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Stealth");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} entered STEALTH!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} entered STEALTH!");
         }
         
         /// <summary>
@@ -827,7 +833,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "ShadowDance");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "ShadowDance");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} began SHADOW DANCE!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} began SHADOW DANCE!");
         }
         
         private void UseDeathMark(Character target)
@@ -843,7 +849,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "DeathMark");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "DeathMark");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} placed DEATH MARK on {target.m_name}!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} placed DEATH MARK on {target.m_name}!");
         }
         
         private void UseEvasion()
@@ -858,7 +864,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "Evasion");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Evasion");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} activated EVASION!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} activated EVASION!");
         }
         
         #endregion
@@ -946,7 +952,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "ChiStrike");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} activated CHI STRIKE!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} activated CHI STRIKE!");
         }
         
         private void UseInnerPeace()
@@ -965,7 +971,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "InnerPeace");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} entered INNER PEACE meditation!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} entered INNER PEACE meditation!");
         }
         
         private void UseWayOfPerfection()
@@ -980,7 +986,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "WayOfPerfection");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "WayOfPerfection");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} achieved WAY OF PERFECTION!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} achieved WAY OF PERFECTION!");
         }
         
         private void UseChiExplosion()
@@ -1000,7 +1006,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "ChiExplosion");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "ChiExplosion");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} released CHI EXPLOSION!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} released CHI EXPLOSION!");
         }
         
         private void UseIronBody()
@@ -1015,7 +1021,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "IronBody");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "IronBody");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} activated IRON BODY!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} activated IRON BODY!");
         }
         
         private void UseFlurryOfBlows()
@@ -1030,7 +1036,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "FlurryOfBlows");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "FlurryOfBlows");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} unleashed FLURRY OF BLOWS!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} unleashed FLURRY OF BLOWS!");
         }
         
         #endregion
@@ -1111,7 +1117,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "EagleEye");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} activated EAGLE EYE!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} activated EAGLE EYE!");
         }
         
         private void UseHuntersMark(Character target)
@@ -1131,7 +1137,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "HuntersMark");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} marked {target.m_name} with HUNTER'S MARK!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} marked {target.m_name} with HUNTER'S MARK!");
         }
         
         private void UsePerfectShot()
@@ -1146,7 +1152,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "PerfectShot");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "PerfectShot");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} prepared PERFECT SHOT!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} prepared PERFECT SHOT!");
         }
         
         private void UseRainOfArrows()
@@ -1166,7 +1172,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "RainOfArrows");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "RainOfArrows");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} unleashed RAIN OF ARROWS!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} unleashed RAIN OF ARROWS!");
         }
         
         private void UseMultishot()
@@ -1181,7 +1187,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "Multishot");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Multishot");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} readied MULTISHOT!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} readied MULTISHOT!");
         }
         
         #endregion
@@ -1262,7 +1268,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "ElementalInfusion");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} activated ELEMENTAL INFUSION!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} activated ELEMENTAL INFUSION!");
         }
         
         private void UseArcaneShield()
@@ -1281,7 +1287,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "ArcaneShield");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} created ARCANE SHIELD!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} created ARCANE SHIELD!");
         }
         
         private void UseArcaneForm()
@@ -1296,7 +1302,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "ArcaneForm");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "ArcaneForm");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} transformed into ARCANE FORM!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} transformed into ARCANE FORM!");
         }
         
         private void UseMeteor()
@@ -1316,7 +1322,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "Meteor");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Meteor");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} called down METEOR!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} called down METEOR!");
         }
         
         private void UseOvercharge()
@@ -1331,7 +1337,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "Overcharge");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Overcharge");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} activated OVERCHARGE!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} activated OVERCHARGE!");
         }
         
         #endregion
@@ -1357,7 +1363,7 @@ namespace FiresCore.Npc.Archetypes
             {
                 bool canGroup = CanUseGroupAbility();
                 bool sanctuaryUnlocked = AbilityUnlockSystem.IsAbilityUnlocked("healer_sanctuary", archetype, level);
-                Debug.Log($"[ArchetypeAbility] Healer {_companion.companionName} Update - Level:{level}, CanGroup:{canGroup}, SanctuaryUnlocked:{sanctuaryUnlocked}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] Healer {_companion.companionName} Update - Level:{level}, CanGroup:{canGroup}, SanctuaryUnlocked:{sanctuaryUnlocked}");
             }
             
             // ULTIMATE (L100): Avatar of Life - when multiple allies are critically low
@@ -1420,7 +1426,7 @@ namespace FiresCore.Npc.Archetypes
                     {
                         if (AbilityUnlockSystem.IsAbilityUnlocked("healer_sanctuary", archetype, level))
                         {
-                            Debug.Log($"[ArchetypeAbility] Healer {_companion.companionName} protecting tank at {tankHealth:P0} health");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] Healer {_companion.companionName} protecting tank at {tankHealth:P0} health");
                             UseSanctuary();
                             return;
                         }
@@ -1451,7 +1457,7 @@ namespace FiresCore.Npc.Archetypes
                     // Purifying Circle for debuffs (unlocks at level 25)
                     if (AlliesHaveDebuffs() && AbilityUnlockSystem.IsAbilityUnlocked("healer_purify_circle", archetype, level))
                     {
-                        Debug.Log($"[ArchetypeAbility] Healer {_companion.companionName} using Purifying Circle for debuffs");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] Healer {_companion.companionName} using Purifying Circle for debuffs");
                         UsePurifyingCircle();
                         return;
                     }
@@ -1459,7 +1465,7 @@ namespace FiresCore.Npc.Archetypes
                     // Sanctuary when in combat - be AGGRESSIVE about healing!
                     if (combatJustStarted || alliesHurt || anyAllyTookDamage)
                     {
-                        Debug.Log($"[ArchetypeAbility] Healer {_companion.companionName} using Sanctuary - combatStart={combatJustStarted}, hurt={alliesHurt}, anyDamage={anyAllyTookDamage}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] Healer {_companion.companionName} using Sanctuary - combatStart={combatJustStarted}, hurt={alliesHurt}, anyDamage={anyAllyTookDamage}");
                         UseSanctuary();
                         return;
                     }
@@ -1681,7 +1687,7 @@ namespace FiresCore.Npc.Archetypes
             // Announce
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "EmergencyHeal");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} EMERGENCY HEAL on {target.m_name} ({target.GetHealthPercentage() * 100:F0}% HP)!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} EMERGENCY HEAL on {target.m_name} ({target.GetHealthPercentage() * 100:F0}% HP)!");
         }
         
         private void UsePurify()
@@ -1700,7 +1706,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Purify");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} used PURIFY!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} used PURIFY!");
         }
         
         private void UseSanctuary()
@@ -1723,7 +1729,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Sanctuary");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} created SANCTUARY protecting {count} allies!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} created SANCTUARY protecting {count} allies!");
         }
         
         private void UsePurifyingCircle()
@@ -1746,7 +1752,7 @@ namespace FiresCore.Npc.Archetypes
             // Notify synergy manager
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "PurifyingCircle");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} created PURIFYING CIRCLE for {count} allies!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} created PURIFYING CIRCLE for {count} allies!");
         }
         
         private void UseAvatarOfLife()
@@ -1761,7 +1767,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "AvatarOfLife");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "AvatarOfLife");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} became AVATAR OF LIFE!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} became AVATAR OF LIFE!");
         }
         
         private void UseDivineHymn()
@@ -1781,7 +1787,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "DivineHymn");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "DivineHymn");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} began singing DIVINE HYMN!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} began singing DIVINE HYMN!");
         }
         
         private void UseResurrection(CompanionController defeatedCompanion)
@@ -1802,7 +1808,7 @@ namespace FiresCore.Npc.Archetypes
             ArchetypeChatManager.AnnounceAbilityUsed(_companion, "Resurrection");
             GroupSynergyManager.Instance?.OnAbilityUsed(_companion, "Resurrection");
             
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} used RESURRECTION on {defeatedCompanion.companionName}!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} used RESURRECTION on {defeatedCompanion.companionName}!");
         }
         
         #endregion
@@ -1833,7 +1839,7 @@ namespace FiresCore.Npc.Archetypes
             if (!AbilityRPCManager.ApplySelfBuff(_character, effectName, 0f)) return;
 
             _skillSystem?.OnAbilityUsed(skillId);
-            Debug.Log($"[ArchetypeAbility] {_companion.companionName} gained passive {effectName}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} gained passive {effectName}");
         }
 
         private void DropOtherArchetypePassives(ArchetypeClass archetype)
@@ -1844,6 +1850,292 @@ namespace FiresCore.Npc.Archetypes
                 if (passive.Value != archetype && StatusEffectManager.HasEffect(_character, passive.Key))
                     AbilityRPCManager.RemoveSelfBuff(_character, passive.Key);
             }
+        }
+
+        #endregion
+
+        #region Druid and Necromancer Abilities
+
+        // Fire 11-04: their own companion kits, built like the other classes. Names, ids, numbers and triggers are the player
+        // tree's (Data/classes-trees.yaml, middle rank), and the effects are the same presets as FiresRPGClasses' kit. Possession is not here.
+        private const float KitZoneTick = 1f, KitZoneLinger = 1.5f;
+
+        private void UpdateDruidAbilities()
+        {
+            var archetype = ArchetypeClass.Druid;
+            int level = CompanionLevel;
+            int nearby = CountEnemiesInRange(8f);
+
+            if (AbilityUnlockSystem.IsAbilityUnlocked("druid_wild_hunt", archetype, level) && KitReady("druid_wild_hunt", 300f) && CountEnemiesInRange(15f) >= 3)
+            {
+                UseWildHunt();
+                return;
+            }
+            if (AbilityUnlockSystem.IsAbilityUnlocked("druid_barkskin", archetype, level) && KitReady("druid_barkskin", 40f) && IsBeingTargeted() && _character.GetHealthPercentage() < 0.7f)
+            {
+                AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_CLASS_WARD20, 10f);
+                AbilityRPCManager.SpawnFX(_character.transform.position, "fx_shaman_protect");
+                KitAnnounce("barkskin", "Barkskin");
+            }
+            if (AbilityUnlockSystem.IsAbilityUnlocked("druid_regrowth", archetype, level) && KitReady("druid_regrowth", 15f))
+            {
+                Character ally = FindCriticalAlly(0.6f);
+                if (ally == null && _character.GetHealthPercentage() < 0.6f) ally = _character;
+                if (ally != null)
+                {
+                    StartCoroutine(KitHealOverTime(ally, 30f, 10));
+                    AbilityRPCManager.SpawnFX(ally.transform.position, "vfx_Potion_health_medium");
+                    KitAnnounce("regrowth", "Regrowth");
+                    return;
+                }
+            }
+            if (AbilityUnlockSystem.IsAbilityUnlocked("druid_alpha_howl", archetype, level) && KitReady("druid_alpha_howl", 45f) && HasEnemyInRange(AbilityUseRange))
+            {
+                // Core's only damage preset is 25%; the player's rung is 15%, which reaches other players only at the top rank.
+                AbilityRPCManager.ApplyGroupBuff(_character, StatusEffectManager.EFFECT_CLASS_DAMAGE25, 15f, 10f);
+                AbilityRPCManager.SpawnFX(_character.transform.position, "fx_GoblinShaman_shout");
+                KitAnnounce("alphahowl", "AlphaHowl");
+                return;
+            }
+            Character target = GetCurrentTarget();
+            if (target == null || Vector3.Distance(target.transform.position, transform.position) > AbilityUseRange) return;
+            if (AbilityUnlockSystem.IsAbilityUnlocked("druid_wolf_pack", archetype, level) && KitSummonCount(null) == 0 && KitReady("druid_wolf_pack", 90f))
+            {
+                if (KitSummon("druid_wolf_pack", "Wolf", 2, 75f, KitSummonCap, null, "vfx_spawn") > 0) { KitAnnounce("wolfpack", "WolfPack"); return; }
+            }
+            if (AbilityUnlockSystem.IsAbilityUnlocked("druid_thornfield", archetype, level) && KitReady("druid_thornfield", 30f) && nearby >= 2)
+            {
+                ClassZones.ZoneAt(_character, target.transform.position, 6f, 8f, ZoneKind.Harmful, enemy =>
+                {
+                    HitData hit = KitHit(enemy);
+                    hit.m_damage.m_pierce = 15f;
+                    enemy.Damage(hit);
+                }, KitZoneTick, "fx_gdking_rootspawn", 2f);
+                KitAnnounce("thornfield", "Thornfield");
+                return;
+            }
+            if (AbilityUnlockSystem.IsAbilityUnlocked("druid_entangling_roots", archetype, level) && KitReady("druid_entangling_roots", 25f))
+            {
+                ClassZones.ZoneAt(_character, target.transform.position, 5f, 6f, ZoneKind.Harmful,
+                    enemy => AbilityRPCManager.ApplySingleEffect(_character, enemy, StatusEffectManager.EFFECT_CLASS_SLOW30, KitZoneLinger),
+                    KitZoneTick, "fx_gdking_rootspawn", 2f);
+                KitAnnounce("entanglingroots", "EntanglingRoots");
+            }
+        }
+
+        private void UpdateNecromancerAbilities()
+        {
+            var archetype = ArchetypeClass.Necromancer;
+            int level = CompanionLevel;
+
+            if (AbilityUnlockSystem.IsAbilityUnlocked("necromancer_lich_form", archetype, level) && KitReady("necromancer_lich_form", 60f) && CountEnemiesInRange(8f) >= 2)
+            {
+                AbilityRPCManager.ApplySelfBuff(_character, StatusEffectManager.EFFECT_CLASS_WARD15, 16f);
+                AbilityRPCManager.SpawnFX(_character.transform.position, "vfx_ghost_death");
+                KitAnnounce("lichform", "LichForm");
+            }
+            if (AbilityUnlockSystem.IsAbilityUnlocked("necromancer_legion", archetype, level) && KitReady("necromancer_legion", 300f) && KitLegion() > 0)
+            {
+                KitAnnounce("legion", "Legion");
+                return;
+            }
+            Character target = GetCurrentTarget();
+            if (target == null || Vector3.Distance(target.transform.position, transform.position) > AbilityUseRange) return;
+            if (AbilityUnlockSystem.IsAbilityUnlocked("necromancer_raise_wraith", archetype, level) && KitSummonCount("necromancer_raise_wraith") == 0 && KitReady("necromancer_raise_wraith", 120f))
+            {
+                if (KitSummon("necromancer_raise_wraith", "Wraith", 1, 55f, KitSummonCap, null, "fx_summon_skeleton_spawn") > 0) { KitAnnounce("raisewraith", "RaiseWraith"); return; }
+            }
+            if (AbilityUnlockSystem.IsAbilityUnlocked("necromancer_raise_archer", archetype, level) && KitSummonCount("necromancer_raise_archer") == 0 && KitReady("necromancer_raise_archer", 45f))
+            {
+                if (KitSummon("necromancer_raise_archer", "Skeleton_Friendly", 1, 75f, KitSummonCap, "bow", "fx_summon_skeleton_spawn") > 0) { KitAnnounce("raisearcher", "RaiseArcher"); return; }
+            }
+            if (AbilityUnlockSystem.IsAbilityUnlocked("necromancer_grave_pestilence", archetype, level) && KitReady("necromancer_grave_pestilence", 90f) && CountEnemiesInRange(10f) >= 3)
+            {
+                ClassZones.ZoneAt(_character, target.transform.position, 8f, 10f, ZoneKind.Harmful, enemy =>
+                {
+                    AbilityRPCManager.ApplySingleEffect(_character, enemy, StatusEffectManager.EFFECT_CLASS_WITHERED, KitZoneLinger);
+                    AbilityRPCManager.ApplySingleEffect(_character, enemy, StatusEffectManager.EFFECT_CLASS_WOUNDED, KitZoneLinger);
+                }, KitZoneTick, "vfx_BombBlob_explode_poison", 2f);
+                KitAnnounce("gravepestilence", "GravePestilence");
+                return;
+            }
+            if (AbilityUnlockSystem.IsAbilityUnlocked("necromancer_grave_chill", archetype, level) && KitReady("necromancer_grave_chill", 25f) && CountEnemiesInRange(10f) >= 2)
+            {
+                ClassZones.ZoneAt(_character, target.transform.position, 5f, 6f, ZoneKind.Harmful, enemy =>
+                {
+                    HitData hit = KitHit(enemy);
+                    hit.m_damage.m_frost = 2f;
+                    enemy.Damage(hit);
+                    AbilityRPCManager.ApplySingleEffect(_character, enemy, StatusEffectManager.EFFECT_CLASS_SLOW30, KitZoneLinger);
+                }, KitZoneTick, "fx_fenring_frost", 1f);
+                KitAnnounce("gravechill", "GraveChill");
+                return;
+            }
+            if (AbilityUnlockSystem.IsAbilityUnlocked("necromancer_wither", archetype, level) && KitReady("necromancer_wither", 8f))
+            {
+                AbilityRPCManager.ApplySingleEffect(_character, target, StatusEffectManager.EFFECT_CLASS_WITHERED, 10f);
+                HitData hit = KitHit(target);
+                hit.m_damage.m_poison = 60f;   // 6 a second for 10 s, vanilla's poison
+                target.Damage(hit);
+                AbilityRPCManager.SpawnFX(target.transform.position, "vfx_BombBlob_explode_poison");
+                KitAnnounce("wither", "Wither");
+            }
+        }
+
+        private void UseWildHunt()
+        {
+            AbilityRPCManager.ApplyGroupBuff(_character, StatusEffectManager.EFFECT_CLASS_HASTE20, 40f, 15f);
+            AbilityRPCManager.ApplyAoEEffect(_character, StatusEffectManager.EFFECT_DEATH_MARK, 40f, 15f);
+            AbilityRPCManager.SpawnFX(_character.transform.position, "fx_GoblinShaman_shout");
+            KitAnnounce("wildhunt", "WildHunt");
+        }
+
+        // The player tree's cooldowns; the shared tier timers would run Lich Form almost nonstop and Roots every 2 minutes.
+        private readonly Dictionary<string, float> _kitReadyAt = new Dictionary<string, float>();
+
+        private bool KitReady(string id, float cooldown)
+        {
+            if (_kitReadyAt.TryGetValue(id, out float at) && Time.time < at) return false;
+            _kitPending = id; _kitPendingCooldown = cooldown;
+            return true;
+        }
+        private string _kitPending; private float _kitPendingCooldown;
+
+        // ---- Summons (Fire 11-04): Core's SummonApi, which spawns for the local player, so only that companion's owner casts.
+        // The tag on each summon names its companion; it is saved with the summon, so counts, cleanup and Life Tap survive a portal.
+        private const string KitTagPrefix = "comp:";
+        private const int KitSummonCap = 2, KitLegionCap = 6;
+        private static readonly int KitLoadoutKey = "rpg_summon_loadout".GetStableHashCode();   // RPGClasses arms a bow from it
+        private static readonly Dictionary<string, ArchetypeAbilitySystem> s_kitById = new Dictionary<string, ArchetypeAbilitySystem>();
+        private string _kitId;
+
+        private string KitId => _kitId ?? (_kitId = !string.IsNullOrEmpty(_companion?.companionId) ? _companion.companionId : "inst" + GetInstanceID());
+
+        private int KitSummonCount(string skill)
+        {
+            string prefix = KitTagPrefix + KitId + ":" + skill;
+            int count = 0;
+            foreach (var info in FiresCore.Summon.SummonApi.CompanionSummons())   // 0.2.1184: companion summons left MySummons (UI list)
+                if (info.SourceTag != null && info.SourceTag.StartsWith(prefix, System.StringComparison.Ordinal)) count++;
+            return count;
+        }
+
+        private FiresCore.Summon.SummonOptions KitOptions(string skill, string group, int cap, float seconds) => new FiresCore.Summon.SummonOptions
+        {
+            Duration = seconds,
+            Mode = FiresCore.Summon.SummonMode.Follow,
+            CapGroup = KitTagPrefix + group + KitId,
+            Cap = cap,
+            SourceTag = KitTagPrefix + KitId + ":" + skill,
+        };
+
+        private int KitSummon(string skill, string prefab, int count, float seconds, int cap, string loadout, string fx)
+        {
+            if (_companion == null || _companion.GetOwner() != Player.m_localPlayer || Player.m_localPlayer == null) return 0;
+            s_kitById[KitId] = this;
+            int made = 0;
+            string why = null;
+            for (int i = 0; i < count; i++)
+            {
+                ZDOID id = FiresCore.Summon.SummonApi.Summon(prefab, KitOptions(skill, "", cap, seconds), out why);
+                if (id.IsNone()) break;
+                made++;
+                GameObject go = ZNetScene.instance != null ? ZNetScene.instance.FindInstance(id) : null;
+                if (go == null) continue;
+                go.transform.position = transform.position + transform.right * (i % 2 == 0 ? 1.5f : -1.5f);
+                if (loadout != null) go.GetComponent<ZNetView>()?.GetZDO()?.Set(KitLoadoutKey, loadout);
+                AbilityRPCManager.SpawnFX(go.transform.position, fx);
+            }
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} {skill}: made {made} of {count}{(why != null ? " (" + why + ")" : "")}; this companion now has {KitSummonCount(null)} summon(s), cap {cap}");
+            return made;
+        }
+
+        // Legion: "Every undead within 30 m below 50% health becomes your thrall for 30 s." The player's method; bosses are left alone.
+        private int KitLegion()
+        {
+            if (_companion == null || _companion.GetOwner() != Player.m_localPlayer || Player.m_localPlayer == null) return 0;
+            s_kitById[KitId] = this;
+            int raised = 0;
+            string why = null;
+            foreach (Character c in new List<Character>(Character.GetAllCharacters()))
+            {
+                if (c == null || c.IsDead() || c.IsTamed() || c.IsBoss() || c.GetFaction() != Character.Faction.Undead || !(c is Humanoid)) continue;
+                if (c.GetHealthPercentage() >= 0.5f || Vector3.Distance(c.transform.position, transform.position) > 30f) continue;
+                string prefab = global::Utils.GetPrefabName(c.gameObject);
+                Vector3 at = c.transform.position;
+                ZDOID id = FiresCore.Summon.SummonApi.Summon(prefab, KitOptions("necromancer_legion", "legion:", KitLegionCap, 30f), out why);
+                if (id.IsNone()) break;
+                ZNetView nview = c.GetComponent<ZNetView>();
+                if (nview != null && nview.IsValid() && !nview.IsOwner()) nview.ClaimOwnership();
+                ZNetScene.instance?.Destroy(c.gameObject);
+                GameObject go = ZNetScene.instance != null ? ZNetScene.instance.FindInstance(id) : null;
+                if (go != null) go.transform.position = at;
+                AbilityRPCManager.SpawnFX(at, "vfx_skeleton_death");
+                raised++;
+            }
+            if (raised > 0 || why != null) FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} necromancer_legion: {raised} thrall(s){(why != null ? " (" + why + ")" : "")}; this companion now has {KitSummonCount(null)} summon(s), cap {KitSummonCap}+{KitLegionCap}");
+            return raised;
+        }
+
+        // Death and dismissal both destroy the companion, so its summons go here.
+        private void OnDestroy()
+        {
+            if (_kitId == null) return;
+            s_kitById.Remove(_kitId);
+            string prefix = KitTagPrefix + _kitId + ":";
+            int gone = 0;
+            foreach (var info in new List<FiresCore.Summon.SummonInfo>(FiresCore.Summon.SummonApi.CompanionSummons()))
+                if (info.SourceTag != null && info.SourceTag.StartsWith(prefix, System.StringComparison.Ordinal)) { FiresCore.Summon.SummonApi.Dismiss(info.Id); gone++; }
+            if (gone > 0) FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] companion {_kitId} gone: dismissed {gone} summon(s)");
+        }
+
+        // Life Tap: the companion's summons' hits heal it for 8% of the damage (the player's middle rank).
+        [HarmonyLib.HarmonyPatch(typeof(Character), nameof(Character.Damage))]
+        private static class KitLifeTapOnSummonHit
+        {
+            private static void Prefix(HitData hit)
+            {
+                if (hit == null || s_kitById.Count == 0 || hit.m_attacker.IsNone() || ZDOMan.instance == null) return;
+                ZDO attacker = ZDOMan.instance.GetZDO(hit.m_attacker);
+                string tag = attacker != null ? attacker.GetString(FiresCore.Summon.SummonKeys.Source, "") : "";
+                if (!tag.StartsWith(KitTagPrefix, System.StringComparison.Ordinal)) return;
+                int end = tag.IndexOf(':', KitTagPrefix.Length);
+                if (end < 0 || !s_kitById.TryGetValue(tag.Substring(KitTagPrefix.Length, end - KitTagPrefix.Length), out var kit) || kit == null || kit._character == null || kit._character.IsDead()) return;
+                if (kit._archetypeController.CurrentArchetypeClass != ArchetypeClass.Necromancer
+                    || !AbilityUnlockSystem.IsAbilityUnlocked("necromancer_life_tap", ArchetypeClass.Necromancer, kit.CompanionLevel)) return;
+                float heal = hit.GetTotalDamage() * 0.08f;
+                if (heal <= 0f) return;
+                AbilityHeals.Apply(kit._character, kit._character, heal, false);
+                FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] necromancer_life_tap: {kit._companion?.companionName} healed {heal:0.0}");
+            }
+        }
+
+        private HitData KitHit(Character enemy)
+        {
+            Vector3 away = enemy.transform.position - _character.transform.position;
+            away.y = 0f;
+            var hit = new HitData { m_point = enemy.GetCenterPoint(), m_dir = away.sqrMagnitude > 0.01f ? away.normalized : _character.transform.forward };
+            hit.SetAttacker(_character);
+            return hit;
+        }
+
+        private System.Collections.IEnumerator KitHealOverTime(Character ally, float total, int seconds)
+        {
+            for (int i = 0; i < seconds; i++)
+            {
+                yield return new WaitForSeconds(1f);
+                if (ally == null || ally.IsDead()) yield break;
+                AbilityHeals.Apply(_character, ally, total / seconds);
+            }
+        }
+
+        private void KitAnnounce(string skill, string name)
+        {
+            if (_kitPending != null) { _kitReadyAt[_kitPending] = Time.time + _kitPendingCooldown; _kitPending = null; }
+            _skillSystem?.OnAbilityUsed(skill);
+            ArchetypeChatManager.AnnounceAbilityUsed(_companion, name);
+            GroupSynergyManager.Instance?.OnAbilityUsed(_companion, name);
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArchetypeAbility] {_companion.companionName} used {name}");
         }
 
         #endregion

@@ -176,6 +176,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 _lastTreePosition = Vector3.zero;
             }
             
+            // [ghost] 10-26 (Fire: "companions should not leave loot on the ground when harvesting trees etc"; his log: Knut broke a
+            // beech and its logs, then went straight to the next tree - nothing ever walked to the wood, only the 3 m loot magnet took
+            // what happened to land near him): before moving on, walk to every drop the harvest left within DropSweepRadius of where
+            // it fell, so the magnet (CompanionAutoPickup) takes it. Bounded by DropSweepSeconds per harvest.
+            if (SweepHarvestDrops(_lastTreePosition != Vector3.zero ? _lastTreePosition : (_targetPosition != Vector3.zero ? _targetPosition : Transform.position), _phaseStartTime)) return false;
+
             if (IsInventoryNearFull())
             {
                 if (VerboseLogging)

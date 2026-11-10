@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Common
 {
-    // The class kit's crowd control (Fire, popup 2026-09-28 21:3x: "build them simply"). Each is a status effect applied on
+    // The class kit's crowd control, built simply. Each is a status effect applied on
     // the TARGET's owner through AbilityRPCManager.ApplySingleEffect (ClassTargeting decides who may be hit), so it holds
     // on every peer; ClassCrowdControl is the API. No Harmony hooks: every one works through vanilla's own paths.
 
@@ -52,7 +52,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
     /// <summary>Knockdown: one stagger and a push away from the caster (vanilla's own pushback), at once.</summary>
     public class KnockdownEffect : CompanionStatusEffectBase
     {
-        // Vanilla's medium push: a club's (Fire's default rule for unstated knockback).
+        // Vanilla's medium push: a club's (the default for unstated knockback).
         public const float DefaultForce = 60f;
 
         public float Force { get; set; } = DefaultForce;
@@ -219,6 +219,64 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Common
         public new StaggerImmuneEffect Clone()
         {
             var clone = (StaggerImmuneEffect)base.Clone();
+            if (clone != null)
+            {
+                clone.Duration = Duration;
+                clone.EffectIcon = EffectIcon;
+                clone.SourceCharacter = SourceCharacter;
+            }
+            return clone;
+        }
+    }
+
+    /// <summary>
+    /// Silence: the carrier can't start magic or skill attacks. Players: staff attacks are refused
+    /// (Classes\SilenceGate.cs, a Humanoid.StartAttack prefix) and RPGClasses checks ClassCrowdControl.IsSilenced before a
+    /// class skill. Monsters: every attack start is refused, a cast interrupt. The one hook is that prefix.
+    /// </summary>
+    /// <summary>
+    /// A boss's cast interrupt (for Fires Monster Overhaul): ClassCrowdControl puts it on a boss next to the slow a boss
+    /// gets instead of a stun, knockdown or silence. It does nothing itself; Fires Monster Overhaul reads it (its SEMan.AddStatusEffect
+    /// postfix) and cancels the boss's cast.
+    /// </summary>
+    public class InterruptMarkerEffect : CompanionStatusEffectBase
+    {
+        public override string Description => "Interrupted";
+
+        public InterruptMarkerEffect()
+        {
+            m_name = "Interrupted";
+            m_tooltip = "Its cast was broken";
+            Duration = 0.5f;
+        }
+
+        public new InterruptMarkerEffect Clone()
+        {
+            var clone = (InterruptMarkerEffect)base.Clone();
+            if (clone != null)
+            {
+                clone.Duration = Duration;
+                clone.EffectIcon = EffectIcon;
+                clone.SourceCharacter = SourceCharacter;
+            }
+            return clone;
+        }
+    }
+
+    public class SilenceEffect : CompanionStatusEffectBase
+    {
+        public override string Description => "Silenced: cannot cast";
+
+        public SilenceEffect()
+        {
+            m_name = "Silenced";
+            m_tooltip = "Cannot use magic or skills";
+            Duration = 3f;
+        }
+
+        public new SilenceEffect Clone()
+        {
+            var clone = (SilenceEffect)base.Clone();
             if (clone != null)
             {
                 clone.Duration = Duration;

@@ -41,7 +41,18 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Healer
             "Spirit",
             "Lightning"
         };
-        
+
+        /// <summary>
+        /// Adds a status effect Purify removes, matched like the built-in list by its object
+        /// name or its m_name. Other mods register their curses at load (FMO: "FMO_Hex"), so a new curse needs no Core edit. Safe to
+        /// call any time and more than once.
+        /// </summary>
+        public static void RegisterDebuff(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return;
+            if (DebuffNames.Add(name)) FiresCore.Logging.FiresLogger.LogDebug($"[PurifyEffect] '{name}' registered as a debuff Purify removes");
+        }
+
         public PurifyEffect()
         {
             m_name = "Purified";

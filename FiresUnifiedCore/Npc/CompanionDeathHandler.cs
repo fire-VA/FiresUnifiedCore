@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -20,7 +20,10 @@ namespace FiresCore.Npc
         // drop equipped gear, and that's handled by WildCompanionLootOnDeath
         // with star-scaled chances. The tombstone only carries STORAGE items.
         public bool dropEquipmentOnDeath = false;  // If true, equipment goes to tombstone
-        public bool dropInventoryOnDeath = true;   // Storage items go to tombstone
+        // A tamed companion keeps all its gear on death, no tombstone. Worn gear lives only in
+        // the bag blob, so dropping "storage" would null the whole loadout and the respawn would come back naked. Default OFF (Awake keeps it OFF
+        // even for a prefab serialized with the old true).
+        public bool dropInventoryOnDeath = false;
         public float tombstoneLifetime = 3600f;    // 1 hour before tombstone despawns (not yet wired to Container)
 
         [Header("Respawn Settings")]
@@ -52,6 +55,7 @@ namespace FiresCore.Npc
 
         private void Awake()
         {
+            dropInventoryOnDeath = false;   // See the field
             _companion = GetComponent<CompanionController>();
             _inventory = GetComponent<CompanionInventory>();
             _equipmentData = GetComponent<CompanionEquipmentData>();
@@ -118,6 +122,22 @@ namespace FiresCore.Npc
                 if (_companion == null) return;
 
                 _isDying = true;
+
+                // A death during the ~1 s deferred ZDO load must not take the WILD branch (no kennel entry, no respawn):
+                // the ZDO is the truth; read tamed / owner / id from it before choosing the branch
+                try
+                {
+                    var dz = _nview != null && _nview.IsValid() ? _nview.GetZDO() : null;
+                    if (dz != null && !_companion.isTamed && dz.GetBool("companion_tamed", false) && dz.GetLong("companion_owner", 0L) != 0L)
+                    {
+                        _companion.isTamed = true;
+                        _companion.ownerPlayerId = dz.GetLong("companion_owner", 0L);
+                        string zid = dz.GetString("companion_id", "");
+                        if (!string.IsNullOrEmpty(zid)) _companion.companionId = zid;
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDeathHandler] {_companion.companionName}: died before its ZDO load finished; tamed/owner/id taken from the ZDO (owner {_companion.ownerPlayerId})");
+                    }
+                }
+                catch (Exception ex) { Debug.LogWarning($"[CompanionDeathHandler] ZDO identity read failed: {ex.Message}"); }
 
                 if (_companion.isTamed && VerboseLogging)
                 {
@@ -206,6 +226,9 @@ namespace FiresCore.Npc
             {
                 CreateTombstone();
             }
+
+            // The Pet cell item is not "worn", so it would go to the tombstone with storage above; dismiss the pet
+            if (_inventory != null) _inventory.ClearPet("death");
 
             // 3. Now that tombstone ZDOID is known, save death metadata
             SaveDeathMetadata();
@@ -309,7 +332,7 @@ namespace FiresCore.Npc
                     return;
                 }
 
-                Debug.Log($"[CompanionDeathHandler] SaveDeathState - KillsData being saved: '{saveData.KillsData}' for {_companion.companionName}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDeathHandler] SaveDeathState - KillsData being saved: '{saveData.KillsData}' for {_companion.companionName}");
 
                 // Add death-specific state
                 saveData.IsPendingRespawn = true;
@@ -516,6 +539,8 @@ namespace FiresCore.Npc
                 {
                     foreach (var item in storageInv.GetAllItems().ToArray())
                     {
+                        // Worn gear lives in the bag's equip cells now; it follows dropEquipmentOnDeath below, as before.
+                        if (_inventory.IsWorn(item)) continue;
                         if (tombstoneInv.AddItem(item.Clone()))
                         {
                             storageInv.RemoveItem(item);
@@ -546,6 +571,8 @@ namespace FiresCore.Npc
 
             foreach (var item in storageInv.GetAllItems().ToArray())
             {
+                // Worn gear (equip cells) was never part of this drop; it stays as before.
+                if (_inventory.IsWorn(item)) continue;
                 Vector3 dropPos = transform.position + UnityEngine.Random.insideUnitSphere * 2f;
                 dropPos.y = transform.position.y + 1f;
 
@@ -582,7 +609,7 @@ namespace FiresCore.Npc
             // server-side respawn there (CompanionKennel.RPC_Store). Only the server schedules directly.
             if (ZNet.instance != null && !ZNet.instance.IsServer())
             {
-                Debug.Log($"[CompanionDeathHandler] {_companion.companionName} died client-side — server will respawn it from the forwarded kennel entry.");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDeathHandler] {_companion.companionName} died client-side — server will respawn it from the forwarded kennel entry.");
                 return;
             }
 
@@ -652,7 +679,7 @@ namespace FiresCore.Npc
                 }
             }
 
-            Debug.Log($"[CompanionDeathHandler] Tombstone monitor timed out for {_companion.companionName}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDeathHandler] Tombstone monitor timed out for {_companion.companionName}");
         }
 
         private void LootTombstone(GameObject tombstoneObj)
@@ -836,12 +863,28 @@ namespace FiresCore.Npc
         {
             if (_nview == null || _companion.ownerPlayerId == 0) return;
             // RPC broadcasts during the local-player respawn/loading window deadlock the zone stream.
-            if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
+            if (CompanionPatches.AreCompanionTeleportsSuppressed())
+            {
+                // Without this the notice is dropped and the owner's group row loses its dead/countdown state. The suppression is the
+                // LOCAL player's respawn / loading window, so the owner is right here: record the dead-pending row locally (no RPC)
+                try
+                {
+                    var me = Player.m_localPlayer;
+                    if (me != null && me.GetPlayerID() == _companion.ownerPlayerId)
+                        CompanionGroupHudProvider.RecordDeath(_companion.companionId, _companion.GetDisplayName(), respawnDelay, _companion.ownerPlayerId);
+                    else FiresCore.Logging.FiresLogger.LogDebug($"[CompanionDeathHandler] death notice for {_companion.companionName} skipped in the respawn window (owner not local)");
+                }
+                catch (Exception ex) { Debug.LogWarning($"[CompanionDeathHandler] local death record failed: {ex.Message}"); }
+                return;
+            }
 
             // Broadcast so the OWNING player gets the message whether they're the listen-host or a
             // remote client on a dedicated server — HandleDeath runs on the ZDO owner (the server),
             // which has no local Player. Each client filters by owner id and localizes the killer
             // name itself, so it reads correctly per-language even when the server is headless.
+            // 0.2.975: the owner is this machine (host / owning client): record the row now as well, the RPC to self may not arrive
+            try { var me = Player.m_localPlayer; if (me != null && me.GetPlayerID() == _companion.ownerPlayerId) RecordDeathRow(_companion.ownerPlayerId, _companion.GetDisplayName(), respawnDelay, "owner is local"); }
+            catch (Exception ex) { Debug.LogWarning($"[CompanionDeathHandler] local death record failed: {ex.Message}"); }
             string killerRaw = _lastAttacker != null ? (_lastAttacker.m_name ?? "") : "";
             try
             {
@@ -870,6 +913,9 @@ namespace FiresCore.Npc
         {
             var localPlayer = Player.m_localPlayer;
             if (localPlayer == null || localPlayer.GetPlayerID() != ownerPlayerId) return;
+            // 0.2.975 (Fire 10-28: a tamed companion died and left the group HUD; [ghost] log 23:49:57): the owner keeps the row greyed with
+            // the respawn countdown. Nothing recorded it on this path before, and the corpse is gone ~1 s later. A repeat call is a no-op.
+            RecordDeathRow(ownerPlayerId, companionName, delay, "death notice");
 
             string killer = null;
             if (!string.IsNullOrEmpty(killerRaw))
@@ -883,6 +929,14 @@ namespace FiresCore.Npc
                 : $"{companionName} died to {killer}! Respawning in {delay:F0}s...";
 
             MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center, msg);
+        }
+
+        private void RecordDeathRow(long ownerPlayerId, string name, float delay, string why)
+        {
+            string id = _companion != null ? _companion.companionId : null;
+            if (string.IsNullOrEmpty(id)) { FiresCore.Logging.FiresLogger.LogDebug($"[GroupHud] {name} died: no companion id ({why}), the row is not kept"); return; }
+            CompanionGroupHudProvider.RecordDeath(id, name, delay, ownerPlayerId);
+            FiresCore.Logging.FiresLogger.LogDebug($"[GroupHud] {name} ({id}) died: row kept greyed, respawn in {delay:0} s ({why})");
         }
 
         private void RPC_SetTombstone(long sender, string zdoidStr)

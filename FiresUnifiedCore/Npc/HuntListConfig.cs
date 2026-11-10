@@ -21,28 +21,16 @@ namespace FiresCore.Npc
         public const string DefaultList =
             "boar,deer,doe,stag,neck,hare,crow,seagull,fish,leviathan,chicken,hen,lox,sheep,cow,rabbit";
 
-        public static ConfigEntry<string> HuntableCreatures;
+        // 1086 ([generator], Fire 11-01: configs live in their own mods): bound and synced by FiresCompanions; Core reads the owner's
+        // value (DefaultList without it). Same member name; .Value still reads (type is now OwnedSetting<string>).
+        public static readonly FiresCore.Config.OwnedSetting<string> HuntableCreatures = new FiresCore.Config.OwnedSetting<string>("Companions", "HuntableCreatures", DefaultList);
 
         private static string _cachedRaw;
         private static HashSet<string> _keywords;
 
-        public static void Initialize(ConfigFile config)
-        {
-            HuntableCreatures = config.Bind(
-                "Companions", "HuntableCreatures", DefaultList,
-                "Comma-separated list of creature name / prefab keywords treated as passive 'hunt-only' " +
-                "prey. A creature matching any keyword is NOT attacked on sight unless the owner toggles " +
-                "Hunt on, or it attacks first. Matching is case-insensitive substring (e.g. 'deer' matches " +
-                "'Deer' and 'Reindeer_mod'). Animals tagged with the vanilla AnimalsVeg faction, and any " +
-                "creature that flees when not alerted, are always treated as huntable regardless of this " +
-                "list. [Synced with Server]");
-        }
+        public static void Initialize(ConfigFile config) { }
 
-        public static void BindToSync(ConfigSync configSync)
-        {
-            if (configSync != null && HuntableCreatures != null)
-                configSync.AddConfigEntry(HuntableCreatures);
-        }
+        public static void BindToSync(ConfigSync configSync) { }
 
         /// <summary>
         /// True if either the (lowercased) creature name or prefab name contains a hunt-list keyword.

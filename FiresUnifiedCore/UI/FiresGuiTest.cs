@@ -4,7 +4,7 @@ using UnityEngine;
 namespace FiresCore.UI
 {
     /// <summary>
-    /// 0.2.310 (Fire 10:2x: a test clicks what a player clicks): where Core's IMGUI windows (the F8 config window) take a test's
+    /// A test clicks what a player clicks: where Core's IMGUI windows (the F8 config window) take a test's
     /// clicks and typing through the same IMGUI event path a player's mouse and keyboard go through. IMGUI reads the OS's events and
     /// an EventSystem raycast never reaches it, so the window records the screen rect of each named control on Repaint, and
     /// a test owner queues mouse-down / mouse-up / character events at those rects; the window replays one queued event per frame
@@ -66,7 +66,7 @@ namespace FiresCore.UI
         internal static void Record(string control)
         {
             if (s_owner == null || Event.current == null || Event.current.type != EventType.Repaint) return;
-            Rect local = GUILayoutUtility.GetLastRect();
+            if (!FiresRoundedSkin.SafeLastRect(out Rect local)) return;
             Vector2 topLeft = GUIUtility.GUIToScreenPoint(local.position);
             s_rects[control] = new Rect(topLeft, local.size);
             s_rectFrame[control] = Time.frameCount;

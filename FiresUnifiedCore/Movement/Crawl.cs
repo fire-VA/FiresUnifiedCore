@@ -7,13 +7,13 @@ using UnityEngine;
 namespace FiresCore.Movement
 {
     /// <summary>
-    /// Crawling (Core 0.2.295, Fire 10-05: "add our own crawling to core (default off) and guard it so that if both mods are installed only
+    /// Crawling (default off), guarded so that if both Core and VikHavn are installed only
     /// one mod handles the crawling"). Setting [Crawling] Crawling = Auto | On | Off, default Auto: on only when VikHavn Combat Moveset
     /// Additions is installed, since it crawls too. ONE owner drives the pose:
     /// - VikHavn installed: VikHavn owns crawling (its capsule scale, crawl clips, speed status effect, camera lowering). Core only asks it
     ///   to go prone, through VikHavn's own SetProne, and back. No second capsule change, no second animation, no edit to VikHavn.
-    /// - VikHavn absent: Core's own crawl, on the local player: the capsule at CoreHeightShare of standing (centre scaled with it), the
-    ///   crouch speed at CoreSpeedShare, the camera pivot lowered with the body, over vanilla's crouch pose.
+    /// - VikHavn absent: Core's own crawl, on the local player: VikHavn's prone pose ported into Core (CrawlPose: capsule at
+    ///   CoreHeightShare of standing on every peer, crawl clips, the prone speed effect), the camera pivot lowered with the body.
     /// Core asks for a crawl only where a crouched body doesn't fit (Headroom), and only while crawling is on.
     /// Debug: "[Crawl] owner: VikHavn (Core delegates its low-ceiling crawl)" / "owner: Core", and "[Crawl] begin …" / "end …".
     /// </summary>
@@ -24,24 +24,25 @@ namespace FiresCore.Movement
         public const string VikHavnGuid = "VikHavn.CombatMovesetAdditions";
         /// <summary>A crouched body's height as a share of the standing capsule (where a crawl starts).</summary>
         public const float CrouchShare = 0.75f;
-        /// <summary>Core's own crawl: capsule height and crouch speed shares.</summary>
-        public const float CoreHeightShare = 0.45f, CoreSpeedShare = 0.5f;
+        /// <summary>Core's own crawl: the prone capsule height share (CrawlPose).</summary>
+        public const float CoreHeightShare = FiresCore.Movement.CrawlPose.CrawlPose.ProneHeight;
 
-        private static ConfigEntry<CrawlingMode> s_mode;
+        private static readonly FiresCore.Config.OwnedSetting<CrawlingMode> s_mode = new FiresCore.Config.OwnedSetting<CrawlingMode>("Crawling", "Crawling", CrawlingMode.Auto);   // 1086 ([generator], Fire 11-01: configs live in their own mods): owner FAPM
+        private static bool s_hooked;
         private static int s_resolvedFor = -1;
         private static bool s_enabled, s_vikHavn;
         private static bool s_active, s_coreCrawling;
         private static float s_standingCapsule = -1f;
         private static Vector3 s_standingCenter;
-        private static float s_crouchSpeed = -1f;
         private static MethodInfo s_vikSetProne;
         private static bool s_vikLookedUp;
 
         internal static void Bind(ConfigFile config)
         {
-            s_mode = config.Bind("Crawling", "Crawling", CrawlingMode.Auto,
-                "Whether the player drops to a crawl where a crouch doesn't fit under a low ceiling. Auto: on only when VikHavn Combat Moveset Additions is installed (it then drives the crawl). On / Off: always.");
-            s_mode.SettingChanged += (sender, args) =>
+            // 1086 ([generator], Fire 11-01: configs live in their own mods): [Crawling] Crawling is the owner's (FAPM); no Core bind
+            if (s_hooked) return;
+            s_hooked = true;
+            s_mode.Changed += () =>
             {
                 s_resolvedFor = -1;
                 if (!Enabled && s_active) End(Player.m_localPlayer, "crawling is off (config)");
@@ -53,12 +54,13 @@ namespace FiresCore.Movement
         {
             get
             {
-                CrawlingMode mode = s_mode != null ? s_mode.Value : CrawlingMode.Auto;
-                if (s_resolvedFor == (int)mode) return s_enabled;
+                if (!AdvancedMovement.Installed) return false;   // 0.2.1043: the APM gate (vanilla without Fires Advanced Player Movement)
+                CrawlingMode mode = s_mode.Value;   // 0.2.1038: FAT's setting when it provides it
+                if (s_resolvedFor == (int)mode && FiresCore.Config.CoreFeatures.Resolved) return s_enabled;
                 s_vikHavn = BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey(VikHavnGuid);
-                s_enabled = mode == CrawlingMode.On || (mode == CrawlingMode.Auto && s_vikHavn);
+                s_enabled = mode == CrawlingMode.On || (mode == CrawlingMode.Auto && FiresCore.Config.CoreFeatures.IsLive(FiresCore.Config.CoreFeatures.Crawling));
                 s_resolvedFor = (int)mode;
-                string why = mode == CrawlingMode.Auto ? $"Auto: VikHavn {(s_vikHavn ? "present" : "not installed")}" : $"{mode} (config)";
+                string why = mode == CrawlingMode.Auto ? $"Auto: APM {(s_enabled ? "installed" : "not installed")}" : $"{mode} (config)";
                 FiresCore.Logging.FiresLogger.LogDebug($"[Crawl] crawling {(s_enabled ? "ON" : "OFF")} ({why}); owner: " +
                                                        (s_vikHavn ? "VikHavn (Core delegates its low-ceiling crawl)" : "Core"));
                 return s_enabled;
@@ -83,6 +85,7 @@ namespace FiresCore.Movement
         internal static void Begin(Player player, string why)
         {
             if (s_active || player == null) return;
+            if (player.InAttack()) return;   // 0.2.849: never mid-swing (Headroom logs "[Crawl] deferred: in attack" and re-checks)
             bool ok = s_vikHavn ? VikHavnProne(player, true) : CoreBegin(player);
             if (!ok) return;
             s_active = true;
@@ -98,16 +101,12 @@ namespace FiresCore.Movement
             if (why != null) FiresCore.Logging.FiresLogger.LogDebug($"[Crawl] end ({why})");
         }
 
-        // Core's own crawl: a lower capsule (centre scaled the same way) and a slower crouch.
+        // Core's own crawl: VikHavn's prone pose, ported (CrawlPose): the synced prone flag lowers the capsule and swaps
+        // in the crawl clips on every peer, and the prone effect sets the speed.
         private static bool CoreBegin(Player player)
         {
-            var capsule = player.GetCollider();
-            if (capsule == null) return false;
             StandingCapsule(player);
-            capsule.height = s_standingCapsule * CoreHeightShare;
-            capsule.center = new Vector3(s_standingCenter.x, s_standingCenter.y * CoreHeightShare, s_standingCenter.z);
-            s_crouchSpeed = player.m_crouchSpeed;
-            player.m_crouchSpeed = s_crouchSpeed * CoreSpeedShare;
+            if (!FiresCore.Movement.CrawlPose.CrawlPose.SetProne(player, true, "low ceiling")) return false;
             s_coreCrawling = true;
             return true;
         }
@@ -115,11 +114,7 @@ namespace FiresCore.Movement
         private static void CoreEnd(Player player)
         {
             s_coreCrawling = false;
-            if (player == null) return;
-            var capsule = player.GetCollider();
-            if (capsule != null && s_standingCapsule > 0f) { capsule.height = s_standingCapsule; capsule.center = s_standingCenter; }
-            if (s_crouchSpeed > 0f) player.m_crouchSpeed = s_crouchSpeed;
-            s_crouchSpeed = -1f;
+            if (player != null) FiresCore.Movement.CrawlPose.CrawlPose.SetProne(player, false, "ceiling lifted");
         }
 
         // VikHavn owns the pose: its own prone switch (LocalProneController.SetProne writes its ZDO flag and its speed effect). Prone ends
@@ -129,7 +124,7 @@ namespace FiresCore.Movement
             if (!s_vikLookedUp)
             {
                 s_vikLookedUp = true;
-                var type = AccessTools.TypeByName("VikHavnCombat.Modules.Stance.LocalProneController");
+                var type = FiresCore.Compat.OptionalTypes.Find("VikHavnCombat.Modules.Stance.LocalProneController");
                 s_vikSetProne = type != null ? AccessTools.Method(type, "SetProne", new[] { typeof(Player), typeof(bool) }) : null;
                 if (s_vikSetProne == null) Debug.LogWarning("[Crawl] VikHavn is installed but its prone switch wasn't found; Core won't crawl");
             }

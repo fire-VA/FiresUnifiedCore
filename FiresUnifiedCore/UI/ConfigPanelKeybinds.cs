@@ -155,6 +155,7 @@ namespace FiresCore.UI
                 int ignored = Conflicts().Count - unresolved.Count;
                 string suffix = ignored > 0 ? $" ({ignored} ignored)" : "";
                 FiresConfigUI.Log.LogInfo("[Keybinds] " + KeybindConflictDetector.Summarize(unresolved) + suffix);
+                FiresConfigUI.Log.LogInfo($"[Keybinds] keybind conflicts: {unresolved.Count} real ({KeybindConflictDetector.LastIgnoredCount} modifier-only ignored)");
             }
             catch (Exception ex) { FiresConfigUI.Log.LogWarning("keybinds: conflict summary failed: " + ex.Message); }
         }
@@ -319,7 +320,7 @@ namespace FiresCore.UI
 
         private static string MemberReadOnlyHint(KeybindEntry member)
         {
-            if (member.IsLocked) return "locked by the server";
+            if (member.IsLocked) return (member.Entry != null ? CfgTags.Read(member.Entry.Description).ReadOnlyReasonNow() : null) ?? "locked by the server";
             return string.IsNullOrEmpty(member.ChangeHint) ? "not changeable here" : member.ChangeHint;
         }
 

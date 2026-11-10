@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -183,8 +183,8 @@ namespace FiresCore.Npc.Core
         {
             var storage = StorageInventory;
             if (storage == null) return false;
-            
-            foreach (var item in storage.GetAllItems())
+
+            foreach (var item in CompanionInventory.StorageItemsOf(storage)) // storage rows only
             {
                 if (item == null) continue;
                 string dropName = item.m_dropPrefab?.name ?? "";
@@ -216,7 +216,7 @@ namespace FiresCore.Npc.Core
             if (storage == null) return 0;
             
             int count = 0;
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storage)) // storage rows only
             {
                 if (item == null) continue;
                 string dropName = item.m_dropPrefab?.name ?? "";
@@ -386,6 +386,8 @@ namespace FiresCore.Npc.Core
             {
                 Debug.Log($"[{BehaviorName}] {result.Message}");
             }
+            // Every deposit, item counts
+            if (result.ItemsDeposited > 0) FiresCore.Logging.FiresLogger.LogDebug($"[Deposit] {BehaviorName}: {result.ItemsDeposited} item(s) into chests near ({CurrentPosition.x:0}, {CurrentPosition.z:0}): {result.Message}");
             
             return result.ItemsDeposited;
         }
@@ -428,7 +430,7 @@ namespace FiresCore.Npc.Core
         public void LogState(string context = "")
         {
             var status = GetInventoryStatus();
-            Debug.Log($"[{BehaviorName}] {context} - Chests: {ChestCount}, Inv: {status.FreeSlots}/{status.TotalSlots} slots, {status.WeightPercent:F0}% weight");
+            FiresCore.Logging.FiresLogger.LogDebug($"[{BehaviorName}] {context} - Chests: {ChestCount}, Inv: {status.FreeSlots}/{status.TotalSlots} slots, {status.WeightPercent:F0}% weight");
         }
         
         /// <summary>
@@ -439,18 +441,18 @@ namespace FiresCore.Npc.Core
             var storage = StorageInventory;
             if (storage == null)
             {
-                Debug.Log($"[{BehaviorName}] {context} - No inventory");
+                FiresCore.Logging.FiresLogger.LogDebug($"[{BehaviorName}] {context} - No inventory");
                 return;
             }
             
             var items = storage.GetAllItems();
-            Debug.Log($"[{BehaviorName}] {context} - Inventory has {items.Count} item stacks:");
+            FiresCore.Logging.FiresLogger.LogDebug($"[{BehaviorName}] {context} - Inventory has {items.Count} item stacks:");
             foreach (var item in items)
             {
                 if (item != null)
                 {
                     string dropName = item.m_dropPrefab?.name ?? "?";
-                    Debug.Log($"  - {item.m_shared?.m_name} (prefab: {dropName}) x{item.m_stack}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"  - {item.m_shared?.m_name} (prefab: {dropName}) x{item.m_stack}");
                 }
             }
         }

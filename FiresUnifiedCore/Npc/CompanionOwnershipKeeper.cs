@@ -8,15 +8,15 @@ namespace FiresCore.Npc
     /// <summary>
     /// Keeps a companion's ZDO on its owner's peer while the owner is near. A companion simulates only on its ZDO owner, and that is
     /// where its owner's hits are seen (OwnerAssist); vanilla's ReleaseNearbyZDOS hands a ZDO to another covering peer whenever the
-    /// owner's active area briefly misses it (a teleport, a drill hop), and nothing handed it back (R68: "[Drill] took back
-    /// FiresBot.fighter (its ZDO was owned by another peer)"). FGN never claims tamed ZDOs for the server, but like vanilla it hands one to
-    /// a covering peer when the owner's REPORTED reference position doesn't cover it ([fgn] 10-01). Every <see cref="Interval"/> s on the
+    /// owner's active area briefly misses it (a teleport, a drill hop), and nothing handed it back. FGN never claims tamed ZDOs for the server, but like vanilla it hands one to
+    /// a covering peer when the owner's REPORTED reference position doesn't cover it. Every <see cref="Interval"/> s on the
     /// owner's own machine: each of its companions within <see cref="Radius"/> m (inside the owner's guaranteed zone coverage) that this
     /// peer does not own is claimed back; never while the owner teleports.
-    /// 0.2.265 (HR1: 85 hand-backs between the bot and the observer in 6 min, every chore cancelled at 0 s): the server keeps it there
+    /// The server keeps it there
     /// too (<see cref="ZDOMan_ReleaseZDOS_KeepCompanions"/>), and a cart or ship far from its owner's player no longer drags that player's
     /// reference position away (<see cref="Tracker_FixedUpdate_NearOnly"/>).
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class CompanionOwnershipKeeper
     {
         private const float Interval = 2f, Radius = 64f;
@@ -43,22 +43,28 @@ namespace FiresCore.Npc
                 if (companion == null || companion.ownerPlayerId != ownerId) continue;
                 ZNetView view = companion.GetComponent<ZNetView>();
                 if (view == null || !view.IsValid() || view.IsOwner()) continue;
-                if (CompanionPossession.IsPossessed(view)) continue;   // 0.2.292: its possessor's peer keeps it (FGN 1.5.37 too)
+                if (ServerKeeps(view.GetZDO())) continue;   // the server keeps it (fgn_server_keeps)
+                if (CompanionPossession.IsPossessed(view)) continue;   // Its possessor's peer keeps it (FGN 1.5.37 too)
                 if (Vector3.Distance(at, companion.transform.position) > Radius) continue;
                 long previous = view.GetZDO().GetOwner();
                 view.ClaimOwnership();
-                Debug.Log($"[CompanionOwnership] {companion.companionName} reclaimed from peer {previous} "
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionOwnership] {companion.companionName} reclaimed from peer {previous} "
                           + $"({Vector3.Distance(at, companion.transform.position):0} m from its owner)");
             }
         }
 
-        // ── 0.2.265: the server keeps a near companion with its owner's peer ([lead]: real MP players hit the same thing) ──────────
+        // ── The server keeps a near companion with its owner's peer ──────────
         // Right after vanilla's (or FGN's) ownership pass (ZDOMan.ReleaseZDOS, server only, every 2 s; m_releaseZDOTimer is 0 just
         // after it ran): for each player (each peer's character ZDO, and the host's own player), every tamed companion ZDO of theirs
         // within Radius m that another peer (or nobody) owns goes back to that player's peer. One line per companion per minute.
 
         private static readonly int s_ownerKey = "companion_owner".GetStableHashCode(), s_tamedKey = "companion_tamed".GetStableHashCode(),
             s_nameKey = "companion_name".GetStableHashCode(), s_displayKey = "companion_displayname".GetStableHashCode();
+        /// <summary>FGN 1.6.24's generic opt-in: the server keeps this ZDO and never hands it to a peer (the Studio god clone). The
+        /// keeper honours the same flag: no second rule.</summary>
+        public const string ServerKeepsKey = "fgn_server_keeps";
+        private static readonly int s_serverKeeps = ServerKeepsKey.GetStableHashCode();
+        public static bool ServerKeeps(ZDO zdo) => zdo != null && zdo.GetBool(s_serverKeeps);
         private static readonly List<ZDO> s_near = new List<ZDO>();
         private static readonly Dictionary<ZDOID, (float at, int quiet)> s_said = new Dictionary<ZDOID, (float, int)>();
         private static bool s_serverFailed;
@@ -96,16 +102,54 @@ namespace FiresCore.Npc
                 long playerId = body.GetLong(ZDOVars.s_playerID, 0L);
                 if (playerId != 0L) KeepFor(man, playerId, body.GetPosition(), peer.m_uid, near);
             }
+            if (ZNet.instance.IsDedicated()) GiveWildToNearestPeer(man, near);
+        }
+
+        // FGN ServerOwnership-V3 simulates
+        // every Character on the server, wild companions included; a headless server does not
+        // animate it, so the client saw it unanimated at the server's position. Runs after vanilla's / FGN's ownership pass: a WILD companion
+        // (not tamed) the dedicated server owns, within Radius of a player, goes to the NEAREST player's peer. Tamed ones: KeepFor above.
+        private static readonly int s_wildPrefab = "CompanionNpc_Wild".GetStableHashCode(), s_companionPrefab = "CompanionNpc".GetStableHashCode();
+        private static readonly List<ZDO> s_wildNear = new List<ZDO>();
+        private static void GiveWildToNearestPeer(ZDOMan man, SimulationDistance near)
+        {
+            long server = ZDOMan.GetSessionID();
+            var bodies = new List<(long uid, Vector3 pos)>();
+            foreach (ZNetPeer peer in ZNet.instance.GetPeers())
+            {
+                if (peer == null || peer.m_characterID.IsNone()) continue;
+                ZDO body = man.GetZDO(peer.m_characterID);
+                if (body != null) bodies.Add((peer.m_uid, body.GetPosition()));
+            }
+            foreach (var (uid, pos) in bodies)
+            {
+                s_wildNear.Clear();
+                man.FindSectorObjects(FiresCore.World.RingZones.ObjectSector(pos), near, s_wildNear);   // halo ring: the ring object-sector id
+                foreach (ZDO zdo in s_wildNear)
+                {
+                    if (zdo == null || zdo.GetOwner() != server || ServerKeeps(zdo)) continue;
+                    int prefab = zdo.GetPrefab();
+                    if ((prefab != s_wildPrefab && prefab != s_companionPrefab) || zdo.GetBool(s_tamedKey)) continue;
+                    float mine = Vector3.Distance(pos, zdo.GetPosition());
+                    if (mine > Radius) continue;
+                    bool nearest = true;
+                    foreach (var (other, opos) in bodies) if (other != uid && Vector3.Distance(opos, zdo.GetPosition()) < mine) { nearest = false; break; }
+                    if (!nearest) continue;
+                    zdo.SetOwner(uid);
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionOwnership] wild '{zdo.GetString(s_nameKey, "?")}' handed from the server to the nearest player's peer {uid} ({mine:0} m): the server does not animate it");
+                }
+            }
         }
 
         private static void KeepFor(ZDOMan man, long playerId, Vector3 at, long peerUid, SimulationDistance near)
         {
             s_near.Clear();
-            man.FindSectorObjects(ZoneSystem.GetZone(at), near, s_near);
+            man.FindSectorObjects(FiresCore.World.RingZones.ObjectSector(at), near, s_near);   // halo ring: the ring object-sector id
             foreach (ZDO zdo in s_near)
             {
                 if (zdo == null || zdo.GetOwner() == peerUid) continue;
-                if (CompanionPossession.IsPossessed(zdo)) continue;   // 0.2.292: its possessor's peer keeps it
+                if (ServerKeeps(zdo)) continue;   // the server keeps it (fgn_server_keeps)
+                if (CompanionPossession.IsPossessed(zdo)) continue;   // Its possessor's peer keeps it
                 if (zdo.GetLong(s_ownerKey, 0L) != playerId || !zdo.GetBool(s_tamedKey)) continue;
                 if (Vector3.Distance(at, zdo.GetPosition()) > Radius) continue;
                 long would = zdo.GetOwner();
@@ -116,7 +160,7 @@ namespace FiresCore.Npc
                 s_said[zdo.m_uid] = (now, 0);
                 string name = zdo.GetString(s_displayKey, "");
                 if (name.Length == 0) name = zdo.GetString(s_nameKey, "a companion");
-                Debug.Log($"[CompanionOwnership] kept {name} with its owner's peer {peerUid} ({Vector3.Distance(at, zdo.GetPosition()):0} m from its owner); " +
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionOwnership] kept {name} with its owner's peer {peerUid} ({Vector3.Distance(at, zdo.GetPosition()):0} m from its owner); " +
                           $"the server would have given it to {PeerName(would)}{(quiet > 0 ? $" (and {quiet} more time(s) in the last minute)" : "")}");
             }
         }
@@ -129,7 +173,7 @@ namespace FiresCore.Npc
             return peer != null ? $"{peer.m_playerName} ({uid})" : $"peer {uid}";
         }
 
-        // ── 0.2.265: a far cart or ship no longer moves its owner's reference position ([fgn] 10-01) ────────────────────────────────
+        // ── A far cart or ship no longer moves its owner's reference position ────────────────────────────────
         // Vanilla Tracker.FixedUpdate sets ZNet's reference position to its cart / ship every tick on the machine that owns it, after
         // Player.Update set it to the player; the reference position sent to the server every 2 s is then the cart's, wherever it is
         // parked, the server thinks that player covers none of its own surroundings, and hands its companions (and everything else it
@@ -154,7 +198,7 @@ namespace FiresCore.Npc
                 {
                     s_trackerSaid[id] = Time.time;
                     Vector3 p = __instance.transform.position;
-                    Debug.Log($"[CompanionOwnership] {Utils.GetPrefabName(__instance.gameObject)} at ({p.x:0}, {p.z:0}) is {far:0} m from {me.GetPlayerName()}: " +
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionOwnership] {Utils.GetPrefabName(__instance.gameObject)} at ({p.x:0}, {p.z:0}) is {far:0} m from {me.GetPlayerName()}: " +
                               "its reference position stays on the player (vanilla would move it to the tracker, and the server would hand this player's surroundings to others)");
                 }
                 return false;

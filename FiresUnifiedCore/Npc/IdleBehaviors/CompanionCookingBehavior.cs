@@ -13,6 +13,7 @@ namespace FiresCore.Npc.IdleBehaviors
     /// food and refilling freed slots until nothing is left, and deposits the results through
     /// SmartStorageOrganizer before reporting back.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     public class CompanionCookingBehavior : WorkBehaviorBase<CompanionCookingBehavior.CookPhase>
     {
         public override string BehaviorName => "CompanionCooking";
@@ -54,6 +55,7 @@ namespace FiresCore.Npc.IdleBehaviors
         // tuneable constants
 
         private const float StationScanRadius  = 12f;
+        private const float JobBoardStationRadius = 30f;   // 0.2.844: = JobBoard.ChestRadius
         private float ChestSearchRadius => CompanionSettings.ChestSearchRadius;
         private const float InteractionDist     = 2.0f;
         private const float MaxCookTime        = 300f;  // 5-minute global cap
@@ -406,6 +408,24 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // phase handlers
 
+        // The pivot of a cooking station on a
+        // fire sits inside solid pieces, so a navmesh path to it fails; test the spot the companion actually walks to (the
+        // interaction point in front of it), as the move does.
+        // The navmesh path query can fail on a built floor
+        // even right next to the station. Vanilla MoveTo walks straight when close, so a station within 10 m with a clear line of
+        // walk is reachable too. The point, the distance and both results go to Debug once per station per scan.
+        private bool StationReachable(CookingStation station)
+        {
+            Vector3 point = InteractionPointHelper.GetInteractionPoint(station.gameObject, Transform.position, InteractionDist);
+            bool nav = IsReachable(point);
+            if (nav) return true;
+            float dist = Vector3.Distance(Transform.position, point);
+            Vector3 from = Transform.position + Vector3.up * 0.8f, to = point + Vector3.up * 0.8f;
+            bool clear = dist <= 10f && !Physics.Linecast(from, to, LayerMask.GetMask("Default", "static_solid", "piece"), QueryTriggerInteraction.Ignore);
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCooking] {Companion?.companionName} reach {station.name}: point {point:F1}, {dist:0.0} m, navmesh path {nav}, close+clear {clear}");
+            return clear;
+        }
+
         private bool UpdateScanning()
         {
             // Refresh station list in case of world changes.
@@ -413,7 +433,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
             if (_stations.Count == 0)
             {
-                LogVerbose("Scan: no stations found");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCooking] {Companion?.companionName} scan: no cooking stations found");
                 SetPhase(CookPhase.Complete);
                 return false;
             }
@@ -422,7 +442,7 @@ namespace FiresCore.Npc.IdleBehaviors
             foreach (var station in _stations)
             {
                 if (_failedStations.Contains(station)) continue;
-                if (!IsReachable(station.transform.position)) { _failedStations.Add(station); continue; }
+                if (!StationReachable(station)) { _failedStations.Add(station); continue; }
                 if (HasFinishedFood(station))
                 {
                     // EARLY RESERVATION so other companions don't pick the same station.
@@ -444,7 +464,7 @@ namespace FiresCore.Npc.IdleBehaviors
             foreach (var station in _stations)
             {
                 if (_failedStations.Contains(station)) continue;
-                if (!IsReachable(station.transform.position)) { _failedStations.Add(station); continue; }
+                if (!StationReachable(station)) { _failedStations.Add(station); continue; }
                 if (!HasFreeSlot(station)) continue;
 
                 if (HasRawFoodForStation(station, GetStorageInventory()))
@@ -479,13 +499,20 @@ namespace FiresCore.Npc.IdleBehaviors
                     _currentStation = station;
                     LogVerbose($"Scan: found raw food in chest for {station.name}");
                     SetPhase(CookPhase.MovingToChest);
+                    InteractTarget = _rawFoodChest != null ? _rawFoodChest.gameObject : null;   // [ghost] 10-26: arrive within interaction reach
                     MoveToPosition(InteractionPointHelper.GetContainerInteractionPoint(
                         _rawFoodChest, Transform.position, InteractionDist));
                     return false;
                 }
             }
 
-            LogVerbose("Scan: nothing to do");
+            // Why, at Debug.
+            {
+                var storageForLog = GetStorageInventory();
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCooking] {Companion?.companionName} scan: nothing to do - {_stations.Count} station(s) "
+                    + $"({string.Join(", ", _stations.Select(s => $"{s.name}: reachable {StationReachable(s)}, free slot {HasFreeSlot(s)}, failed {_failedStations.Contains(s)}"))}); "
+                    + $"storage {(storageForLog == null ? "none" : storageForLog.NrOfItems() + " item(s)")}, owner {(Companion != null && Companion.GetComponent<ZNetView>() is ZNetView nv && nv.IsValid() ? nv.IsOwner().ToString() : "?")}");
+            }
             SetPhase(CookPhase.Complete);
             return false;
         }
@@ -606,9 +633,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 ItemDrop.ItemData raw = FindRawFoodForStation(_currentStation, storage);
                 if (raw == null) break;
 
+                // Vanilla CookItem takes the item from user.GetInventory(), which IS this storage since audit slice 5.
                 if (_currentStation.UseItem(Humanoid, raw))
                 {
-                    storage.RemoveOneItem(raw);
                     SaveInventory();
                     addedAny = true;
                     LogVerbose($"Loaded {raw.m_shared.m_name} onto station");
@@ -741,9 +768,8 @@ namespace FiresCore.Npc.IdleBehaviors
                     ItemDrop.ItemData raw = FindRawFoodForStation(_currentStation, storage);
                     if (raw == null) break;
 
-                    if (_currentStation.UseItem(Humanoid, raw))
+                    if (_currentStation.UseItem(Humanoid, raw)) // takes it from storage itself (slice 5: one bag)
                     {
-                        storage.RemoveOneItem(raw);
                         SaveInventory();
                         actedThisTick = true;
                         LogVerbose($"Refilled slot with {raw.m_shared.m_name}");
@@ -893,7 +919,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _toDeposit.Clear();
             if (storage != null)
             {
-                foreach (var item in storage.GetAllItems())
+                foreach (var item in CompanionInventory.StorageItemsOf(storage))
                     if (item != null && IsCookedFood(item))
                         _toDeposit.Add(item);
             }
@@ -965,12 +991,16 @@ namespace FiresCore.Npc.IdleBehaviors
 
         // helpers - stations
 
-        // One set of station rules with the bot's base chores (0.2.237): ChoreBrain.CookingStationsNear (fed directly, this
+        // One set of station rules with the bot's base chores: ChoreBrain.CookingStationsNear (fed directly, this
         // companion's reservations), nearest first.
         private List<CookingStation> FindCookingStations()
         {
             if (Transform == null) return new List<CookingStation>();
-            return AI.ChoreBrain.CookingStationsNear(SearchCenter, GetEffectiveSearchRadius(StationScanRadius), Transform.position, Character);
+            // 0.2.844 (lead): a staying companion looks as far as the Job Board does (30 m from the Stay point), so the board never offers "Cook food"
+            // for a station the chore then can't see ("no cooking stations nearby" x30 while the board said the job could run)
+            float r = GetEffectiveSearchRadius(StationScanRadius);
+            if (IdleBehavior != null && IdleBehavior.HasHomePosition && Companion != null && !Companion.ShouldBeFollowing) r = Mathf.Max(r, JobBoardStationRadius);
+            return AI.ChoreBrain.CookingStationsNear(SearchCenter, r, Transform.position, Character);
         }
 
         private void ReleaseStation()
@@ -1060,7 +1090,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             var storage = GetStorageInventory();
             if (storage == null) return false;
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(storage))
                 if (item != null && IsRawCookable(item))
                     return true;
             return false;
@@ -1085,7 +1115,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool HasRawFoodForStation(CookingStation station, Inventory inv)
         {
             if (station == null || inv == null) return false;
-            foreach (var item in inv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(inv))
                 if (item != null && IsRawFor(station, item))
                     return true;
             return false;
@@ -1095,7 +1125,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private ItemDrop.ItemData FindRawFoodForStation(CookingStation station, Inventory inv)
         {
             if (station == null || inv == null) return null;
-            foreach (var item in inv.GetAllItems())
+            foreach (var item in CompanionInventory.StorageItemsOf(inv)) // storage rows only
                 if (item != null && IsRawFor(station, item))
                     return item;
             return null;
@@ -1137,7 +1167,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// contains raw food <paramref name="station"/> can cook.</summary>
         private Container FindChestWithRawFood(CookingStation station)
         {
-            // 0.2.256 ([ghost]): CanStart asks here before any Start has filled the chest list, so a companion carrying no raw food never
+            // CanStart asks here before any Start has filled the chest list, so a companion carrying no raw food never
             // saw the base chests' meat. A throttled refresh (5 s / 5 m), as ChestDepositV2's CanStart does.
             if (station == null || Resources.RefreshNearbyChests() == 0) return null;
 

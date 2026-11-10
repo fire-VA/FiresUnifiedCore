@@ -60,8 +60,8 @@ namespace FiresCore.Input
             KeybindRegistry.Register(this);
         }
 
-        // BepInEx refuses these in a section or key name and throws from Bind (R77: a VikHavn key with an apostrophe aborted that mod's
-        // setup on all three peers). A binding name comes from the calling mod, so Core cleans it instead of throwing (0.2.204).
+        // BepInEx refuses these in a section or key name and throws from Bind (a key with an apostrophe aborted a mod's
+        // setup on all three peers). A binding name comes from the calling mod, so Core cleans it instead of throwing.
         private static readonly char[] RefusedConfigChars = { '=', '\n', '\t', '\\', '"', '\'', '[', ']' };
 
         /// <summary>
@@ -118,7 +118,12 @@ namespace FiresCore.Input
         // Gated centrally: while a Fires text field is focused, no KeyBinding hotkey fires (the keys are being
         // typed). Raw UnityEngine.Input can't be Harmony-patched, so every KeyBinding-based hotkey checks here.
         public bool IsPressed()
-            => !FiresInputBlock.IsCapturing && FiresKeys.GetKeyDown(Key.Value) && ModifiersMatch();
+        {
+            if (FiresInputBlock.IsCapturing || !FiresKeys.GetKeyDown(Key.Value) || !ModifiersMatch()) return false;
+            // A modifier binding that fires swallows the vanilla button on its key (vanilla ignores modifiers).
+            if (Ctrl.Value || Shift.Value || Alt.Value) FiresInputBlock.ConsumeThisFrame(Key.Value);
+            return true;
+        }
 
         public bool IsHeld()
             => !FiresInputBlock.IsCapturing && FiresKeys.GetKey(Key.Value) && ModifiersMatch();

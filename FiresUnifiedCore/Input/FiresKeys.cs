@@ -5,7 +5,7 @@ namespace FiresCore.Input
 {
     /// <summary>
     /// Where every Fires key read goes (KeyBinding, Chord, and the mods' own direct reads), so a test can press a key through
-    /// the same code a player's key goes through (Fire, popup 2026-09-28: the UI-driven class test). UnityEngine.Input is an
+    /// the same code a player's key goes through (e.g. a UI-driven class test). UnityEngine.Input is an
     /// engine InternalCall that can't be Harmony-patched reliably, so the seam is here instead. Outside a test this is exactly
     /// UnityEngine.Input: the injection sets are empty unless a test owner holds them.
     /// </summary>

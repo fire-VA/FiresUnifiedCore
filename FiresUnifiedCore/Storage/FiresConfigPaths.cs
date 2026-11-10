@@ -74,7 +74,25 @@ namespace FiresCore.Storage
         public static string Presets     => Ensure(Path.Combine(Root, "Presets"));
         public static string Recipes     => Ensure(Path.Combine(Root, "Recipes"));
         public static string Creatures   => Ensure(Path.Combine(Root, "Creatures"));
-        public static string Cache       => Ensure(Path.Combine(Debug, "Cache"));
+        // Config profiles stay small: caches live in <BepInEx>\cache\FiresRPGmaker, same relative layout.
+        public static string Cache       => Ensure(Path.Combine(CacheRoot, "Debug", "Cache"));
+        public static string CacheRoot   => Ensure(Path.Combine(BepInEx.Paths.BepInExRootPath, "cache", RootName));
+
+        // A folder inside the config Root -> the same relative folder under CacheRoot (FiresServerScope.ScopedDir's per-server copies);
+        // anything else is returned unchanged.
+        public static string ToCacheTree(string dir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dir)) return dir;
+                string full = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar);
+                string root = Path.GetFullPath(Path.Combine(BepInEx.Paths.ConfigPath, RootName)).TrimEnd(Path.DirectorySeparatorChar);
+                if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase)) return CacheRoot;
+                if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return dir;
+                return Ensure(Path.Combine(CacheRoot, full.Substring(root.Length + 1)));
+            }
+            catch { return dir; }
+        }
 
         public static string PresetsFor(string modName) =>
             Ensure(Path.Combine(Presets, string.IsNullOrWhiteSpace(modName) ? "Mod" : modName.Trim()));
@@ -108,6 +126,12 @@ namespace FiresCore.Storage
         {
             if (string.IsNullOrEmpty(flatKey)) return Root;
             var parts = flatKey.Replace('\\', '/').Trim('/').Split('/');
+            if (string.Equals(parts[0], "cache", StringComparison.OrdinalIgnoreCase))   // Cache moved to CacheRoot
+            {
+                string c = Cache;
+                for (int i = 1; i < parts.Length; i++) c = Path.Combine(c, parts[i]);
+                return Ensure(c);
+            }
             string rel = _topMap.TryGetValue(parts[0], out var mapped) ? mapped : parts[0];
             for (int i = 1; i < parts.Length; i++) rel = Path.Combine(rel, parts[i]);
             return Ensure(Path.Combine(Root, rel.Replace('/', Path.DirectorySeparatorChar)));
@@ -190,8 +214,73 @@ namespace FiresCore.Storage
                 TryDeleteEmpty(Path.Combine(cfg, "firesnpcs"));
                 TryDeleteEmpty(Path.Combine(cfg, "FiresNPCs_Sounds"));
                 TryDeleteEmpty(Path.Combine(cfg, "FiresNPCs_PatrolRoutes"));
+
+                MigrateToCacheRoot();
             }
             catch (Exception ex) { UnityEngine.Debug.LogWarning("[FiresConfigPaths] Migrate failed: " + ex.Message); }
+        }
+
+        // Debug\Cache and every per-server scoped copy (s<host> / h<worldUID> / unknown folders made by
+        // FiresServerScope.ScopedDir) move from config to CacheRoot. Same volume, so each folder is one Directory.Move: a rename,
+        // atomic, nothing copied, nothing deleted. A target that already has content is NEVER merged or overwritten: the old folder
+        // stays in config, with a warning. One Info line per run with the count and MB.
+        private static readonly System.Text.RegularExpressions.Regex _scopedName =
+            new System.Text.RegularExpressions.Regex(@"^(s[A-Za-z0-9_]*\d[A-Za-z0-9_]*|h[0-9A-F]+|unknown)$");
+
+        private static void MigrateToCacheRoot()
+        {
+            int moved = 0, kept = 0; long bytes = 0;
+            var names = new List<string>();
+            try
+            {
+                string root = Path.GetFullPath(Root).TrimEnd(Path.DirectorySeparatorChar);
+                // 1) Debug\Cache
+                MoveWhole(Path.Combine(root, "Debug", "Cache"), Path.Combine(CacheRoot, "Debug", "Cache"), ref moved, ref kept, ref bytes, names);
+                // 2) scoped per-server copies anywhere under Root (NPCs\SavedNPCs\s<uid>, Root\s<uid> for dialogue cooldowns, ...)
+                foreach (var dir in Directory.GetDirectories(root, "*", SearchOption.AllDirectories))
+                {
+                    if (!Directory.Exists(dir)) continue;   // already moved with a parent
+                    if (!_scopedName.IsMatch(Path.GetFileName(dir))) continue;
+                    string rel = Path.GetFullPath(dir).Substring(root.Length + 1);
+                    MoveWhole(dir, Path.Combine(CacheRoot, rel), ref moved, ref kept, ref bytes, names);
+                }
+            }
+            catch (Exception ex) { UnityEngine.Debug.LogWarning("[FiresConfigPaths] cache move stopped: " + ex.Message + " (what moved stays moved; the rest stays in config)"); }
+            // World is real per-world data (player progress), never a cache: it stays in config. Its size is logged each start so
+            // a growth toward the profile limit shows before it becomes a problem.
+            try
+            {
+                long worldBytes = 0, rootBytes = 0;
+                foreach (var f in Directory.GetFiles(World, "*", SearchOption.AllDirectories)) worldBytes += new FileInfo(f).Length;
+                foreach (var f in Directory.GetFiles(Root, "*", SearchOption.AllDirectories)) rootBytes += new FileInfo(f).Length;
+                string msg = "[FiresConfigPaths] config\\" + RootName + " is " + (rootBytes / 1048576.0).ToString("0.0") + " MB; World (stays in config) "
+                             + (worldBytes / 1048576.0).ToString("0.0") + " MB";
+                if (worldBytes > 8L * 1048576L) UnityEngine.Debug.LogWarning(msg + " - nearing the 10 MB profile limit; World should move next to the world saves");
+                else UnityEngine.Debug.Log(msg);
+            }
+            catch { }
+            if (moved > 0 || kept > 0)
+                UnityEngine.Debug.Log("[FiresConfigPaths] moved " + moved + " cache folder(s), " + (bytes / 1048576.0).ToString("0.0") + " MB, from config\\" + RootName
+                    + " to " + CacheRoot + "; " + kept + " left in config (target already had content)"
+                    + (names.Count > 0 ? ": " + string.Join(", ", names.GetRange(0, Math.Min(8, names.Count)).ToArray()) + (names.Count > 8 ? " (+" + (names.Count - 8) + ")" : "") : ""));
+        }
+
+        private static void MoveWhole(string src, string dst, ref int moved, ref int kept, ref long bytes, List<string> names)
+        {
+            if (!Directory.Exists(src)) return;
+            if (Directory.Exists(dst) && Directory.GetFileSystemEntries(dst).Length > 0)
+            {
+                kept++;
+                UnityEngine.Debug.LogWarning("[FiresConfigPaths] '" + dst + "' already has content; '" + src + "' stays in config (not merged, not deleted)");
+                return;
+            }
+            long size = 0;
+            try { foreach (var f in Directory.GetFiles(src, "*", SearchOption.AllDirectories)) size += new FileInfo(f).Length; } catch { }
+            if (Directory.Exists(dst)) Directory.Delete(dst, false);   // empty (checked above): Ensure() may have created it
+            Directory.CreateDirectory(Path.GetDirectoryName(dst));
+            Directory.Move(src, dst);
+            moved++; bytes += size;
+            names.Add(Path.GetFileName(src));
         }
 
         private static void MoveDirInto(string src, string dst)

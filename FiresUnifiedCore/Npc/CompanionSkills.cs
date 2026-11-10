@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using System.Collections.Generic;
 
@@ -167,7 +167,7 @@ if (_initialized) return;
            _skills[skillType].accumulator = 0f;
 
         SaveToZDO();
-         Debug.Log($"[CompanionSkills] Set {skillType} to level {level}");
+         FiresCore.Logging.FiresLogger.LogDebug($"[CompanionSkills] Set {skillType} to level {level}");
   }
 
      /// <summary>
@@ -215,7 +215,7 @@ if (_initialized) return;
 // Only log level-ups for tamed companions to reduce log spam
 if (_companion?.isTamed == true)
 {
-    Debug.Log($"[CompanionSkills] {_companion?.companionName} leveled up {skillType} to {data.level}!");
+    FiresCore.Logging.FiresLogger.LogInfo($"[CompanionSkills] {_companion?.companionName} leveled up {skillType} to {data.level}!");
 }
        
        // Show level up effect and message
@@ -323,7 +323,7 @@ if (_companion?.isTamed == true)
 _skills[skillType] = new SkillData();
      }
     SaveToZDO();
-       Debug.Log($"[CompanionSkills] Reset all skills for {_companion?.companionName}");
+       FiresCore.Logging.FiresLogger.LogInfo($"[CompanionSkills] Reset all skills for {_companion?.companionName}");
      }
 
         /// <summary>

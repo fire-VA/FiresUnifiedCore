@@ -143,7 +143,7 @@ namespace FiresCore.ClientLogRelay.Interactions
             {
                 for (int i = 0; i < expired.Count; i++) _entries.Remove(expired[i]);
                 if (expired.Count > 0)
-                    Debug.Log($"[ClientLogRelay] LogRequestRegistry swept {expired.Count} expired entr(ies)");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[ClientLogRelay] LogRequestRegistry swept {expired.Count} expired entr(ies)");
             }
         }
     }

@@ -260,7 +260,7 @@ namespace FiresCore.UI
                 for (int y = 0; y < Grid; y++)
                     for (int x = 0; x < Grid; x++)
                         if (texture.GetPixel(width * x / Grid, height * y / Grid).a > 0.1f) opaque++;
-                Debug.Log($"[NpcPhoto] '{spawn.name}' shot {width}x{height} — opaque samples {opaque}/{Grid * Grid} (camera z offset {Mathf.Max(size.x, size.y) / Mathf.Tan(fieldOfView * Mathf.Deg2Rad):0.#}m)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[NpcPhoto] '{spawn.name}' shot {width}x{height} — opaque samples {opaque}/{Grid * Grid} (camera z offset {Mathf.Max(size.x, size.y) / Mathf.Tan(fieldOfView * Mathf.Deg2Rad):0.#}m)");
 
                 return Sprite.Create(texture, new Rect(0f, 0f, width, height), Vector2.one / 2f);
             }

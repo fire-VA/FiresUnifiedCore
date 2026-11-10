@@ -6,10 +6,10 @@ using UnityEngine;
 namespace FiresCore.Movement
 {
     /// <summary>
-    /// Player swimming (Core 0.2.298; Fire 10-05: swimming moves into Core "like crawling and climbing" with a toggle "so people can choose
-    /// to use it without galaxies"; "when a cave passes under a water plane (like the ocean) the water shouldnt be registered within the
-    /// cave, only cave water WE place should ever register a swim trigger"). Two modes since Fire's refinement (10-05 22:3x): "when we
-    /// surface we should remain boyant, but when we dive we should remain neutral ... so that diving is something purposeful".
+    /// Player swimming in Core (like crawling and climbing), with a toggle so it can be used
+    /// without Galaxies. When a cave passes under a water plane (like the ocean) that water is not registered within the
+    /// cave; only cave water we place registers a swim trigger. Two modes: surfaced the player stays
+    /// buoyant, diving is neutral, so diving is something purposeful.
     /// Setting [Swimming] Swimming = Auto | On | Off, default Auto: on when Fires Valheim Galaxies is installed. An explicit On or Off
     /// always wins; nothing here ever writes the setting.
     /// While on, for the local player:
@@ -26,6 +26,7 @@ namespace FiresCore.Movement
     /// Debug (never Info): "[Swim] swimming ON|OFF (why)", "[Swim] mode: surface -> dive (Ctrl)", "[Swim] mode: dive -> surface (reached
     /// the top)", "[Swim] dive: hold / rise / sink at y=...", "[Swim] the sea ignored under a cave roof at (...)", "[Swim] open water again".
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Swimming)]
     public static class PlayerSwim
     {
         public enum SwimmingMode { Auto, On, Off }
@@ -42,14 +43,16 @@ namespace FiresCore.Movement
         private const float HoldLead = 1f;           // a rise or sink never aims more than this past the body (a roof or the bed stops it)
         private const float ResyncDistance = 3f;     // pushed further than this from the held height (a current, a hit): hold where it is
         private const float SwimGapSeconds = 0.5f;   // no swim step for this long = left the water; the next swim starts at the surface
+        private const float BedClearance = 0.5f;     // 0.2.1132: a dive stops this far above the ground (Fire: walking the bottom is for iron boots later)
         private const float TopReached = 0.15f;      // within this of the float line counts as back at the top
 
-        private static ConfigEntry<SwimmingMode> s_mode;
-        private static ConfigEntry<float> s_verticalSpeed;
+        private static readonly FiresCore.Config.OwnedSetting<SwimmingMode> s_mode = new FiresCore.Config.OwnedSetting<SwimmingMode>("Swimming", "Swimming", SwimmingMode.Auto);   // 1086 ([generator], Fire 11-01: configs live in their own mods): owner FAPM
+        private static bool s_hooked;
+        private static readonly FiresCore.Config.OwnedSetting<float> s_verticalSpeed = new FiresCore.Config.OwnedSetting<float>("Swimming", "Vertical swim speed", 2.5f);
         private static int s_resolvedFor = -1;
         private static bool s_enabled, s_galaxies, s_galaxiesKnown;
 
-        private static bool s_diving;
+        private static bool s_diving, s_bedSaid;
         private static float s_holdY = float.NaN;
         private static float s_lastSwimTime = -100f;
         private static float s_savedSwimDepth = float.NaN;
@@ -59,13 +62,10 @@ namespace FiresCore.Movement
 
         internal static void Bind(ConfigFile config)
         {
-            s_mode = config.Bind("Swimming", "Swimming", SwimmingMode.Auto,
-                "Diving with neutral buoyancy (Crouch dives and sinks, Jump rises, otherwise keep your depth; back at the top you float as "
-                + "usual) and caves below the sea staying dry. Auto: on only when Fires Valheim Galaxies is installed. On / Off: always.");
-            s_verticalSpeed = config.Bind("Swimming", "Vertical swim speed", 2.5f,
-                new ConfigDescription("Metres per second the player rises or sinks while Jump or Crouch is held in a dive.",
-                    new AcceptableValueRange<float>(0.5f, 8f)));
-            s_mode.SettingChanged += (sender, args) => s_resolvedFor = -1;
+            // 1086 ([generator], Fire 11-01: configs live in their own mods): [Swimming] is the owner's (FAPM); no Core bind
+            if (s_hooked) return;
+            s_hooked = true;
+            s_mode.Changed += () => s_resolvedFor = -1;
         }
 
         /// <summary>True when Core drives player swimming.</summary>
@@ -73,11 +73,12 @@ namespace FiresCore.Movement
         {
             get
             {
-                SwimmingMode mode = s_mode != null ? s_mode.Value : SwimmingMode.Auto;
+                if (!AdvancedMovement.Installed) return false;   // 0.2.1043: the APM gate (vanilla without Fires Advanced Player Movement)
+                SwimmingMode mode = s_mode.Value;
                 if (s_resolvedFor == (int)mode) return s_enabled;
-                s_enabled = mode == SwimmingMode.On || (mode == SwimmingMode.Auto && GalaxiesInstalled);
+                s_enabled = mode != SwimmingMode.Off;   // 0.2.1047: Auto = on with APM (the gate above); was "with Galaxies"
                 s_resolvedFor = (int)mode;
-                string why = mode == SwimmingMode.Auto ? $"Auto: Galaxies {(GalaxiesInstalled ? "present" : "not installed")}" : $"{mode} (config)";
+                string why = mode == SwimmingMode.Auto ? "Auto: APM installed" : $"{mode} (config)";
                 FiresCore.Logging.FiresLogger.LogDebug($"[Swim] swimming {(s_enabled ? "ON" : "OFF")} ({why})");
                 return s_enabled;
             }
@@ -97,7 +98,7 @@ namespace FiresCore.Movement
             }
         }
 
-        private static float VerticalSpeed => s_verticalSpeed != null ? s_verticalSpeed.Value : 2.5f;
+        private static float VerticalSpeed => s_verticalSpeed.Value;
 
         // Galaxies installed (read once: the plugin set does not change in a session).
         private static bool GalaxiesInstalled
@@ -140,7 +141,7 @@ namespace FiresCore.Movement
             if (!s_diving)
             {
                 if (!crouch) return;                         // SURFACE: vanilla swimming
-                s_diving = true;
+                s_diving = true; s_bedSaid = false;
                 s_holdY = Mathf.Min(y, top);
                 s_lastControl = int.MinValue;
                 Log("[Swim] mode: surface -> dive (Ctrl) at y={0:0.00} (surface {1:0.00}, float line {2:0.00})", y, liquid, top);
@@ -151,7 +152,14 @@ namespace FiresCore.Movement
             if (rise) s_holdY = Mathf.Min(s_holdY + VerticalSpeed * dt, y + HoldLead);           // a roof stops a rise
             else if (sink) s_holdY = Mathf.Max(s_holdY - VerticalSpeed * dt, y - HoldLead);      // the body sets the pace
             if (player.IsOnGround() && s_holdY < y) s_holdY = y;                                 // the bed stops a sink
-            // Never above the float line, for THIS step only (0.2.304; overnight swim_test: a 10 s hold drifted 1.23 m). The
+            // 0.2.1132 (Fire: "we should not be able to swim down all the way and walk on the bottom of the water"): the hold stays above the bed, so the body never touches it and keeps vanilla's swim pose;
+            // a rising bed lifts it. Ground above the body is a cave's outer terrain, not its bed: ignored.
+            if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(player.transform.position, out float bed) && bed <= y + HoldLead && s_holdY < bed + BedClearance)
+            {
+                s_holdY = bed + BedClearance;
+                if (!s_bedSaid) { s_bedSaid = true; Log("[Swim] dive floor: held at {0:0.00}, {1:0.00} m over the bed at {2:0.00} (body y={3:0.00}, on ground {4})", s_holdY, BedClearance, bed, y, player.IsOnGround()); }
+            }
+            // Never above the float line, for THIS step only (a 10 s hold otherwise drifted 1.23 m). The
             // line rides the waves; clamping the stored hold to it lowered the hold at every trough and never raised it back.
             float target = Mathf.Min(s_holdY, top);
 
@@ -203,11 +211,40 @@ namespace FiresCore.Movement
             if (roof) level = -10000f;
         }
 
-        // Without Galaxies, the camera may follow the head under the surface (vanilla keeps it above the water).
+        /// <summary>0.2.1047 (Fire 10-30: "Advanced player movement is getting our swimming"): true while Core's swim camera follows the
+        /// head under the surface: swimming on (APM), APM's [Swimming] "Camera follows you underwater" on, and no Galaxies older than
+        /// 0.1.69 (those still release the camera for a swimmer themselves). Galaxies 0.1.69+ reads this and keeps only its ship case.</summary>
+        public static bool CameraOwned => Enabled && FiresCore.Config.CoreSettings.Get("Swimming", "Camera follows you underwater", true) && !OldGalaxiesCamera;
+
+        // a Galaxies before 0.1.69 does the head-under camera release itself (read once)
+        private static bool OldGalaxiesCamera
+        {
+            get
+            {
+                if (!s_oldGalaxiesKnown)
+                {
+                    s_oldGalaxiesKnown = true;
+                    s_oldGalaxies = GalaxiesInstalled && BepInEx.Bootstrap.Chainloader.PluginInfos.TryGetValue(GalaxiesGuid, out var pi)
+                        && pi.Metadata.Version < new System.Version(0, 1, 69);
+                    if (s_oldGalaxies) FiresCore.Logging.FiresLogger.LogDebug("[Swim] camera: an older Galaxies (before 0.1.69) releases it for a swimmer itself");
+                }
+                return s_oldGalaxies;
+            }
+        }
+        private static bool s_oldGalaxiesKnown, s_oldGalaxies;
+
+        // The camera may follow the head under the surface (vanilla keeps it above the water).
+        private const float CameraReleaseDepth = 0.5f, CameraRestoreDepth = 0.3f;   // metres of head under the liquid; 0.5 is an estimate, Fire may tune it by hand
         private static void CameraBeforeUpdate(GameCamera camera)
         {
-            if (camera == null || GalaxiesInstalled) return;
-            bool under = Enabled && HeadUnderwater;
+            if (camera == null) return;
+            // [visual] (Fire's first-person waterline split): surface strokes dip the head past HeadUnderwater's 0.1 m, which pulled the camera to the water plane. Release below
+            // CameraReleaseDepth, restore vanilla only above CameraRestoreDepth, so it can't flip per stroke. HeadUnderwater stays as is for its other readers.
+            var swimmer = Player.m_localPlayer;
+            float depth = swimmer != null && swimmer.IsSwimming() ? swimmer.GetLiquidLevel() - swimmer.GetHeadPoint().y : -1f;
+            bool under = CameraOwned && (s_cameraMinWater.HasValue ? depth > CameraRestoreDepth : depth > CameraReleaseDepth);
+            if (under != s_cameraMinWater.HasValue)
+                FiresCore.Logging.FiresLogger.LogDebug($"[Swim] camera water limit {(under ? "released" : "restored")}: head {depth:0.00} m under, {(FirstPerson.IsActive ? "first" : "third")} person");
             if (under)
             {
                 if (!s_cameraMinWater.HasValue) s_cameraMinWater = camera.m_minWaterDistance;

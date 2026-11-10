@@ -6,7 +6,7 @@ using UnityEngine;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// 0.2.286 (Fire, RIDEj on ATomTest: "the companions are ruining the lox test, they keep walking over and aggroing it"): a creature
+    /// Companions walking over and aggroing a creature mid-tame ruins the tame, so a creature
     /// a player is taming is left alone by companions. Being tamed = a wild Tameable within <see cref="PlayerRadius"/> of a player that
     /// has taming progress, or was fed in the last <see cref="FedMinutes"/>, or sits in a pit (most of the ground round it well above
     /// it). A companion never picks it as a target, drops it as one, and keeps <see cref="KeepAwayMetres"/> from it so it doesn't alert

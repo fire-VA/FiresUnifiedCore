@@ -43,7 +43,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     return -50; // Low priority - let deposit run first
                 }
-                return 0; // Normal priority when inventory has room
+                return OreNeedPriority(); // 0 normally; 0.2.908: +6 while a homestead smelter is low on ore (Fire)
             }
         }
         
@@ -72,7 +72,7 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             FindingResource,
             MovingToChestForTool,      // Walk to chest to get required tool
-            FetchingCraftStock,        // 0.2.274: walk to base chests and take what a tool (or its Bronze) costs
+            FetchingCraftStock,        // Walk to base chests and take what a tool (or its Bronze) costs
             RetrievingToolFromChest,   // Open chest and pull tool
             MovingToWorkbench,         // Walk to workbench to craft a tool
             CraftingTool,              // Stand at workbench and craft
@@ -172,7 +172,7 @@ namespace FiresCore.Npc.IdleBehaviors
             _commandedTarget = target;
         }
         
-        // 0.2.257 ([ghost]): the autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
+        // The autonomous pick below is parked in _commandedTarget for Start. When another chore won the idle pick,
         // the next CanStart read it as a player command and skipped the gather toggle and the full-bag gate.
         private GameObject _autoPick;
 
@@ -228,7 +228,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     
                     // No tool available anywhere - cannot start this behavior
                     Debug.LogWarning($"[ResourceGathering] {Companion?.companionName} cannot gather {resourceData.Name} - no {resourceData.RequiredTool} available");
-                    CompanionChatHelper.QuickMessages.CantDoTask(Companion, $"I need a {resourceData.RequiredTool.ToString().ToLower()}");
+                    CompanionChatHelper.QuickMessages.CantDoTask(Companion, ToolRefusalFor(resourceData));
                     return false;
                 }
                 
@@ -308,30 +308,72 @@ namespace FiresCore.Npc.IdleBehaviors
             return false;
         }
         
+        // 0.2.839 (Fire: "i see no mining happening" - they walked to an iron vein 130 m out while 15 copper/tin deposits stood by the house):
+        
+        // autonomous mining stays within this of the Stay point; the nearest wanted deposit wins, else the nearest smeltable one. Trips go farther.
+        
+        private const float AutoMineRadius = 40f;
+        
+        private bool _lastPickWasWood; private float _noPickSaidAt;   // 0.2.838: wood / ore turns, "no pickaxe" said every 5 min at most
+
+        
+        // 0.2.864 (lead for Fire 10-27): one line per pick, "[Chore] pick <name>: <target or nothing>; mining: <picked / skipped: reason>"
         private GameObject FindNeededResourceNearHome()
+        {
+            _oreScan = default; _oreScan.Seen = -1;   // -1 = no ore search ran this pick
+            var got = FindNeededResourceNearHomeInner();
+            if (IdleBehavior == null || !IdleBehavior.HasHomePosition) return got;
+            bool hasPick = HasToolOfType(ResourceDataHelper.ToolType.Pickaxe);
+            bool isOre = got != null && ResourceDataHelper.GetResourceData(got)?.RequiredTool == ResourceDataHelper.ToolType.Pickaxe;
+            string mining;
+            if (isOre) mining = OreWhy(true);
+            // 0.2.926 (lead, round #34): the search already crafts a pick from base stock (PlanStockTool); say why that could not either
+            else if (!hasPick && GetBestObtainableToolTier(ResourceDataHelper.ToolType.Pickaxe) < 0)
+                mining = CanCraftToolFromStock(ResourceDataHelper.ToolType.Pickaxe, 0)
+                    ? "skipped: no pickaxe carried or in a chest (one can be crafted from base stock; the ore search decides)"
+                    : $"skipped: no tool (no pickaxe carried or in a chest, and none craftable from base stock: {StockCraftWhy(ResourceDataHelper.ToolType.Pickaxe, 0)})";
+            else if (_oreScan.Seen < 0) mining = $"skipped: not tried this pick ({(hasPick ? "has a pickaxe" : "pickaxe only in a chest")}; {(got != null ? "an earlier priority won" : "the 15% rest roll")})";
+            else mining = OreWhy(false);
+            FiresCore.Logging.FiresLogger.LogDebug($"[Chore] pick {Companion?.companionName}: {(got != null ? Utils.GetPrefabName(got) : "nothing")}; mining: {mining}");
+            return got;
+        }
+
+        private GameObject FindNeededResourceNearHomeInner()
         {
             if (IdleBehavior == null || !IdleBehavior.HasHomePosition) return null;
             
             Vector3 homePos = IdleBehavior.HomePosition;
+            Vector3 areaPos = IdleBehavior.WorkCenter;   // Fire 10-27: a designated map zone (one board run) wins over the stay point
             
             // Use the stay mode work search radius (50m default, or territory bounds if larger)
-            float searchRadius = CompanionSettings.GetStayModeWorkSearchRadius(homePos);
+            float searchRadius = IdleBehavior.WorkRadius(homePos);
             
             var neededStationInputs = GetInputsNeededByNearbySmelters(homePos);
             bool needsWood = CheckIfNearbyKilnNeedsWood(homePos);
             int? obtainablePickaxeTier = null;
             int ObtainablePickaxeTier() => obtainablePickaxeTier ??= GetBestObtainableToolTier(ResourceDataHelper.ToolType.Pickaxe);
-            
+
+            // 0.2.912 (round #30: every Mining-zone run "refused: can't start now" - with the smelter full no ore was "needed", so nothing
+            // in the zone qualified): a designated mining zone is an order - any ore in it is mined; the refusal says why when none can be
+            if (IdleBehavior.HasWorkZone && IdleBehavior.WorkZoneFocus == "mine")
+            {
+                var anyOre = new HashSet<string>(System.Linq.Enumerable.Where(ResourceDataHelper.SmeltableItems, o => o.EndsWith("Ore") || o.Contains("Scrap")));
+                var zoneOre = FindNearbyOreDeposit(areaPos, searchRadius, anyOre, ObtainablePickaxeTier());
+                if (zoneOre != null) return zoneOre;
+                LastRefusal = $"mining zone {IdleBehavior.WorkZoneName}: {OreWhy(false)}";
+                return null;
+            }
+
             // Priority 1: Station needs - always try these first
             if (neededStationInputs.Count > 0)
             {
-                var oreDeposit = FindNearbyOreDeposit(homePos, searchRadius, neededStationInputs, ObtainablePickaxeTier());
+                var oreDeposit = (IdleBehavior.WorkZoneFocus == "gather" ? null : FindNearbyOreDeposit(areaPos, IdleBehavior.HasWorkZone ? searchRadius : Mathf.Min(searchRadius, AutoMineRadius), neededStationInputs, ObtainablePickaxeTier()));
                 if (oreDeposit != null)
                 {
                     var resourceData = ResourceDataHelper.GetResourceData(oreDeposit);
                     if (resourceData != null && resourceData.IsValid)
                     {
-                        // 0.2.274: or a tool for it can be crafted from base stock (FindNearbyOreDeposit only offers such a node then).
+                        // Or a tool for it can be crafted from base stock (FindNearbyOreDeposit only offers such a node then).
                         if (!resourceData.RequiresCombat || HasToolForResource(resourceData)
                             || CanCraftToolFromStock(resourceData.RequiredTool, resourceData.MinToolTier))
                         {
@@ -342,10 +384,45 @@ namespace FiresCore.Npc.IdleBehaviors
                     }
                 }
             }
-            
+
+            // [ghost] 0.2.929 (Fire 10-27 popup: "Always mine when free"; round #34: "none mineable ... wanted: FlametalOreNew/BlackMetalScrap/..."
+            // with Fire's fresh copper field in range - a smelter holding SOME CopperOre made copper "not needed"): any smeltable ore in range
+            // is mined when the companion is free, the ore whose bar the base holds least of first (then the nearest)
+            if (IdleBehavior.WorkZoneFocus != "gather")
+            {
+                var rank = OreRankByBars(homePos);
+                if (rank.Count > 0)
+                {
+                    var free = FindNearbyOreDeposit(areaPos, IdleBehavior.HasWorkZone ? searchRadius : Mathf.Min(searchRadius, AutoMineRadius), rank, ObtainablePickaxeTier());
+                    var freeData = free != null ? ResourceDataHelper.GetResourceData(free) : null;
+                    if (freeData != null && freeData.IsValid && (HasToolForResource(freeData) || CanCraftToolFromStock(freeData.RequiredTool, freeData.MinToolTier)))
+                        return free;
+                }
+            }
+
+            // [ghost] 0.2.838 (Fire: "and still no companions are mining"; his log: every ResourceGathering run was "found tree (kiln
+            // needs wood)" - a kiln is nearly always short of wood, so this branch won every pick and the ore below was never reached):
+            // after a wood run, the next pick tries ore first when a deposit near home can be mined with a pickaxe it has or can fetch.
+            if (_lastPickWasWood)
+            {
+                var ore = (IdleBehavior.WorkZoneFocus == "gather" ? null : FindNearbyOreDeposit(areaPos, IdleBehavior.HasWorkZone ? searchRadius : Mathf.Min(searchRadius, AutoMineRadius), ResourceDataHelper.SmeltableItems, ObtainablePickaxeTier()));
+                var oreData = ore != null ? ResourceDataHelper.GetResourceData(ore) : null;
+                if (oreData != null && oreData.IsValid && (HasToolForResource(oreData) || CanCraftToolFromStock(oreData.RequiredTool, oreData.MinToolTier)))
+                {
+                    _lastPickWasWood = false;
+                    FiresCore.Logging.FiresLogger.LogDebug($"[ResourceGathering] {Companion?.companionName} mine: {ore.name} (ore turn after a wood run)");
+                    return ore;
+                }
+                if (ore == null && ObtainablePickaxeTier() < 0 && Time.time >= _noPickSaidAt)
+                {
+                    _noPickSaidAt = Time.time + 300f;
+                    AI.ChoreBrain.ChoreDone(Companion?.companionName, "mining", "mine: no pickaxe (put one in a chest)");
+                }
+            }
+
             if (needsWood)
             {
-                var tree = FindNearbyTree(homePos, searchRadius);
+                var tree = (IdleBehavior.WorkZoneFocus == "mine" || IdleBehavior.WorkZoneFocus == "gather" ? null : FindNearbyTree(areaPos, searchRadius));
                 if (tree != null)
                 {
                     var resourceData = ResourceDataHelper.GetResourceData(tree);
@@ -355,22 +432,19 @@ namespace FiresCore.Npc.IdleBehaviors
                         {
                             if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                                 Debug.Log($"[ResourceGathering] {Companion?.companionName} found tree (kiln needs wood)");
+                            _lastPickWasWood = true;
                             return tree;
                         }
                     }
                 }
             }
             
-            // Priority 2: Always pick up pickables (berries, mushrooms, etc.) - these are free!
-            var pickable = FindNearbyPickable(homePos, searchRadius);
-            if (pickable != null)
-            {
-                if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[ResourceGathering] {Companion?.companionName} found pickable: {pickable.name}");
-                return pickable;
-            }
-            
-            // Priority 3: Opportunistic gathering - gather resources even without station needs
+            // [ghost] 10-26 (Fire: "ive never seen one grab a pickaxe and mine ore"; his 829 log: all 5 ResourceGathering runs went to
+            // pickables, "On it - $item_pickable_branch" / "I'll gather some $item_dandelion"): pickables were Priority 2, ahead of the
+            // opportunistic ore / wood below, so a base with any branch or flower around never mined or chopped. Ore and wood now come
+            // first; pickables are the fallback when there is no tool work.
+
+            // Priority 2: Opportunistic gathering - gather resources even without station needs
             // This makes stayed companions actually useful by gathering wood/ore proactively
             // 85% chance to opportunistically gather (was 70% - increased for better worker behavior)
             if (Random.value < 0.85f)
@@ -379,10 +453,25 @@ namespace FiresCore.Npc.IdleBehaviors
                 bool hasAxe = HasToolOfType(ResourceDataHelper.ToolType.Axe);
                 bool hasPickaxe = HasToolOfType(ResourceDataHelper.ToolType.Pickaxe);
                 
-                // If companion has axe, try trees first
+                // [ghost] 0.2.864 (Fire 10-27: "still not a lot of mining happening..."; his log: every pick was "opportunistically gathering
+                // tree", 0 "ore turn" lines - this branch tried trees first whenever the companion had an axe, and the ore turn above was only
+                // armed by the kiln-needs-wood branch): with a pickaxe, ore comes first unless the last pick was ore (both tools = take turns).
+                if (hasPickaxe && (!hasAxe || _lastPickWasWood))
+                {
+                    var ore = (IdleBehavior.WorkZoneFocus == "gather" ? null : FindNearbyOreDeposit(areaPos, IdleBehavior.HasWorkZone ? searchRadius : Mathf.Min(searchRadius, AutoMineRadius), ResourceDataHelper.SmeltableItems, ObtainablePickaxeTier()));
+                    var od = ore != null ? ResourceDataHelper.GetResourceData(ore) : null;
+                    if (od != null && od.IsValid && (!od.RequiresCombat || HasToolForResource(od)))
+                    {
+                        _lastPickWasWood = false;
+                        FiresCore.Logging.FiresLogger.LogDebug($"[ResourceGathering] {Companion?.companionName} mine: {ore.name} (has a pickaxe; {(hasAxe ? "ore's turn after wood" : "no axe")})");
+                        return ore;
+                    }
+                }
+
+                // If companion has axe, try trees
                 if (hasAxe)
                 {
-                    var tree = FindNearbyTree(homePos, searchRadius);
+                    var tree = (IdleBehavior.WorkZoneFocus == "mine" || IdleBehavior.WorkZoneFocus == "gather" ? null : FindNearbyTree(areaPos, searchRadius));
                     if (tree != null)
                     {
                         var resourceData = ResourceDataHelper.GetResourceData(tree);
@@ -392,6 +481,7 @@ namespace FiresCore.Npc.IdleBehaviors
                             {
                                 if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                                     Debug.Log($"[ResourceGathering] {Companion?.companionName} opportunistically gathering tree: {tree.name}");
+                                _lastPickWasWood = true;   // 0.2.864: the next pick is ore's turn
                                 return tree;
                             }
                         }
@@ -401,7 +491,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // If companion has pickaxe, try ore deposits
                 if (hasPickaxe)
                 {
-                    var oreDeposit = FindNearbyOreDeposit(homePos, searchRadius, ResourceDataHelper.SmeltableItems, ObtainablePickaxeTier());
+                    var oreDeposit = (IdleBehavior.WorkZoneFocus == "gather" ? null : FindNearbyOreDeposit(areaPos, IdleBehavior.HasWorkZone ? searchRadius : Mathf.Min(searchRadius, AutoMineRadius), ResourceDataHelper.SmeltableItems, ObtainablePickaxeTier()));
                     if (oreDeposit != null)
                     {
                         var resourceData = ResourceDataHelper.GetResourceData(oreDeposit);
@@ -420,7 +510,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // Fallback: try both even without explicit tool check (tools might be in chests)
                 if (!hasAxe)
                 {
-                    var tree = FindNearbyTree(homePos, searchRadius);
+                    var tree = (IdleBehavior.WorkZoneFocus == "mine" || IdleBehavior.WorkZoneFocus == "gather" ? null : FindNearbyTree(areaPos, searchRadius));
                     if (tree != null)
                     {
                         var resourceData = ResourceDataHelper.GetResourceData(tree);
@@ -435,7 +525,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 if (!hasPickaxe)
                 {
-                    var oreDeposit = FindNearbyOreDeposit(homePos, searchRadius, ResourceDataHelper.SmeltableItems, ObtainablePickaxeTier());
+                    var oreDeposit = (IdleBehavior.WorkZoneFocus == "gather" ? null : FindNearbyOreDeposit(areaPos, IdleBehavior.HasWorkZone ? searchRadius : Mathf.Min(searchRadius, AutoMineRadius), ResourceDataHelper.SmeltableItems, ObtainablePickaxeTier()));
                     if (oreDeposit != null)
                     {
                         var resourceData = ResourceDataHelper.GetResourceData(oreDeposit);
@@ -449,6 +539,15 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
             }
             
+            // Priority 3: pickables (berries, mushrooms, branches) - free, once there is no tool work
+            var pickable = (IdleBehavior.WorkZoneFocus == "mine" ? null : FindNearbyPickable(areaPos, searchRadius));
+            if (pickable != null)
+            {
+                if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
+                    Debug.Log($"[ResourceGathering] {Companion?.companionName} found pickable: {pickable.name}");
+                return pickable;
+            }
+
             if (VerboseLogging || CompanionIdleBehavior.VerboseLogging)
                 Debug.Log($"[ResourceGathering] {Companion?.companionName} no resources found near home (station inputs needed={neededStationInputs.Count}, needsWood={needsWood})");
             
@@ -490,13 +589,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 ? CompanionSettings.GetStayModeWorkSearchRadius(position)
                 : CompanionSettings.ChestSearchRadius;
             
-            var colliders = Physics.OverlapSphere(position, searchRadius);
-            
-            foreach (var collider in colliders)
+            // 0.2.908: the loaded Smelter instances, not a physics overlap (EBM's baked stand-ins hid the homestead smelter, round #28)
+            foreach (var smelter in SmeltersNear(position, searchRadius))
             {
-                if (collider == null) continue;
-                
-                var smelter = collider.GetComponent<Smelter>() ?? collider.GetComponentInParent<Smelter>();
                 if (smelter == null || !checkedStations.Add(smelter)) continue;
                 
                 if (!PieceDataHelper.IsOperableStation(smelter) || PieceDataHelper.IsCharcoalKiln(smelter)) continue;
@@ -647,9 +742,9 @@ namespace FiresCore.Npc.IdleBehaviors
                 GatherPhase.MovingToWorkbench => "Going to workbench",
                 GatherPhase.CraftingTool => "Crafting a tool",
                 GatherPhase.FetchingCraftStock => "Fetching materials for a tool",
-                GatherPhase.MovingToResource => $"Walking to {resourceName}",
+                GatherPhase.MovingToResource => _targetResource?.RequiredTool == ResourceDataHelper.ToolType.Pickaxe ? $"Walking to mine {resourceName}" : $"Walking to {resourceName}",
                 GatherPhase.Interacting => $"Picking {resourceName}",
-                GatherPhase.Attacking => $"Gathering {resourceName}",
+                GatherPhase.Attacking => _targetResource?.RequiredTool == ResourceDataHelper.ToolType.Pickaxe ? $"Mining {resourceName}" : $"Gathering {resourceName}",
                 GatherPhase.WaitingForDrops => "Collecting drops",
                 _ => "Gathering resources"
             };
@@ -704,12 +799,6 @@ namespace FiresCore.Npc.IdleBehaviors
                 _combatMovement.ClearMoveDestination();
             }
             
-            // Zero velocity for immediate stop
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
         }
         
         private void FaceTarget(Vector3 targetPos)
@@ -728,8 +817,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            dir.Normalize();
-            Transform.rotation = Quaternion.LookRotation(dir);
+            // Vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            _character?.SetLookDir(dir.normalized);
         }
         
         #endregion

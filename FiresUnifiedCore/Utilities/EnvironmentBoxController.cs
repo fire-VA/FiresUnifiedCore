@@ -289,7 +289,14 @@ namespace FiresCore.Utilities
 
         // Snow shader state
         private bool m_snowShaderActive = false;
-        private float? m_origSnowAmount;
+        // [generator] 11-09 (Fire: snow on pieces on a clean world): the three snow globals are SHARED by every box, so one owner set decides them.
+        // The values from before ANY box applied snow are captured once, when the first box takes the globals, and put back only when the last box
+        // lets go. Before, each box kept its own "original", read at its first enter: a box entered while another snow box was active stored 1 as
+        // its original, kept it for its whole life, and set the globals back to 1 on every later exit, so the world stayed snowy with no box near.
+        // Vanilla never writes these three globals (checked in assembly_valheim, 10-28), so nothing else ever put them back.
+        private static readonly HashSet<EnvironmentBoxController> s_snowOwners = new HashSet<EnvironmentBoxController>();
+        private static float s_beforeGlobalSnow, s_beforeSnowAmount, s_beforeAddSnow;
+        private static readonly int GlobalSnowId = Shader.PropertyToID("_GlobalSnowAmount"), SnowAmountId = Shader.PropertyToID("_SnowAmount"), AddSnowId = Shader.PropertyToID("_AddSnow");
 
         // Original box material, stored on skybox-override entry (original RPGMaker behaviour).
         private Material m_originalBoxMaterial;
@@ -364,12 +371,14 @@ namespace FiresCore.Utilities
         {
             _allBoxes.Remove(this);
 
-            // Clean up if player was inside
-            if (_playerInsideBox == this)
+            // Clean up if player was inside. [generator] 11-09: any box the player is inside, not only the last one entered (the
+            // singleton), and the snow globals are let go in every case, so an unloaded / destroyed box can never keep the world snowy.
+            if (m_playerInside || _playerInsideBox == this)
             {
                 OnPlayerExit();
-                _playerInsideBox = null;
+                if (_playerInsideBox == this) _playerInsideBox = null;
             }
+            RestoreBiomeShaders();
 
             // Clean up marker
             if (m_hiddenMarker != null)
@@ -511,9 +520,9 @@ namespace FiresCore.Utilities
         /// </summary>
         private void ValidatePlayerInside()
         {
-            // Only check if we think the player is inside THIS box
+            // Only check if we think the player is inside THIS box. [generator] 11-09: every box that thinks so is checked, not only the singleton:
+            // with nested boxes the first one entered was never validated, so a teleport or fly-out left it "inside" (and its snow on) for good.
             if (!m_playerInside) return;
-            if (_playerInsideBox != this) return;
 
             var player = Player.m_localPlayer;
             if (player == null)
@@ -526,7 +535,7 @@ namespace FiresCore.Utilities
             // Check if player is ACTUALLY inside the box bounds
             if (!ContainsPoint(player.transform.position))
             {
-                Debug.Log($"[EnvironmentBox] Player no longer inside box (teleported/flew out?), triggering exit");
+                FiresCore.Logging.FiresLogger.LogDebug($"[EnvironmentBox] Player no longer inside box (teleported/flew out?), triggering exit");
                 OnPlayerExit();
             }
         }
@@ -541,8 +550,8 @@ namespace FiresCore.Utilities
             m_playerInside = true;
             _playerInsideBox = this;
 
-            Debug.Log($"[EnvironmentBox] Player entered box: {gameObject.name}");
-            Debug.Log($"[EnvironmentBox] ForcedBiome={ForcedBiome}, AffectsVanillaPaint={AffectsVanillaPaint}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[EnvironmentBox] Player entered box: {gameObject.name}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[EnvironmentBox] ForcedBiome={ForcedBiome}, AffectsVanillaPaint={AffectsVanillaPaint}");
 
             // Notify the terrain provider (FAT) that this box's biome override is active. No-op without a
             // provider — a Core-only dark-crypt box (ForcedBiome=None) needs no terrain work at all.
@@ -581,9 +590,11 @@ namespace FiresCore.Utilities
             if (_playerInsideBox == this)
             {
                 _playerInsideBox = null;
+                // [generator] 11-09: still inside another box (nested): that one becomes the current box again
+                foreach (var other in _allBoxes) if (other != null && other != this && other.m_playerInside) { _playerInsideBox = other; break; }
             }
 
-            Debug.Log($"[EnvironmentBox] Player exited box: {gameObject.name}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[EnvironmentBox] Player exited box: {gameObject.name}");
 
             // Clear forced environment
             if (ForceEnvironment && EnvMan.instance != null)
@@ -1050,7 +1061,7 @@ namespace FiresCore.Utilities
             EnvMan.instance.m_debugTime = dayFraction;
 
             m_timeOverrideActive = true;
-            Debug.Log($"[EnvironmentBox] Applied time override: {CurrentTimeOfDay} (fraction: {dayFraction:F2})");
+            FiresCore.Logging.FiresLogger.LogDebug($"[EnvironmentBox] Applied time override: {CurrentTimeOfDay} (fraction: {dayFraction:F2})");
         }
 
         private void RestoreTime()
@@ -1063,7 +1074,7 @@ namespace FiresCore.Utilities
             EnvMan.instance.m_debugTimeOfDay = false;
 
             m_timeOverrideActive = false;
-            Debug.Log("[EnvironmentBox] Restored world time");
+            FiresCore.Logging.FiresLogger.LogDebug("[EnvironmentBox] Restored world time");
         }
 
         /// <summary>
@@ -1118,20 +1129,24 @@ namespace FiresCore.Utilities
             // Check if this biome requires snow shader
             if (BiomeRequiresSnowShader(ForcedBiome))
             {
-                // Store original snow amount if not already stored
-                if (!m_origSnowAmount.HasValue)
+                if (m_snowShaderActive) return;   // already one of the owners
+                s_snowOwners.RemoveWhere(o => o == null);   // a destroyed box that never let go
+                if (s_snowOwners.Count == 0)
                 {
-                    try { m_origSnowAmount = Shader.GetGlobalFloat("_GlobalSnowAmount"); }
-                    catch { m_origSnowAmount = 0f; }
+                    // the true values from before any box: each global on its own (was: _GlobalSnowAmount's value reused for _SnowAmount, 0 for _AddSnow)
+                    s_beforeGlobalSnow = Shader.GetGlobalFloat(GlobalSnowId);
+                    s_beforeSnowAmount = Shader.GetGlobalFloat(SnowAmountId);
+                    s_beforeAddSnow = Shader.GetGlobalFloat(AddSnowId);
                 }
+                s_snowOwners.Add(this);
 
                 // Apply snow shader globals - same as TerritoryRuntime
-                Shader.SetGlobalFloat("_GlobalSnowAmount", 1f);
-                Shader.SetGlobalFloat("_SnowAmount", 1f);
-                Shader.SetGlobalFloat("_AddSnow", 1f);
+                Shader.SetGlobalFloat(GlobalSnowId, 1f);
+                Shader.SetGlobalFloat(SnowAmountId, 1f);
+                Shader.SetGlobalFloat(AddSnowId, 1f);
 
                 m_snowShaderActive = true;
-                Debug.Log($"[EnvironmentBox] Applied snow shaders for biome: {ForcedBiome}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[EnvironmentBox] Applied snow shaders for biome: {ForcedBiome}");
             }
 
             // Note: SetHasBiomeOverrideBoxes is now called in OnPlayerEnter before this method
@@ -1144,12 +1159,17 @@ namespace FiresCore.Utilities
         {
             if (m_snowShaderActive)
             {
-                Shader.SetGlobalFloat("_GlobalSnowAmount", m_origSnowAmount ?? 0f);
-                Shader.SetGlobalFloat("_SnowAmount", m_origSnowAmount ?? 0f);
-                Shader.SetGlobalFloat("_AddSnow", 0f);
-
                 m_snowShaderActive = false;
-                Debug.Log("[EnvironmentBox] Restored original snow shader values");
+                s_snowOwners.Remove(this);
+                s_snowOwners.RemoveWhere(o => o == null);
+                if (s_snowOwners.Count == 0)
+                {
+                    Shader.SetGlobalFloat(GlobalSnowId, s_beforeGlobalSnow);
+                    Shader.SetGlobalFloat(SnowAmountId, s_beforeSnowAmount);
+                    Shader.SetGlobalFloat(AddSnowId, s_beforeAddSnow);
+                    FiresCore.Logging.FiresLogger.LogDebug($"[EnvironmentBox] last snow box let go: snow shader globals back to {s_beforeGlobalSnow:0.##} / {s_beforeSnowAmount:0.##} / {s_beforeAddSnow:0.##}");
+                }
+                else FiresCore.Logging.FiresLogger.LogDebug($"[EnvironmentBox] snow box let go; {s_snowOwners.Count} other snow box(es) still hold the snow globals");
             }
 
             // (the biome-override flag for FAT's paint patches is cleared by the provider OnBoxExit.)

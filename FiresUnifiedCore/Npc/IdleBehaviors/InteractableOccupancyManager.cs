@@ -59,8 +59,39 @@ namespace FiresCore.Npc.IdleBehaviors
             public float OccupyTime;
             public float MaxDuration;
             public Vector3 Position;
-            
+            public Character Holder;        // [ghost] 10-26: who holds it (liveness check)
+            public float FirstOccupyTime;   // when this holder first took it; a refresh by the same holder does not reset it
+
             public bool IsExpired => Time.time - OccupyTime > MaxDuration;
+        }
+
+        // [ghost] 10-26 (Fire's 24 h log: "hearth at (62, 58) is taken by Ylva the Axe; looking past it" for 8 companions while
+        // Ylva's own line says the hearth is "taken by Saga"; the same for the charcoal kiln, windmill and cooking station, and only
+        // 3 fuel + 1 smelter chores in 24 h): a holder refreshes its reservation every time its brain re-picks the station, so the
+        // 30 s ReserveSeconds never lapsed while it was busy elsewhere, and everyone else looked past a station nobody was using.
+        // A reservation only counts while it is LIVE: the holder still exists and is alive, and is within ActiveRadius of the
+        // station, or took it less than TravelGrace ago (walking there). A stale one is released with one Debug line.
+        private const float ActiveRadius = 6f, TravelGrace = 45f;
+
+        private static bool IsStale(OccupancyEntry e, out string why)
+        {
+            why = null;
+            if (e.IsExpired) { why = "expired"; return true; }
+            if (e.Holder == null) return false;   // a holder we can't see (older entry): the timeout alone decides
+            if (!e.Holder || e.Holder.IsDead()) { why = "the holder is gone"; return true; }
+            float dist = Vector3.Distance(e.Holder.transform.position, e.Position);
+            float age = Time.time - e.FirstOccupyTime;
+            if (dist > ActiveRadius && age > TravelGrace) { why = $"the holder is {dist:0} m away after {age:0} s"; return true; }
+            return false;
+        }
+
+        // Removes a stale entry (caller holds _lock); one Debug line per release.
+        private static bool DropIfStale(int objectId, OccupancyEntry e, string objName)
+        {
+            if (!IsStale(e, out string why)) return false;
+            _occupiedObjects.Remove(objectId);
+            if (why != "expired") FiresCore.Logging.FiresLogger.LogDebug($"[Occupancy] {objName} released from {e.OccupantName}: {why}");
+            return true;
         }
         
         #endregion
@@ -95,11 +126,12 @@ namespace FiresCore.Npc.IdleBehaviors
                     {
                         existing.OccupyTime = Time.time;
                         existing.MaxDuration = maxDuration;
+                        if (existing.Holder == null) { existing.Holder = occupant; existing.FirstOccupyTime = Time.time; }
                         return true;
                     }
-                    
-                    // Check if previous occupant still exists and is valid
-                    if (!existing.IsExpired)
+
+                    // Check if previous occupant still exists and is valid (and still using it: [ghost] 10-26 liveness)
+                    if (!DropIfStale(objectId, existing, interactable.name))
                     {
                         // Still occupied by someone else
                         if (VerboseLogging)
@@ -120,7 +152,9 @@ namespace FiresCore.Npc.IdleBehaviors
                     OccupantName = occupant.m_name ?? occupant.name,
                     OccupyTime = Time.time,
                     MaxDuration = maxDuration,
-                    Position = interactable.transform.position
+                    Position = interactable.transform.position,
+                    Holder = occupant,
+                    FirstOccupyTime = Time.time
                 };
                 
                 if (VerboseLogging)
@@ -205,7 +239,7 @@ namespace FiresCore.Npc.IdleBehaviors
         /// <param name="excludeCharacter">Optional character to exclude from the check (e.g., "is it occupied by someone other than me?")</param>
         /// <summary>
         /// The name of whoever holds <paramref name="interactable"/> other than <paramref name="excludeCharacter"/>, or null when nobody else
-        /// does (0.2.238: ChoreBrain's "is taken by" evidence line).
+        /// does (ChoreBrain's "is taken by" log line).
         /// </summary>
         public static string OccupantName(GameObject interactable, Character excludeCharacter = null)
         {
@@ -213,8 +247,9 @@ namespace FiresCore.Npc.IdleBehaviors
             int excludeId = excludeCharacter?.GetInstanceID() ?? 0;
             lock (_lock)
             {
-                if (!_occupiedObjects.TryGetValue(interactable.GetInstanceID(), out var existing) || existing.IsExpired) return null;
+                if (!_occupiedObjects.TryGetValue(interactable.GetInstanceID(), out var existing)) return null;
                 if (excludeCharacter != null && existing.OccupantInstanceId == excludeId) return null;
+                if (DropIfStale(interactable.GetInstanceID(), existing, interactable.name)) return null;
                 return existing.OccupantName;
             }
         }
@@ -235,13 +270,10 @@ namespace FiresCore.Npc.IdleBehaviors
                     if (excludeCharacter != null && existing.OccupantInstanceId == excludeId)
                         return false;
                     
-                    // Check if expired
-                    if (existing.IsExpired)
-                    {
-                        _occupiedObjects.Remove(objectId);
+                    // Expired, or no longer in use by its holder ([ghost] 10-26 liveness)
+                    if (DropIfStale(objectId, existing, interactable.name))
                         return false;
-                    }
-                    
+
                     return true;
                 }
             }

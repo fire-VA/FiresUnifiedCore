@@ -9,8 +9,8 @@ using UnityEngine.Rendering;
 namespace FiresCore.Movement
 {
     /// <summary>
-    /// First person while crawling (Core 0.2.303, Fire 10-06: "When crawling in caves the camera should be put into first person
-    /// mode and moved down to the height of the head to prevent the clipping issues we see"). Local player only.
+    /// First person while crawling: in caves the camera goes to first person
+    /// and down to head height to prevent clipping. Local player only.
     /// While Core holds the player in a crawl (Crawl.Active) or a low-ceiling crouch (Headroom.Holding), the camera eases from
     /// wherever vanilla (and Headroom's guard) put it to the head (Character.GetHeadPoint, the head bone), and the body's meshes cast shadows only,
     /// so the view isn't filled with the inside of the head. Standing up eases it back to the player's own mode and distance.
@@ -21,6 +21,7 @@ namespace FiresCore.Movement
     /// clean toggle to drive (its first person is the camera zoomed in to its distance epsilon), so ours is used instead.
     /// Debug lines: "[CrawlCamera] first person (crawl)" / "(low ceiling)" and "[CrawlCamera] back to the player's camera (…)".
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Movement, FiresCore.Config.CoreFeatures.Crawling)]
     public static class CrawlCamera
     {
         public const string FirstPersonPovGuid = "jpvalheim.firstpersonpov";
@@ -31,7 +32,7 @@ namespace FiresCore.Movement
         /// <summary>Above this blend the body is drawn as shadow only.</summary>
         private const float HideBodyAbove = 0.6f;
 
-        private static ConfigEntry<bool> s_enabled;
+        private static readonly FiresCore.Config.OwnedSetting<bool> s_enabled = new FiresCore.Config.OwnedSetting<bool>("Movement", "First person when crawling", true);   // 1086 ([generator], Fire 11-01: configs live in their own mods): owner FAPM
         private static float s_blend;
         private static bool s_want;
         private static string s_reason;
@@ -39,9 +40,9 @@ namespace FiresCore.Movement
         private static bool? s_povInstalled;
         private static readonly List<(Renderer renderer, ShadowCastingMode mode)> s_hidden = new List<(Renderer, ShadowCastingMode)>();
 
-        public static bool Enabled => s_enabled == null || s_enabled.Value;
+        public static bool Enabled => AdvancedMovement.Installed && s_enabled.Value;
 
-        // 0.2.308 ([ghost] for Fire's FirstPerson territory flag): other mods ask for first person by owner, local player only.
+        // Other mods ask for first person by owner, local player only.
         // A request is FULLY forced: it ignores "First person when crawling", and scroll-zoom can't change the third-person distance
         // while it holds. Valcast camera modes / possession still win (first person resumes when they end); First Person POV in its
         // own first person also stands this down, since the player already looks from the head.
@@ -53,6 +54,8 @@ namespace FiresCore.Movement
         public static void Request(string owner, bool on, string reason = null)
         {
             if (string.IsNullOrEmpty(owner)) return;
+            if (on && !OwnerMods.Movement && owner != "FiresRPGmaker.Territory") {   // 0.2.1142: RPGmaker's first-person territories are its own feature, on B Main without APM
+                OwnerMods.Skip("APM", "crawl camera request from " + owner + " refused"); return; }   // 0.2.1139
             bool had = s_requests.ContainsKey(owner);
             if (on) s_requests[owner] = reason ?? owner;
             else s_requests.Remove(owner);
@@ -74,14 +77,13 @@ namespace FiresCore.Movement
 
         internal static void Bind(ConfigFile config)
         {
-            s_enabled = config.Bind("Movement", "First person when crawling", true,
-                "While a low ceiling holds the player in a crawl or crouch, the camera moves to the head (first person) so it can't clip through the rock, and eases back on standing up. Off: the third-person camera stays (pulled in by 'Low ceilings').");
+            // 1086 ([generator], Fire 11-01: configs live in their own mods): [Movement] First person when crawling is the owner's (FAPM); no Core bind
         }
 
         private static FieldInfo s_povFirstPerson;
 
         // True while First Person POV is in its first person this frame.
-        private static bool PovFirstPerson()
+        internal static bool PovFirstPerson()
         {
             if (s_povInstalled == null)
             {
@@ -104,7 +106,7 @@ namespace FiresCore.Movement
         private static bool s_valcastLooked;
         private static readonly List<PropertyInfo> s_valcastFlags = new List<PropertyInfo>();
 
-        private static string ValcastOwner()
+        internal static string ValcastOwner()
         {
             if (!s_valcastLooked)
             {
@@ -184,6 +186,7 @@ namespace FiresCore.Movement
                     Step(player);
                     if (s_blend <= 0f) return;
                     if (player.m_eye == null) return;
+                    Headroom.LogPullIn("CrawlCamera first person (own feature, not under the toggle)");
                     Vector3 look = player.GetLookDir();
                     Vector3 eye = player.GetHeadPoint() + look * EyeForward;
                     float t = s_blend * s_blend * (3f - 2f * s_blend);   // smoothstep: no snap at either end

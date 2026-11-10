@@ -8,7 +8,10 @@ namespace FiresCore.Npc.Movement
     /// acceleration field in FixedUpdate, so the player can walk through the squad. Mass is left at the prefab baseline:
     /// lowering it to let players win collisions made every monster hit launch the companion.
     /// </summary>
-    [RequireComponent(typeof(Rigidbody))]
+    // [ghost] 10-26 (Fire's 24 h log, [seasons]' sweep N1: "Can't remove Rigidbody because CompanionPersonalSpaceEnforcer depends
+    // on it" x5, then vanilla CharacterAnimEvent NREs x1,245 in 53 s): a placement ghost that copied a companion (FAP select
+    // 'Multiple') could not strip the Rigidbody because of [RequireComponent], and the half-stripped copy threw every frame. The
+    // attribute is gone; the push already null-guards _rigidbody (and is off: Enabled = false).
     public class CompanionPersonalSpaceEnforcer : MonoBehaviour
     {
         // Tunables
@@ -29,11 +32,18 @@ namespace FiresCore.Npc.Movement
             _character = GetComponent<Character>();
         }
 
+        // The push was a Rigidbody.AddForce on the companion every physics
+        // step. Vanilla NPCs keep apart by their colliders, and folding the push into the move direction would make a second
+        // SetMoveDir writer beside the movement authority. So it is off; the code stays for a steering-based return if crowding
+        // becomes a problem.
+        internal static bool Enabled = false;
+
         private void FixedUpdate()
         {
+            if (!Enabled) return;
             if (_rigidbody == null || _rigidbody.isKinematic) return;
             if (_companion == null || !_companion.isTamed) return;
-            if (_companion.IsPossessed) return;   // 0.2.292: no push off its driver's own frozen body
+            if (_companion.IsPossessed) return;   // No push off its driver's own frozen body
             if (_character == null || _character.IsDead()) return;
 
             Vector3 myPos = transform.position;

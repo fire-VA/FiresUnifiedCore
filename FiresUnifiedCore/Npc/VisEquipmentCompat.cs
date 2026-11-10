@@ -19,48 +19,89 @@ namespace FiresCore.Npc
         private static int Hash(string name) =>
             string.IsNullOrEmpty(name) ? 0 : name.GetStableHashCode();
 
-        private static MethodInfo Resolve(string methodName, Type[] newSig, Type[] oldSig)
+        // The overload is found by name, not by one fixed signature. Valheim 1.0 (live) has SetRightItem /
+        // SetRightItemVisual / SetRightBackItem (int itemHash, int quality) and SetLeftItem / SetLeftBackItem /
+        // SetShoulderItem (int itemHash, int variant, int quality); the old lookups asked for (int) and (int, int), found
+        // nothing, and returned silently, so a companion's hand, back and shoulder items were never drawn on 1.0.
+        private static readonly HashSet<string> _warned = new HashSet<string>();
+
+        private static MethodInfo Resolve(string methodName)
         {
-            // Cache key disambiguates simple vs with-variant overloads.
-            string key = methodName + "|" + newSig.Length;
             lock (_lock)
             {
-                if (_cache.TryGetValue(key, out var cached)) return cached;
-                var type = typeof(VisEquipment);
-                // Prefer the new (int …) overload — that's what the upcoming
-                // build exposes, and the patcher does not shim these.
-                var method = type.GetMethod(methodName, newSig)
-                        ?? type.GetMethod(methodName, oldSig);
-                _cache[key] = method;
-                return method;
+                if (_cache.TryGetValue(methodName, out var cached)) return cached;
+                MethodInfo best = null;
+                int bestRank = int.MaxValue;
+                foreach (MethodInfo m in typeof(VisEquipment).GetMethods(BindingFlags.Instance | BindingFlags.Public))
+                {
+                    if (m.Name != methodName) continue;
+                    int rank = Rank(m.GetParameters());
+                    if (rank < bestRank) { best = m; bestRank = rank; }
+                }
+                _cache[methodName] = best;
+                if (best == null && _warned.Add(methodName))
+                    FiresCore.Logging.FiresLogger.LogWarning($"[VisEquipmentCompat] VisEquipment.{methodName} has no usable overload on this game build; that slot stays undrawn.");
+                return best;
             }
         }
 
-        private static void DispatchSimple(VisEquipment vis, string methodName, string name)
+        // Lower is better: the all-int forms (1.0) first, longest first, then the old string forms. Anything else: unusable.
+        private static int Rank(ParameterInfo[] ps)
         {
-            if (vis == null) return;
-            var method = Resolve(methodName,
-                newSig: new[] { typeof(int) },
-                oldSig: new[] { typeof(string) });
-            if (method == null) return;
-            object arg = method.GetParameters()[0].ParameterType == typeof(int)
-                ? (object)Hash(name)
-                : (object)(name ?? "");
-            method.Invoke(vis, new[] { arg });
+            if (ps.Length == 0 || ps.Length > 3) return int.MaxValue;
+            for (int i = 1; i < ps.Length; i++) if (ps[i].ParameterType != typeof(int)) return int.MaxValue;
+            if (ps[0].ParameterType == typeof(int)) return 3 - ps.Length;       // (int,int,int)=0, (int,int)=1, (int)=2
+            if (ps[0].ParameterType == typeof(string)) return 10 - ps.Length;   // (string,int)=8, (string)=9
+            return int.MaxValue;
         }
 
-        private static void DispatchWithVariant(VisEquipment vis, string methodName, string name, int variant)
+        // 2-arg forms: the right-hand family takes (hash, quality) on 1.0; the left/shoulder family took (hash, variant)
+        // before 1.0. 3-arg forms are (hash, variant, quality). Quality 0 = vanilla VisEquipment.SetItem's default.
+        // NullReferenceException at VisEquipment.SetRightBackItem from CompanionController.Start:
+        // every vanilla Set*Item stores the new hash and THEN reads m_nview.GetZDO(). m_nview is set in VisEquipment.Awake, so a
+        // call before that Awake throws after stamping the hash, and the next call with the same item returns early and never
+        // reaches the ZDO. Until the body's VisEquipment is awake nothing is called; callers retry on their next redraw.
+        private static readonly AccessTools.FieldRef<VisEquipment, ZNetView> NView = AccessTools.FieldRefAccess<VisEquipment, ZNetView>("m_nview");
+        private static readonly HashSet<int> _notReadyLogged = new HashSet<int>();
+
+        /// <summary>True once the VisEquipment has run its Awake (m_nview set), so its Set*Item setters can't throw.</summary>
+        internal static bool IsReady(VisEquipment vis) => vis != null && NView(vis) != null;
+
+        private static bool Ready(VisEquipment vis, string what)
         {
-            if (vis == null) return;
-            var method = Resolve(methodName,
-                newSig: new[] { typeof(int), typeof(int) },
-                oldSig: new[] { typeof(string), typeof(int) });
-            if (method == null) return;
-            object arg0 = method.GetParameters()[0].ParameterType == typeof(int)
-                ? (object)Hash(name)
-                : (object)(name ?? "");
-            method.Invoke(vis, new object[] { arg0, variant });
+            if (vis == null) return false;
+            if (NView(vis) != null) return true;
+            if (_notReadyLogged.Add(vis.GetInstanceID()))
+                FiresCore.Logging.FiresLogger.LogDebug($"[VisEquipmentCompat] {what} on '{vis.name}' skipped: its VisEquipment isn't awake yet (m_nview null); it is drawn on the next redraw");
+            return false;
         }
+
+        private static void Dispatch(VisEquipment vis, string methodName, string name, int variant, bool hasVariant)
+        {
+            if (!Ready(vis, methodName))
+            {
+                // What vanilla had stored before it threw: the slot's item field, so the owner still draws it locally
+                // (SetRightBackItem -> m_rightBackItem). The ZDO is written by a later call once the body is awake.
+                if (vis != null && methodName.StartsWith("Set") && methodName.EndsWith("Item"))
+                    SetItemFieldDirect(vis, "m_" + char.ToLowerInvariant(methodName[3]) + methodName.Substring(4), name ?? "");
+                return;
+            }
+            MethodInfo method = Resolve(methodName);
+            if (method == null) return;
+            ParameterInfo[] ps = method.GetParameters();
+            object first = ps[0].ParameterType == typeof(int) ? (object)Hash(name) : (object)(name ?? "");
+            object[] args;
+            if (ps.Length == 1) args = new[] { first };
+            else if (ps.Length == 2) args = new object[] { first, hasVariant ? variant : 0 };
+            else args = new object[] { first, variant, 0 };
+            method.Invoke(vis, args);
+        }
+
+        private static void DispatchSimple(VisEquipment vis, string methodName, string name) =>
+            Dispatch(vis, methodName, name, 0, false);
+
+        private static void DispatchWithVariant(VisEquipment vis, string methodName, string name, int variant) =>
+            Dispatch(vis, methodName, name, variant, true);
 
         // Single-arg slot setters
         public static void SetHelmetItem(VisEquipment v, string name)      => DispatchSimple(v, "SetHelmetItem", name);
@@ -92,7 +133,7 @@ namespace FiresCore.Npc
             string fieldName,
             string setMethodName)
         {
-            if (src == null || dst == null) return;
+            if (src == null || !Ready(dst, setMethodName)) return;
             var field = typeof(VisEquipment).GetField(
                 fieldName,
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
@@ -102,6 +143,35 @@ namespace FiresCore.Npc
             var method = typeof(VisEquipment).GetMethod(setMethodName, new[] { field.FieldType });
             if (method == null) return;
             method.Invoke(dst, new[] { value });
+        }
+
+        // fires_attachfit_reload: zeroes the armour slots' m_current*ItemHash so the next vanilla UpdateEquipmentVisuals
+        // sees "changed", destroys the old instances and attaches them again from the ZDO hashes (which are not touched). Field or
+        // property, whichever this build has. Returns how many slots held an item.
+        private static readonly string[] s_armorCurrent =
+            { "m_currentHelmetItemHash", "m_currentChestItemHash", "m_currentLegItemHash", "m_currentShoulderItemHash" };
+
+        internal static int ResetArmorHashes(VisEquipment vis)
+        {
+            if (vis == null) return 0;
+            int n = 0;
+            foreach (var name in s_armorCurrent)
+            {
+                try
+                {
+                    var f = AccessTools.Field(typeof(VisEquipment), name);
+                    if (f != null && f.FieldType == typeof(int))
+                    {
+                        if ((int)f.GetValue(vis) != 0) { f.SetValue(vis, 0); n++; }
+                        continue;
+                    }
+                    var p = AccessTools.Property(typeof(VisEquipment), name);
+                    if (p != null && p.PropertyType == typeof(int) && p.CanRead && p.CanWrite && (int)p.GetValue(vis, null) != 0)
+                    { p.SetValue(vis, 0, null); n++; }
+                }
+                catch (Exception ex) { FiresCore.Logging.FiresLogger.LogDebug($"[VisEquipmentCompat] reset {name} on '{vis.name}' failed: {ex.Message}"); }
+            }
+            return n;
         }
 
         public static void CopyHairItem(VisEquipment src, VisEquipment dst)
@@ -124,7 +194,9 @@ namespace FiresCore.Npc
             {
                 if (_itemFieldCache.TryGetValue(fieldName, out var cached)) return cached;
                 var field = AccessTools.Field(typeof(VisEquipment), fieldName);
-                if (field != null && field.FieldType != typeof(string)) field = null;
+                // Valheim 1.0's backing fields are int item hashes (m_rightItem etc.); only string fields were
+                // accepted, so on 1.0 every mannequin slot came out empty.
+                if (field != null && field.FieldType != typeof(string) && field.FieldType != typeof(int)) field = null;
                 _itemFieldCache[fieldName] = field;
                 return field;
             }
@@ -175,7 +247,9 @@ namespace FiresCore.Npc
             if (field == null) return false;
             try
             {
-                field.SetValue(vis, ResolveTokenToName(token) ?? "");
+                string name = ResolveTokenToName(token) ?? "";
+                if (field.FieldType == typeof(int)) field.SetValue(vis, Hash(name));
+                else field.SetValue(vis, name);
                 return true;
             }
             catch { return false; }

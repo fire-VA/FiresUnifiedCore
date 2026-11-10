@@ -11,7 +11,8 @@ namespace FiresCore.Logging
     // StatusBannerSeconds sets the interval; both are per machine and read live.
     public static class StatusBanner
     {
-        internal const string TitleEmoji = "\U0001F4CA";
+        // The 📊 drew as a box / two cells in conhost; a Latin-1 glyph is one cell everywhere.
+        internal const string TitleEmoji = "»";
         private const string TitlePrefix = TitleEmoji + " STATUS";
         // BepInEx already prints "[Info   :FiresUnifiedCore] " in front of every line, so repeating the mod name
         // here cost 19 columns for nothing.
@@ -24,8 +25,8 @@ namespace FiresCore.Logging
         private const int ConsoleColumns = 100;
         private const int BepInExPrefixColumns = 27;
         private const int BoxBorderColumns = 4;
-        private static readonly int MaxInnerWidth =
-            ConsoleColumns - BepInExPrefixColumns - (Tag.Length + 1) - BoxBorderColumns;
+        // Measured from the real console row and the real prefix (LoadSummary's model), not a fixed 100 / 27.
+        private static int MaxInnerWidth => LoadSummary.MaxInnerWidth(Tag);
         private const int TitleMargin = 8;
 
         private const string ConfigSection = "General";
@@ -50,7 +51,7 @@ namespace FiresCore.Logging
         // Core binds these from its own config file at setup; nothing else should.
         internal static void BindConfig(ConfigFile config)
         {
-            // 0.2.297 ([release]'s log-defaults audit, Fire 10-05: every mod defaults to message-level logging, no periodic
+            // Every mod defaults to message-level logging, no periodic
             // chatter): off unless asked for, and a box it prints is Debug.
             _enabled = config.Bind(ConfigSection, EnabledKey, false, EnabledDescription);
             _seconds = config.Bind(ConfigSection, SecondsKey, SecondsDefault,
@@ -105,7 +106,7 @@ namespace FiresCore.Logging
             string title = $"{TitlePrefix} {FormatUptime(Time.realtimeSinceStartup)}";
             int innerWidth = title.Length + TitleMargin;
             foreach (string line in Lines) innerWidth = Math.Max(innerWidth, line.Length);
-            // Debug (0.2.297): formatted by LoadSummary's one width model, printed at Debug through Core's source (the load boxes
+            // Debug: formatted by LoadSummary's one width model, printed at Debug through Core's source (the load boxes
             // keep LoadSummary.EmitBox at Info).
             try
             {

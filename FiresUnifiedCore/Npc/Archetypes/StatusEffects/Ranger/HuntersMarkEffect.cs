@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Ranger
 {
@@ -92,7 +92,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ranger
             // Show visual feedback
             target.Message(MessageHud.MessageType.TopLeft, "MARKED!");
             
-            Debug.Log($"[HuntersMarkEffect] Applied to {target.m_name}, hasIcon={icon != null}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[HuntersMarkEffect] Applied to {target.m_name}, hasIcon={icon != null}");
             
             return true;
         }

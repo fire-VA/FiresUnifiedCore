@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
 {
@@ -134,7 +134,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
             
             seman.AddStatusEffect(effect, true);
             
-            Debug.Log($"[ChiStrikeEffect] Applied to {target.m_name}, charges={charges}, hasIcon={icon != null}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ChiStrikeEffect] Applied to {target.m_name}, charges={charges}, hasIcon={icon != null}");
             
             return true;
         }

@@ -55,7 +55,7 @@ namespace FiresCore.Identity
         }
 
         // The uid and name arrive with the peer's RPC_PeerInfo, which a join gate can hold back for as long as it sends the
-        // world's caches (R25: 26 s for a 359 MB terrain cache). A fixed 10 s wait gave up first and recorded nothing
+        // world's caches (26 s for a 359 MB terrain cache was measured). A fixed 10 s wait gave up first and recorded nothing
         // ("Peer skipped: session uid not found"), so it waits as long as the connection lasts.
         private static IEnumerator CaptureWhenReady(ZNetPeer peer)
         {

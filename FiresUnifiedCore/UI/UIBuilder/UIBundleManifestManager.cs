@@ -291,7 +291,7 @@ namespace FiresCore.UI
             SaveManifest(manifest);
             _manifestCache[bundleName] = manifest;
 
-            Debug.Log($"[UIBundleManifest] Created manifest for '{bundleName}': " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIBundleManifest] Created manifest for '{bundleName}': " +
                 $"{manifest.SpriteCount} sprites, {manifest.TextureCount} textures, " +
                 $"{manifest.MaterialCount} materials, {manifest.PrefabCount} prefabs");
 
@@ -406,7 +406,7 @@ namespace FiresCore.UI
                 var bundle = AssetBundle.LoadFromFile(filePath);
                 if (bundle != null)
                 {
-                    Debug.Log($"[UIBundleManifest] Loaded cached bundle '{bundleName}' from {filePath}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UIBundleManifest] Loaded cached bundle '{bundleName}' from {filePath}");
                     return bundle;
                 }
                 else

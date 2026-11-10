@@ -1103,8 +1103,8 @@ namespace FiresCore.Npc.Combat
         {
             if (character == null) return false;
 
-            // Support casts (heals, shields) reach the caster's PARTY only, PvP on or off (Fire's rule, the same gate as
-            // AbilityHeals.Apply). R69 pve: "Vafire.healer>FiresBot 1" came from here, when every player counted as friendly.
+            // Support casts (heals, shields) reach the caster's PARTY only, PvP on or off (the same gate as
+            // AbilityHeals.Apply).
             if (Context.Character != null) return Archetypes.ClassTargeting.IsPartyMember(Context.Character, character);
 
             // Players are always potential friendly targets
@@ -1322,6 +1322,7 @@ namespace FiresCore.Npc.Combat
             Vector3 targetPos = target.transform.position + Vector3.up * 1f;
             Vector3 direction = (targetPos - spawnPos).normalized;
             GameObject projectileObj = UnityEngine.Object.Instantiate(attackTemplate.m_attackProjectile, spawnPos, Quaternion.LookRotation(direction));
+            CombatLoopStats.NoteAttack(Context.Character, 0);   // [ghost] 11-02: ranged shots never reached the melee path, so [CombatFight] read 0 swings; log only
 
             // Projectiles, Aoes and SpawnAbility summons all start from IProjectile.Setup (owner, velocity, noise, hit,
             // weapon, ammo; Projectile.cs:260-271); without it a SpawnAbility never spawns and an Aoe has no owner.
@@ -1363,6 +1364,7 @@ namespace FiresCore.Npc.Combat
             // Spawn the visual effect at the friendly target's position
             Vector3 targetPos = friendlyTarget.transform.position;
             GameObject effectObj = UnityEngine.Object.Instantiate(attackTemplate.m_attackProjectile, targetPos, Quaternion.identity);
+            CombatLoopStats.NoteAttack(Context.Character, 0);   // [ghost] 11-02: ranged shots never reached the melee path, so [CombatFight] read 0 swings; log only
 
             // An ownerless Aoe skips its friend/enemy test (Aoe.ShouldHit) and would buff enemies standing inside it.
             effectObj.GetComponent<IProjectile>()?.Setup(Context.Character, Vector3.zero, attackTemplate.m_attackHitNoise,

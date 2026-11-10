@@ -360,6 +360,89 @@ namespace FiresCore.Classes
                     "Achieve martial perfection. Attack speed doubled, all attacks critically hit for 15 seconds.", 
                     100, ArchetypeClass.Monk, AbilityCategory.Ultimate, "#FFD700"),
             };
+
+            // ===== DRUID / NECROMANCER (scaffolding: the Starter signature + the evasion) =====
+            s_abilitiesByArchetype[ArchetypeClass.Druid] = new List<ClassAbility>
+            {
+                new ClassAbility("druid_wildshape", "Wildshape",
+                    "Consume a beaten creature under your crosshair and take its form and attacks for a time.",
+                    1, ArchetypeClass.Druid, AbilityCategory.Starter, "#5AA640"),
+
+                new ClassAbility("druid_regrowth", "Regrowth",
+                    "Heals a hurt ally or yourself over 10 seconds.",
+                    5, ArchetypeClass.Druid, AbilityCategory.Basic, "#5AA640"),
+
+                new ClassAbility("druid_entangling_roots", "Entangling Roots",
+                    "Roots burst from the ground and slow enemies in a 5 m circle for 6 seconds.",
+                    15, ArchetypeClass.Druid, AbilityCategory.Advanced, "#5AA640"),
+
+                new ClassAbility("druid_barkskin", "Barkskin",
+                    "Your skin hardens to bark: 20% less damage taken for 10 seconds.",
+                    20, ArchetypeClass.Druid, AbilityCategory.Advanced, "#8C6A3F"),
+
+                new ClassAbility("druid_thornfield", "Thornfield",
+                    "A field of thorns: enemies inside take pierce damage every second for 8 seconds.",
+                    40, ArchetypeClass.Druid, AbilityCategory.Expert, "#5AA640"),
+
+                new ClassAbility("druid_alpha_howl", "Alpha Howl",
+                    "You and your allies within 15 m deal more damage for 10 seconds.",
+                    45, ArchetypeClass.Druid, AbilityCategory.Expert, "#8CC63F"),
+
+                new ClassAbility("druid_wild_hunt", "Wild Hunt",
+                    "You and your allies sprint, and every creature within 40 m is hunt-marked.",
+                    100, ArchetypeClass.Druid, AbilityCategory.Ultimate, "#8CC63F"),
+
+                new ClassAbility("druid_wolf_pack", "Wolf Pack",
+                    "Call 2 wolves that fight beside you for 75 seconds.",
+                    25, ArchetypeClass.Druid, AbilityCategory.Advanced, "#8CC63F"),
+
+                new ClassAbility("druid_beast_pounce", "Beast Pounce",
+                    "Emergency evasion: roll and pounce a short distance like a beast.",
+                    EvasionUnlockLevel, ArchetypeClass.Druid, AbilityCategory.Advanced, "#8CC63F"),
+            };
+
+            s_abilitiesByArchetype[ArchetypeClass.Necromancer] = new List<ClassAbility>
+            {
+                new ClassAbility("necromancer_bind_dead", "Bind the Dead",
+                    "Possess an undead humanoid while your body channels, untouchable.",
+                    1, ArchetypeClass.Necromancer, AbilityCategory.Starter, "#73408C"),
+
+                new ClassAbility("necromancer_wither", "Wither",
+                    "Curses your target: poison every second and more damage taken for 10 seconds.",
+                    5, ArchetypeClass.Necromancer, AbilityCategory.Basic, "#73408C"),
+
+                new ClassAbility("necromancer_lich_form", "Lich Form",
+                    "Your own body becomes undead: 15% less damage taken for 16 seconds.",
+                    10, ArchetypeClass.Necromancer, AbilityCategory.Basic, "#4B2A5C"),
+
+                new ClassAbility("necromancer_grave_chill", "Grave Chill",
+                    "A grave-cold mist slows and frosts enemies in a 5 m circle for 6 seconds.",
+                    15, ArchetypeClass.Necromancer, AbilityCategory.Advanced, "#73408C"),
+
+                new ClassAbility("necromancer_grave_pestilence", "Grave Pestilence",
+                    "A cloud of pestilence for 10 seconds: every enemy inside is Withered and Wounded.",
+                    75, ArchetypeClass.Necromancer, AbilityCategory.Master, "#4B2A5C"),
+
+                new ClassAbility("necromancer_raise_archer", "Raise Archer",
+                    "Raise a skeleton archer that shoots your target for 75 seconds.",
+                    15, ArchetypeClass.Necromancer, AbilityCategory.Advanced, "#73408C"),
+
+                new ClassAbility("necromancer_life_tap", "Life Tap",
+                    "Your summons' hits heal you for 8% of the damage they deal.",
+                    20, ArchetypeClass.Necromancer, AbilityCategory.Advanced, "#73408C"),
+
+                new ClassAbility("necromancer_raise_wraith", "Raise Wraith",
+                    "Raise a wraith that deals spirit damage for 55 seconds.",
+                    45, ArchetypeClass.Necromancer, AbilityCategory.Expert, "#73408C"),
+
+                new ClassAbility("necromancer_legion", "Legion",
+                    "Every undead within 30 m below 50% health becomes your thrall for 30 seconds.",
+                    100, ArchetypeClass.Necromancer, AbilityCategory.Ultimate, "#4B2A5C"),
+
+                new ClassAbility("necromancer_shadow_step", "Shadow Step",
+                    "Emergency evasion: fade into shadow and blink a short distance.",
+                    EvasionUnlockLevel, ArchetypeClass.Necromancer, AbilityCategory.Advanced, "#4B2A5C"),
+            };
         }
 
         /// <summary>Every archetype the roster defines.</summary>

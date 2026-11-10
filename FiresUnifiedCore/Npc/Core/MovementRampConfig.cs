@@ -11,33 +11,17 @@ namespace FiresCore.Npc.Core
     /// </summary>
     public static class MovementRampConfig
     {
-        public static ConfigEntry<bool> Enable;
-        public static ConfigEntry<float> RampSeconds;
+        // 1086 ([generator], Fire 11-01: configs live in their own mods): bound and synced by FiresCompanions; Core reads the owner's
+        // value (old default without it). Same member names; .Value still reads (type is now OwnedSetting<T>).
+        public static readonly FiresCore.Config.OwnedSetting<bool> Enable = new FiresCore.Config.OwnedSetting<bool>("Companions", "SmoothSpeedRamp", true);
+        public static readonly FiresCore.Config.OwnedSetting<float> RampSeconds = new FiresCore.Config.OwnedSetting<float>("Companions", "SpeedRampSeconds", 1.0f);
 
-        public static void Initialize(ConfigFile config)
-        {
-            Enable = config.Bind(
-                "Companions", "SmoothSpeedRamp", true,
-                "Ease companion run speed up to full instead of snapping to it (and ease back down when they " +
-                "stop), ramping between their own walk and run speed. Cosmetic locomotion polish. [Synced with Server]");
+        public static void Initialize(ConfigFile config) { }
 
-            RampSeconds = config.Bind(
-                "Companions", "SpeedRampSeconds", 1.0f,
-                new ConfigDescription(
-                    "Seconds for a companion to ramp from walk speed up to full run speed (and back). Lower = " +
-                    "snappier, higher = more gradual. [Synced with Server]",
-                    new AcceptableValueRange<float>(0.1f, 5f)));
-        }
+        public static void BindToSync(ConfigSync configSync) { }
 
-        public static void BindToSync(ConfigSync configSync)
-        {
-            if (configSync == null) return;
-            if (Enable != null) configSync.AddConfigEntry(Enable);
-            if (RampSeconds != null) configSync.AddConfigEntry(RampSeconds);
-        }
-
-        /// <summary>Cheap hot-path read (backing field). False until bound.</summary>
-        public static bool Enabled => Enable != null && Enable.Value;
-        public static float Seconds => RampSeconds != null ? RampSeconds.Value : 1.0f;
+        /// <summary>Hot-path read (cached while the owner's key has a change event).</summary>
+        public static bool Enabled => Enable.Value;
+        public static float Seconds => RampSeconds.Value;
     }
 }

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using FiresCore.Npc.Core;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
@@ -135,7 +135,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (!IsParty(character)) continue; // Fire: heals only the party (it used to heal anything not hostile)
+                if (!IsParty(character)) continue; // heals only the party (it used to heal anything not hostile)
 
                 float distance = Vector3.Distance(center, character.transform.position);
                 if (distance <= AuraRange)
@@ -199,7 +199,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Monk
             
             seman.AddStatusEffect(effect, true);
             
-            Debug.Log($"[InnerPeaceEffect] Applied to {monk.m_name}, hasIcon={icon != null}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[InnerPeaceEffect] Applied to {monk.m_name}, hasIcon={icon != null}");
             
             return true;
         }

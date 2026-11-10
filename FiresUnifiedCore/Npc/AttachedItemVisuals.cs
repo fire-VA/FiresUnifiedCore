@@ -14,6 +14,7 @@ namespace FiresCore.Npc
     /// AttachArmor, which is also the only one that runs SetupCloth.
     /// </summary>
     [HarmonyPatch]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class AttachedItemVisuals
     {
         private static readonly HashSet<string> _reportedItems = new HashSet<string>();
@@ -62,7 +63,7 @@ namespace FiresCore.Npc
             string instanceState = DescribeSkinnedRenderers(instance);
             if (sourceState == NoSkinnedRenderers && instanceState == NoSkinnedRenderers) return;
 
-            Debug.Log($"[AttachedItemVisuals] '{itemName}' origin={DescribeOrigin(itemPrefab, itemName)}"
+            FiresCore.Logging.FiresLogger.LogDebug($"[AttachedItemVisuals] '{itemName}' origin={DescribeOrigin(itemPrefab, itemName)}"
                 + $" | source: {sourceState} | instance: {instanceState}");
         }
 

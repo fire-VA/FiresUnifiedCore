@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using FiresCore.Npc.Combat;
 using FiresCore.Npc.Archetypes;
 
@@ -64,6 +64,21 @@ namespace FiresCore.Npc.Movement
         /// <summary>
         /// Clears the flanking angle assignment.
         /// </summary>
+        /// <summary>True while this companion has a flank slot and
+        /// stands more than 0.7 m off it, so the melee intent keeps walking it to the slot instead of strafing on the owner-foe line.</summary>
+        public bool OffFlankSlot(Vector3 targetPos, Character foe)
+        {
+            if (!_hasAssignedFlankAngle) return false;
+            float engageDist = CompanionSettings.CombatCoordinationMeleeEngageDistance;
+            ItemDrop.ItemData weapon = (_character as Humanoid)?.GetCurrentWeapon();
+            float reach = weapon != null && weapon.m_shared.m_attack != null ? weapon.m_shared.m_attack.m_attackRange : 1.5f;
+            float foeRadius = foe != null ? foe.GetRadius() : 0.5f;
+            engageDist = Mathf.Min(engageDist, foeRadius + reach * 0.8f);
+            Vector3 slot = targetPos + Quaternion.Euler(0f, _assignedFlankAngle, 0f) * Vector3.forward * engageDist;
+            Vector3 d = slot - _transform.position; d.y = 0f;
+            return d.sqrMagnitude > 0.5f;
+        }
+
         public void ClearFlankAngle()
         {
             _hasAssignedFlankAngle = false;
@@ -465,8 +480,7 @@ namespace FiresCore.Npc.Movement
             if (_hasAssignedFlankAngle)
             {
                 float engageDist = CompanionSettings.CombatCoordinationMeleeEngageDistance;
-                // The slot within the weapon's reach of the foe's body (0.2.217, R87 pve: Jorunn held "slot N° on $enemy_greyling …
-                // 3.2 m from it" 17x and landed 0 hits: the 2.5 m ring from the foe's centre was outside a one-hand axe's reach).
+                // The slot within the weapon's reach of the foe's body: a fixed 2.5 m ring from the foe's centre was outside a one-hand axe's reach).
                 ItemDrop.ItemData weapon = (_character as Humanoid)?.GetCurrentWeapon();
                 float reach = weapon != null && weapon.m_shared.m_attack != null ? weapon.m_shared.m_attack.m_attackRange : 1.5f;
                 float foeRadius = _committedTarget is Character foe ? foe.GetRadius() : 0.5f;
@@ -1087,9 +1101,8 @@ namespace FiresCore.Npc.Movement
                 }
             }
             
-            // The GroupTactics slot (0.2.210, R81: "STACK Magni the Grey + Jorunn the Brave within 1.0 m on $enemy_greydwarfbrute for
-            // 2.2 s" with both slotted): the flank angle was set on this handler but its approach (CalculateApproachMovement) was
-            // never called, so every melee companion walked straight at the foe.
+            // The GroupTactics slot: the flank angle is set on this handler, and its approach (CalculateApproachMovement) must be
+            // called here or every melee companion walks straight at the foe.
             if (_hasAssignedFlankAngle)
             {
                 Vector3 toSlot = CalculateApproachMovement();

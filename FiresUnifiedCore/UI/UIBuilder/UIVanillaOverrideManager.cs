@@ -244,7 +244,7 @@ namespace FiresCore.UI
 
             if (!_activeOverrides.TryGetValue(layoutUID, out var active))
             {
-                Debug.Log($"[UIVanillaOverride] No active override for '{layoutUID}'.");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] No active override for '{layoutUID}'.");
                 return false;
             }
 
@@ -264,7 +264,7 @@ namespace FiresCore.UI
             }
             active.UserDeactivatedObjects?.Clear();
             if (destroyed > 0)
-                Debug.Log($"[UIVanillaOverride] Destroyed {destroyed} injected mod elements for '{active.VanillaTargetName}'.");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Destroyed {destroyed} injected mod elements for '{active.VanillaTargetName}'.");
 
             // Remove mod-specific compat shims that were attached during apply
             if (active.VanillaRoot != null)
@@ -338,7 +338,7 @@ namespace FiresCore.UI
                 }
             }
 
-            Debug.Log($"[UIVanillaOverride] Restored {restored} transforms for '{active.VanillaTargetName}'.");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Restored {restored} transforms for '{active.VanillaTargetName}'.");
 
             _activeOverrides.Remove(layoutUID);
 
@@ -458,7 +458,7 @@ namespace FiresCore.UI
                 var layout = UILayoutCodex.Get(active.LayoutUID);
                 if (layout == null) continue;
 
-                Debug.Log($"[UIVanillaOverride] Pending target '{active.VanillaTargetName}' found, applying override.");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Pending target '{active.VanillaTargetName}' found, applying override.");
                 ApplyOverride(layout, vanillaGO);
             }
         }
@@ -583,8 +583,8 @@ namespace FiresCore.UI
             string target = layout.GetMeta(MetaKeyTarget);
             bool wasActive = vanillaGO.activeSelf;
 
-            Debug.Log($"[UIVanillaOverride] === Applying in-place override '{layoutUID}' to vanilla '{target}' ===");
-            Debug.Log($"[UIVanillaOverride] Vanilla GO: name='{vanillaGO.name}', active={wasActive}, " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] === Applying in-place override '{layoutUID}' to vanilla '{target}' ===");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Vanilla GO: name='{vanillaGO.name}', active={wasActive}, " +
                 $"parent='{vanillaGO.transform.parent?.name}', childCount={vanillaGO.transform.childCount}");
 
             // Check for missing mod dependencies and warn (but don't block override application)
@@ -636,7 +636,7 @@ namespace FiresCore.UI
 
             // Log vanilla hierarchy summary
             int vanillaTotal = CountChildren(vanillaGO.transform);
-            Debug.Log($"[UIVanillaOverride] Vanilla hierarchy: {vanillaTotal} total GameObjects");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Vanilla hierarchy: {vanillaTotal} total GameObjects");
 
             // Sanity check: if the layout has many nodes but the vanilla GO has very few children,
             // we probably matched the wrong GameObject (e.g., a generic "root" under TopLeftMessage
@@ -651,7 +651,7 @@ namespace FiresCore.UI
                 return false;
             }
 
-            Debug.Log($"[UIVanillaOverride] Layout has {rootNode.CountAll()} nodes, " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Layout has {rootNode.CountAll()} nodes, " +
                 $"HasRuntimeRootTransform={layout.HasRuntimeRootTransform()}, " +
                 $"HasScreenPosition={layout.HasScreenPosition()}");
 
@@ -676,7 +676,7 @@ namespace FiresCore.UI
             var vanillaLookup = new Dictionary<string, List<GameObject>>(StringComparer.OrdinalIgnoreCase);
             BuildVanillaLookup(vanillaGO.transform, vanillaLookup, "");
 
-            Debug.Log($"[UIVanillaOverride] Built vanilla lookup: {vanillaLookup.Count} unique names");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Built vanilla lookup: {vanillaLookup.Count} unique names");
 
             // Compute which nodes have been modified from the capture baseline.
             // If a baseline exists, only modified/new nodes are overridden - unchanged
@@ -686,11 +686,11 @@ namespace FiresCore.UI
             if (modifiedIds != null)
             {
                 var diffStats = UIOverrideDiffEngine.GetDiffStats(layout);
-                Debug.Log($"[UIVanillaOverride] Diff baseline found: {diffStats}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Diff baseline found: {diffStats}");
             }
             else
             {
-                Debug.Log($"[UIVanillaOverride] No capture baseline - applying full override (legacy behavior)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] No capture baseline - applying full override (legacy behavior)");
             }
 
             // Apply transforms recursively, matching by name/path
@@ -701,13 +701,13 @@ namespace FiresCore.UI
             {
                 int wired = WireInjectedElements(overrideEntry.InjectedObjects, vanillaGO);
                 if (wired > 0)
-                    Debug.Log($"[UIVanillaOverride] Wired {wired} injected elements to live game systems.");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Wired {wired} injected elements to live game systems.");
 
                 // Wire inventory slot/hotbar mirrors via our own slot system
                 UIOverrideSlotSystem.DiscoverSlotsFromGameState();
                 int inventoryWired = UIOverrideInventoryWiring.WireInventoryElements(overrideEntry.InjectedObjects);
                 if (inventoryWired > 0)
-                    Debug.Log($"[UIVanillaOverride] Wired {inventoryWired} inventory elements via UIOverrideInventoryWiring.");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Wired {inventoryWired} inventory elements via UIOverrideInventoryWiring.");
 
                 // NOTE: We do NOT force initial visibility here. The compat class
                 // (UIOverrideAzuEPICompat) runs ApplyPanelStates() which sets the
@@ -742,10 +742,10 @@ namespace FiresCore.UI
             PersistOverrides();
 
             Debug.Log($"[UIVanillaOverride] === Override complete: '{layoutUID}' -> '{target}' ===");
-            Debug.Log($"[UIVanillaOverride]   Matched: {overrideEntry.MatchedCount} elements modified");
-            Debug.Log($"[UIVanillaOverride]   Injected: {overrideEntry.InjectedCount} mod elements instantiated from layout data");
-            Debug.Log($"[UIVanillaOverride]   Unmatched: {overrideEntry.UnmatchedCount} layout nodes had no vanilla counterpart");
-            Debug.Log($"[UIVanillaOverride]   Backups: {overrideEntry.Backups.Count} transforms saved for restore");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride]   Matched: {overrideEntry.MatchedCount} elements modified");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride]   Injected: {overrideEntry.InjectedCount} mod elements instantiated from layout data");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride]   Unmatched: {overrideEntry.UnmatchedCount} layout nodes had no vanilla counterpart");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride]   Backups: {overrideEntry.Backups.Count} transforms saved for restore");
 
             return true;
         }
@@ -767,7 +767,7 @@ namespace FiresCore.UI
             if (IsOverrideProtected(node))
             {
                 if (overrideEntry.UnmatchedCount < 20)
-                    Debug.Log($"[UIVanillaOverride] Skipping override-protected subtree '{path}' (tag='{node.Tag}')");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Skipping override-protected subtree '{path}' (tag='{node.Tag}')");
                 return;
             }
 
@@ -969,7 +969,7 @@ namespace FiresCore.UI
 
                             if (overrideEntry.InjectedCount <= 20)
                             {
-                                Debug.Log($"[UIVanillaOverride] Injected mod element '{childPath}' " +
+                                FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Injected mod element '{childPath}' " +
                                     $"(type={childNode.Type}, active={childNode.Active}) into '{vanillaGO.name}'");
                             }
                         }
@@ -1289,7 +1289,7 @@ namespace FiresCore.UI
                     {
                         var preview = go.GetComponent<UIOverridePlayerPreview>();
                         if (preview == null) preview = go.AddComponent<UIOverridePlayerPreview>();
-                        Debug.Log($"[UIVanillaOverride] Wired player preview on '{go.name}'");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Wired player preview on '{go.name}'");
                         return true;
                     }
                 }
@@ -1410,7 +1410,7 @@ namespace FiresCore.UI
                     {
                         rawImg.texture = tex;
                         AttachMinimapWirer(go, rawImg);
-                        Debug.Log($"[UIVanillaOverride] Wired minimap RawImage '{go.name}' to Minimap.m_mapTexture");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Wired minimap RawImage '{go.name}' to Minimap.m_mapTexture");
                         return true;
                     }
                 }
@@ -1426,7 +1426,7 @@ namespace FiresCore.UI
                         rawImg.texture = smallMapImg.texture;
                         rawImg.material = smallMapImg.material;
                         AttachMinimapWirer(go, rawImg);
-                        Debug.Log($"[UIVanillaOverride] Wired minimap RawImage '{go.name}' to m_mapImageSmall.texture");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Wired minimap RawImage '{go.name}' to m_mapImageSmall.texture");
                         return true;
                     }
                 }
@@ -1475,7 +1475,7 @@ namespace FiresCore.UI
                         }
                     }
                 });
-                Debug.Log($"[UIVanillaOverride] Wired minimap zoom-in button '{go.name}'");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Wired minimap zoom-in button '{go.name}'");
                 return true;
             }
 
@@ -1494,7 +1494,7 @@ namespace FiresCore.UI
                         }
                     }
                 });
-                Debug.Log($"[UIVanillaOverride] Wired minimap zoom-out button '{go.name}'");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Wired minimap zoom-out button '{go.name}'");
                 return true;
             }
 
@@ -1580,7 +1580,7 @@ namespace FiresCore.UI
                 }
             }
 
-            Debug.Log($"[UIVanillaOverride] Wired {barType} bar updater on '{go.name}'");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Wired {barType} bar updater on '{go.name}'");
             return true;
         }
 
@@ -1605,7 +1605,7 @@ namespace FiresCore.UI
             if (foundSprite != null)
             {
                 img.sprite = foundSprite;
-                Debug.Log($"[UIVanillaOverride] Wired '{iconType}' icon on '{go.name}' to sprite '{foundSprite.name}'");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Wired '{iconType}' icon on '{go.name}' to sprite '{foundSprite.name}'");
                 return true;
             }
 
@@ -1626,7 +1626,7 @@ namespace FiresCore.UI
             {
                 // Apply a gradient or simple sun/moon color
                 img.color = new Color(1f, 0.9f, 0.4f, 0.8f); // Warm sun color
-                Debug.Log($"[UIVanillaOverride] Applied day/night indicator placeholder to '{go.name}'");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Applied day/night indicator placeholder to '{go.name}'");
                 return true;
             }
             return false;
@@ -1713,7 +1713,7 @@ namespace FiresCore.UI
             updater.Text = tmpText;
             updater.LegacyText = legacyText;
 
-            Debug.Log($"[UIVanillaOverride] Wired text updater ({textType.Value}) on '{go.name}'");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Wired text updater ({textType.Value}) on '{go.name}'");
             return true;
         }
 
@@ -1906,7 +1906,7 @@ namespace FiresCore.UI
                     rootRect.anchoredPosition = new Vector2(localX, localY);
                     rootRect.localScale = new Vector3(screenScale, screenScale, 1f);
 
-                    Debug.Log($"[UIVanillaOverride] Applied screen position ({layout.ScreenPositionX:F3}, {layout.ScreenPositionY:F3}) " +
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Applied screen position ({layout.ScreenPositionX:F3}, {layout.ScreenPositionY:F3}) " +
                         $"scale={screenScale:F2} to root '{vanillaGO.name}'");
                 }
             }
@@ -2062,7 +2062,7 @@ namespace FiresCore.UI
                         var found = target.FindRoot();
                         if (found != null && string.Equals(found.name, targetName, StringComparison.OrdinalIgnoreCase))
                         {
-                            Debug.Log($"[UIVanillaOverride] Matched legacy target name '{targetName}' to VanillaTarget '{target.UID}' via FindRoot()");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Matched legacy target name '{targetName}' to VanillaTarget '{target.UID}' via FindRoot()");
                             return found;
                         }
                     }
@@ -2120,7 +2120,7 @@ namespace FiresCore.UI
                         var found = target.FindRoot();
                         if (found != null && string.Equals(found.name, targetName, StringComparison.OrdinalIgnoreCase))
                         {
-                            Debug.Log($"[UIVanillaOverride] Matched legacy target name '{targetName}' to KnownTarget '{target.UID}' via FindRoot()");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[UIVanillaOverride] Matched legacy target name '{targetName}' to KnownTarget '{target.UID}' via FindRoot()");
                             return found;
                         }
                     }

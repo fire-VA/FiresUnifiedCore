@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 
 namespace FiresCore.Npc.Combat
@@ -763,7 +763,7 @@ public class StaminaManager : MonoBehaviour
             _isRecovering = true;  // Keep in recovery mode to prevent attacks
             _isSprinting = false;
             
-            Debug.Log($"[StaminaManager] === FLEE STATE ENTERED === " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[StaminaManager] === FLEE STATE ENTERED === " +
                 $"Instant boost: {previousStamina:F0} -> {targetStamina:F0} (+{fleeInstantBoostPercent:P0}), " +
                 $"Enhanced regen: {fleeStateRegenBoost:F2}x until full");
         }
@@ -778,7 +778,7 @@ public class StaminaManager : MonoBehaviour
                 float fleeTime = Time.time - _fleeStateStartTime;
                 _isInFleeState = false;
                 
-                Debug.Log($"[StaminaManager] === FLEE STATE EXITED === " +
+                FiresCore.Logging.FiresLogger.LogDebug($"[StaminaManager] === FLEE STATE EXITED === " +
                     $"Duration: {fleeTime:F1}s, Final stamina: {GetStaminaPercent():P0}");
             }
         }
@@ -792,7 +792,7 @@ public class StaminaManager : MonoBehaviour
             if (_isInCriticalRecovery)
             {
                 _isInCriticalRecovery = false;
-                Debug.Log($"[StaminaManager] Critical recovery cleared manually (stamina: {GetStaminaPercent():P0})");
+                FiresCore.Logging.FiresLogger.LogDebug($"[StaminaManager] Critical recovery cleared manually (stamina: {GetStaminaPercent():P0})");
             }
         }
         
@@ -933,9 +933,9 @@ public class StaminaManager : MonoBehaviour
                 float timeSinceCritical = Time.time - _criticalRecoveryStartTime;
                 
                 // Exit critical recovery only when:
-                // 1. Stamina is nearly full (90%+)
-                // 2. Minimum time has passed (to let stamina fully regen)
-                if (percent >= 0.90f && timeSinceCritical >= CriticalRecoveryMinTime)
+                // 1. Stamina is back above what a swing needs ([ghost] 11-02 fix 4, Fire "back off briefly": was 90 %, about 15 s out of the fight)
+                // 2. Minimum time has passed
+                if (percent >= 0.55f && timeSinceCritical >= CriticalRecoveryMinTime)
                 {
                     _isInCriticalRecovery = false;
                     _isRecovering = false;

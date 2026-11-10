@@ -179,7 +179,7 @@ namespace FiresCore.Help
         private void Update()
         {
             bool menuOpen = Menu.IsVisible();
-            if (_helpButton != null) _helpButton.SetActive(menuOpen && !IsVisible && !Hud.IsUserHidden());   // 0.2.293: none with the HUD hidden
+            if (_helpButton != null) { bool show = menuOpen && !IsVisible && !Hud.IsUserHidden(); if (_helpButton.activeSelf != show) _helpButton.SetActive(show); }   // None with the HUD hidden; 0.2.825 C15: set on change only
 
             if (IsVisible && UnityEngine.Input.GetKeyDown(KeyCode.Escape)) Hide();
         }

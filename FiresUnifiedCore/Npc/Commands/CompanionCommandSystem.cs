@@ -203,7 +203,8 @@ namespace FiresCore.Npc.Commands
 
         private void ProcessCommandInput()
         {
-            if (FiresCore.Input.FiresInputBlock.IsCapturing) return; // typing in a Fires field — don't fire command hotkeys
+            if (FiresCore.Input.FiresInputBlock.IsTyping()) return;   // never while typing in any text field, chat, console
+            // // typing in a Fires field — don't fire command hotkeys
             // Check for modifier + mouse button (ping command)
             bool shiftHeld = UnityEngine.Input.GetKey(modifierKey) || UnityEngine.Input.GetKey(KeyCode.RightShift);
             bool altHeld = UnityEngine.Input.GetKey(KeyCode.LeftAlt) || UnityEngine.Input.GetKey(KeyCode.RightAlt);
@@ -461,14 +462,14 @@ namespace FiresCore.Npc.Commands
                 if (!hitCompanion.ShouldBeFollowing)
                 {
                     // Companion is stayed/not following - command them to follow
-                    Debug.Log($"[CompanionCommandSystem] Alt+Shift+MMB on stayed companion {hitCompanion.companionName} - commanding FOLLOW");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommandSystem] Alt+Shift+MMB on stayed companion {hitCompanion.companionName} - commanding FOLLOW");
                     CommandCompanionFollow(hitCompanion);
                     return;
                 }
                 else
                 {
                     // Companion is following - command them to stay at current position
-                    Debug.Log($"[CompanionCommandSystem] Alt+Shift+MMB on following companion {hitCompanion.companionName} - commanding STAY");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommandSystem] Alt+Shift+MMB on following companion {hitCompanion.companionName} - commanding STAY");
                     CommandCompanionStay(hitCompanion, hitCompanion.transform.position);
                     return;
                 }
@@ -532,7 +533,7 @@ namespace FiresCore.Npc.Commands
             // own MessageHud.Center already, this is the smaller corner one).
             ShowMessage($"{companion.GetDisplayName()}: Staying at position");
 
-            Debug.Log($"[CompanionCommandSystem] {companion.companionName} commanded to STAY at {position}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommandSystem] {companion.companionName} commanded to STAY at {position}");
         }
         
         /// <summary>
@@ -581,7 +582,7 @@ namespace FiresCore.Npc.Commands
             CompanionChatHelper.QuickMessages.FollowingOwner(companion);
             ShowMessage($"{companion.GetDisplayName()}: Following you");
 
-            Debug.Log($"[CompanionCommandSystem] {companion.companionName} commanded to FOLLOW");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommandSystem] {companion.companionName} commanded to FOLLOW");
 
             // ROSTER MIRROR (Phase 3): persistent intent = Following.
             try
@@ -1089,7 +1090,7 @@ namespace FiresCore.Npc.Commands
             
             try
             {
-                Debug.Log($"[COMMAND] ForceStopAllBehaviors for {companion.companionName}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] ForceStopAllBehaviors for {companion.companionName}");
                 
                 // 0. FIRST: Acquire command movement priority via state controller
                 var stateController = companion.GetComponent<CompanionStateController>();
@@ -1161,7 +1162,7 @@ namespace FiresCore.Npc.Commands
                     rigidbody.angularVelocity = Vector3.zero;
                 }
                 
-                Debug.Log($"[COMMAND] ForceStopAllBehaviors COMPLETE for {companion.companionName}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] ForceStopAllBehaviors COMPLETE for {companion.companionName}");
             }
             catch (Exception ex)
             {
@@ -1255,7 +1256,7 @@ namespace FiresCore.Npc.Commands
                 if (companionAI != null)
                 {
                     companionAI.ForceTarget(command.TargetCharacter);
-                    Debug.Log($"[CompanionCommandSystem] {companion.companionName} targeting {command.TargetCharacter.m_name} via CompanionAI");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommandSystem] {companion.companionName} targeting {command.TargetCharacter.m_name} via CompanionAI");
                 }
             }
             else if (command.TargetObject != null)
@@ -1313,7 +1314,7 @@ namespace FiresCore.Npc.Commands
             }
 
             string lootMsg = hasLootNearby ? $" ({lootCount} items nearby)" : "";
-            Debug.Log($"[CompanionCommandSystem] {companion.companionName} moving to {command.TargetPosition}{lootMsg}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommandSystem] {companion.companionName} moving to {command.TargetPosition}{lootMsg}");
 
             // Start coroutine to monitor arrival
             StartCoroutine(MonitorMoveCommandWithStateController(companion, command, stateController));
@@ -1572,7 +1573,7 @@ namespace FiresCore.Npc.Commands
                     if (idleBehavior.TryStartSubBehavior<WoodGatheringBehavior>())
                     {
                         command.DelegatedToSubBehavior = true;
-                        Debug.Log($"[COMMAND] {companion.companionName} started WoodGatheringBehavior");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} started WoodGatheringBehavior");
                         ShowMessage($"{companion.companionName}: Chopping wood");
                         return;
                     }
@@ -1592,7 +1593,7 @@ namespace FiresCore.Npc.Commands
                 if (idleBehavior.TryStartSubBehavior<ResourceGatheringBehavior>())
                 {
                     command.DelegatedToSubBehavior = true;
-                    Debug.Log($"[COMMAND] {companion.companionName} started ResourceGatheringBehavior for {command.TargetObject?.name}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} started ResourceGatheringBehavior for {command.TargetObject?.name}");
                     ShowMessage($"{companion.companionName}: Gathering resources");
                     return;
                 }
@@ -1603,7 +1604,7 @@ namespace FiresCore.Npc.Commands
             }
             
             // Fallback: move to resource and attack it directly
-            Debug.Log($"[CompanionCommandSystem] {companion.companionName} using fallback attack for resource gathering");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommandSystem] {companion.companionName} using fallback attack for resource gathering");
             
             if (combatMovement != null)
             {
@@ -1639,7 +1640,7 @@ namespace FiresCore.Npc.Commands
                 if (command.TargetObject == null && !resourceDestroyed)
                 {
                     resourceDestroyed = true;
-                    Debug.Log($"[CompanionCommandSystem] {companion.companionName} destroyed resource, collecting loot");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommandSystem] {companion.companionName} destroyed resource, collecting loot");
                     
                     yield return StartCoroutine(CollectLooseItems(companion, resourcePosition, ResourceLootRadius, ResourceLootSeconds));
                     
@@ -1720,7 +1721,7 @@ namespace FiresCore.Npc.Commands
         
         private void ExecuteSmelterCommand(CompanionController companion, ActiveCommand command)
         {
-            Debug.Log($"[COMMAND] ExecuteSmelterCommand called for {companion.companionName}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] ExecuteSmelterCommand called for {companion.companionName}");
             
             // Cancel current activities
             var idleBehavior = companion.GetComponent<CompanionIdleBehavior>();
@@ -1731,17 +1732,17 @@ namespace FiresCore.Npc.Commands
 
             // Find the smelter operator behavior
             var smelterBehavior = idleBehavior?.GetSubBehavior<SmelterOperatorBehavior>();
-            Debug.Log($"[COMMAND] {companion.companionName} smelterBehavior={smelterBehavior != null}, idleBehavior={idleBehavior != null}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} smelterBehavior={smelterBehavior != null}, idleBehavior={idleBehavior != null}");
             
             if (smelterBehavior != null)
             {
                 smelterBehavior.SetCommandedTarget(command.TargetObject);
-                Debug.Log($"[COMMAND] {companion.companionName} SetCommandedTarget, attempting TryStartSubBehavior...");
+                FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} SetCommandedTarget, attempting TryStartSubBehavior...");
                 
                 if (idleBehavior.TryStartSubBehavior<SmelterOperatorBehavior>())
                 {
                     command.DelegatedToSubBehavior = true;
-                    Debug.Log($"[COMMAND] {companion.companionName} TryStartSubBehavior SUCCEEDED! IsInSubBehavior={idleBehavior.IsInSubBehavior}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} TryStartSubBehavior SUCCEEDED! IsInSubBehavior={idleBehavior.IsInSubBehavior}");
                     ShowMessage($"{companion.companionName}: Operating smelter");
                     
                     // DON'T mark as complete - the sub-behavior will run until done
@@ -1755,13 +1756,13 @@ namespace FiresCore.Npc.Commands
             }
             
             // Fallback: move to smelter
-            Debug.Log($"[COMMAND] {companion.companionName} falling back to ExecuteMoveCommand");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} falling back to ExecuteMoveCommand");
             ExecuteMoveCommand(companion, command);
         }
 
         private void ExecuteFireTendCommand(CompanionController companion, ActiveCommand command)
         {
-            Debug.Log($"[COMMAND] ExecuteFireTendCommand called for {companion.companionName}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] ExecuteFireTendCommand called for {companion.companionName}");
             
             // Cancel current activities
             var idleBehavior = companion.GetComponent<CompanionIdleBehavior>();
@@ -1773,13 +1774,13 @@ namespace FiresCore.Npc.Commands
             var fireBehaviorV2 = idleBehavior?.GetSubBehavior<FireTendingBehaviorV2>();
             if (fireBehaviorV2 != null)
             {
-                Debug.Log($"[COMMAND] {companion.companionName} found FireTendingBehaviorV2");
+                FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} found FireTendingBehaviorV2");
                 fireBehaviorV2.SetCommandedTarget(command.TargetObject);
 
                 if (idleBehavior.TryStartSubBehavior<FireTendingBehaviorV2>())
                 {
                     command.DelegatedToSubBehavior = true;
-                    Debug.Log($"[COMMAND] {companion.companionName} started FireTendingBehaviorV2 successfully");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} started FireTendingBehaviorV2 successfully");
                     ShowMessage($"{companion.companionName}: Tending fire");
                     return;
                 }
@@ -1790,7 +1791,7 @@ namespace FiresCore.Npc.Commands
             }
 
             // Fallback: move to fire
-            Debug.Log($"[COMMAND] {companion.companionName} fire tending unavailable, falling back to move command");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} fire tending unavailable, falling back to move command");
             ExecuteMoveCommand(companion, command);
         }
 
@@ -1853,7 +1854,7 @@ namespace FiresCore.Npc.Commands
             }
 
             // Fallback: manual deposit via coroutine
-            Debug.Log($"[CompanionCommandSystem] {companion.companionName} using fallback deposit method");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCommandSystem] {companion.companionName} using fallback deposit method");
             StartCoroutine(ManualDepositToChest(companion, command));
         }
 
@@ -1885,7 +1886,7 @@ namespace FiresCore.Npc.Commands
                 }
             }
 
-            Debug.Log($"[COMMAND] {companion.companionName} cooking unavailable, falling back to move");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} cooking unavailable, falling back to move");
             ExecuteMoveCommand(companion, command);
         }
 
@@ -1909,7 +1910,7 @@ namespace FiresCore.Npc.Commands
                 }
             }
 
-            Debug.Log($"[COMMAND] {companion.companionName} repair unavailable, falling back to move");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} repair unavailable, falling back to move");
             ExecuteMoveCommand(companion, command);
         }
 
@@ -1935,7 +1936,7 @@ namespace FiresCore.Npc.Commands
                 }
             }
 
-            Debug.Log($"[COMMAND] {companion.companionName} fishing unavailable, falling back to move");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} fishing unavailable, falling back to move");
             ExecuteMoveCommand(companion, command);
         }
 
@@ -1959,7 +1960,7 @@ namespace FiresCore.Npc.Commands
                 }
             }
 
-            Debug.Log($"[COMMAND] {companion.companionName} farming unavailable, falling back to move");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} farming unavailable, falling back to move");
             ExecuteMoveCommand(companion, command);
         }
 
@@ -2021,7 +2022,7 @@ namespace FiresCore.Npc.Commands
 
             // Deposit items
             int deposited = 0;
-            var itemsToDeposit = new List<ItemDrop.ItemData>(storageInv.GetAllItems());
+            var itemsToDeposit = new List<ItemDrop.ItemData>(CompanionInventory.StorageItemsOf(storageInv)); // storage rows only
 
             foreach (var item in itemsToDeposit)
             {
@@ -2243,7 +2244,7 @@ namespace FiresCore.Npc.Commands
                 return;
             }
 
-            Debug.Log($"[COMMAND] {companion.companionName} attempting to start bow training...");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} attempting to start bow training...");
             
             // Use the public method to start bow training (uses StartAsCommand internally)
             bool started = idleBehavior.TryStartBowTraining();
@@ -2265,7 +2266,7 @@ namespace FiresCore.Npc.Commands
                     );
                 }
                 
-                Debug.Log($"[COMMAND] {companion.companionName} training STARTED successfully");
+                FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} training STARTED successfully");
                 ShowMessage($"{companion.companionName}: Training");
             }
             else
@@ -2281,7 +2282,7 @@ namespace FiresCore.Npc.Commands
                 if (_activeCommands.TryGetValue(companion, out var cmd))
                     cmd.IsComplete = true;
                 
-                Debug.Log($"[COMMAND] {companion.companionName} training failed: {reason}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] {companion.companionName} training failed: {reason}");
             }
         }
 
@@ -2333,7 +2334,7 @@ namespace FiresCore.Npc.Commands
         {
             if (companion == null) return;
             
-            Debug.Log($"[COMMAND] CompleteCommand for {companion.companionName}: {reason}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] CompleteCommand for {companion.companionName}: {reason}");
 
             CommandType completedType = CommandType.None;
             bool delegatedToSubBehavior = false;
@@ -2348,7 +2349,7 @@ namespace FiresCore.Npc.Commands
             // (a felled tree completes the Gather command early); fallback paths must release it here or it holds for 120 s.
             if (delegatedToSubBehavior)
             {
-                Debug.Log($"[COMMAND] NOT clearing priority for {companion.companionName} - sub-behavior running {completedType} manages its own priority");
+                FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] NOT clearing priority for {companion.companionName} - sub-behavior running {completedType} manages its own priority");
             }
             else
             {
@@ -2357,7 +2358,7 @@ namespace FiresCore.Npc.Commands
                 var combatMovement = companion.GetComponent<CompanionCombatMovement>();
                 if (combatMovement != null && combatMovement.HasCommandPriority)
                 {
-                    Debug.Log($"[COMMAND] Clearing command priority for {companion.companionName} ({completedType})");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] Clearing command priority for {companion.companionName} ({completedType})");
                     combatMovement.ClearCommandPriority();
                 }
             }
@@ -2373,7 +2374,7 @@ namespace FiresCore.Npc.Commands
         {
             if (companion == null) return;
             
-            Debug.Log($"[COMMAND] CancelCommand for {companion.companionName}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[COMMAND] CancelCommand for {companion.companionName}");
 
             // Clear target assignment in coordinator before removing command
             if (_activeCommands.TryGetValue(companion, out var command))

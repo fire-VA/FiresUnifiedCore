@@ -68,8 +68,8 @@ namespace FiresCore.World
     }
 
     /// <summary>
-    /// Where things spawn, from the game's own data only (Core 0.2.203, AUTOPLAY_PROGRESSION §7.14; Fire: "it needs to be able to
-    /// know how to go looking for them"). The rules per item come from ZoneSystem.m_vegetation (biome, altitude, ocean depth, tilt,
+    /// Where things spawn, from the game's own data only, so a gatherer knows where to go looking.
+    /// The rules per item come from ZoneSystem.m_vegetation (biome, altitude, ocean depth, tilt,
     /// forest) joined to what each placed prefab yields: a Pickable's item, a rock's drops, a tree's logs, a destructible's drops.
     /// <see cref="Candidates"/> samples the world generator on a <see cref="CellSize"/> m grid round a point, loaded or not, and
     /// returns the cells that fit, nearest first. One brain: the bot's planner and the companions ask the same.

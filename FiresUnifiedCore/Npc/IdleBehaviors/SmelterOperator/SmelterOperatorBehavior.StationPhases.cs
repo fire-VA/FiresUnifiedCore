@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using FiresCore.Npc.Core;
 
 namespace FiresCore.Npc.IdleBehaviors
@@ -36,8 +36,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 Debug.Log($"  Distance to target: {dist:F2}m (need <{ArrivalDistance:F1}m)");
             }
             
-            // Use ArrivalDistance to check if we've arrived at the standing position
-            if (dist < ArrivalDistance)
+            // Arrived = close AND the station in reach with no wall in between (a station behind a wall is not "here")
+            if (dist < ArrivalDistance && FiresCore.Npc.Core.CompanionReach.CanTouch(Transform, _targetSmelter, out _))
             {
                 StopMovement();
                 ResetProgressTracking();
@@ -171,27 +171,39 @@ namespace FiresCore.Npc.IdleBehaviors
         // Track last successful pull for circuit breaker
         private int _lastPullCount = 0;
         
+        // [ghost] 11-02 (Gymir's 660 s run, 1.95 M phase lines): holding EITHER input used to count as "have materials". With coal in the bag, an empty
+        // smelter and ore in a chest, FillingStation asked for ore, this phase skipped the pull and sent it back, every frame until the session timeout.
+        // Mirror case: ore in the bag, ore slots full, no fuel. A smelter now pulls unless it holds what the station can take; a kiln has one input.
+        private bool StillMissingAnInput()
+        {
+            if (_isKilnOperation) return !HasMaterialsInOwnInventory();
+            bool missing = (NeedsFuel() && !HasFuel()) || (CanAddOre() && !HasOre());
+            if (missing && HasMaterialsInOwnInventory() && Time.time - _phaseStartTime < 0.1f)
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: holds ore {HasOre()}, fuel {HasFuel()}; station needs fuel {NeedsFuel()}, can add ore {CanAddOre()}: pulling the missing input");
+            return missing;
+        }
+
         private bool UpdatePullingFromChests()
         {
             StopMovement();
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
-            if (Time.time - _phaseStartTime < 0.2f)
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2 s ended the turn ~90 deg short; the FacingAuthority is the single writer now
             {
-                FaceTarget(_targetPosition);
+                FaceTarget(StationFacePoint()); // The smelter itself, not its interaction point
             }
             
             // CRITICAL: Re-find nearby chests in case they weren't found initially
             // This can happen if ContainerRegistry wasn't fully initialized when we first looked
             if (_nearbyChests == null || _nearbyChests.Count == 0)
             {
-                Debug.Log($"[SmelterOperator] {Companion?.companionName} no chests cached - re-scanning...");
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} no chests cached - re-scanning...");
                 FindNearbyChests();
             }
             
             // First check if companion already has needed materials in their own inventory
             // Only pull from chests if we don't have enough
-            if (!HasMaterialsInOwnInventory())
+            if (StillMissingAnInput())
             {
                 // Check if we should use physical chest interaction
                 if (UsePhysicalChestInteraction && _nearbyChests.Count > 0)
@@ -216,7 +228,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 {
                     // Successfully pulled items - reset counter
                     _consecutiveFailedPulls = 0;
-                    Debug.Log($"[SmelterOperator] {Companion?.companionName} pull SUCCESS: {_lastPullCount} items pulled");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} pull SUCCESS: {_lastPullCount} items pulled");
                 }
                 else
                 {
@@ -234,7 +246,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         string materialNeeded = _isKilnOperation ? "wood" : "ore";
                         if (TryStartResourceGatheringForMaterial(materialNeeded))
                         {
-                            Debug.Log($"[SmelterOperator] {Companion?.companionName} - Started resource gathering for {materialNeeded}");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} - Started resource gathering for {materialNeeded}");
                             // _needsResourceGathering flag is set, Update() will handle transition
                             return false;
                         }
@@ -307,7 +319,7 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 foreach (string woodType in PieceDataHelper.GetStationInputs(_targetSmelter))
                 {
-                    bestChest = ContainerRegistry.GetClosestWithItem(Transform.position, woodType, CHEST_SEARCH_RADIUS);
+                    bestChest = ClosestReachableWithItem(woodType);
                     if (bestChest != null)
                     {
                         itemToPull = woodType;
@@ -322,7 +334,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (NeedsFuel() && !HasFuel())
                 {
                     string fuelPrefab = _targetSmelter.m_fuelItem.gameObject.name;
-                    bestChest = ContainerRegistry.GetClosestWithItem(Transform.position, fuelPrefab, CHEST_SEARCH_RADIUS);
+                    bestChest = ClosestReachableWithItem(fuelPrefab);
                     if (bestChest != null)
                     {
                         itemToPull = fuelPrefab;
@@ -338,7 +350,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         if (conversion.m_from != null)
                         {
                             string orePrefab = conversion.m_from.name;
-                            bestChest = ContainerRegistry.GetClosestWithItem(Transform.position, orePrefab, CHEST_SEARCH_RADIUS);
+                            bestChest = ClosestReachableWithItem(orePrefab);
                             if (bestChest != null)
                             {
                                 itemToPull = orePrefab;
@@ -362,8 +374,11 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Check if we're already close enough to the chest
             // Use tight ArrivalDistance to ensure proper positioning
+            if (Time.time < _pullBackoffUntil) { SetPhase(OperatePhase.Complete); return false; }   // the last pull moved nothing: wait it out
+            if (_unreachableChests.TryGetValue(bestChest.GetInstanceID(), out float untilC) && Time.time < untilC) { SetPhase(OperatePhase.Complete); return false; }
+            _lastPullCount = 0;
             float distToChest = Vector3.Distance(Transform.position, bestChest.transform.position);
-            if (distToChest <= ArrivalDistance)
+            if ((distToChest <= ArrivalDistance && FiresCore.Npc.Core.CompanionReach.CanTouch(Transform, bestChest, out _)) || FiresCore.Npc.Core.CompanionReach.InInteractReach(Transform, bestChest, out _))
             {
                 // Already at chest - go directly to interaction
                 SetPhase(OperatePhase.InteractingWithChestForPull);
@@ -383,6 +398,23 @@ namespace FiresCore.Npc.IdleBehaviors
             return true;
         }
         
+        // 0.2.902 (round #25: every smelter run went for the same unreachable chest at (293, 54.5, 935) and ended): the nearest chest with
+        // the item that is NOT currently marked unreachable, so a second chest with ore / coal is used instead of ending the run
+        private Container ClosestReachableWithItem(string prefab)
+        {
+            var all = ContainerRegistry.GetAllWithItem(Transform.position, prefab, CHEST_SEARCH_RADIUS);
+            Container best = null; float bd = float.MaxValue; int skipped = 0;
+            foreach (var c in all)
+            {
+                if (c == null) continue;
+                if ((_unreachableChests.TryGetValue(c.GetInstanceID(), out float until) && Time.time < until) || FiresCore.Npc.Core.ChestReach.IsUnreachable(c)) { skipped++; continue; }   // 0.2.916: + any companion's
+                float d = (c.transform.position - Transform.position).sqrMagnitude;
+                if (d < bd) { bd = d; best = c; }
+            }
+            if (best == null && skipped > 0) _runUnreached = $"every chest with {prefab} ({skipped}) was unreachable lately";
+            return best;
+        }
+
         /// <summary>
         /// Update phase: Moving to chest to pull materials.
         /// </summary>
@@ -400,31 +432,75 @@ namespace FiresCore.Npc.IdleBehaviors
                 _targetChestForPull, Transform.position);
             float dist = Vector3.Distance(Transform.position, interactionPoint);
             
-            // Use tight ArrivalDistance to ensure we reach the correct position in front of chest
-            if (dist <= ArrivalDistance)
+            // Arrived = close AND nothing (a wall, a piece) between the companion and the chest, like a player's reach (Fire 10-23:
+            // companions opened chests from outside the base through the wall).
+            string blockedBy = null;
+            // [ghost] 10-26 (Fire's hand test: "can't reach the chest at (2046, 55.3, 709)", the overhead Coal chest, every run): also
+            // arrived when the chest is within a player's interact reach (from underneath it), not only at the ground point.
+            bool inReach = FiresCore.Npc.Core.CompanionReach.InInteractReach(Transform, _targetChestForPull, out float reachDist);
+            if (inReach || (dist <= ArrivalDistance && FiresCore.Npc.Core.CompanionReach.CanTouch(Transform, _targetChestForPull, out blockedBy)))
             {
+                if (inReach) FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: chest in interact reach ({reachDist:0.0} m, ground point {dist:0.0} m)");
                 StopMovement();
                 SetPhase(OperatePhase.InteractingWithChestForPull);
                 return false;
             }
+            if (dist <= ArrivalDistance && Time.time >= _reachLogAt) { _reachLogAt = Time.time + 5f; FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: at the chest but {blockedBy} is in the way; walking round"); }
             
             // CRITICAL FIX (Bug #11): Continue movement every frame!
             // Move to the interaction point, not the chest center
             TryMoveToPosition(interactionPoint, walk: true, run: false);
             
             // Timeout check
-            if (Time.time - _phaseStartTime > 30f)
+            // 0.2.916 (round #31: the base's only ore + coal chest is upstairs, ~73 m by path): the walk gets 20 s + 2 s per metre from the
+            // station to the chest (30-90 s), and a chest not reached is skipped for EVERY companion (ChestReach)
+            float pullLimit = Mathf.Clamp(20f + 2f * Vector3.Distance(_targetSmelter != null ? _targetSmelter.transform.position : Transform.position, _targetChestForPull.transform.position), 30f, 90f);
+            if (Time.time - _phaseStartTime > pullLimit)
             {
-                if (CompanionIdleBehavior.VerboseLogging)
-                    Debug.Log($"[SmelterOperator] Timeout walking to chest - using instant pull");
+                // No more "instant pull" through walls: a chest the companion can't walk up to is skipped for a while.
+                Vector3 cp = _targetChestForPull.transform.position;
+                float left = Vector3.Distance(Transform.position, InteractionPointHelper.GetContainerInteractionPoint(_targetChestForPull, Transform.position));
+                string why = $"not reached in {pullLimit:0} s by {Companion?.companionName} ({left:0.0} m short, {cp.y - Transform.position.y:+0.0;-0.0} m up/down)";
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: can't reach the chest at {cp} - {why}; skipping it for {UnreachableChestSeconds:0} s (every companion)");
+                LogWalkDiagnosis(interactionPoint, cp);
+                _unreachableChests[_targetChestForPull.GetInstanceID()] = Time.time + UnreachableChestSeconds;
+                FiresCore.Npc.Core.ChestReach.MarkUnreachable(_targetChestForPull, UnreachableChestSeconds, why);
+                _runUnreached = $"{_pullItemPrefab} chest at ({cp.x:0}, {cp.y:0}, {cp.z:0}) {why}";   // 0.2.902
                 StopMovement();
-                PullMaterialsFromChests();
-                SetPhase(OperatePhase.FillingStation);
+                _targetChestForPull = null;
+                SetPhase(OperatePhase.Complete);
             }
             
             return false;
         }
         
+        // [ghost] 0.2.917 (Fire: "they should not be timing out just because a chest is upstairs not that far away"): log-only proof of
+        // why a chest walk timed out - does a full path exist from here and from the start, its length and corners, where the companion stopped.
+        private static readonly System.Collections.Generic.List<Vector3> s_diagPath = new System.Collections.Generic.List<Vector3>();
+        private void LogWalkDiagnosis(Vector3 target, Vector3 chestPos)
+        {
+            if (Pathfinding.instance == null) return;
+            Vector3 at = Transform.position;
+            string Path(Vector3 from)
+            {
+                s_diagPath.Clear();
+                bool full = Pathfinding.instance.GetPath(from, target, s_diagPath, Pathfinding.AgentType.Humanoid, requireFullPath: true);
+                bool part = full || Pathfinding.instance.GetPath(from, target, s_diagPath, Pathfinding.AgentType.Humanoid);
+                float len = 0f; for (int i = 1; i < s_diagPath.Count; i++) len += Vector3.Distance(s_diagPath[i - 1], s_diagPath[i]);
+                string corners = string.Join(" ", System.Linq.Enumerable.Select(System.Linq.Enumerable.Take(s_diagPath, 12), p => $"({p.x:0.0},{p.y:0.0},{p.z:0.0})"));
+                string end = s_diagPath.Count > 0 ? $"{Vector3.Distance(s_diagPath[s_diagPath.Count - 1], target):0.0} m short of the target" : "-";
+                return $"{(full ? "full" : part ? "PARTIAL" : "NONE")} path {len:0.0} m, {s_diagPath.Count} corners, last corner {end}: {corners}";
+            }
+            Vector3 start = _targetSmelter != null ? _targetSmelter.transform.position : at;
+            FiresCore.Logging.FiresLogger.LogDebug($"[WalkDiag] {Companion?.companionName} chest {chestPos:F1} stand target {target:F1} ({target.y - chestPos.y:+0.0;-0.0} m vs chest): stopped at {at:F1}, {Vector3.Distance(at, target):0.0} m left, moving {(Companion != null ? Companion.GetComponent<Rigidbody>()?.velocity.magnitude ?? 0f : 0f):0.00} m/s");
+            FiresCore.Logging.FiresLogger.LogDebug($"[WalkDiag]   from stop: {Path(at)}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[WalkDiag]   from station {start:F1}: {Path(start)}");
+            // 0.2.923 (round #33 case 2: stalled 2.9 m short with a full 9.3 m path while "slid along collider left / right" alternated):
+            // the path it is actually walking (vanilla's after the corner easing) and the last easing note
+            var ai = Companion?.GetCompanionAI();
+            if (ai != null) FiresCore.Logging.FiresLogger.LogDebug($"[WalkDiag]   walking: {ai.WalkedPathNote}");
+        }
+
         /// <summary>
         /// Update phase: Interacting with chest (open animation, pull items, close).
         /// Now properly shows chest opening and closing for all nearby clients.
@@ -480,6 +556,10 @@ namespace FiresCore.Npc.IdleBehaviors
                     {
                         _inventory.SaveToZDO();
                         _lastPullCount = result.AmountTransferred;
+                        var term = InteractionPointHelper.TerminalUsedFor(_targetChestForPull);
+                        Vector3 cpos = _targetChestForPull.transform.position;
+                        if (term != null) FiresCore.Logging.FiresLogger.LogDebug($"[Chore] {Companion?.companionName} used storage terminal at ({term.transform.position.x:0}, {term.transform.position.z:0}): took {_pullItemPrefab} x{result.AmountTransferred} (from chest ({cpos.x:0}, {cpos.y:0}, {cpos.z:0}))");
+                        else FiresCore.Logging.FiresLogger.LogDebug($"[Chore] {Companion?.companionName} took {_pullItemPrefab} x{result.AmountTransferred} from chest ({cpos.x:0}, {cpos.y:0}, {cpos.z:0}) directly (no nearer storage terminal)");
                         
                         if (CompanionIdleBehavior.VerboseLogging)
                             Debug.Log($"[SmelterOperator] Pulled {result.AmountTransferred}x {_pullItemPrefab} from chest");
@@ -504,6 +584,15 @@ namespace FiresCore.Npc.IdleBehaviors
                 return false;
             }
             
+            // A pull that moved nothing would loop (open, close, walk back, open again every ~1.2 s): back off and say why.
+            if (_lastPullCount <= 0)
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: nothing to pull: no {_pullItemPrefab ?? "item"} moved from the chest at {_targetChestForPull.transform.position} (empty, full bag or not allowed); backing off {PullBackoffSeconds:0} s");
+                _pullBackoffUntil = Time.time + PullBackoffSeconds;
+                _targetChestForPull = null; _pullItemPrefab = null; _pullItemAmount = 0;
+                SetPhase(OperatePhase.Complete);
+                return true;
+            }
             // Done - clear pull target and return to smelter
             _targetChestForPull = null;
             _pullItemPrefab = null;
@@ -559,7 +648,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     // IMPROVEMENT: Try to start resource gathering for wood
                     if (TryStartResourceGatheringForMaterial("wood"))
                     {
-                        Debug.Log($"[SmelterOperator] {Companion?.companionName} - No wood in chests, started gathering trees");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} - No wood in chests, started gathering trees");
                         return false; // Will resume smelter operation after gathering
                     }
                     
@@ -579,7 +668,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // No materials at all - try to gather
                 if (TryStartResourceGatheringForMaterial("ore"))
                 {
-                    Debug.Log($"[SmelterOperator] {Companion?.companionName} - No ore in chests, started mining");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} - No ore in chests, started mining");
                     return false;
                 }
                 
@@ -594,7 +683,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // Try to start mining for ore
                 if (TryStartResourceGatheringForMaterial("ore"))
                 {
-                    Debug.Log($"[SmelterOperator] {Companion?.companionName} - No ore in chests, started mining");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} - No ore in chests, started mining");
                     return false;
                 }
                 
@@ -609,7 +698,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 // Try to gather wood to make coal
                 if (TryStartResourceGatheringForMaterial("wood"))
                 {
-                    Debug.Log($"[SmelterOperator] {Companion?.companionName} - No fuel and no wood, started gathering trees");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} - No fuel and no wood, started gathering trees");
                     return false;
                 }
                 
@@ -741,7 +830,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Cancel this smelter operation and request resource gathering instead
             // The companion will gather resources, deposit them, then can start smelter operation again
-            Debug.Log($"[SmelterOperator] {Companion?.companionName} starting resource gathering for {materialType}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} starting resource gathering for {materialType}");
             
             // Tell the player what's happening
             CompanionChatHelper.ShowWorkingStatus(Companion, $"Going to gather {materialType}...");
@@ -773,7 +862,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 if (conversion.m_from != null)
                 {
                     string orePrefab = conversion.m_from.name;
-                    foreach (var item in storageInv.GetAllItems())
+                    foreach (var item in CompanionInventory.StorageItemsOf(storageInv))
                     {
                         if (item == null) continue;
                         string dropName = item.m_dropPrefab?.name ?? "";
@@ -787,7 +876,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (_targetSmelter.m_fuelItem != null)
             {
                 string fuelPrefab = _targetSmelter.m_fuelItem.name;
-                foreach (var item in storageInv.GetAllItems())
+                foreach (var item in CompanionInventory.StorageItemsOf(storageInv))
                 {
                     if (item == null) continue;
                     string dropName = item.m_dropPrefab?.name ?? "";
@@ -803,6 +892,26 @@ namespace FiresCore.Npc.IdleBehaviors
         
         #region Filling Station
         
+        // The station's own position to face (a player faces the smelter it feeds), else the interaction point.
+        private Vector3 StationFacePoint() => _targetSmelter != null ? _targetSmelter.transform.position : _targetPosition;
+
+        // 0.2.930: the bag holds this station's fuel or one of its inputs
+        private bool HoldsStationInput(out string what)
+        {
+            what = null;
+            var bag = _inventory?.GetStorageInventory();
+            if (bag == null || _targetSmelter == null) return false;
+            foreach (var item in bag.GetAllItems())
+            {
+                string p = item?.m_dropPrefab != null ? item.m_dropPrefab.name : null;
+                if (p == null) continue;
+                bool fuel = _targetSmelter.m_fuelItem != null && _targetSmelter.m_fuelItem.gameObject.name == p;
+                bool input = _targetSmelter.m_conversion != null && _targetSmelter.m_conversion.Exists(c => c?.m_from != null && c.m_from.gameObject.name == p);
+                if (fuel || input) { what = $"{p} x{item.m_stack}"; return true; }
+            }
+            return false;
+        }
+
         private bool UpdateFillingStation()
         {
             if (_targetSmelter == null)
@@ -815,15 +924,24 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
             // Constantly calling FaceTarget() causes glitchy rotation due to competing rotation updates.
-            if (Time.time - _phaseStartTime < 0.2f)
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2 s ended the turn ~90 deg short; the FacingAuthority is the single writer now
             {
-                FaceTarget(_targetPosition);
+                FaceTarget(StationFacePoint()); // The smelter itself, not its interaction point
             }
             
             // CRITICAL: Check if inventory is full - need to deposit before continuing
             var invStatus = GetInventoryStatus();
-            if (invStatus.IsFull || invStatus.IsOverweight)
+            // 0.2.930 (round #34: 21 smelter runs, "ore in 0, fuel in 0" - each "pull SUCCESS: 29 items pulled", then at once "I need to drop
+            // something off" and all 29 deposited again): a full / overweight bag that holds what THIS station takes fills the station first
+            // (that empties it); only a bag with nothing for the station goes to deposit
+            if ((invStatus.IsFull || invStatus.IsOverweight) && HoldsStationInput(out string held))
             {
+                if (Time.time - _phaseStartTime < 0.1f)
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: bag {(invStatus.IsFull ? "full" : "overweight")} ({invStatus.Reason}) but it holds {held} for {GetStationName()}: filling first");
+            }
+            else if (invStatus.IsFull || invStatus.IsOverweight)
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName}: bag {(invStatus.IsFull ? "full" : "overweight")} ({invStatus.Reason}) with nothing for {GetStationName()}: depositing first");
                 if (CompanionIdleBehavior.VerboseLogging)
                     Debug.Log($"[SmelterOperator] Inventory full ({invStatus.Reason}) - going to deposit");
                 
@@ -1068,7 +1186,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         _primarySmelter = _targetSmelter;
                         _primarySmelterPosition = _targetPosition;
                         
-                        Debug.Log($"[SmelterOperator] {Companion?.companionName} -> Need coal, starting kiln workflow");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} -> Need coal, starting kiln workflow");
                         
                         // Pull wood from chests if needed
                         if (!HasWoodForKiln() && HasWoodInChests())
@@ -1098,7 +1216,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 else if (!haveOreSomewhere)
                 {
-                    Debug.Log($"[SmelterOperator] {Companion?.companionName} -> No ore anywhere, cancelling");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} -> No ore anywhere, cancelling");
                     CompanionChatHelper.QuickMessages.NoOreAvailable(Companion);
                     
                     string companionId = Companion?.companionId ?? Companion?.companionName ?? "unknown";
@@ -1109,7 +1227,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 }
                 else if (!canMakeCoal)
                 {
-                    Debug.Log($"[SmelterOperator] {Companion?.companionName} -> No fuel and can't make coal, cancelling");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} -> No fuel and can't make coal, cancelling");
                     CompanionChatHelper.QuickMessages.NoFuelAvailable(Companion);
                     
                     string companionId = Companion?.companionId ?? Companion?.companionName ?? "unknown";
@@ -1127,13 +1245,13 @@ namespace FiresCore.Npc.IdleBehaviors
                 
                 if (IsProcessing() || HasOutput())
                 {
-                    Debug.Log($"[SmelterOperator] {Companion?.companionName} -> Station full, waiting for output");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} -> Station full, waiting for output");
                     CompanionChatHelper.QuickMessages.StationFull(Companion, GetStationName());
                     SetPhase(OperatePhase.WaitingForOutput);
                 }
                 else
                 {
-                    Debug.Log($"[SmelterOperator] {Companion?.companionName} -> Station full, depositing to chests");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} -> Station full, depositing to chests");
                     SetPhase(OperatePhase.DepositingToChests);
                 }
                 return false;
@@ -1163,7 +1281,7 @@ namespace FiresCore.Npc.IdleBehaviors
             // STEP 8: No materials available anywhere - complete
             if (!hasOreInv && !hasOreChests && !hasFuelInv && !hasFuelChests)
             {
-                Debug.Log($"[SmelterOperator] {Companion?.companionName} -> No materials available anywhere, completing");
+                FiresCore.Logging.FiresLogger.LogDebug($"[SmelterOperator] {Companion?.companionName} -> No materials available anywhere, completing");
                 CompanionChatHelper.QuickMessages.NoMaterialsAvailable(Companion, "ore or fuel");
                 SetPhase(OperatePhase.DepositingToChests);
                 return false;
@@ -1266,9 +1384,9 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
-            if (Time.time - _phaseStartTime < 0.2f)
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2 s ended the turn ~90 deg short; the FacingAuthority is the single writer now
             {
-                FaceTarget(_hasFuelSwitch ? _fuelSwitchPosition : _targetPosition);
+                FaceTarget(StationFacePoint()); // The smelter itself, not its switch
             }
             
             // Wait for animation cooldown before adding next item
@@ -1361,9 +1479,9 @@ namespace FiresCore.Npc.IdleBehaviors
             StopMovement();
             
             // CRITICAL FIX: Only face target ONCE when entering this phase, not every frame!
-            if (Time.time - _phaseStartTime < 0.2f)
+            if (Time.time - _phaseStartTime < 1.5f) // 0.2 s ended the turn ~90 deg short; the FacingAuthority is the single writer now
             {
-                FaceTarget(_hasOreSwitch ? _oreSwitchPosition : _targetPosition);
+                FaceTarget(StationFacePoint()); // The smelter itself, not its switch
             }
             
             // Wait for animation cooldown before adding next item

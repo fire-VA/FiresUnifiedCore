@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 using FiresCore.Npc.Utilities;
 
@@ -106,7 +106,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
                     ApplyVanishImmunity();
                 }
                 
-                Debug.Log($"[StealthEffect] {m_character.m_name} entered stealth - ghost material + particles, alpha={StealthAlpha}, {StealthBackstabMultiplier}x backstab damage");
+                FiresCore.Logging.FiresLogger.LogDebug($"[StealthEffect] {m_character.m_name} entered stealth - ghost material + particles, alpha={StealthAlpha}, {StealthBackstabMultiplier}x backstab damage");
             }
         }
         
@@ -143,12 +143,12 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
                     // Keep this as our particle reference
                     _ghostParticles = effectGO;
                     
-                    Debug.Log($"[StealthEffect] Started ghost particles from {prefabName}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[StealthEffect] Started ghost particles from {prefabName}");
                     return;
                 }
                 
                 // No particles found - that's ok, we still have the ghost material swap
-                Debug.Log("[StealthEffect] No suitable ghost particles found - using material swap only");
+                FiresCore.Logging.FiresLogger.LogDebug("[StealthEffect] No suitable ghost particles found - using material swap only");
             }
             catch (System.Exception ex)
             {
@@ -237,7 +237,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
                 // ALWAYS log stealth attacks - this is important feedback
                 if (m_character != null)
                 {
-                    Debug.Log($"[StealthEffect] {m_character.m_name} BACKSTAB from stealth! {StealthBackstabMultiplier}x damage bonus applied");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[StealthEffect] {m_character.m_name} BACKSTAB from stealth! {StealthBackstabMultiplier}x damage bonus applied");
                 }
                 
                 // CRITICAL: Delay stealth break slightly to ensure the damage is applied first
@@ -285,7 +285,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
             if (m_character != null)
             {
                 m_character.Message(MessageHud.MessageType.TopLeft, "Revealed!");
-                Debug.Log($"[StealthEffect] {m_character.m_name} stealth broken - {reason}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[StealthEffect] {m_character.m_name} stealth broken - {reason}");
             }
         }
         
@@ -345,7 +345,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Rogue
             
             seman.AddStatusEffect(effect, true);
             
-            Debug.Log($"[StealthEffect] Applied to {target.m_name}, hasIcon={icon != null}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[StealthEffect] Applied to {target.m_name}, hasIcon={icon != null}");
             
             return true;
         }

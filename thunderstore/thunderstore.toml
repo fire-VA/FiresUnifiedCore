@@ -1,0 +1,29 @@
+[config]
+schemaVersion = "0.0.1"
+
+[package]
+namespace = "VerdantsAscent"
+name = "FiresUnifiedCore"
+versionNumber = "0.2.735"
+description = "Shared core library for the Fires mod family: NPC engine, config sync + admin gating, networking helpers, storage (LiteDB vault), UI framework, input capture. Required by the other Fires mods."
+websiteUrl = "https://github.com/fire-VA/FiresUnifiedCore"
+containsNsfwContent = false
+
+[package.dependencies]
+denikson-BepInExPack_Valheim = "5.4.2350"
+
+[build]
+icon = "./icon.png"
+readme = "./README.md"
+outdir = "./build"
+
+[[build.copy]]
+source = "./plugins"
+target = "plugins"
+
+[publish]
+repository = "https://thunderstore.io"
+communities = ["valheim"]
+
+[publish.categories]
+valheim = ["mods", "libraries"]

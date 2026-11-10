@@ -461,7 +461,7 @@ namespace FiresCore.UI
             }
 
             if (result.Patches.Count > 0)
-                Debug.Log($"[UIHarmonyPatchAuditor] Found {result.Patches.Count} mod Harmony patch(es) on UI methods");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIHarmonyPatchAuditor] Found {result.Patches.Count} mod Harmony patch(es) on UI methods");
         }
 
         //  Phase 2: Runtime component scanning
@@ -472,7 +472,7 @@ namespace FiresCore.UI
             ScanComponentsRecursive(root.transform, result, visited, "");
 
             if (result.Components.Count > 0)
-                Debug.Log($"[UIHarmonyPatchAuditor] Found {result.Components.Count} mod component type(s) on captured UI hierarchy");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIHarmonyPatchAuditor] Found {result.Components.Count} mod component type(s) on captured UI hierarchy");
         }
 
         private static void ScanComponentsRecursive(Transform current, AuditResult result,
@@ -610,7 +610,7 @@ namespace FiresCore.UI
                 result.ModAssemblyNames.CopyTo(modsArray);
                 Array.Sort(modsArray, StringComparer.OrdinalIgnoreCase);
                 layout.SetMeta("dependency_mods", string.Join(",", modsArray));
-                Debug.Log($"[UIHarmonyPatchAuditor] Detected {modsArray.Length} mod dependency/ies: {string.Join(", ", modsArray)}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIHarmonyPatchAuditor] Detected {modsArray.Length} mod dependency/ies: {string.Join(", ", modsArray)}");
             }
 
             // dependency_plugins

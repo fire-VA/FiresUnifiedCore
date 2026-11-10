@@ -5,48 +5,32 @@ namespace FiresCore.UI.GroupHud
 {
     /// <summary>
     /// Client-side layout config for the shared group HUD. NOT server-synced — it's a per-client
-    /// HUD preference, like the vanilla HUD scale. The live panel listens to SettingChanged so edits
-    /// via the config file / Configuration Manager apply without a restart.
+    /// HUD preference, like the vanilla HUD scale.
+    /// 0.2.1069 ([ghost], lead 10-31, Fire's "Core = our Jotunn" rule): the keys live in the owner mod (FiresRPGmaker binds
+    /// [GroupHud] ShowGroupHud / MaxRowsPerColumn / Columns / DefaultPosX / DefaultPosY under the same names, copies a value saved
+    /// in Core's cfg once, and hands them to Core with CoreSettings.Provide). Core no longer binds them; it reads the owner's live
+    /// value through CoreSettings.Get, falling back to the old defaults when no owner provides them. The panel re-applies the
+    /// layout when a read value changes (polled, GroupHudController.PollLayout).
+    /// The ConfigEntry fields stay (add-only API) and are null now.
     /// </summary>
     public static class GroupHudConfig
     {
+        public const string Section = "GroupHud";
+
         public static ConfigEntry<bool> ShowGroupHud;
         public static ConfigEntry<int> MaxRowsPerColumn;
         public static ConfigEntry<int> Columns;
         public static ConfigEntry<float> DefaultPosX;
         public static ConfigEntry<float> DefaultPosY;
 
-        public static void Initialize(ConfigFile config)
-        {
-            ShowGroupHud = config.Bind(
-                "GroupHud", "ShowGroupHud", true,
-                "Show the group HUD — the below-minimap panel listing tracked members (companions, " +
-                "party, …) with name, distance and health/stamina/eitr bars.");
+        public static bool Show => FiresCore.Config.CoreSettings.Get(Section, "ShowGroupHud", true);
+        public static int Rows => FiresCore.Config.CoreSettings.Get(Section, "MaxRowsPerColumn", 8);
+        public static int Cols => FiresCore.Config.CoreSettings.Get(Section, "Columns", 1);
 
-            MaxRowsPerColumn = config.Bind(
-                "GroupHud", "MaxRowsPerColumn", 8,
-                new ConfigDescription(
-                    "Rows shown per column before the panel starts scrolling.",
-                    new AcceptableValueRange<int>(1, 20)));
-
-            Columns = config.Bind(
-                "GroupHud", "Columns", 1,
-                new ConfigDescription(
-                    "Number of side-by-side columns. 1 = single list, 2 = two columns.",
-                    new AcceptableValueRange<int>(1, 2)));
-
-            DefaultPosX = config.Bind(
-                "GroupHud", "DefaultPosX", -10f,
-                "Default panel X anchored to the screen's top-right corner (negative = left of the " +
-                "corner). Only used until you drag the panel; your dragged position then wins.");
-
-            DefaultPosY = config.Bind(
-                "GroupHud", "DefaultPosY", -200f,
-                "Default panel Y anchored to the screen's top-right corner (negative = below the " +
-                "corner, i.e. under the minimap).");
-        }
+        /// <summary>Kept for callers; binds nothing now (the owner mod binds the keys).</summary>
+        public static void Initialize(ConfigFile config) { }
 
         public static Vector2 DefaultPosition =>
-            new Vector2(DefaultPosX?.Value ?? -10f, DefaultPosY?.Value ?? -200f);
+            new Vector2(FiresCore.Config.CoreSettings.Get(Section, "DefaultPosX", -10f), FiresCore.Config.CoreSettings.Get(Section, "DefaultPosY", -200f));
     }
 }

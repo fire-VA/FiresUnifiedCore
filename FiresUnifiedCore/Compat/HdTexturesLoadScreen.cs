@@ -6,7 +6,7 @@ using UnityEngine.UI;
 
 namespace FiresCore.Compat
 {
-    // Fire (16:00): "a custom loading screen up while the HD textures are loading". Full screen over the menu while
+    // A custom loading screen while the HD textures are loading. Full screen over the menu while
     // HdTexturesLoadSpread runs: our own branding (text only; no IronGate art), a progress bar, "Loading HD textures: N / T",
     // the time so far and an estimate of what is left. It takes no clicks. It lives on the load's DontDestroyOnLoad runner,
     // so it stays up through an early join's finish-before-the-world and goes when the load ends.

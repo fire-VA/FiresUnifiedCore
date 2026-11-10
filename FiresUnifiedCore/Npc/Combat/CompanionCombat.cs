@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System;
 using System.Collections.Generic;
 using FiresCore.Npc.Combat;
@@ -309,6 +309,7 @@ if (characterInParent == null)
 
         private void OnDestroy()
    {
+            CombatLoopStats.End(_character, "companion removed");   // log only: a fight cut short by a despawn still reports
             if (_equipmentData != null)
          {
      _equipmentData.OnEquipmentChanged -= OnEquipmentDataChanged;
@@ -321,8 +322,8 @@ if (characterInParent == null)
             // Wild companions need to defend themselves against hostile creatures
             if (_companion == null) return;
             if (_nview == null || !_nview.IsValid()) return;
-            if (_companion.IsPossessed) return;   // 0.2.292: a player is driving it; its own attacks come from them
-            if (_companion.isDefeated) return;
+            if (_companion.IsPossessed) return;   // a player is driving it; its own attacks come from them
+            if (_companion.isDefeated) { CombatLoopStats.End(_character, "companion defeated"); return; }
 
             _equipmentData?.UpdateFoodTimers();
 
@@ -371,6 +372,7 @@ if (characterInParent == null)
   _dodgeBehavior.Initialize(_context, this);
 
             _blockingBehavior = new BlockingBehavior();
+            _blockingBehavior.RollReady = () => _dodgeBehavior != null && _dodgeBehavior.CanDodge(false);
      _blockingBehavior.Initialize(_context, this);
 
     // Create weapon behaviors
@@ -478,6 +480,7 @@ if (characterInParent == null)
 
         private void UpdateCombat()
         {
+            CombatLoopStats.Tick(_character);   // closes a fight's [CombatLoop] summary 5 s after its last swing
             // Throttled equipment checks - don't run every frame
             if (Time.time - _lastEquipmentChangeCheckTime >= EquipmentCheckInterval)
             {
@@ -499,6 +502,7 @@ if (characterInParent == null)
             }
 
             // Check if we should attack
+            NoteFoeStagger();
             if (_activeBehavior != null && !_blockingBehavior.IsBlocking && !_dodgeBehavior.IsDodging)
             {
                 var target = _companionAI?.GetTargetCreature();
@@ -514,11 +518,34 @@ if (characterInParent == null)
                     }
 
                     _blockingBehavior.StopBlocking();
+                    if (_staggerSeenAt > 0f) { FiresCore.Logging.FiresLogger.LogDebug($"[CombatStagger] {_companion?.companionName}: swing {Time.time - _staggerSeenAt:0.00} s after {target.m_name}'s stagger"); _staggerSeenAt = -1f; }
                     _activeBehavior.ExecuteAttack(target);
                 }
             }
         }
         
+        // [ghost] 11-03: a foe's stagger: what stands in the way of the swing. A block is dropped; the swing goes through ShouldAttack.
+        private float _staggerSeenAt = -1f;
+        private bool _foeWasStaggered;
+
+        private void NoteFoeStagger()
+        {
+            var foe = _companionAI?.GetTargetCreature();
+            bool staggered = foe != null && foe.IsStaggering();
+            if (staggered && !_foeWasStaggered)
+            {
+                _staggerSeenAt = Time.time;
+                FiresCore.Logging.FiresLogger.LogDebug($"[CombatStagger] {_companion?.companionName}: {foe.m_name} staggered at {Vector3.Distance(transform.position, foe.transform.position):0.0} m; blocking {_blockingBehavior.IsBlocking}, rolling {_dodgeBehavior.IsDodging}, in swing {_activeBehavior?.IsAttacking}, stamina can attack {GetComponent<StaminaManager>()?.CanAttack()}");
+                if (_blockingBehavior.IsBlocking) _blockingBehavior.StopBlocking();
+            }
+            else if (!staggered && _foeWasStaggered && _staggerSeenAt > 0f)
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[CombatStagger] {_companion?.companionName}: stagger over with no swing after {Time.time - _staggerSeenAt:0.00} s");
+                _staggerSeenAt = -1f;
+            }
+            _foeWasStaggered = staggered;
+        }
+
         /// <summary>
         /// Checks if the companion currently has an active stealth effect.
         /// </summary>
@@ -585,6 +612,7 @@ if (characterInParent == null)
         /// </summary>
         private void CheckAndEquipAvailableWeapon()
         {
+            if (_weaponSwapManager != null && _weaponSwapManager.FightsWithoutStaff) return;   // a healer's fists are its choice here
             // Only check when we have a target (in combat)
             var target = _companionAI?.GetTargetCreature();
             if (target == null || target.IsDead()) return;
@@ -610,7 +638,7 @@ if (characterInParent == null)
                 _lastUnarmedLogTime = Time.time;
                 if (rightBack != null || leftBack != null)
                 {
-                    Debug.Log($"[CompanionCombat] {_companion?.companionName} is UNARMED but has back slots: " +
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] {_companion?.companionName} is UNARMED but has back slots: " +
                         $"RightBack={rightBack?.m_shared?.m_name ?? "empty"}, LeftBack={leftBack?.m_shared?.m_name ?? "empty"}");
                 }
             }
@@ -625,14 +653,14 @@ if (characterInParent == null)
                 if (melee != null && ranged == null)
                 {
                     if (shouldLog)
-                        Debug.Log($"[CompanionCombat] Only melee available: {melee.PrefabName} - forcing swap");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] Only melee available: {melee.PrefabName} - forcing swap");
                     EquipWeaponFromAnywhere(false);
                     return;
                 }
                 if (ranged != null && melee == null)
                 {
                     if (shouldLog)
-                        Debug.Log($"[CompanionCombat] Only ranged available: {ranged.PrefabName} - forcing swap");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] Only ranged available: {ranged.PrefabName} - forcing swap");
                     EquipWeaponFromAnywhere(true);
                     return;
                 }
@@ -644,7 +672,7 @@ if (characterInParent == null)
                     var recommendation = _weaponSwapManager.EvaluateCombatOpeningWeapon(target, distToTarget);
                     
                     if (shouldLog)
-                        Debug.Log($"[CompanionCombat] Both weapons available - Tactical recommendation: {recommendation} (dist: {distToTarget:F1}m)");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] Both weapons available - Tactical recommendation: {recommendation} (dist: {distToTarget:F1}m)");
                     
                     bool useRanged = recommendation == WeaponSwapManager.WeaponRecommendation.Ranged;
                     EquipWeaponFromAnywhere(useRanged);
@@ -653,12 +681,12 @@ if (characterInParent == null)
                 
                 // WeaponSwapManager found nothing - try fallback
                 if (shouldLog)
-                    Debug.Log($"[CompanionCombat] {_companion?.companionName} WeaponSwapManager found NO weapons - falling back to direct back slot check");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] {_companion?.companionName} WeaponSwapManager found NO weapons - falling back to direct back slot check");
             }
             else
             {
                 if (shouldLog)
-                    Debug.Log($"[CompanionCombat] {_companion?.companionName} No WeaponSwapManager - falling back to direct back slot check");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] {_companion?.companionName} No WeaponSwapManager - falling back to direct back slot check");
             }
             
             // Fallback: manually check back slots if WeaponSwapManager not available or found nothing
@@ -722,7 +750,7 @@ if (characterInParent == null)
             // Check for melee on right back
             if (IsCombatWeapon(rightBack) && !IsBow(rightBack) && !IsRangedItem(rightBack))
             {
-                Debug.Log($"[CompanionCombat] Equipping melee from RightBack: {rightBack.m_shared?.m_name}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] Equipping melee from RightBack: {rightBack.m_shared?.m_name}");
                 
                 _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.RightBack);
                 _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightHand, rightBack);
@@ -730,7 +758,7 @@ if (characterInParent == null)
                 // Also equip shield from left back if available
                 if (leftBack != null && IsShield(leftBack))
                 {
-                    Debug.Log($"[CompanionCombat] Also equipping shield from LeftBack: {leftBack.m_shared?.m_name}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] Also equipping shield from LeftBack: {leftBack.m_shared?.m_name}");
                     _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.LeftBack);
                     _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.LeftHand, leftBack);
                 }
@@ -742,7 +770,7 @@ if (characterInParent == null)
             // Check for ranged on left back
             if (IsCombatWeapon(leftBack) && (IsBow(leftBack) || IsRangedItem(leftBack)))
             {
-                Debug.Log($"[CompanionCombat] Equipping ranged from LeftBack: {leftBack.m_shared?.m_name}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] Equipping ranged from LeftBack: {leftBack.m_shared?.m_name}");
                 
                 _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.LeftBack);
                 _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.LeftHand, leftBack);
@@ -753,7 +781,7 @@ if (characterInParent == null)
             // Check for ranged on right back (unusual but possible)
             if (IsCombatWeapon(rightBack) && (IsBow(rightBack) || IsRangedItem(rightBack)))
             {
-                Debug.Log($"[CompanionCombat] Equipping ranged from RightBack: {rightBack.m_shared?.m_name}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] Equipping ranged from RightBack: {rightBack.m_shared?.m_name}");
                 
                 _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.RightBack);
                 _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.LeftHand, rightBack);
@@ -764,7 +792,7 @@ if (characterInParent == null)
             // Check for melee on left back (unusual but possible)
             if (IsCombatWeapon(leftBack) && !IsBow(leftBack) && !IsRangedItem(leftBack))
             {
-                Debug.Log($"[CompanionCombat] Equipping melee from LeftBack: {leftBack.m_shared?.m_name}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] Equipping melee from LeftBack: {leftBack.m_shared?.m_name}");
                 
                 _inventory.UnequipSlotSilent(CompanionInventory.EquipmentSlot.LeftBack);
                 _inventory.EquipItemSilent(CompanionInventory.EquipmentSlot.RightHand, leftBack);
@@ -802,7 +830,7 @@ if (characterInParent == null)
             ItemDrop.ItemData chosen = null;
             bool chosenIsRanged = false;
 
-            foreach (var item in storage.GetAllItems())
+            foreach (var item in _inventory.GetStorageItems()) // storage rows only (worn/pouch live in the bag)
             {
                 if (!IsCombatWeapon(item)) continue;
                 if (IsGatheringToolItem(item)) continue;
@@ -826,7 +854,7 @@ if (characterInParent == null)
                 storage.RemoveItem(chosen);
                 _inventory.EquipItemSilent(targetSlot, chosen);
 
-                Debug.Log($"[CompanionCombat] {_companion?.companionName} last-resort: equipped {chosen.m_shared.m_name} from storage to {targetSlot}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionCombat] {_companion?.companionName} last-resort: equipped {chosen.m_shared.m_name} from storage to {targetSlot}");
                 FinalizeEquipmentChange();
                 return true;
             }
@@ -1023,6 +1051,7 @@ if (characterInParent == null)
         public static bool IsCombatWeapon(ItemDrop.ItemData item)
         {
             if (item?.m_shared == null || !item.IsWeapon() || !item.HavePrimaryAttack()) return false;
+            if (item.m_shared.m_tamedOnly) return false;   // [ghost] 11-02: vanilla Attack only lets it hurt tamed creatures (Butcher Knife); a companion swung it 11 times at a Greyling for nothing
             if (!IsWeaponSkill(item.m_shared.m_skillType)) return false;
             if (item.GetDamage().GetTotalDamage() > 0f) return true;
             return IsMagicWeapon(item) && item.m_shared.m_attack.m_attackProjectile != null;

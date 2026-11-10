@@ -1,10 +1,10 @@
+﻿using System.Collections.Generic;
 using UnityEngine;
 
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// The cold survival rule for every body (Core 0.2.250; overnight 06:57 Coop1 died "to Freezing (damage) … health before it 1" at
-    /// (590, 245) on a walk for LeatherScraps). Vanilla's own rule (Player.UpdateEnvStatusEffects): Freezing while the environment
+    /// The cold survival rule for every body. Vanilla's own rule (Player.UpdateEnvStatusEffects): Freezing while the environment
     /// freezes (EnvMan.IsFreezing: the Mountains, the Deep North) and the body is neither near a fire's heat nor in shelter; Cold
     /// while it is cold (night, rain) away from a fire, or freezing by a fire with no shelter; frost resistance (even slight) or a
     /// warm cozy area cancels both. Freezing eats health. So: warm up at a lit fire in reach, else get back toward home out of the
@@ -87,12 +87,15 @@ namespace FiresCore.Npc.Combat
         {
             Fireplace best = null;
             float bestD = reach * reach;
-            foreach (Fireplace f in Object.FindObjectsByType<Fireplace>(FindObjectsSortMode.None))
+            var sw = FiresCore.Npc.Core.SceneScanCensus.Start();   // 0.2.1221 [ghost]: registry, not a scene search
+            IList<Fireplace> all = FiresCore.Npc.Core.SceneScanCensus.UseFireRegistry ? (IList<Fireplace>)FiresCore.Npc.JobBoard.HomesteadStations.Live(FiresCore.Npc.JobBoard.HomesteadStations.Fires) : Object.FindObjectsByType<Fireplace>(FindObjectsSortMode.None);
+            foreach (Fireplace f in all)
             {
-                if (f == null || !f.IsBurning()) continue;
+                if (f == null) continue;
                 float d = (f.transform.position - at).sqrMagnitude;
-                if (d <= bestD) { bestD = d; best = f; }
+                if (d <= bestD && f.IsBurning()) { bestD = d; best = f; }   // distance first: IsBurning reads the ZDO
             }
+            FiresCore.Npc.Core.SceneScanCensus.Note("ColdRisk.NearestLitFire", sw, all.Count);
             return best;
         }
     }

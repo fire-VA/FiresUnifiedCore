@@ -39,6 +39,8 @@ namespace FiresCore.UI
 
         private object _attribute;
         private MemberInfo _attributeReadOnly;
+        private MemberInfo _attributeReason;
+        private const string ReasonMember = "ReadOnlyReason";
 
         public static CfgTags Read(ConfigDescription description)
         {
@@ -71,6 +73,9 @@ namespace FiresCore.UI
         /// ConfigSync flips <c>ReadOnly</c> on its own attribute object whenever the server lock state or the
         /// caller's admin status changes, so the flag has to be re-read rather than captured at discovery.
         /// </summary>
+        /// <summary>0.2.1161: which object says read-only, for the Debug line.</summary>
+        public string LockSource => _attribute != null ? _attribute.GetType().FullName + " in " + _attribute.GetType().Assembly.GetName().Name : "a ReadOnly tag on the entry";
+
         public bool IsReadOnlyNow()
         {
             if (_attributeReadOnly == null) return ReadOnly;
@@ -83,6 +88,28 @@ namespace FiresCore.UI
             }
             catch { return ReadOnly; }
         }
+
+        /// <summary>
+        /// Add-only: an optional string member "ReadOnlyReason" on the attribute object, read LIVE. A mod that
+        /// greys a setting for its own reason (FAP: "Off while EWP persistence is on") returns it; null/empty = a server lock
+        /// (the row says "Locked by the server" as before).
+        /// </summary>
+        public string ReadOnlyReasonNow()
+        {
+            if (_attributeReason == null) return null;
+            try
+            {
+                object value = _attributeReason is FieldInfo field
+                    ? field.GetValue(_attribute)
+                    : ((PropertyInfo)_attributeReason).GetValue(_attribute, null);
+                var s = value as string;
+                return string.IsNullOrEmpty(s) ? null : s;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>The locked row's text: the mod's own reason when it gives one, else the server lock.</summary>
+        public string LockText(string serverText = "Locked by the server") => ReadOnlyReasonNow() ?? serverText;
 
         private void ApplyStringTag(string name)
         {
@@ -116,6 +143,7 @@ namespace FiresCore.UI
             _attribute = attribute;
             _attributeReadOnly = (MemberInfo)type.GetField(nameof(ReadOnly), PublicInstance)
                 ?? type.GetProperty(nameof(ReadOnly), PublicInstance);
+            _attributeReason = (MemberInfo)type.GetField(ReasonMember, PublicInstance) ?? type.GetProperty(ReasonMember, PublicInstance);
         }
 
         private static object MemberValue(Type type, object instance, string name)

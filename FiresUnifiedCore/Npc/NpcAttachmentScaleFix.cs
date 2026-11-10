@@ -17,19 +17,13 @@ namespace FiresCore.Npc
     /// companion body a '[NpcSkeleton]' line: its bones against the Player's, name by name and index by index.
     /// </summary>
     [HarmonyPatch(typeof(VisEquipment), "AttachItem")]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class NpcAttachmentScaleFix
     {
-        private static ConfigEntry<bool> s_rescale;
+        // 1086 ([generator], Fire 11-01: configs live in their own mods): bound and synced by FiresCompanions; Core reads the owner's value (old default without it).
+        private static readonly FiresCore.Config.OwnedSetting<bool> s_rescale = new FiresCore.Config.OwnedSetting<bool>("Companions", "Core attachment rescale", true);
 
-        internal static void Bind(ConfigFile config, FiresCore.Sync.ConfigSync configSync)
-        {
-            s_rescale = config.Bind("Companions", "Core attachment rescale", true,
-                "SERVER. On (default): attachments follow a scaled companion body. The body's scale is on its root, and vanilla's "
-                + "attach keeps each item's WORLD size (SetParent), so without this a dwarf holds a player-size sword: rigid items get "
-                + "the attach child's authored scale times the body's, skinned ones (hair, beards, capes) the body's transform scale "
-                + "(Core 0.2.157). Off = vanilla's sizes, for an A/B only.");
-            configSync?.AddConfigEntry(s_rescale);
-        }
+        internal static void Bind(ConfigFile config, FiresCore.Sync.ConfigSync configSync) { }
 
         private static void Postfix(VisEquipment __instance, int itemHash, Transform joint, bool backAttach, GameObject __result)
         {
@@ -37,12 +31,12 @@ namespace FiresCore.Npc
             if (__instance.GetComponent<CompanionController>() == null) return;   // our bodies only
             string core = "none";
             // Off (A/B only): vanilla's sizes.
-            if (s_rescale != null && !s_rescale.Value) { Evidence(__instance, itemHash, joint, __result, "none (rescale off by cfg)"); return; }
+            if (!s_rescale.Value) { Evidence(__instance, itemHash, joint, __result, "none (rescale off by cfg)"); return; }
 
             // Skinned attaches (attach_skin) ride the body's bones and are parented to the body model's parent, not the joint.
             // Their meshes follow the bones, but vanilla's SetParent kept the item's world scale, so on a scaled body the
             // instance sits at 1/scale. MagicaCloth hair and beards size their simulation from that transform (initScale /
-            // scaleRatio), so a dwarf's cloth hair ran at full size and floated off the small head (Fire, 2026-09-29). Give the
+            // scaleRatio), so a dwarf's cloth hair ran at full size and floated off the small head. Give the
             // instance the body's scale; the cloth follows the change.
             if (joint != null && __result.transform.parent != joint)
             {
@@ -127,7 +121,7 @@ namespace FiresCore.Npc
             var player = PlayerBones();
             if (npcBones == null || player == null)
             {
-                Debug.Log($"[NpcSkeleton] '{NameOf(vis)}' on {Peer()}: body bones {(npcBones == null ? "missing" : npcBones.Length.ToString())}, "
+                FiresCore.Logging.FiresLogger.LogDebug($"[NpcSkeleton] '{NameOf(vis)}' on {Peer()}: body bones {(npcBones == null ? "missing" : npcBones.Length.ToString())}, "
                           + $"Player bones {(player == null ? "missing" : player.Length.ToString())}");
                 return;
             }
@@ -144,7 +138,7 @@ namespace FiresCore.Npc
             foreach (var b in npcBones) if (b != null) npcSet.Add(b.name);
             int missing = 0;
             foreach (var p in player) if (!npcSet.Contains(p)) missing++;
-            Debug.Log($"[NpcSkeleton] '{NameOf(vis)}' on {Peer()}: body bones {npcBones.Length} vs Player {player.Length}; same name at same index "
+            FiresCore.Logging.FiresLogger.LogDebug($"[NpcSkeleton] '{NameOf(vis)}' on {Peer()}: body bones {npcBones.Length} vs Player {player.Length}; same name at same index "
                       + $"{same}/{player.Length}; Player bones missing by name {missing}; mesh '{(body.sharedMesh != null ? body.sharedMesh.name : "-")}' "
                       + $"root '{(body.rootBone != null ? body.rootBone.name : "-")}' body scale {vis.transform.lossyScale.y:0.00} on root, attaches inherit"
                       + (diffs.Count > 0 ? $"; first differences {string.Join(", ", diffs)}" : ""));
@@ -178,7 +172,7 @@ namespace FiresCore.Npc
                 }
                 foreach (var cloth in instance.GetComponentsInChildren<MagicaCloth2.MagicaCloth>(true))
                     line.Append($" | cloth '{cloth.name}' enabled {cloth.enabled} lossy {cloth.transform.lossyScale.y:0.00}");
-                Debug.Log(line.ToString());
+                FiresCore.Logging.FiresLogger.LogDebug(line.ToString());
             }
             catch (System.Exception ex)
             {

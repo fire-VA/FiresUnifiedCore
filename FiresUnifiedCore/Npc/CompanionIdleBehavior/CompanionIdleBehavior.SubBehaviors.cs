@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.IdleBehaviors;
 using FiresCore.Npc.Movement;
@@ -77,6 +77,11 @@ namespace FiresCore.Npc
             fireTending.Initialize(_companion, this);
             _subBehaviors.Add(fireTending);
 
+            // 0.2.873 (Fire 10-27): taming wild tameables near home the vanilla way (feed their own consume items, let Tameable count)
+            var taming = new TamingBehavior();
+            taming.Initialize(_companion, this);
+            _subBehaviors.Add(taming);
+
             // Crafting upgrades (auto-upgrade equipment) - V2 version
             var craftingUpgrade = new CraftingUpgradeBehaviorV2();
             craftingUpgrade.Initialize(_companion, this);
@@ -122,11 +127,25 @@ namespace FiresCore.Npc
             fishing.Initialize(_companion, this);
             _subBehaviors.Add(fishing);
 
-            // Haul (0.2.220) - carries out CompanionController.StartHaul; never in the idle rotation
+            // Haul - carries out CompanionController.StartHaul; never in the idle rotation
             var haul = new HaulBehavior();
             haul.Initialize(_companion, this);
             _subBehaviors.Add(haul);
 
+            // companions gear up from base chests / craft their own armour
+            var gearUp = new GearUpBehavior();
+            gearUp.Initialize(_companion, this);
+            _subBehaviors.Add(gearUp);
+
+            // [ghost] 0.2.836: companions repair their own worn / broken gear at the right station (ChoreBrain.NextRepair)
+            var gearRepair = new GearRepairBehavior();
+            gearRepair.Initialize(_companion, this);
+            _subBehaviors.Add(gearRepair);
+
+            // hunting / fishing trips: on command, or the companion's saved "every morning" plan
+            var trip = new TripBehavior();
+            trip.Initialize(_companion, this);
+            _subBehaviors.Add(trip);
             if (VerboseLogging)
                 Debug.Log($"[CompanionIdleBehavior] Initialized {_subBehaviors.Count} sub-behaviors");
         }
@@ -186,14 +205,21 @@ namespace FiresCore.Npc
                 }
             }
 
+            // A job never runs under a sit/rest/emote pose - stand up first
+            if (!ReferenceEquals(_jobPoseCheckedFor, _activeSubBehavior)) { _jobPoseCheckedFor = _activeSubBehavior; EndPoseForJob(_activeSubBehavior.BehaviorName); }   // its first tick only: the job's own emotes (kneel, ...) come later
+
             // Update the active sub-behavior
-            bool isComplete = _activeSubBehavior.Update();
+            // 0.2.854: whatever this chore puts into a chest is reported as stored by this companion (JobReport.Actor)
+            bool isComplete;
+            FiresCore.Npc.JobBoard.JobReport.Actor = _companion?.companionName;
+            try { isComplete = _activeSubBehavior.Update(); }
+            finally { FiresCore.Npc.JobBoard.JobReport.Actor = null; }
 
             if (isComplete)
             {
                 NoteSubBehaviorEnd(_activeSubBehavior, "done");
-                // 0.2.257: a behaviour that says "done" without its own Complete() keeps its reservations and movement authority
-                // (SmelterOperator did, [ghost]). Say so once per finish, always on, so the next one shows in the log.
+                // a behaviour that says "done" without its own Complete() keeps its reservations and movement authority
+                // (SmelterOperator once did). Say so once per finish, always on, so the next one shows in the log.
                 if (_activeSubBehavior.IsActive)
                     Debug.LogWarning($"[CompanionIdleBehavior] {_companion?.companionName} sub-behavior {_activeSubBehavior.BehaviorName} returned done while still active (its Complete() did not run)");
 
@@ -205,9 +231,10 @@ namespace FiresCore.Npc
             }
         }
 
-        // 0.2.255 (Fire's homestead test: chore vs idle vs standing time): when the running sub-behaviour started, and one always-on
+        // When the running sub-behaviour started, and one always-on
         // line when it ends, "[CompanionIdleBehavior] <name> ended sub-behavior: <behaviour> after N s (done | cancelled)".
         private float _subStartedAt = -1f;
+        private string _lastPickedBehavior;   // 0.2.913: the +4 hysteresis on need-based picks
 
         private void NoteSubBehaviorStart() => _subStartedAt = Time.time;
 
@@ -215,8 +242,14 @@ namespace FiresCore.Npc
         {
             if (behavior == null) return;
             string took = _subStartedAt >= 0f ? $"{Time.time - _subStartedAt:0} s" : "? s";
-            Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} ended sub-behavior: {behavior.BehaviorName} after {took} ({how})");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionIdleBehavior] {_companion?.companionName} ended sub-behavior: {behavior.BehaviorName} after {took} ({how})");
+            if (how == "done") FiresCore.Npc.JobBoard.JobReport.Record(_companion?.companionName, "chore", behavior.BehaviorName, 1);   // 0.2.854
             _subStartedAt = -1f;
+            // 0.2.897 (round #20: the logging run ended with the stump left standing, so the stump hook never planted): a camp run that ends
+            // well plants its remaining saplings where it stands, if inside the zone
+            if (HasWorkZone && how == "done" && (WorkZoneFocus == "chop" || WorkZoneFocus == "mine")) FiresCore.Npc.IdleBehaviors.ZoneReplant.AtRunEnd(_companion, this);
+            if (HasWorkZone && (WorkZoneFocus == "chop" || WorkZoneFocus == "mine")) FiresCore.Npc.IdleBehaviors.ZoneReplant.RunSummary(_companion, this, how);   // 0.2.897
+            ClearWorkZone(how);   // Fire 10-27: one zone run per board pick
         }
 
         private bool TryStartSubBehavior()
@@ -231,8 +264,12 @@ namespace FiresCore.Npc
             
             // Reduce cooldown significantly for staying companions
             bool isStaying = _hasHomePosition || (_companion != null && !_companion.ShouldBeFollowing);
-            float effectiveCooldown = isStaying ? subBehaviorCooldown * 0.3f : subBehaviorCooldown;
-            
+            // [ghost] 0.2.843 (Fire: "all mostly idle"): a staying companion checks for work 4 s after its last check (was 18 s), but
+            // after a round that found nothing it waits EmptyRoundBackoff, so the CanStart scans don't run every few seconds for nothing
+            float effectiveCooldown = isStaying ? 4f : subBehaviorCooldown;
+            if (isStaying && Time.time < _emptyRoundUntil)
+                return false;
+
             // Check cooldown
             if (Time.time - _lastSubBehaviorAttempt < effectiveCooldown)
                 return false;
@@ -245,7 +282,8 @@ namespace FiresCore.Npc
             // The random chance is INTENTIONAL to make companions feel organic
             // and not like robots that work 100% of the time.
             // ============================================================
-            float effectiveChance = isStaying ? Mathf.Min(subBehaviorChance * 3f, 0.8f) : subBehaviorChance;
+            // [ghost] 0.2.843: a staying companion at base is there to work (Fire: "run more fluidly"); followers keep the organic chance
+            float effectiveChance = isStaying ? 0.95f : subBehaviorChance;
             
             if (UnityEngine.Random.value > effectiveChance)
                 return false;
@@ -271,6 +309,8 @@ namespace FiresCore.Npc
             
             if (availableBehaviors.Count == 0)
             {
+                _lastRoundFoundWork = false;
+                if (isStaying) _emptyRoundUntil = Time.time + EmptyRoundBackoff;
                 if (VerboseLogging && isStaying)
                 {
                     Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} tried {_subBehaviors.Count} behaviors, none could start (staying mode)");
@@ -286,10 +326,18 @@ namespace FiresCore.Npc
             const float PopularityRadius = 30f;
             const int   PopularityPenalty = 25; // each nearby companion subtracts 25 from priority
             var scored = new List<(IdleSubBehavior beh, int score)>(availableBehaviors.Count);
+            var needWhys = new Dictionary<string, string>();   // 0.2.913: the need part of each score, for the pick line
             foreach (var candidate in availableBehaviors)
             {
                 int popularity = CountNearbyCompanionsRunningBehavior(candidate.BehaviorName, PopularityRadius);
                 int score = candidate.InventoryPriority - popularity * PopularityPenalty;
+                // 0.2.913 (Fire: "priority levels should be dynamic based off of what the homestead actually needs"): + weight x need from
+                // the homestead needs model ("[Homestead Needs] Need-based chore scores", default off)
+                if (isStaying)
+                {
+                    int need = FiresCore.Npc.JobBoard.HomesteadNeeds.NeedFor(candidate.BehaviorName, out string needWhy);
+                    if (need > 0) { score += need; needWhys[candidate.BehaviorName] = $"need +{need}: {needWhy}"; }
+                }
                 scored.Add((candidate, score));
             }
             scored.Sort((a, b) => b.score.CompareTo(a.score));
@@ -315,6 +363,18 @@ namespace FiresCore.Npc
 
             // Start the highest effective-score (or randomly selected among same score) behavior
             var selectedBehavior = scored[0].beh;
+            // 0.2.913 (plan section 5, anti-thrash): with need scores on, the chore picked last time is kept unless another beats it by 4+
+            string kept = null;
+            if (FiresCore.Npc.JobBoard.HomesteadNeeds.ScoresOn && _lastPickedBehavior != null && selectedBehavior.BehaviorName != _lastPickedBehavior)
+            {
+                foreach (var x in scored)
+                    if (x.beh.BehaviorName == _lastPickedBehavior && x.score > scored[0].score - 4) { kept = $"kept {x.beh.BehaviorName} ({x.score} vs {scored[0].beh.BehaviorName} {scored[0].score}, under the +4 to switch)"; selectedBehavior = x.beh; break; }
+            }
+            _lastPickedBehavior = selectedBehavior.BehaviorName;
+            // 0.2.864 (lead for Fire 10-27 "still not a lot of mining"): the candidates and their scores (priority - 25 per nearby
+            // companion already on it); mining lives inside ResourceGathering, whose own "[Chore] pick" line says wood vs ore and why
+            FiresCore.Logging.FiresLogger.LogDebug($"[Chore] pick {_companion?.companionName}: candidates {string.Join(", ", System.Linq.Enumerable.Select(scored, x => x.beh.BehaviorName + "=" + x.score))}; chose {selectedBehavior.BehaviorName}{string.Concat(System.Linq.Enumerable.Select(System.Linq.Enumerable.Where(scored, x => x.beh.PriorityReason != null), x => " (" + x.beh.PriorityReason + ")"))}{string.Concat(System.Linq.Enumerable.Select(needWhys, kv => " (" + kv.Key + " " + kv.Value + ")"))}{(kept != null ? " (" + kept + ")" : "")}");
+            _lastRoundFoundWork = true;
             _isRotating = false;      // sub-behavior owns rotation; stop any look-around that would fight it
             _activeSubBehavior = selectedBehavior;
             _activeSubBehavior.Start();
@@ -324,7 +384,7 @@ namespace FiresCore.Npc
             // Notify coordinator
             BehaviorCoordinator?.NotifyBehaviorStarted(_activeSubBehavior);
 
-            Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} started sub-behavior: {selectedBehavior.BehaviorName} (priority={selectedBehavior.InventoryPriority})");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionIdleBehavior] {_companion?.companionName} started sub-behavior: {selectedBehavior.BehaviorName} (priority={selectedBehavior.InventoryPriority})");
 
             return true;
         }
@@ -375,7 +435,10 @@ namespace FiresCore.Npc
             TryStartSubBehavior<PatrolBehavior>();
         }
 
-        // 0.2.267 (HR2: "ended … after 0 s (cancelled)" with no way to tell why): every cancel names its reason on the end line.
+        // Every cancel names its reason on the end line.
+        /// <summary>Ends whatever sub-behavior runs (keep-alive: the companion is simulated elsewhere now).</summary>
+        public void StopActiveSubBehavior(string why) => CancelActiveSubBehavior(why);
+
         private void CancelActiveSubBehavior(string why = "unnamed")
         {
             if (_activeSubBehavior != null)
@@ -475,7 +538,7 @@ namespace FiresCore.Npc
             // Notify coordinator
             BehaviorCoordinator?.NotifyBehaviorStarted(_activeSubBehavior);
             
-            Debug.Log($"[CompanionIdleBehavior] {_companion?.companionName} STARTED sub-behavior {behavior.BehaviorName} - _activeSubBehavior is now SET, IsInSubBehavior={IsInSubBehavior}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionIdleBehavior] {_companion?.companionName} STARTED sub-behavior {behavior.BehaviorName} - _activeSubBehavior is now SET, IsInSubBehavior={IsInSubBehavior}");
             
             return true;
         }

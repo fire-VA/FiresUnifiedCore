@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Reflection;
 using System.Text;
 using HarmonyLib;
@@ -12,6 +12,7 @@ namespace FiresCore.Npc.NpcMode
     /// swallowed, since placement genuinely fails; the log points at the bundle field to fix.
     /// </summary>
     [HarmonyPatch(typeof(Player), nameof(Player.PlacePiece))]
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.Companions)]
     internal static class StaticNpcPlacePieceFinalizer
     {
         private const string NullInstantiateMarker = "The Object you want to instantiate is null";
@@ -41,7 +42,7 @@ namespace FiresCore.Npc.NpcMode
                 { whitelisted = true; break; }
             if (!whitelisted) return;
 
-            Debug.Log($"[FiresRPGmaker] PlacePiece prefix: about to place '{pieceName}'. " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[FiresRPGmaker] PlacePiece prefix: about to place '{pieceName}'. " +
                       $"gameObject={(piece.gameObject != null ? "ok" : "<NULL>")} " +
                       $"m_placeEffect={(piece.m_placeEffect != null ? "ok" : "<NULL>")} " +
                       $"m_resources.Length={(piece.m_resources != null ? piece.m_resources.Length : -1)}");

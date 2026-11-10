@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 
 namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
@@ -45,7 +45,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             // Taunt all enemies in range
             TauntAllEnemies();
             
-            Debug.Log($"[ImmortalStanceEffect] {m_character.m_name} activated IMMORTAL STANCE - {Duration}s immunity!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ImmortalStanceEffect] {m_character.m_name} activated IMMORTAL STANCE - {Duration}s immunity!");
         }
         
         private void TauntAllEnemies()
@@ -60,7 +60,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             {
                 if (character == null || character.IsDead()) continue;
                 if (character == m_character) continue;
-                if (!IsFoe(character)) continue; // Fire: enemies only; a player when both have PvP on
+                if (!IsFoe(character)) continue; // enemies only; a player when both have PvP on
                 
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist <= TauntRadius)
@@ -81,7 +81,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
                 }
             }
             
-            Debug.Log($"[ImmortalStanceEffect] Taunted {taunted} enemies");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ImmortalStanceEffect] Taunted {taunted} enemies");
         }
         
         /// <summary>
@@ -173,15 +173,18 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             
             m_character.Message(MessageHud.MessageType.Center, "<color=white>AVATAR OF LIGHT</color>");
             
-            Debug.Log($"[AvatarOfLightEffect] {m_character.m_name} transformed into AVATAR OF LIGHT!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[AvatarOfLightEffect] {m_character.m_name} transformed into AVATAR OF LIGHT!");
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
         {
             hitData.m_damage.Modify(DamageBonus);
-            // Add spirit damage
+            // holy = blunt + half of it again as spirit, so it lands on spirit-immune foes
             float totalDamage = hitData.m_damage.GetTotalDamage();
-            hitData.m_damage.m_spirit += totalDamage * 0.2f;
+            float holy = totalDamage * 0.2f;
+            hitData.m_damage.m_blunt += holy;
+            hitData.m_damage.m_spirit += holy * 0.5f;
+            FiresCore.Logging.FiresLogger.LogDebug($"[AvatarOfLightEffect] holy on hit: +{holy:0.0} blunt, +{holy * 0.5f:0.0} spirit (20% of {totalDamage:0.0})");
         }
         
         public override void OnDamaged(HitData hit, Character attacker)
@@ -221,7 +224,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
                 float dist = Vector3.Distance(pos, character.transform.position);
                 if (dist > AuraRadius) continue;
                 
-                // Fire: heal the caster's party, damage enemies (it used to heal any player or tame and hit anything else)
+                // heal the caster's party, damage enemies (it used to heal any player or tame and hit anything else)
                 if (IsParty(character))
                 {
                     if (character.GetHealthPercentage() < 1f)
@@ -232,12 +235,14 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
                 }
                 else if (IsFoe(character))
                 {
-                    // Damage enemies (spirit damage)
+                    // Damage enemies: holy (blunt + half of it again as spirit)
                     var hitData = new HitData();
                     hitData.m_point = character.transform.position;
                     hitData.m_dir = (character.transform.position - pos).normalized;
                     hitData.m_attacker = m_character.GetZDOID();
-                    hitData.m_damage.m_spirit = AuraDamagePerSecond;
+                    hitData.m_damage.m_blunt = AuraDamagePerSecond;
+                    hitData.m_damage.m_spirit = AuraDamagePerSecond * 0.5f;
+                    FiresCore.Logging.FiresLogger.LogDebug($"[AvatarOfLightEffect] holy aura on {character.m_name}: {AuraDamagePerSecond:0.0} blunt + {AuraDamagePerSecond * 0.5f:0.0} spirit");
 
                     character.Damage(hitData);
                     NoteHit(character, AuraDamagePerSecond, false);
@@ -297,7 +302,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             
             m_character.Message(MessageHud.MessageType.Center, "<color=red>AVATAR OF WAR</color>");
             
-            Debug.Log($"[AvatarOfWarEffect] {m_character.m_name} transformed into AVATAR OF WAR!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[AvatarOfWarEffect] {m_character.m_name} transformed into AVATAR OF WAR!");
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
@@ -394,7 +399,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             
             m_character.Message(MessageHud.MessageType.Center, "<color=purple>SHADOW DANCE</color>");
             
-            Debug.Log($"[ShadowDanceEffect] {m_character.m_name} entered SHADOW DANCE!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ShadowDanceEffect] {m_character.m_name} entered SHADOW DANCE!");
         }
         
         /// <summary>
@@ -707,7 +712,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             
             m_character.Message(MessageHud.MessageType.Center, "<color=yellow>PERFECT SHOT READY</color>");
             
-            Debug.Log($"[PerfectShotEffect] {m_character.m_name} preparing PERFECT SHOT!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[PerfectShotEffect] {m_character.m_name} preparing PERFECT SHOT!");
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
@@ -731,7 +736,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
                     SpawnVFX("fx_Lightning", m_character.transform.position);
                 }
                 
-                Debug.Log($"[PerfectShotEffect] PERFECT SHOT fired! {DamageMultiplier * 100:F0}% damage!");
+                FiresCore.Logging.FiresLogger.LogDebug($"[PerfectShotEffect] PERFECT SHOT fired! {DamageMultiplier * 100:F0}% damage!");
                 
                 // Remove effect after use
                 Duration = 0.1f;
@@ -790,7 +795,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             
             m_character.Message(MessageHud.MessageType.Center, "<color=#FF00FF>ARCANE FORM</color>");
             
-            Debug.Log($"[ArcaneFormEffect] {m_character.m_name} transformed into ARCANE FORM!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ArcaneFormEffect] {m_character.m_name} transformed into ARCANE FORM!");
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)
@@ -870,7 +875,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             
             m_character.Message(MessageHud.MessageType.Center, "<color=green>AVATAR OF LIFE</color>");
             
-            Debug.Log($"[AvatarOfLifeEffect] {m_character.m_name} transformed into AVATAR OF LIFE!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[AvatarOfLifeEffect] {m_character.m_name} transformed into AVATAR OF LIFE!");
         }
         
         /// <summary>
@@ -960,7 +965,7 @@ namespace FiresCore.Npc.Archetypes.StatusEffects.Ultimate
             
             m_character.Message(MessageHud.MessageType.Center, "<color=#FFD700>WAY OF PERFECTION</color>");
             
-            Debug.Log($"[WayOfPerfectionEffect] {m_character.m_name} achieved WAY OF PERFECTION!");
+            FiresCore.Logging.FiresLogger.LogDebug($"[WayOfPerfectionEffect] {m_character.m_name} achieved WAY OF PERFECTION!");
         }
         
         public override void ModifyAttack(Skills.SkillType skill, ref HitData hitData)

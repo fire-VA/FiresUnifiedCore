@@ -538,7 +538,7 @@ namespace FiresCore.UI
                     }
                 }
 
-                Debug.Log($"[UIOverrideSlotSystem] Discovered {discovered} slot(s), " +
+                FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideSlotSystem] Discovered {discovered} slot(s), " +
                     $"{toolHotbarSlots.Count} hotbar slot(s) from VAInventory " +
                     $"(VisibleHeight={InventoryHeight})");
 

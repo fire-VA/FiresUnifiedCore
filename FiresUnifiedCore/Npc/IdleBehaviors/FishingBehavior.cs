@@ -6,7 +6,7 @@ using UnityEngine;
 namespace FiresCore.Npc.IdleBehaviors
 {
     /// <summary>
-    /// Companion idle behavior: real fishing on the one fishing brain (Core 0.2.243, <see cref="FishingBrain"/>, the bot's too). Plan
+    /// Companion idle behavior: real fishing on the one fishing brain (<see cref="FishingBrain"/>, the bot's too). Plan
     /// a dry stand at the water's edge near home with deep water in reach (toward fish that take a carried bait), walk there, take out
     /// the rod, throw the rod's own projectile with one bait at the planned point (the game drops a FishingFloat where it lands), then
     /// each tick do what the brain advises: wait, hook and reel (hold the line in) on a bite, hold while a hooked fish runs, recast when
@@ -32,7 +32,7 @@ namespace FiresCore.Npc.IdleBehaviors
         #region Constants
 
         private const float ScanRadius = 30f;
-        /// <summary>0.2.268: how long a companion leaves fishing alone after a plan found no fish / water / shore near home.</summary>
+        /// <summary>How long a companion leaves fishing alone after a plan found no fish / water / shore near home.</summary>
         private const float NoFishCooldown = 300f;
         private float _noFishUntil;
         private const float CommandedRadius = 14f;
@@ -150,7 +150,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     return FishPhase.Complete;
                 case FishPhase.MovingToShore:
                 {
-                    // 0.2.258 (R37: three stalled walks to the water's edge at a shelved pond): the stand wasn't reached; cast from where
+                    // The stand wasn't reached (a shelf or step can block the walk to the edge); cast from where
                     // it stands when deep water lies within a cast, else give up as before.
                     var storage = GetStorageInventory();
                     FishingBrain.FishPlan fromHere = null;
@@ -160,7 +160,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     Vector3 at = Transform != null ? Transform.position : Vector3.zero;
                     if (here == "")
                     {
-                        Debug.Log($"[Fishing] {Companion?.companionName} did not reach the stand at ({_plan.Stand.x:0}, {_plan.Stand.z:0}) from ({at.x:0}, {at.z:0}); casting from here: {fromHere}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[Fishing] {Companion?.companionName} did not reach the stand at ({_plan.Stand.x:0}, {_plan.Stand.z:0}) from ({at.x:0}, {at.z:0}); casting from here: {fromHere}");
                         _plan = fromHere;
                         StopMovement();
                         FaceTarget(_plan.Aim);
@@ -168,7 +168,7 @@ namespace FiresCore.Npc.IdleBehaviors
                         _thrown = false;
                         return FishPhase.Casting;
                     }
-                    Debug.Log($"[Fishing] {Companion?.companionName} did not reach the stand at ({_plan.Stand.x:0}, {_plan.Stand.z:0}) from ({at.x:0}, {at.z:0}) and cannot cast from here: {here}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[Fishing] {Companion?.companionName} did not reach the stand at ({_plan.Stand.x:0}, {_plan.Stand.z:0}) from ({at.x:0}, {at.z:0}) and cannot cast from here: {here}");
                     return FishPhase.Complete;
                 }
                 default:
@@ -200,7 +200,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 string missing = MissingGear();
                 if (missing != null)
                 {
-                    Debug.Log($"[Fishing] {Companion.companionName} cannot fish at the commanded spot: {missing}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[Fishing] {Companion.companionName} cannot fish at the commanded spot: {missing}");
                     _commandedSpot = null;
                     return false;
                 }
@@ -209,7 +209,7 @@ namespace FiresCore.Npc.IdleBehaviors
             }
 
             if (!CompanionBehaviorToggles.IsFishingEnabled(Companion)) return false;
-            // 0.2.268 (HR3: "Fishing after 0 s (done)" over and over at a pond with no fish): after a plan found no fish / water /
+            // Without this a companion retries fishing over and over at a pond with no fish: after a plan found no fish / water /
             // shore near home, this companion leaves fishing alone for NoFishCooldown (a commanded spot above still goes).
             if (Time.time < _noFishUntil) return false;
             if (!CanStartBase()) return false;
@@ -245,13 +245,13 @@ namespace FiresCore.Npc.IdleBehaviors
             {
                 bool rest = why.StartsWith("nofish") || why.StartsWith("nowater") || why.StartsWith("noshore");
                 if (rest) _noFishUntil = Time.time + NoFishCooldown;
-                Debug.Log($"[Fishing] {Companion?.companionName} cannot fish near ({_planNear.x:0}, {_planNear.z:0}): {why}" +
+                FiresCore.Logging.FiresLogger.LogDebug($"[Fishing] {Companion?.companionName} cannot fish near ({_planNear.x:0}, {_planNear.z:0}): {why}" +
                           (rest ? $"; not trying again for {NoFishCooldown / 60f:0} min" : ""));
                 SetPhase(FishPhase.Complete);
                 return false;
             }
-            // 0.2.258: the stand, how it was chosen and its reach, the cast distance (always on).
-            Debug.Log($"[Fishing] {Companion?.companionName} plans: {_plan}");
+            // The stand, how it was chosen and its reach, the cast distance (always on).
+            FiresCore.Logging.FiresLogger.LogDebug($"[Fishing] {Companion?.companionName} plans: {_plan}");
             SetPhase(FishPhase.MovingToShore);
             MoveToPosition(_plan.Stand);
             return false;
@@ -281,7 +281,7 @@ namespace FiresCore.Npc.IdleBehaviors
                 string why = FishingBrain.CastProjectile(Character, _plan, GetStorageInventory());
                 if (why != "")
                 {
-                    Debug.Log($"[Fishing] {Companion?.companionName} cannot cast: {why}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[Fishing] {Companion?.companionName} cannot cast: {why}");
                     SetPhase(FishPhase.Complete);
                     return false;
                 }
@@ -297,7 +297,6 @@ namespace FiresCore.Npc.IdleBehaviors
         private bool UpdateLine()
         {
             FaceTarget(_plan.Aim);
-            SweepBagIntoStorage();
 
             FishingBrain.FishMove move = FishingBrain.Advise(Character, out string why);
             switch (move)
@@ -323,7 +322,7 @@ namespace FiresCore.Npc.IdleBehaviors
                     NextCast(why);
                     break;
                 default:
-                    Debug.Log($"[Fishing] {Companion?.companionName} stops fishing: {why}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[Fishing] {Companion?.companionName} stops fishing: {why}");
                     SetPhase(FishPhase.Complete);
                     break;
             }
@@ -332,7 +331,6 @@ namespace FiresCore.Npc.IdleBehaviors
 
         private bool UpdateCollecting()
         {
-            SweepBagIntoStorage();
             if (TimeInCurrentPhase < 0.5f) return false;
             if (_fishCaught >= MaxCatches) { SetPhase(FishPhase.Complete); return false; }
             NextCast("landed one");
@@ -343,13 +341,12 @@ namespace FiresCore.Npc.IdleBehaviors
         private void NextCast(string why)
         {
             FishingBrain.Withdraw(Character);
-            SweepBagIntoStorage();
             if (_casts >= MaxCasts) { LogVerbose($"Done after {_casts} casts"); SetPhase(FishPhase.Complete); return; }
             Vector3 was = _plan.Stand;
             string refusal = PlanCast();
             if (refusal != "")
             {
-                Debug.Log($"[Fishing] {Companion?.companionName} stops fishing ({why}): {refusal}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[Fishing] {Companion?.companionName} stops fishing ({why}): {refusal}");
                 SetPhase(FishPhase.Complete);
                 return;
             }
@@ -445,36 +442,12 @@ namespace FiresCore.Npc.IdleBehaviors
                 FishingBrain.SetReeling(Character, false);
             }
             SetReelPose(false);
-            SweepBagIntoStorage();
             UnequipFishingRod();
         }
 
         #endregion
 
         #region Inventory Helpers
-
-        // The game's float lands a catch (and returns an unused bait) into the companion's Humanoid bag, which nothing else uses; it all
-        // goes into storage.
-        private void SweepBagIntoStorage()
-        {
-            Inventory bag = Humanoid != null ? Humanoid.GetInventory() : null;
-            Inventory storage = GetStorageInventory();
-            if (bag == null || storage == null || bag.NrOfItems() == 0) return;
-            bool moved = false;
-            foreach (ItemDrop.ItemData item in bag.GetAllItems().ToList())
-            {
-                if (item == null || !storage.CanAddItem(item)) continue;
-                bag.RemoveItem(item);
-                storage.AddItem(item);
-                moved = true;
-                if (item.m_dropPrefab != null && item.m_dropPrefab.GetComponent<Fish>() != null)
-                {
-                    Debug.Log($"[Fishing] {Companion?.companionName} stored {item.m_dropPrefab.name}{(item.m_quality > 1 ? $" (q{item.m_quality})" : "")}");
-                    AI.ChoreBrain.ChoreDone(Companion?.companionName, "fishing", $"caught {item.m_dropPrefab.name}{(item.m_quality > 1 ? $" (q{item.m_quality})" : "")}");
-                }
-            }
-            if (moved) SaveInventory();
-        }
 
         private void NotifyOwner()
         {

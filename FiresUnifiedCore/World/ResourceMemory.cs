@@ -40,10 +40,10 @@ namespace FiresCore.World
     }
 
     /// <summary>
-    /// Where each item was actually found (Core 0.2.203, AUTOPLAY_PROGRESSION §7.12/§7.14): recorded on every gather, searched first
+    /// Where each item was actually found: recorded on every gather, searched first
     /// before the spawn knowledge and the explorer. Persisted per world on the gathering body's own client, under its BepInEx folder
     /// (a client has no world save; the bot's ProgramData writes vanish under Sandboxie):
-    /// BepInEx\config\FiresCore\WorldMemory\&lt;world&gt;_&lt;seed&gt;.resources.json. The explorer's map is a separate file ([visual]).
+    /// BepInEx\config\FiresCore\WorldMemory\&lt;world&gt;_&lt;seed&gt;.resources.json. The explorer's map is a separate file.
     /// </summary>
     [HarmonyPatch]
     public static class ResourceMemory
@@ -93,7 +93,7 @@ namespace FiresCore.World
             e.LastSeen = now;
             e.Regrows = regrows;
             e.ReadyAt = regrows ? now + regrowSeconds : 0d;
-            Debug.Log($"[ResourceMemory] found {itemPrefab} x{count} at ({pos.x:0}, {pos.z:0}) ({sourcePrefab ?? "?"}, {(Heightmap.Biome)e.Biome}; " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[ResourceMemory] found {itemPrefab} x{count} at ({pos.x:0}, {pos.z:0}) ({sourcePrefab ?? "?"}, {(Heightmap.Biome)e.Biome}; " +
                       $"{Ordinal(e.Times)} time here)");
             MarkDirty();
         }
@@ -127,7 +127,7 @@ namespace FiresCore.World
             Entry e = Nearest(itemPrefab, pos, MergeMetres);
             if (e == null) return;
             s_data.Resources.Remove(e);
-            Debug.Log($"[ResourceMemory] forgot {itemPrefab} at ({e.X:0}, {e.Z:0}): {why}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[ResourceMemory] forgot {itemPrefab} at ({e.X:0}, {e.Z:0}): {why}");
             MarkDirty();
         }
 
@@ -214,7 +214,7 @@ namespace FiresCore.World
         private static void FlushOnShutdown()
         {
             try { Flush(); } catch { }
-            try { EnemyMemory.Flush(); } catch { }   // the enemies + danger file (0.2.219), same moment
+            try { EnemyMemory.Flush(); } catch { }   // the enemies + danger file, same moment
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using FiresCore.Npc.Combat;
 using FiresCore.Npc.Movement;
 using FiresCore.Npc.Core;
@@ -152,19 +152,7 @@ namespace FiresCore.Npc.AI
             // PLAYER COMMAND OVERRIDES FLEE. See OnDamaged for the rationale.
             bool underPlayerCommand = _combatMovement != null && _combatMovement.HasCommandPriority;
 
-            if (!underPlayerCommand && _staminaManager != null && _staminaManager.IsInCriticalRecovery() && !isTank)
-            {
-                Debug.Log($"[CompanionAI] {m_character?.m_name} CRITICAL STAMINA in UpdateCombatState - forcing flee state! " +
-                    $"(stamina={_staminaManager.GetStaminaPercent():P0})");
-
-                SetState(AIState.Fleeing);
-                return;
-            }
-            else if (_staminaManager != null && _staminaManager.IsInCriticalRecovery() && isTank)
-            {
-                if (VerboseLogging)
-                    Debug.Log($"[CompanionAI] TANK {m_character?.m_name} staying in combat despite critical stamina - holding the line!");
-            }
+            // [ghost] 11-02 fix 4 (Fire): low stamina no longer leaves the fight or runs to the owner. It stays in Combat; CompanionCombatMovement backs off from the foe until recovered.
             
             _timeSinceAttacking += dt;
             _timeSinceTargetSeen += dt;
@@ -177,6 +165,16 @@ namespace FiresCore.Npc.AI
                 SetCompanionCrouch(false);
                 if (VerboseLogging)
                     Debug.Log($"[CompanionAI] {m_character?.m_name} broke sneak stance \u2014 attacking");
+            }
+
+            // [ghost] 11-02 stance fix (Fire: matching the owner "should not be doing that during combat unless were sneaking"): the crouch mirror
+            // only ran while following, so a companion crouched with its owner stayed crouched through the approach until its first swing.
+            UpdateOwnerStance();
+            if (!_isOwnerSneaking && _stance != null && (_isCompanionSneaking || _stance.IsCrouching || _stance.IsProne))
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] {m_character?.m_name}: standing up for combat, owner is not sneaking");
+                _isCompanionSneaking = false;
+                SetCompanionCrouch(false);
             }
 
             bool shouldFlee = ShouldFlee();
@@ -200,7 +198,7 @@ namespace FiresCore.Npc.AI
                     if (Time.time - _lastFleeEntryLogTime >= FleeLogInterval)
                     {
                         _lastFleeEntryLogTime = Time.time;
-                        Debug.Log($"[CompanionAI] {m_character?.m_name} ShouldFlee=true but re-entry cooldown active ({MinFleeReentryDelay - (Time.time - _lastFleeExitTime):F1}s left) — staying in Combat");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] {m_character?.m_name} ShouldFlee=true but re-entry cooldown active ({MinFleeReentryDelay - (Time.time - _lastFleeExitTime):F1}s left) — staying in Combat");
                     }
                 }
                 else
@@ -208,7 +206,7 @@ namespace FiresCore.Npc.AI
                     if (Time.time - _lastFleeEntryLogTime >= FleeLogInterval)
                     {
                         _lastFleeEntryLogTime = Time.time;
-                        Debug.Log($"[CompanionAI] {m_character?.m_name} UpdateCombatState detected ShouldFlee=true ({GetFleeReason()}) — transitioning to Fleeing!");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] {m_character?.m_name} UpdateCombatState detected ShouldFlee=true ({GetFleeReason()}) — transitioning to Fleeing!");
                     }
                     SetState(AIState.Fleeing);
                     return;
@@ -238,16 +236,35 @@ namespace FiresCore.Npc.AI
                 return;
             }
 
-            if (_shouldFollow && _followTarget != null)
+            // [ghost] 10-26 (Fire's hand test: "Too far from owner (Nm), returning" x890 against the 12 m re-engage leash; the
+            // companion walked past 10 m from its owner to reach a foe the directive had just let it take, came back, and was sent
+            // again: step, stop, "confused"; Fire: a 10 m leash "is quite restrictive in combat"): ONE leash rule for taking and
+            // keeping a fight. The FOE must stay within ReengageLeash (25 m) of the owner, as SetTarget's ReengageBlock already
+            // asks; the companion itself only comes back past CombatRunawayCap (32 m). A foe attacking this companion, the owner or
+            // another of the owner's companions is always fought.
+            if (_shouldFollow && _followTarget != null && !AttacksOurSide(_targetCreature))
             {
                 float distToOwner = Vector3.Distance(transform.position, _followTarget.transform.position);
-                if (distToOwner > combatLeashDistance)
+                float foeToOwner = Vector3.Distance(_targetCreature.transform.position, _followTarget.transform.position);
+                if (foeToOwner > ReengageLeash || distToOwner > CombatRunawayCap)
                 {
                     if (VerboseLogging)
-                        Debug.Log($"[CompanionAI] Too far from owner ({distToOwner:F0}m), returning");
+                        Debug.Log($"[CompanionAI] Too far from owner (foe {foeToOwner:F0} m / me {distToOwner:F0} m from the owner; leash {ReengageLeash:0} m, cap {CombatRunawayCap:0} m), returning");
                     SetState(AIState.Returning);
                     return;
                 }
+            }
+
+            // [ghost] 10-26 (Fire: staying companions "should work regardless of owner around"): a staying companion's leash is
+            // its HOME point; the owner's distance never applies to it.
+            if (!_shouldFollow && _hasHomePositionSet && !AttacksOurSide(_targetCreature)
+                && Vector3.Distance(_targetCreature.transform.position, _stayPosition) > StayLeash)
+            {
+                if (VerboseLogging)
+                    Debug.Log($"[CompanionAI] {m_character?.m_name} staying: foe {Vector3.Distance(_targetCreature.transform.position, _stayPosition):F0} m from its home point (leash {StayLeash:0} m), returning home");
+                ClearTarget();
+                SetState(AIState.Idle);
+                return;
             }
 
             if (_timeSinceAttacking > giveUpTime && _beenAtLastTargetPos)
@@ -312,7 +329,7 @@ namespace FiresCore.Npc.AI
                 _kiteDirection = 0;
                 _hasTriedKitingRangedSwap = false;
                 _lastFleeExitTime = Time.time;
-                Debug.Log($"[CompanionAI] EXITING FLEE: {m_character?.m_name} player command issued — obeying order, returning to normal");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] EXITING FLEE: {m_character?.m_name} player command issued — obeying order, returning to normal");
                 SetState(_shouldFollow ? AIState.Following : AIState.Idle);
                 return;
             }
@@ -353,7 +370,7 @@ namespace FiresCore.Npc.AI
                     _kiteDirection = 0;
                     _hasTriedKitingRangedSwap = false;
                     _lastFleeExitTime = Time.time;
-                    Debug.Log($"[CompanionAI] EXITING FLEE: {m_character?.m_name} no active threats nearby (stamina={staminaPercent:P0}) - returning to normal");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] EXITING FLEE: {m_character?.m_name} no active threats nearby (stamina={staminaPercent:P0}) - returning to normal");
                     SetState(_shouldFollow ? AIState.Following : AIState.Idle);
                     return;
                 }
@@ -374,7 +391,7 @@ namespace FiresCore.Npc.AI
                         _kiteDirection = 0;
                         _hasTriedKitingRangedSwap = false;
                         _lastFleeExitTime = Time.time;
-                        Debug.Log($"[CompanionAI] EXITING FLEE: {m_character?.m_name} health={healthPercent:P0}, stamina={staminaPercent:P0} - returning to normal");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] EXITING FLEE: {m_character?.m_name} health={healthPercent:P0}, stamina={staminaPercent:P0} - returning to normal");
                         SetState(_shouldFollow ? AIState.Following : AIState.Idle);
                         return;
                     }
@@ -386,14 +403,14 @@ namespace FiresCore.Npc.AI
                 if (_staminaManager != null && (inCriticalRecovery || (inRecovery && staminaPercent < 0.7f)))
                 {
                     _fleeStartTime = Time.time;
-                    Debug.Log($"[CompanionAI] {m_character?.m_name} flee time expired but stamina still low ({staminaPercent:P0}) - EXTENDING flee timer");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] {m_character?.m_name} flee time expired but stamina still low ({staminaPercent:P0}) - EXTENDING flee timer");
                 }
                 else
                 {
                     _kiteDirection = 0;
                     _hasTriedKitingRangedSwap = false;
                     _lastFleeExitTime = Time.time;
-                    Debug.Log($"[CompanionAI] EXITING FLEE (timeout): {m_character?.m_name} stamina={staminaPercent:P0} - returning to normal");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionAI] EXITING FLEE (timeout): {m_character?.m_name} stamina={staminaPercent:P0} - returning to normal");
                     SetState(_shouldFollow ? AIState.Following : AIState.Idle);
                     return;
                 }
@@ -700,6 +717,7 @@ namespace FiresCore.Npc.AI
         private void UpdateCombatMovement(float dt)
         {
             if (_targetCreature == null) return;
+            if (_staminaManager != null && _staminaManager.IsInCriticalRecovery()) return;   // [ghost] 11-02 fix 4: CompanionCombatMovement is backing off; no walk order toward the foe against it
 
             UpdateWeaponType();
 
@@ -800,25 +818,8 @@ namespace FiresCore.Npc.AI
         {
             bool isTank = _archetypeController != null && _archetypeController.IsTank;
 
-            if (_staminaManager != null && !isTank)
-            {
-                bool inCritical = _staminaManager.IsInCriticalRecovery();
-                bool shouldTreatAsLow = _staminaManager.ShouldTreatAsLowHealth();
-                float staminaPct = _staminaManager.GetStaminaPercent();
-
-                if (inCritical)
-                {
-                    _lastFleeReason = $"critical-stamina-recovery (stamina={staminaPct:P0})";
-                    return true;
-                }
-
-                if (shouldTreatAsLow)
-                {
-                    _lastFleeReason = $"stamina-emergency (stamina={staminaPct:P0})";
-                    return true;
-                }
-            }
-            else if (isTank && _staminaManager != null)
+            // [ghost] 11-02 fix 4: stamina is no reason to flee (fleeing kites round the owner); see UpdateCombatState.
+            if (isTank && _staminaManager != null)
             {
                 float staminaPct = _staminaManager.GetStaminaPercent();
                 if (staminaPct < 0.3f && VerboseLogging)

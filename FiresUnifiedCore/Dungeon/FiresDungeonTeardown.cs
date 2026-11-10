@@ -13,6 +13,81 @@ namespace FiresCore.Dungeon
     /// </summary>
     public static class FiresDungeonTeardown
     {
+
+        // ---- 0.2.1094 ([seasons]' drop, method from FDM's DungeonLink; Fire 11-02: removing an entrance removes its dungeon, never a neighbour).
+        // Add-only and inert until a mod calls Stamped: every ZDO made inside a scope carries the dungeon's id, so teardown needs no volume and nothing loaded.
+        public const string KeyId = "fires_dungeon_id";
+        private const string KeyIdFdm = "fdm_dungeon_id";   // dungeons FDM generated keep working
+        private static readonly int s_hashId = KeyId.GetStableHashCode(), s_hashIdFdm = KeyIdFdm.GetStableHashCode();
+        private static long s_scope;
+        internal static int ZdosCreated;   // 0.2.1095: FiresDungeonCore.InvokeSpawnLocation tells a Full spawn from a refused one by this
+
+        public static long NewId()
+        {
+            long id = ((long)UnityEngine.Random.Range(int.MinValue, int.MaxValue) << 32) ^ DateTime.UtcNow.Ticks;
+            return id == 0L ? 1L : id;
+        }
+
+        /// <summary>Runs a synchronous spawn; every ZDO it creates carries <paramref name="id"/>.</summary>
+        public static T Stamped<T>(long id, Func<T> spawn)
+        {
+            long was = s_scope;
+            s_scope = id;
+            try { return spawn(); }
+            finally { s_scope = was; }
+        }
+
+        /// <summary>Server only: destroys every ZDO carrying the id, loaded or not, except <paramref name="keep"/>. Returns the count.</summary>
+        public static int DestroyById(long id, ZDOID keep)
+        {
+            if (id == 0L || ZNet.instance == null || !ZNet.instance.IsServer() || ZDOMan.instance == null) return 0;
+            var all = HarmonyLib.AccessTools.Field(typeof(ZDOMan), "m_objectsByID")?.GetValue(ZDOMan.instance) as Dictionary<ZDOID, ZDO>;
+            if (all == null) { Debug.LogWarning("[FiresDungeon] DestroyById: ZDOs not readable; nothing removed"); return 0; }
+            var doomed = new List<ZDO>();
+            foreach (var z in all.Values)
+                if (z != null && z.m_uid != keep && (z.GetLong(s_hashId, 0L) == id || z.GetLong(s_hashIdFdm, 0L) == id)) doomed.Add(z);
+            var scene = ZNetScene.instance;
+            foreach (var z in doomed)
+            {
+                ZNetView live = scene != null ? scene.FindInstance(z) : null;
+                z.SetOwner(ZDOMan.GetSessionID());
+                if (live != null) scene.Destroy(live.gameObject);
+                else ZDOMan.instance.DestroyZDO(z);
+            }
+            FiresCore.Logging.FiresLogger.LogDebug($"[FiresDungeon] dungeon {id} torn down by id: {doomed.Count} object(s)");
+            return doomed.Count;
+        }
+
+        [HarmonyLib.HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.CreateNewZDO), new[] { typeof(Vector3), typeof(int) })]
+        private static class ZDOMan_CreateNewZDO_DungeonStamp
+        {
+            private static void Postfix(ZDO __result)
+            {
+                ZdosCreated++;
+                if (s_scope != 0L && __result != null) __result.Set(s_hashId, s_scope);
+            }
+        }
+
+        // Stale-heal and resize regenerate later from a coroutine: a generator whose own ZDO has an id stamps what it generates, whenever it runs.
+        [HarmonyLib.HarmonyPatch(typeof(DungeonGenerator), nameof(DungeonGenerator.Generate), new[] { typeof(int), typeof(ZoneSystem.SpawnMode) })]
+        private static class DungeonGenerator_Generate_DungeonStamp
+        {
+            private static void Prefix(DungeonGenerator __instance, out long __state)
+            {
+                __state = s_scope;
+                var view = __instance.GetComponent<ZNetView>();
+                var zdo = view != null ? view.GetZDO() : null;
+                long id = zdo != null ? zdo.GetLong(s_hashId, 0L) : 0L;
+                if (id == 0L && zdo != null) id = zdo.GetLong(s_hashIdFdm, 0L);   // a dungeon FDM generated: its regenerated rooms get the same id
+                if (id != 0L) s_scope = id;
+            }
+
+            private static Exception Finalizer(Exception __exception, long __state)
+            {
+                s_scope = __state;
+                return __exception;
+            }
+        }
         private const float DefaultInteriorYOffset = 5000f;
         private const float InteriorFloorGuard = 300f;   // interior sweep never reaches below interiorCenter - this
         private const int SectorSweepArea = 2;           // 5x5 zones around the entrance — covers env boxes grown past the zone edge
@@ -111,7 +186,7 @@ namespace FiresCore.Dungeon
                     && inst.m_location.m_prefabName == spec.CryptLocationPrefabName)
                 {
                     zoneSystem.m_locationInstances.Remove(zone);
-                    Debug.Log($"{spec.LogTag} removed location-instance record for zone {zone} ('{spec.CryptLocationPrefabName}').");
+                    FiresCore.Logging.FiresLogger.LogDebug($"{spec.LogTag} removed location-instance record for zone {zone} ('{spec.CryptLocationPrefabName}').");
                 }
             }
             catch (Exception ex)

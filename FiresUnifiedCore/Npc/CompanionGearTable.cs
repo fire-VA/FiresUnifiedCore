@@ -31,7 +31,7 @@ namespace FiresCore.Npc
 
         private static readonly string[][] Weapons =
         {
-            new[] { "Club", "AxeStone", "AxeFlint", "KnifeFlint", "SpearFlint", "KnifeButcher", "SledgeStagbreaker", "AxeEarly", "Bow" },
+            new[] { "Club", "AxeStone", "AxeFlint", "KnifeFlint", "SpearFlint", "SledgeStagbreaker", "AxeEarly", "Bow" },
             new[] { "SwordBronze", "MaceBronze", "AxeBronze", "SpearBronze", "KnifeCopper", "AtgeirBronze", "FistBjornClaw", "BowFineWood" },
             new[] { "SwordIron", "MaceIron", "AxeIron", "SpearElderbark", "AtgeirIron", "SledgeIron", "Battleaxe", "BowHuntsman" },
             new[] { "SwordSilver", "MaceSilver", "KnifeSilver", "SpearWolfFang", "BattleaxeCrystal", "FistFenrirClaw", "BowDraugrFang", "KnifeChitin", "SpearChitin" },

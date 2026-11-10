@@ -41,9 +41,54 @@ namespace FiresCore.Bridge
         /// <summary>True if any registered screen is currently open.</summary>
         public static bool IsAnyOpen()
         {
-            foreach (var entry in _entries.Values)
-                try { if (entry.IsOpen != null && entry.IsOpen()) return true; } catch { }
+            bool any = false;
+            foreach (var kv in _entries)
+                if (IsReallyOpen(kv.Key, kv.Value)) { any = true; break; }
+            NoteOpen(any);
+            return any;
+        }
+
+        /// <summary>The keys of the screens open right now (diagnostics: what keeps "any open" true). Add-only.</summary>
+        public static List<string> OpenKeys()
+        {
+            var open = new List<string>();
+            foreach (var kv in _entries)
+                if (IsReallyOpen(kv.Key, kv.Value)) open.Add(kv.Key);
+            return open;
+        }
+
+        // A screen that
+        // registered a root counts as open only while that root exists and is activeInHierarchy (its IsOpen flag can go stale when the
+        // owner's close path skips it). No root registered = its IsOpen alone, as before.
+        private static readonly HashSet<string> s_staleLogged = new HashSet<string>();
+        private static bool IsReallyOpen(string key, Entry entry)
+        {
+            bool open;
+            try { open = entry.IsOpen != null && entry.IsOpen(); } catch { return false; }
+            if (!open || entry.Root == null) return open;
+            GameObject root = null;
+            try { root = entry.Root(); } catch { }
+            if (root != null && root.activeInHierarchy) { s_staleLogged.Remove(key); return true; }
+            if (s_staleLogged.Add(key))
+                FiresCore.Logging.FiresLogger.LogDebug($"[ModUi] '{key}' says open but its root is {(root == null ? "gone" : "inactive")}: not counted as open (owner: fix its IsOpen)");
             return false;
+        }
+
+        // A Debug line naming the open screen(s) each time the set changes (IsAnyOpen runs every frame).
+        private static string s_lastOpenSig = "";
+        private static void NoteOpen(bool any)
+        {
+            string sig = any ? string.Join(", ", OpenKeys()) : "";
+            if (sig == s_lastOpenSig) return;
+            s_lastOpenSig = sig;
+            FiresCore.Logging.FiresLogger.LogDebug(sig.Length > 0 ? $"[ModUi] open screens: {sig}" : "[ModUi] no mod screen open");
+        }
+
+        /// <summary>Closes one registered screen by key; false when it is unknown or has no close action. Add-only.</summary>
+        public static bool Close(string key)
+        {
+            if (string.IsNullOrEmpty(key) || !_entries.TryGetValue(key, out var entry) || entry.Close == null) return false;
+            try { entry.Close(); return true; } catch { return false; }
         }
 
         /// <summary>Close every registered screen that exposes a close action.</summary>

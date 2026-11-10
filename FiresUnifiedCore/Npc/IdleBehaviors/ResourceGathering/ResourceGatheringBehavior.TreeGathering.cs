@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc;
 
@@ -56,7 +56,8 @@ namespace FiresCore.Npc.IdleBehaviors
 
                 // A tree no reachable axe can cut (a tier-2 birch nearest home) would block chopping for good.
                 if (target == null || !ResourceDataHelper.CanChop(target, axeTier)) continue;
-                if (IsUnreached(target)) continue;   // 0.2.268: a run timed out short of it lately
+                if (FiresCore.World.ResourceHealth.Skip(target, "wood")) continue;   // 0.2.902: no hit can fell an infinite-health tree
+                if (IsUnreached(target)) continue;   // A run timed out short of it lately
                 
                 float dist = Vector3.Distance(position, target.transform.position);
                 if (dist < closestDist)
@@ -245,7 +246,7 @@ namespace FiresCore.Npc.IdleBehaviors
             
             if (sapling != null)
             {
-                Debug.Log($"[ResourceGathering] {Companion?.companionName} planted a {prefabName} where stump was cleared!");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ResourceGathering] {Companion?.companionName} planted a {prefabName} where stump was cleared!");
                 
                 // Notify player
                 var owner = Companion?.GetOwner();
@@ -271,11 +272,6 @@ namespace FiresCore.Npc.IdleBehaviors
             
             StopMovement();
             
-            if (_rigidbody != null && !_rigidbody.isKinematic)
-            {
-                Vector3 vel = _rigidbody.linearVelocity;
-                _rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
             
             FaceTarget(_lastTreePosition);
             

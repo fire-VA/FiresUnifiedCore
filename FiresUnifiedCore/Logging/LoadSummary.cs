@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using BepInEx.Configuration;
 using UnityEngine;
@@ -88,13 +88,64 @@ namespace FiresCore.Logging
             string emitTag = string.IsNullOrEmpty(tag) ? LogTag : tag;
             try
             {
-                foreach (var line in FormatBox(title, lines, innerWidth))
+                // Never wider than the console row left after the
+                // prefix the console really prints, and long lines wrap at word boundaries inside the box.
+                int max = MaxInnerWidth(emitTag);
+                int width = Math.Min(Math.Max(innerWidth, BoxInnerWidth), max);
+                foreach (var line in FormatBox(title, WrapLines(lines, width), width))
                     EmitLine($"{emitTag} {line}");
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"{emitTag} EmitBox failed: {ex.Message}");
             }
+        }
+
+        // The console row the box must fit. A real console reports its width (the dedi's and the client's BepInEx console);
+        // without one (a log file, a redirected stdout), Windows conhost's default 120 columns.
+        private const int DefaultConsoleColumns = 120;
+        private const int ConsoleSafety = 1;   // the last column wraps on some hosts
+        // What the console prints before the box text: "[Info   : Unity Log] [FiresUnifiedCore] " + the tag + " ". Measured on
+        // a dedicated server: the Unity Log route adds the source in brackets after BepInEx's own level column.
+        private const string ConsolePrefixModel = "[Info   : Unity Log] [FiresUnifiedCore] ";
+        internal static int ConsoleColumns()
+        {
+            try
+            {
+                int w = System.Console.WindowWidth;
+                if (w >= 60 && w <= 1000) return w;
+            }
+            catch { }
+            return DefaultConsoleColumns;
+        }
+
+        /// <summary>The widest inner box line that still fits one console row after the console prefix + this tag.</summary>
+        public static int MaxInnerWidth(string tag)
+        {
+            int prefix = ConsolePrefixModel.Length + (string.IsNullOrEmpty(tag) ? LogTag.Length : tag.Length) + 1;
+            return Math.Max(BoxInnerWidth, ConsoleColumns() - prefix - 4 - ConsoleSafety);
+        }
+
+        /// <summary>Lines wrapped at word boundaries to fit 'width' cells (a continuation is indented 2).</summary>
+        public static string[] WrapLines(string[] lines, int width)
+        {
+            var output = new System.Collections.Generic.List<string>();
+            foreach (var raw in lines ?? Array.Empty<string>())
+            {
+                string text = raw ?? string.Empty;
+                string indent = string.Empty;
+                while (DisplayWidth(indent + text) > width)
+                {
+                    int room = Math.Max(8, width - indent.Length);
+                    int cut = text.Length > room ? text.LastIndexOf(' ', Math.Min(room, text.Length - 1)) : -1;
+                    if (cut <= 0) cut = Math.Min(room, text.Length);
+                    output.Add(indent + text.Substring(0, cut).TrimEnd());
+                    text = text.Substring(cut).TrimStart();
+                    indent = "  ";
+                }
+                output.Add(indent + text);
+            }
+            return output.ToArray();
         }
 
         // The box as lines, built but NOT emitted, and without a tag.
@@ -113,7 +164,10 @@ namespace FiresCore.Logging
         public static string[] FormatBox(string title, string[] lines, int innerWidth)
         {
             int width = Math.Max(innerWidth, BoxInnerWidth);
-            var body = lines ?? Array.Empty<string>();
+            // A mod that formats here and logs through its own source has a prefix up to ~57 columns ("[Info   : Unity Log] "
+            // + "[ModName up to 20] " + "[LoadSummary] "): cap the box to the console row and wrap at words, never mid-word on the console.
+            width = Math.Min(width, Math.Max(BoxInnerWidth, ConsoleColumns() - 57 - 4 - ConsoleSafety));
+            var body = WrapLines(lines ?? Array.Empty<string>(), width);
             var box = new string[body.Length + 2];
 
             box[0] = BuildTopBorder(title, width);
@@ -239,8 +293,9 @@ namespace FiresCore.Logging
         // Falls back to Debug.Log before the source is wired (pre-Setup).
         private static void EmitLine(string fullLine)
         {
-            if (FiresUnifiedCore.Log != null) FiresUnifiedCore.Log.LogInfo(fullLine);
-            else Debug.Log(fullLine);
+            // The boxed summary is Debug, not Info.
+            if (FiresUnifiedCore.Log != null) FiresUnifiedCore.Log.LogDebug(fullLine);
+            // pre-Setup there is no Debug sink; dropped rather than logged at Info.
         }
     }
 }

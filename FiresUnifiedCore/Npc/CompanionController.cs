@@ -91,6 +91,10 @@ namespace FiresCore.Npc
         public string displayNameOverride;
         public string companionId;
 
+        /// <summary>Farming build 2: the spacing (m) this companion has learned per crop sapling prefab. Saved add-only as
+        /// "companion_cropspacing" ("sapling_Carrot:1.20;..."), written alone by <see cref="SaveCropSpacing"/>.</summary>
+        public readonly Dictionary<string, float> CropSpacing = new Dictionary<string, float>();
+
 [Header("Placement")]
         /// <summary>When true, this NPC was placed via hammer as a static quest NPC — not a wild companion.</summary>
         public bool isStaticPlacement = false;
@@ -134,7 +138,7 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
         // Core Valheim components
         private ZNetView _nview;
 
-        /// <summary>0.2.292: a player is driving this body (FiresValcast possession); Core's brain stands down (CompanionPossession).</summary>
+        /// <summary>A player is driving this body (FiresValcast possession); Core's brain stands down (CompanionPossession).</summary>
         internal bool IsPossessed => CompanionPossession.IsPossessed(_nview);
         private Humanoid _humanoid;
         private CompanionAI _companionAI;
@@ -230,13 +234,36 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
 
     #region Unity Lifecycle
 
+        // Fire 11-04, "theyre helpless on the ice": vanilla's slip is tuned per Character, so a companion's own copy of those fields
+        // gets more grip with no patch; players and enemies keep theirs. m_iceShoes is not used: Humanoid resets it from worn items.
+        private static readonly FiresCore.Config.OwnedSetting<float> s_iceGrip = new FiresCore.Config.OwnedSetting<float>("Companions", "Ice grip", 0.75f);
+
+        private void ApplyIceGrip()
+        {
+            if (_character == null) return;
+            float grip = Mathf.Clamp01(s_iceGrip.Value);
+            Character c = _character;
+            float control = c.m_slipperyControl;
+            c.m_slipperyControl = Mathf.Lerp(c.m_slipperyControl, 1f, grip);            // how much of a step's wanted speed is taken
+            c.m_slipperyControlRun = Mathf.Lerp(c.m_slipperyControlRun, 1f, grip);
+            c.m_slipperyMoveChangeControl = Mathf.Lerp(c.m_slipperyMoveChangeControl, 1f, grip);   // turning at speed
+            c.m_slipperyAcceleration = Mathf.Lerp(c.m_slipperyAcceleration, 0f, grip);  // the speed gain that carries it past you
+            c.m_slipperyBreaking = Mathf.Lerp(c.m_slipperyBreaking, 0.8f, grip);        // stopping when it stops walking
+            c.m_slippingMinSpeed = Mathf.Lerp(c.m_slippingMinSpeed, 1f, grip);
+            c.m_slippingWindFactor = Mathf.Lerp(c.m_slippingWindFactor, 0f, grip);      // the wind's push
+            c.m_slipperyTurnDir = Mathf.Lerp(c.m_slipperyTurnDir, 0f, grip);            // no sliding round to face the drift
+            FiresCore.Logging.FiresLogger.LogDebug($"[IceGrip] {c.m_name}: grip {grip:0.##}, slip control {control:0.###} -> {c.m_slipperyControl:0.###}");
+        }
+
     private void Awake()
    {
        _nview = GetComponent<ZNetView>();
+            if (GetComponent<BodyModelWatcher>() == null) gameObject.AddComponent<BodyModelWatcher>();   // npc_model_override on every peer (BodyModelSwap)
      _animator = GetComponentInChildren<Animator>(true);
             _character = GetComponent<Character>();
        _humanoid = GetComponent<Humanoid>();
        
+            ApplyIceGrip();
        // Register this companion in the global list
        if (!_allCompanions.Contains(this))
        {
@@ -261,6 +288,9 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
 
             // Tick shared systems once per frame (uses static frame counter to avoid redundant calls)
             TickSharedSystems();
+
+            // Pillion board/backstop brain (self-throttled to 0.5 s, local player only).
+            CompanionPillionDriver.Tick();
 
    UpdateCompanionBehavior();
 
@@ -309,7 +339,7 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
             }
             _pendingDeferredFollowRestore = false;
 
-            Debug.Log($"[CompanionController] Deferred follow restore activated for {companionName} - owner {owner.GetPlayerName()} now present");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Deferred follow restore activated for {companionName} - owner {owner.GetPlayerName()} now present");
         }
 
    private void OnDestroy()
@@ -353,7 +383,7 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
             
             // Ensure GroupCombatCoordinator singleton exists for multi-companion coordination
             Combat.GroupCombatCoordinator.EnsureInitialized();
-            // The companions' combos (0.2.204, Fire: wire it in): never initialised before, so every OnAbilityUsed went nowhere.
+            // The companions' combos must be initialised, otherwise every OnAbilityUsed goes nowhere.
             Archetypes.GroupSynergyManager.Initialize();
         }
 
@@ -534,7 +564,13 @@ public bool proactiveProtection = true;  // Move ahead to engage threats before 
             // Personal-space enforcer keeps the companion from physically
             // shoving the player around or piling onto sibling companions
             // during combat. Pure physics nudge \u2014 see component summary.
-            if (GetComponent<CompanionPersonalSpaceEnforcer>() == null)
+            // Not on ghosts (placement/preview copies with m_forceDisableInit, no valid nview or no Rigidbody);
+            // RequireComponent added a Rigidbody there and threw.
+            var enforcerView = GetComponent<ZNetView>();
+            bool ghost = ZNetView.m_forceDisableInit || enforcerView == null || !enforcerView.IsValid() || GetComponent<Rigidbody>() == null;
+            if (ghost && GetComponent<CompanionPersonalSpaceEnforcer>() == null)
+                FiresCore.Logging.FiresLogger.LogDebug("[Companions] personal-space enforcer skipped on ghost " + name);
+            else if (GetComponent<CompanionPersonalSpaceEnforcer>() == null)
             {
                 gameObject.AddComponent<CompanionPersonalSpaceEnforcer>();
             }
@@ -733,7 +769,7 @@ if (isTamed && ownerPlayerId == 0 &&
         private void CheckFollowTeleport()
         {
             if (!isTamed || ownerPlayerId == 0) return;
-            if (IsPossessed) return;   // 0.2.292: a possessed body goes where its driver takes it
+            if (IsPossessed) return;   // A possessed body goes where its driver takes it
 
             // Always consume throttle
             if (Time.time - _lastTeleportCheck < teleportCheckInterval) return;
@@ -799,7 +835,7 @@ if (isTamed && ownerPlayerId == 0 &&
                 // WHY a companion isn't teleporting. Logs once per sustained gap, not every tick.
                 _consecutiveTeleports++;
                 if (_consecutiveTeleports == MaxConsecutiveTeleports)
-                    Debug.Log($"[CompanionController] {companionName}: owner not in local scene — follow latch preserved, awaiting server leash / owner return.");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] {companionName}: owner not in local scene — follow latch preserved, awaiting server leash / owner return.");
                 return;
             }
 
@@ -814,6 +850,13 @@ if (isTamed && ownerPlayerId == 0 &&
             // === Leash (single authority: FiresCore.Npc.Core.CompanionLeash) ===
             Vector3 ownerPos = owner.transform.position;
             float distance = Vector3.Distance(transform.position, ownerPos);
+
+            // Teleport-with-player: an owner jump of > 50 m between ticks is a teleport (goto, ward travel or
+            // anything that bypasses Player.TeleportTo). Bring the followers along once the owner has arrived.
+            if (_ownerFramePosValid && Vector3.Distance(_ownerFramePos, ownerPos) > OwnerJumpDistance)
+                StartTeleportFollowersWith(owner, Vector3.Distance(_ownerFramePos, ownerPos));
+            _ownerFramePos = ownerPos;
+            _ownerFramePosValid = true;
 
             // Within the leash radius: normal following. The AI keeps the companion close at its own gait and may
             // fight along the way; the tether does not intervene.
@@ -872,19 +915,25 @@ if (isTamed && ownerPlayerId == 0 &&
             // Throttle: one snap, then a settle cooldown before another.
             if (Time.time - _lastTeleportTime < Core.CompanionLeash.SnapThrottle)
                 return;
+            // A reel-in that did not stick backs off exponentially (VerifyOwnerTeleport).
+            if (ReelBackoffActive)
+                return;
 
             // SNAP = server-authoritative reconcile (the single teleport path). The server scans ZDOMan for every
             // follower of this owner and reels in any that are far, claiming ZDO ownership first so the write
             // cannot lose to closest-peer ownership flap. Drop combat, fire it, settle.
             CommitReturnToOwner(owner);
-            Debug.Log($"[CompanionController] {companionName} can't close the gap ({distance:F0}m) - snapping to owner.");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] {companionName} can't close the gap ({distance:F0}m) - snapping to owner.");
             _lastTeleportDistance = distance;
             _lastTeleportTime = Time.time;
             _ownerPosAtLastTeleport = ownerPos;
             ResetCatchupState();
             ReleaseAllMovementLocks();
 
-            Core.CompanionTeleportService.RequestReconcileFollowers(owner);
+            // This machine owns the companion -> apply here (no server round trip); otherwise the server asks
+            // the owning peer.
+            if (!ApplyOwnerTeleport(GetSafeTeleportPosition(owner), owner, "reel-in"))
+                Core.CompanionTeleportService.RequestReconcileFollowers(owner);
             CompanionPatches.SuppressCompanionTeleportsUntil =
                 Time.unscaledTime + CompanionPatches.SUPPRESS_DURATION_STRANDED_SETTLE;
             _companionAI?.ResetPathfindingState();
@@ -1036,7 +1085,7 @@ if (isTamed && ownerPlayerId == 0 &&
  var owner = GetOwner();
        if (owner != null)
         {
-        Debug.Log($"[CompanionController] {companionName} respawning near owner after defeat");
+        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] {companionName} respawning near owner after defeat");
         Respawn();
         }
         }
@@ -1077,7 +1126,7 @@ if (isTamed && ownerPlayerId == 0 &&
                 if (existingVaultData != null)
                 {
                     wasFollowing = existingVaultData.IsFollowing;
-                    Debug.Log($"[CompanionController] Glitch recovery: Found save data for {companionName}, wasFollowing={wasFollowing}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Glitch recovery: Found save data for {companionName}, wasFollowing={wasFollowing}");
                 }
                 else
                 {
@@ -1097,7 +1146,7 @@ if (isTamed && ownerPlayerId == 0 &&
             string savedPrefabName = GetPrefabName();
             long savedOwnerId = ownerPlayerId;
             
-            Debug.Log($"[CompanionController] Glitch recovery: Scheduling respawn via CompanionRespawnManager for {companionName}");
+            FiresCore.Logging.FiresLogger.LogInfo($"[CompanionController] Glitch recovery: Scheduling respawn via CompanionRespawnManager for {companionName}");
             
             // CRITICAL: Use CompanionRespawnManager to handle the respawn
             // This uses the SAME code path as death, ensuring proper vault restoration
@@ -1216,6 +1265,7 @@ if (isTamed && ownerPlayerId == 0 &&
         public void CommandFollow(Player player)
         {
             if (player == null) return;
+            ReownOnFollow(player);   // 0.2.1072: before the intent / roster / kennel writes, so they land under the current character
 
             // PERSISTENT INTENT FIRST — this is a ZDO/registry write that needs only the player, NOT the
             // AI. CommandFollow runs at tame time when _companionAI may not be wired yet; the old
@@ -1245,7 +1295,7 @@ if (isTamed && ownerPlayerId == 0 &&
                 // next load will both honour it; arm the deferred watcher so runtime follow engages as
                 // soon as the AI and owner exist.
                 _pendingDeferredFollowRestore = true;
-                Debug.Log($"[CompanionController] CommandFollow: persistent follow intent recorded for {companionName} before AI was wired — deferred watcher will engage follow.");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] CommandFollow: persistent follow intent recorded for {companionName} before AI was wired — deferred watcher will engage follow.");
                 return;
             }
 
@@ -1273,10 +1323,57 @@ if (isTamed && ownerPlayerId == 0 &&
             MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center,
                 $"{GetDisplayName()} is following you!");
 
-            Debug.Log($"[CompanionController] {companionName} now following {player.GetPlayerName()}");
+            FiresCore.Logging.FiresLogger.LogInfo($"[CompanionController] {companionName} now following {player.GetPlayerName()}");
         }
 
-        /// <summary>0.2.268: a stay order sends no walk to an anchor the companion already stands this close to.</summary>
+        // 0.2.1072 ([ghost], Fire 10-31 "this companion will not show up on our group hud?", his pick "Re-own on follow"): Fire's
+        // companions were owned by his main character (Vafire 1664546226) while he played FireRpGtEsT (1801140624); a Follow order
+        // made them follow the current character but kept the old owner, so the group HUD (owner == local player) showed none.
+        // Now a follow order by the LOCAL player re-owns a companion whose owner is another character of THIS machine's own saves
+        // (SaveSystem.GetAllPlayerProfiles: local + cloud character files, i.e. the same account on this PC). Any other owner
+        // (another account's character, never in these saves) is refused and keeps its owner.
+        // The companion's existing data has no account id, so the saves on this PC are the account check that works for it.
+        private static Dictionary<long, string> s_localCharacters;
+        private static readonly HashSet<string> s_reownRefusedLogged = new HashSet<string>();
+
+        private static bool IsOwnCharacter(long playerId, out string name)
+        {
+            name = null;
+            for (int pass = 0; pass < 2; pass++)
+            {
+                if (s_localCharacters == null || pass == 1)
+                {
+                    var map = new Dictionary<long, string>();
+                    try { foreach (var p in SaveSystem.GetAllPlayerProfiles()) if (p != null && p.GetPlayerID() != 0L) map[p.GetPlayerID()] = p.GetName(); }
+                    catch (Exception ex) { FiresCore.Logging.FiresLogger.LogDebug($"[CompanionReown] character list not read: {ex.Message}"); }
+                    s_localCharacters = map;
+                }
+                if (s_localCharacters.TryGetValue(playerId, out name)) return true;
+            }
+            return false;   // second pass re-read the saves (a character made this session)
+        }
+
+        private void ReownOnFollow(Player player)
+        {
+            if (player != Player.m_localPlayer || !isTamed || ownerPlayerId == 0L) return;
+            long me = player.GetPlayerID();
+            if (me == 0L || ownerPlayerId == me) return;
+            long old = ownerPlayerId;
+            if (!IsOwnCharacter(old, out string oldName))
+            {
+                if (s_reownRefusedLogged.Add((companionId ?? companionName) + "|" + old))
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionReown] {companionName}: NOT re-owned - owner {old} is not a character of this account (refused: other account); follows {player.GetPlayerName()} ({me}) with its owner kept");
+                return;
+            }
+            if (_nview != null && _nview.IsValid() && !_nview.IsOwner()) _nview.ClaimOwnership();
+            ownerPlayerId = me;
+            SaveToZDO();
+            try { if (!string.IsNullOrEmpty(companionId)) FiresCore.Bridge.NpcDormancyBridge.Remove(old, companionId); } catch { }
+            SaveCompanionToVault();
+            Debug.Log($"[CompanionReown] {companionName} re-owned on follow: {oldName} ({old}) -> {player.GetPlayerName()} ({me}), same account (own character save)");
+        }
+
+        /// <summary>A stay order sends no walk to an anchor the companion already stands this close to.</summary>
         private const float StayArriveRadius = 4f;
 
         public void CommandStay()
@@ -1290,7 +1387,13 @@ if (isTamed && ownerPlayerId == 0 &&
         /// (<see cref="CompanionRosterWriter.OnStayCommand"/>) together; skipping any of them left a respawned
         /// companion walking back to the player instead of its anchor.
         /// </summary>
-        public void CommandStay(Vector3 stayPosition)
+        public void CommandStay(Vector3 stayPosition) => CommandStay(stayPosition, true, null);
+
+        /// <summary>
+        /// Same stay order; <paramref name="announce"/> false = no "X is staying here." message and no chat phrase (Fire 10-30: the
+        /// message only on a real player order). Automatic callers (trips setting their work / home point) pass false with their name.
+        /// </summary>
+        public void CommandStay(Vector3 stayPosition, bool announce, string caller)
         {
             // PERSISTENT INTENT FIRST — a ZDO/registry write that needs only this companion, not the AI.
             // Same failure mode as CommandFollow: the old `_companionAI == null` early-return could skip
@@ -1301,7 +1404,7 @@ if (isTamed && ownerPlayerId == 0 &&
 
             if (_companionAI == null)
             {
-                Debug.Log($"[CompanionController] CommandStay: persistent stay intent recorded for {companionName} before AI was wired.");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] CommandStay: persistent stay intent recorded for {companionName} before AI was wired.");
                 return;
             }
 
@@ -1323,8 +1426,7 @@ if (isTamed && ownerPlayerId == 0 &&
             if (_combatMovement != null)
             {
                 _combatMovement.SetHomePosition(stayPosition);
-                // Walk to the stay position. 0.2.268 (HR3: "ended … after 0 s (cancelled: a Move command)" for every chore started
-                // right after the drill's stay order): a normal move, not an ABSOLUTE Move command (which cancelled every sub-behavior until
+                // Walk to the stay position with a normal move, not an ABSOLUTE Move command (which cancelled every sub-behavior until
                 // it arrived, up to 120 s; five companions sent to one anchor could never all arrive). None at all when it already stands
                 // within StayArriveRadius of the anchor.
                 if (Vector3.Distance(transform.position, stayPosition) > StayArriveRadius)
@@ -1337,7 +1439,7 @@ if (isTamed && ownerPlayerId == 0 &&
             if (idleBehavior != null)
             {
                 idleBehavior.SetHomePosition(stayPosition);
-                Debug.Log($"[CompanionController] Set home position on IdleBehavior for {companionName} at {stayPosition}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Set home position on IdleBehavior for {companionName} at {stayPosition}");
             }
 
             // ROSTER MIRROR (Phase 3): persistent intent = Staying. Capture
@@ -1353,11 +1455,15 @@ if (isTamed && ownerPlayerId == 0 &&
                 Debug.LogWarning($"[CompanionController] Roster write failed for CommandStay (non-fatal): {ex.Message}");
             }
 
-            MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center,
-                $"{GetDisplayName()} is staying here.");
+            if (announce)
+            {
+                MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center,
+                    $"{GetDisplayName()} is staying here.");
 
-            // Use chat helper for consistent feedback (matches hotkey behavior)
-            CompanionChatHelper.QuickMessages.StayingHere(this);
+                // Use chat helper for consistent feedback (matches hotkey behavior)
+                CompanionChatHelper.QuickMessages.StayingHere(this);
+            }
+            else FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] {companionName} stay point set by {caller ?? "code"} (no message)");
 
             Debug.Log($"[CompanionController] {companionName} commanded to stay at {stayPosition}");
         }
@@ -1430,7 +1536,7 @@ if (isTamed && ownerPlayerId == 0 &&
                     _companionAI.ClearCommandDestination();
                 }
                 
-                Debug.Log($"[CompanionController] Released all movement locks for {companionName}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Released all movement locks for {companionName}");
             }
             catch (Exception ex)
             {
@@ -1480,7 +1586,7 @@ if (isTamed && ownerPlayerId == 0 &&
         {
             if (player == null || item == null) return false;
 
-            Debug.Log($"[CompanionController] OnUseItem: player={player.GetPlayerName()}, item={item.m_shared.m_name}, isTamed={isTamed}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] OnUseItem: player={player.GetPlayerName()}, item={item.m_shared.m_name}, isTamed={isTamed}");
 
             if (isTamed) return false;
 
@@ -1578,17 +1684,42 @@ if (isTamed && ownerPlayerId == 0 &&
             if (factionInt <= 0) return false;
 
             MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center, $"{GetDisplayName()} refuses to join you!");
-            Debug.Log($"[CompanionController] Refused recruitment: {companionName} is hostile-faction (ZDO faction={factionInt})");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Refused recruitment: {companionName} is hostile-faction (ZDO faction={factionInt})");
             return true;
         }
 
-           public void TameCompanion(Player owner)
+        public void TameCompanion(Player owner) => TameCompanion(owner, false);
+
+        /// <summary>
+        /// <paramref name="forced"/>
+        /// (the admin path) skips the hostile-faction refusal, turns the wild faction back to Neutral on the ZDO (so the dresser never
+        /// re-applies it), and drops the AI's current target. The normal path then sets the tamed faction/group as for any tame.
+        /// One Debug line gives the decision. Add-only overload.
+        /// </summary>
+        public void TameCompanion(Player owner, bool forced)
           {
          if (owner == null) return;
 
-      Debug.Log($"[CompanionController] Taming {companionName} to {owner.GetPlayerName()}");
+      FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Taming {companionName} to {owner.GetPlayerName()}");
 
-      if (RefusesRecruitment()) return;
+      var tzdo = _nview != null && _nview.IsValid() ? _nview.GetZDO() : null;
+      int wildFaction = tzdo != null ? tzdo.GetInt(FiresCore.Npc.WildSpawn.WildCompanionDresser.ZDO_FACTION, -1) : -1;
+      string factionBefore = _character != null ? _character.m_faction.ToString() : "?";
+      string targetBefore = _companionAI != null && _companionAI.GetTargetCreature() != null ? _companionAI.GetTargetCreature().m_name : "none";
+      if (!forced && RefusesRecruitment())
+      {
+          FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] tame decision: {companionName} by {owner.GetPlayerName()} forced False -> REFUSED (wild faction {wildFaction}, m_faction {factionBefore}, target {targetBefore})");
+          return;
+      }
+      if (forced)
+      {
+          if (tzdo != null && wildFaction > 0)
+          {
+              if (!_nview.IsOwner()) _nview.ClaimOwnership();
+              tzdo.Set(FiresCore.Npc.WildSpawn.WildCompanionDresser.ZDO_FACTION, 0);   // Neutral: the dresser won't make it hostile again
+          }
+          _companionAI?.ClearForceTarget();
+      }
 
       // IDENTITY COMPLETENESS (fixes "tamed before it got a name"): a wild companion's
       // name / appearance / gear are assigned by CompanionRandomLoadout on a ~0.5s delay after
@@ -1610,7 +1741,7 @@ if (isTamed && ownerPlayerId == 0 &&
       if (string.IsNullOrEmpty(companionId))
     {
 companionId = GenerateUniqueCompanionId();
-   Debug.Log($"[CompanionController] Generated unique ID: {companionId}");
+   FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Generated unique ID: {companionId}");
  }
 
             isTamed = true;
@@ -1690,7 +1821,8 @@ companionId = GenerateUniqueCompanionId();
     MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center,
     $"{GetDisplayName()} is now your companion!");
 
-Debug.Log($"[CompanionController] {companionName} (ID: {companionId}) successfully tamed by {owner.GetPlayerName()}");
+FiresCore.Logging.FiresLogger.LogInfo($"[CompanionController] {companionName} (ID: {companionId}) successfully tamed by {owner.GetPlayerName()}");
+      FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] tame decision: {companionName} by {owner.GetPlayerName()} forced {forced} -> TAMED (wild faction {wildFaction} -> {(tzdo != null ? tzdo.GetInt(FiresCore.Npc.WildSpawn.WildCompanionDresser.ZDO_FACTION, -1) : -1)}, m_faction {factionBefore} -> {(_character != null ? _character.m_faction.ToString() : "?")}, target {targetBefore} -> {(_companionAI != null && _companionAI.GetTargetCreature() != null ? _companionAI.GetTargetCreature().m_name : "none")})");
   }
 
         public void AdminTame(Player player)
@@ -1704,7 +1836,7 @@ Debug.Log($"[CompanionController] {companionName} (ID: {companionId}) successful
           return;
           }
 
-            TameCompanion(player);
+            TameCompanion(player, forced: true);   // The admin path always succeeds (no hostile-faction refusal)
     MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center,
             $"[Admin] Force-tamed {GetDisplayName()}!");
     }
@@ -1753,7 +1885,7 @@ _isRespawning = false;
    }
 
             SaveToZDO();
-     Debug.Log($"[CompanionController] {companionName} respawned at {spawnPos}");
+     FiresCore.Logging.FiresLogger.LogInfo($"[CompanionController] {companionName} respawned at {spawnPos}");
         }
 
         private void SetDefeatedVisuals(bool defeated)
@@ -1775,17 +1907,17 @@ _isRespawning = false;
     {
   // Only set velocity BEFORE making kinematic (Unity 6 doesn't allow setting velocity on kinematic bodies)
   body.linearVelocity = Vector3.zero;
-  body.isKinematic = true;
+  FiresCore.Npc.KinematicSync.Set(body, true, "CompanionController freeze");
        }
                 else
      {
-         body.isKinematic = false;
+         FiresCore.Npc.KinematicSync.Set(body, false, "CompanionController unfreeze");
          }
     }
 
       if (_companionAI != null)
    {
-      _companionAI.enabled = !defeated && !IsPossessed;   // 0.2.292: a revive mid-possession leaves the AI to the possessor's release
+      _companionAI.enabled = !defeated && !IsPossessed;   // A revive mid-possession leaves the AI to the possessor's release
             }
    
     if (_character != null && defeated)
@@ -1794,9 +1926,35 @@ _isRespawning = false;
             }
         }
 
+        // 0.2.816 (Fire 10-24, halo ring): inside a GravityUp field a companion's spawn / teleport / catch-up spot is found on the ring
+        // surface around the point, in the plane at right angles to the local up, through Surface.Point (never the flat heightmap).
+        // One Debug line per snap. False when no loaded floor is there; the caller then keeps its own fallback.
+        private bool RingSnap(Vector3 center, float radius, string why, out Vector3 spot)
+        {
+            spot = center;
+            if (!FiresCore.World.GravityUp.InField(center, out Vector3 up)) return false;
+            Vector3 refv = Mathf.Abs(Vector3.Dot(up, Vector3.forward)) < 0.9f ? Vector3.forward : Vector3.right;
+            Vector3 u = Vector3.Cross(up, refv).normalized, v = Vector3.Cross(up, u).normalized;
+            int solid = LayerMask.GetMask("static_solid", "Default");
+            for (int i = 0; i < 12; i++)
+            {
+                float a = i * 0.5236f, r = i == 0 ? 0f : radius * (0.5f + 0.5f * ((i % 3) / 2f));
+                Vector3 test = center + (u * Mathf.Cos(a) + v * Mathf.Sin(a)) * r;
+                if (!FiresCore.World.Surface.Point(test, out Vector3 floor, out Vector3 fup)) continue;
+                Vector3 stand = floor + fup * 0.5f;
+                if (Physics.CheckSphere(stand + fup * 0.5f, 0.3f, solid)) continue;
+                spot = stand;
+                FiresCore.Logging.FiresLogger.LogDebug($"[GravityUp] companion snap ({why}) {gameObject.name}: ring floor ({floor.x:0.0}, {floor.y:0.0}, {floor.z:0.0}), up ({fup.x:0.00}, {fup.y:0.00}, {fup.z:0.00}), try {i + 1}");
+                return true;
+            }
+            FiresCore.Logging.FiresLogger.LogDebug($"[GravityUp] companion snap ({why}) {gameObject.name}: no loaded ring floor within {radius:0.0} m of ({center.x:0.0}, {center.y:0.0}, {center.z:0.0}); fallback kept");
+            return false;
+        }
+
   private Vector3 GetSpawnPositionNearPlayer(Player player)
         {
         Vector3 basePos = player.transform.position;
+        if (RingSnap(basePos, respawnRadius, "spawn near owner", out Vector3 ringSpot)) return ringSpot;   // 0.2.816
 
         // DUNGEON / INTERIOR DETECTION (see GetSafeTeleportPosition)
         // Inside dungeons, ZoneSystem.GetGroundHeight returns the OUTSIDE
@@ -1835,7 +1993,7 @@ _isRespawning = false;
             if (owner == null) return;
             Vector3 spawnPos = GetSafeTeleportPosition(owner);
             TeleportToPositionInternal(spawnPos, owner, isPortal: false);
-            Debug.Log($"[CompanionController] {companionName} teleported to owner at {spawnPos}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] {companionName} teleported to owner at {spawnPos}");
         }
 
         /// <summary>
@@ -1847,10 +2005,22 @@ _isRespawning = false;
         public void TeleportToDestination(Vector3 destination)
         {
             if (_companionAI == null || !_companionAI.ShouldBeFollowing) return;
+            // The portal's item rule, as for its owner (see TeleportFollowersWith)
+            if (!s_lastPortalAllowAll && !CanPassPortal(out string blocker))
+            {
+                _portalStranded = true;
+                FiresLogger.LogDebug($"[Follow] {companionName} stays behind the portal: carrying {blocker} (not teleportable, not in its TeleportBypass slot)");
+                GetOwner()?.Message(MessageHud.MessageType.Center, $"{companionName} can't pass the portal: carrying {blocker}");
+                return;
+            }
             Vector3 spawnPos = GetSafeTeleportPositionNearPoint(destination);
             TeleportToPositionInternal(spawnPos, GetOwner(), isPortal: true);
-            Debug.Log($"[CompanionController] {companionName} teleported to destination {spawnPos}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] {companionName} teleported to destination {spawnPos}");
         }
+
+        /// <summary>Trip failsafe (Fire 10-24): moves a stuck companion to a spot its trip picked, through the one shared teleport
+        /// procedure (no follow / portal rules: it isn't following anyone).</summary>
+        public void TeleportForTrip(Vector3 spot) => TeleportToPositionInternal(spot, GetOwner(), isPortal: false);
 
         /// <summary>
         /// SHARED safe-teleport procedure used by every teleport-to-owner / teleport-to-position
@@ -1868,7 +2038,7 @@ _isRespawning = false;
             var body = GetComponent<Rigidbody>();
             if (body != null)
             {
-                if (body.isKinematic) body.isKinematic = false;
+                if (body.isKinematic) FiresCore.Npc.KinematicSync.Set(body, false, "CompanionController wake");
                 body.linearVelocity = Vector3.zero;
                 body.angularVelocity = Vector3.zero;
             }
@@ -1896,8 +2066,16 @@ _isRespawning = false;
                 _character.SetRun(false);
             }
 
-            // 4. Move the transform.
+            // 4. Move the transform AND the Rigidbody. Transform alone does not stick - an interpolated,
+            //    non-kinematic body writes its own (old) pose back over the transform on the next physics step, and
+            //    the owner's ZSyncTransform then synced that old spot into the ZDO.
             transform.position = spawnPos;
+            if (body != null)
+            {
+                body.position = spawnPos;
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+            }
 
             // Write the position, bump the data revision (SetPosition alone does not) and force-send, so on a
             // long jump the server's stale cached copy is provably older and cannot revert the teleport on its
@@ -1937,6 +2115,7 @@ _isRespawning = false;
         /// </summary>
         private Vector3 GetSafeTeleportPositionNearPoint(Vector3 center)
         {
+            if (RingSnap(center, 2f, "teleport near point", out Vector3 ringSpot)) return ringSpot;   // 0.2.816
             // GetGroundHeight returns the surface height whatever the Y, so snapping an interior destination dumped
             // the companion outside the dungeon and set off the long-distance teleport loop. A destination well above
             // local terrain (dungeons at any altitude, towers, masts) is treated as interior and not snapped.
@@ -2010,6 +2189,7 @@ _isRespawning = false;
         private Vector3 GetSafeTeleportPosition(Player owner)
         {
             Vector3 ownerPos = owner.transform.position;
+            if (RingSnap(ownerPos, 3f, "teleport / catch-up to owner", out Vector3 ringSpot)) return ringSpot;   // 0.2.816
             Vector3 ownerForward = owner.transform.forward;
 
             // DUNGEON / INTERIOR DETECTION
@@ -2097,21 +2277,34 @@ _isRespawning = false;
 
         #region RPCs
 
-     private void RPC_SetCompanionName(long sender, string name)
+        private const int MaxCompanionNameLength = 32;
+        private const float MaxTeleportFromOwner = 300f;   // a peer that only simulates someone's companion may move it this close to its owner
+
+        // The server, or the player who owns this companion (from the routed sender, never the packet).
+        private bool SenderMayCommand(long sender) => RpcGuard.SenderIsServer(sender) || RpcGuard.SenderIsPlayer(sender, ownerPlayerId);
+
+        private void RPC_SetCompanionName(long sender, string name)
         {
-   companionName = name;
+            if (!SenderMayCommand(sender)) { RpcGuard.Refuse("RPC_SetCompanionName", sender, "not the owner or the server"); return; }
+            name = (name ?? "").Replace("<", "").Replace(">", "").Trim();   // no rich text in names
+            if (name.Length == 0) return;
+            if (name.Length > MaxCompanionNameLength) name = name.Substring(0, MaxCompanionNameLength);
+            companionName = name;
             SaveToZDO();
         }
 
-   private void RPC_SetOwner(long sender, long newOwner)
+        private void RPC_SetOwner(long sender, long newOwner)
         {
-     ownerPlayerId = newOwner;
-  SaveToZDO();
+            if (!RpcGuard.SenderIsServer(sender)) { RpcGuard.Refuse("RPC_SetOwner", sender, "only the server may change an owner"); return; }
+            ownerPlayerId = newOwner;
+            SaveToZDO();
         }
 
-private void RPC_TameCompanion(long sender)
-     {
- isTamed = true;
+        private void RPC_TameCompanion(long sender)
+        {
+            if (!RpcGuard.SenderIsServer(sender) && !RpcGuard.SenderOwnsZdo(sender, _nview != null ? _nview.GetZDO() : null))
+            { RpcGuard.Refuse("RPC_TameCompanion", sender, "not the server or the companion's owner peer"); return; }
+            isTamed = true;
      if (_character != null)
    {
     _character.SetTamed(true);
@@ -2121,7 +2314,8 @@ private void RPC_TameCompanion(long sender)
 
         private void RPC_Command(long sender, long commandType)
         {
-    var player = Player.m_localPlayer;
+            if (!SenderMayCommand(sender)) { RpcGuard.Refuse("RPC_Command", sender, "not the owner or the server"); return; }
+            var player = Player.m_localPlayer;
             if (player == null) return;
 
   switch (commandType)
@@ -2149,15 +2343,161 @@ private void RPC_TameCompanion(long sender)
         /// </summary>
         private void RPC_ReelIn(long sender, Vector3 landing)
         {
+            if (!RpcGuard.SenderIsServer(sender)) { RpcGuard.Refuse(ReelInRpc, sender, "only the server reels companions in"); return; }
             if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) return;
-            if (IsPossessed) return;   // 0.2.292: never yank a body its driver holds (an older server may still ask)
+            if (IsPossessed) return;   // Never yank a body its driver holds (an older server may still ask)
             Vector3 spawnPos = GetSafeTeleportPositionNearPoint(landing);
-            TeleportToPositionInternal(spawnPos, GetOwner(), isPortal: false);
-            Debug.Log($"[CompanionController] {companionName} reeled in to its owner at {spawnPos}");
+            ApplyOwnerTeleport(spawnPos, GetOwner(), "reel-in");
+        }
+
+        // ── Owner-applied teleport + verify + exponential back-off ──
+        private const float ReelVerifyDelay = 0.5f;
+        private const float ReelVerifyRadius = 4f;
+        private const float ReelBackoffMax = 80f;
+        private float _reelBackoff = Core.CompanionLeash.SnapThrottle;
+        private float _nextSnapAllowedTime;
+        private Coroutine _reelVerify;
+
+        /// <summary>True while a failed reel-in is backing off; the leash snap waits for it.</summary>
+        internal bool ReelBackoffActive => Time.time < _nextSnapAllowedTime;
+
+        /// <summary>
+        /// Teleports this companion on the machine that owns its ZDO (transform + Rigidbody + ZDO, AI path cleared) and
+        /// checks 0.5 s later that it stayed there. A teleport that did not stick backs off exponentially instead of the
+        /// leash retrying every 5 s. Does not touch inventory or equipment.
+        /// </summary>
+        internal bool ApplyOwnerTeleport(Vector3 spawnPos, Player owner, string what)
+        {
+            if (_nview == null || !_nview.IsValid() || !_nview.IsOwner()) return false;
+            if (IsPossessed) return false;
+            // Left behind at a portal (carrying what the portal refuses): no leash / reel-in snap across it either, until the
+            // owner is back within leash range (then it simply follows on foot again)
+            if (_portalStranded)
+            {
+                if (owner != null && Vector3.Distance(owner.transform.position, transform.position) < Core.CompanionLeash.LeashDistance) _portalStranded = false;
+                else return false;
+            }
+            TeleportToPositionInternal(spawnPos, owner, isPortal: false);
+            FiresLogger.LogDebug($"[Leash] {companionName} {what} to ({spawnPos.x:0.0},{spawnPos.y:0.0},{spawnPos.z:0.0}) applied by owner");
+            if (_reelVerify != null) StopCoroutine(_reelVerify);
+            _reelVerify = StartCoroutine(VerifyOwnerTeleport(spawnPos, what));
+            return true;
+        }
+
+        /// <summary>
+        /// Teleport-with-player: once <paramref name="player"/> has arrived (not teleporting, can move, ground
+        /// loaded under them) every companion FOLLOWING them that this machine owns is moved beside them at once.
+        /// Companions on Stay are skipped; companions another machine owns are left to the server's arrival reconcile.
+        /// </summary>
+        public static System.Collections.IEnumerator TeleportFollowersWith(Player player, float jump)
+        {
+            const float Timeout = 30f;
+            float start = Time.realtimeSinceStartup;
+            while (player != null && (player.IsTeleporting() || !player.CanMove()
+                       || (ZoneSystem.instance != null && !ZoneSystem.instance.IsZoneLoaded(player.transform.position)))
+                   && Time.realtimeSinceStartup - start < Timeout)
+                yield return null;
+            if (player == null) yield break;
+            yield return null;   // one settled frame
+            if (player == null) yield break;
+            long pid = player.GetPlayerID();
+            Vector3 at = player.transform.position;
+            foreach (var c in _allCompanions.ToArray())
+            {
+                if (c == null || c.ownerPlayerId != pid || !c.ShouldBeFollowing) continue;
+                if (c._nview == null || !c._nview.IsValid() || !c._nview.IsOwner()) continue;
+                float d = Vector3.Distance(c.transform.position, at);
+                if (d < Core.CompanionLeash.LeashDistance) continue;
+                // Through a portal the companion obeys
+                // the same item rule as its owner (vanilla Inventory.IsTeleportable; the one item in its TeleportBypass cell is let
+                // through, as VAInventory's TeleportBypassPatch does for the player); otherwise it stays behind.
+                if (Time.time - s_lastPortalTime < 60f && !s_lastPortalAllowAll && !c.CanPassPortal(out string blocker))
+                {
+                    c._portalStranded = true;
+                    FiresLogger.LogDebug($"[Follow] {c.companionName} stays behind the portal: carrying {blocker} (not teleportable, not in its TeleportBypass slot)");
+                    player.Message(MessageHud.MessageType.Center, $"{c.companionName} can't pass the portal: carrying {blocker}");
+                    continue;
+                }
+                c._portalStranded = false;
+                FiresLogger.LogDebug($"[Follow] {c.companionName} teleporting with {player.GetPlayerName()} ({d:0} m)");
+                c._lastTeleportTime = Time.time;
+                c.ApplyOwnerTeleport(c.GetSafeTeleportPosition(player), player, "teleport-with-owner");
+            }
+        }
+
+        private static float _lastFollowersTeleportStart = -999f;
+
+        // ---- Portal rule for companions ----
+        internal static float s_lastPortalTime = -999f;
+        internal static bool s_lastPortalAllowAll;
+        private bool _portalStranded;
+
+        /// <summary>True when every item the companion carries may pass a portal: vanilla m_teleportable, except ONE item sitting in its
+        /// TeleportBypass cell (the player's rule). <paramref name="blocker"/> names the first item that blocks.</summary>
+        public bool CanPassPortal(out string blocker)
+        {
+            blocker = null;
+            var ci = GetComponent<CompanionInventory>();
+            var inv = ci != null ? ci.GetInventory() : null;
+            if (inv == null) return true;
+            var bypass = CompanionGridLayout.FindSection("TeleportBypass");
+            foreach (var it in inv.GetAllItems())
+            {
+                if (it?.m_shared == null || it.m_shared.m_teleportable) continue;
+                if (bypass != null && it.m_gridPos.x == bypass.Cells[0].x && it.m_gridPos.y == bypass.Cells[0].y) continue;
+                blocker = Localization.instance != null ? Localization.instance.Localize(it.m_shared.m_name) : it.m_shared.m_name;
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>Starts <see cref="TeleportFollowersWith"/> on the player, at most once per 2 s.</summary>
+        public static void StartTeleportFollowersWith(Player player, float jump)
+        {
+            if (player == null || player != Player.m_localPlayer) return;
+            if (Time.unscaledTime - _lastFollowersTeleportStart < 2f) return;
+            _lastFollowersTeleportStart = Time.unscaledTime;
+            player.StartCoroutine(TeleportFollowersWith(player, jump));
+        }
+
+        // Owner position last frame, for the > 50 m jump detector (teleports that bypass Player.TeleportTo).
+        private Vector3 _ownerFramePos;
+        private bool _ownerFramePosValid;
+        private const float OwnerJumpDistance = 50f;
+
+        private System.Collections.IEnumerator VerifyOwnerTeleport(Vector3 target, string what)
+        {
+            yield return new WaitForSeconds(ReelVerifyDelay);
+            _reelVerify = null;
+            if (this == null || _nview == null || !_nview.IsValid()) yield break;
+            float d = Vector3.Distance(transform.position, target);
+            if (d <= ReelVerifyRadius)
+            {
+                FiresLogger.LogDebug($"[Leash] {companionName} {what} verified at {d:0.0} m");
+                _reelBackoff = Core.CompanionLeash.SnapThrottle;
+                _nextSnapAllowedTime = 0f;
+                yield break;
+            }
+            string reason;
+            var body = GetComponent<Rigidbody>();
+            var zdo = _nview.GetZDO();
+            if (!_nview.IsOwner()) reason = "ZDO ownership moved to peer " + (zdo != null ? zdo.GetOwner().ToString() : "?");
+            else if (transform.parent != null) reason = "parented to " + transform.parent.name;
+            else if (body != null && body.isKinematic) reason = "rigidbody kinematic";
+            else if (body != null && Vector3.Distance(body.position, transform.position) > 1f) reason = "rigidbody pose differs from transform";
+            else if (zdo != null && Vector3.Distance(zdo.GetPosition(), target) > ReelVerifyRadius && Vector3.Distance(zdo.GetPosition(), transform.position) < 1f)
+                reason = "position written back (ZDO follows the old spot)";
+            else reason = "moved away after landing";
+            reason += $", now {d:0.0} m from the target";
+            _nextSnapAllowedTime = Time.time + _reelBackoff;
+            FiresLogger.LogDebug($"[Leash] {companionName} {what} did not stick ({reason}), next try in {_reelBackoff:0} s");
+            _reelBackoff = Mathf.Min(_reelBackoff * 2f, ReelBackoffMax);
         }
 
         private void RPC_TeleportToOwner(long sender)
         {
+            if (sender != ZDOMan.GetSessionID() && !SenderMayCommand(sender) && !RpcGuard.SenderOwnsZdo(sender, _nview != null ? _nview.GetZDO() : null))
+            { RpcGuard.Refuse("RPC_TeleportToOwner", sender, "not the owner, its peer or the server"); return; }
             // Only process if we're NOT the owner (owner already did the teleport)
             if (_nview != null && _nview.IsOwner()) return;
             
@@ -2195,12 +2535,29 @@ private void RPC_TameCompanion(long sender)
             //
             // Apply unconditionally and trust the broadcasted value.
 
+            // Only the companion's own peer (the ZDO owner that ran the teleport) or the server may move it, and only to a spot
+            // near its owner player when that player is loaded here.
+            // The companion's machine broadcasts this; right after a long jump its ZDO owner may not be that machine yet, so the
+            // owner PLAYER's peer and a local self-call count too (the 64 m target check below still applies).
+            bool mayMove = sender == ZDOMan.GetSessionID()
+                || RpcGuard.SenderIsServer(sender)
+                || RpcGuard.SenderOwnsZdo(sender, _nview != null ? _nview.GetZDO() : null)
+                || RpcGuard.SenderIsPlayer(sender, ownerPlayerId);
+            if (!mayMove) { RpcGuard.Refuse("RPC_TeleportToPosition", sender, "not the companion's machine, its owner or the server"); return; }
+            // The owner's own machine, the server or a self-call may land it anywhere (their catch-up spot can be far ahead of
+            // a running owner). Another peer that only simulates this companion may move it only near its owner.
+            bool trusted = sender == ZDOMan.GetSessionID() || RpcGuard.SenderIsServer(sender) || RpcGuard.SenderIsPlayer(sender, ownerPlayerId);
+            Player ownerPlayer = GetOwner();
+            if (!trusted && ownerPlayer != null && Vector3.Distance(ownerPlayer.transform.position, position) > MaxTeleportFromOwner)
+            { RpcGuard.Refuse("RPC_TeleportToPosition", sender, $"target {Vector3.Distance(ownerPlayer.transform.position, position):0} m from the owner (max {MaxTeleportFromOwner:0}, sender only simulates it)"); return; }
+
             // Use the position provided by the broadcaster (the actual ZDO
             // owner that ran the teleport) — don't recalculate.
             transform.position = position;
 
             // Stop physics to prevent jittering after teleport.
             var body = GetComponent<Rigidbody>();
+            if (body != null) body.position = position;
             if (body != null && !body.isKinematic)
             {
                 body.linearVelocity = Vector3.zero;
@@ -2247,12 +2604,48 @@ private void RPC_TameCompanion(long sender)
 
         private void RPC_Respawn(long sender)
         {
-      Respawn();
+            if (!SenderMayCommand(sender)) { RpcGuard.Refuse("RPC_Respawn", sender, "not the owner or the server"); return; }
+            Respawn();
 }
 
         #endregion
 
       #region Persistence
+
+        /// <summary>Writes only the learned crop spacing (a farming tweak shouldn't re-save the whole companion).</summary>
+        public void SaveCropSpacing()
+        {
+            if (CompanionPatches.AreCompanionTeleportsSuppressed()) return;
+            var zdo = _nview?.GetZDO();
+            if (zdo != null && _nview.IsOwner()) WriteCropSpacing(zdo);
+        }
+
+        private void WriteCropSpacing(ZDO zdo)
+        {
+            if (CropSpacing.Count == 0) return;
+            var sb = new System.Text.StringBuilder();
+            foreach (var kv in CropSpacing)
+            {
+                if (string.IsNullOrEmpty(kv.Key) || kv.Key.IndexOf(':') >= 0 || kv.Key.IndexOf(';') >= 0) continue;
+                sb.Append(kv.Key).Append(':').Append(kv.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)).Append(';');
+            }
+            zdo.Set("companion_cropspacing", sb.ToString());
+        }
+
+        private void ReadCropSpacing(ZDO zdo)
+        {
+            string data = zdo.GetString("companion_cropspacing", "");
+            if (string.IsNullOrEmpty(data)) return;
+            CropSpacing.Clear();
+            foreach (var entry in data.Split(';'))
+            {
+                int c = entry.LastIndexOf(':');
+                if (c <= 0) continue;
+                if (float.TryParse(entry.Substring(c + 1), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v)
+                    && v > 0f && v < 20f)
+                    CropSpacing[entry.Substring(0, c)] = v;
+            }
+        }
 
         public void SaveToZDO()
  {
@@ -2270,6 +2663,7 @@ private void RPC_TameCompanion(long sender)
             zdo.Set("companion_displayname", displayNameOverride ?? "");
             zdo.Set("companion_tamed", isTamed);
             zdo.Set("companion_owner", ownerPlayerId);
+            WriteCropSpacing(zdo);
             zdo.Set("companion_defeated", isDefeated);
             zdo.Set("companion_defeatedtime", defeatedTime);
             zdo.Set("companion_canfight", canFight);
@@ -2362,6 +2756,7 @@ private void RPC_TameCompanion(long sender)
     companionId = zdo.GetString("companion_id", companionId);
             companionName = zdo.GetString("companion_name", companionName);
             displayNameOverride = zdo.GetString("companion_displayname", "");
+            ReadCropSpacing(zdo);
             // Like id/name above, tamed/owner keep the CURRENT field values when the ZDO keys are
             // absent. A restore path that set these in memory but couldn't complete its ZDO write
             // (fresh ZNetView not yet valid) used to get reset to untamed/unowned here — producing
@@ -2369,6 +2764,14 @@ private void RPC_TameCompanion(long sender)
        isTamed = zdo.GetBool("companion_tamed", isTamed);
   ownerPlayerId = zdo.GetLong("companion_owner", ownerPlayerId);
             isDefeated = zdo.GetBool("companion_defeated", false);
+            // 0.2.984 ([ghost]: Bothild had no companion id, so she could never come back from the kennel): a tamed companion without
+            // an id gets a stable one, written to its ZDO by the owner (the kennel / vault save it from there)
+            if (isTamed && string.IsNullOrEmpty(companionId) && _nview != null && _nview.IsValid() && _nview.IsOwner())
+            {
+                companionId = GenerateUniqueCompanionId();
+                zdo.Set("companion_id", companionId);
+                FiresCore.Logging.FiresLogger.LogInfo($"[CompanionController] {companionName}: tamed but had no id - gave it {companionId} (so it can be restored)");
+            }
         defeatedTime = zdo.GetFloat("companion_defeatedtime", 0f);
             canFight = zdo.GetBool("companion_canfight", true);
       aggroRange = zdo.GetFloat("companion_aggrorange", aggroRange);
@@ -2408,7 +2811,7 @@ private void RPC_TameCompanion(long sender)
              var owner = GetOwner();
              if (owner == null)
              {
-                 Debug.Log($"[CompanionController] {companionName} was following but owner not in game right now - deferring follow restore (saved state preserved)");
+                 FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] {companionName} was following but owner not in game right now - deferring follow restore (saved state preserved)");
                  ownerPresent = false; // skip the runtime follow restoration below
              }
          }
@@ -2468,7 +2871,7 @@ if (isTamed)
                 var kennelEntry = FiresCore.Bridge.NpcDormancyBridge.Get(ownerPlayerId, companionId);
                 if (kennelEntry?.Snapshot != null && !string.IsNullOrEmpty(kennelEntry.Snapshot.DisplayName))
                 {
-                    Debug.Log($"[CompanionController] Tamed companion {companionId} loaded incomplete — restoring identity " +
+                    FiresCore.Logging.FiresLogger.LogInfo($"[CompanionController] Tamed companion {companionId} loaded incomplete — restoring identity " +
                               $"'{kennelEntry.Snapshot.DisplayName}' from kennel (authoritative store).");
                     try
                     {
@@ -2503,7 +2906,7 @@ if (isTamed)
                    if (owner != null)
                    {
                        _companionAI.SetFollowTarget(owner.gameObject);
-                       Debug.Log($"[CompanionController] {companionName} loaded {Vector3.Distance(transform.position, owner.transform.position):F0} m from {owner.GetPlayerName()}: following");
+                       FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] {companionName} loaded {Vector3.Distance(transform.position, owner.transform.position):F0} m from {owner.GetPlayerName()}: following");
                    }
                }
                else if (wasFollowing && !ownerPresent)
@@ -2546,7 +2949,7 @@ if (isTamed)
                           _combatMovement.SetHomePosition(homePos);
                       }
 
-                      Debug.Log($"[CompanionController] Restored stay position for {companionName} at {homePos}");
+                      FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Restored stay position for {companionName} at {homePos}");
                   }
               }
                   }
@@ -2628,7 +3031,7 @@ if (isTamed)
          UpdateCharacterName(newName);
       SaveToZDO();
  
-      Debug.Log($"[CompanionController] Display name set to: {newName}");
+      FiresCore.Logging.FiresLogger.LogInfo($"[CompanionController] Display name set to: {newName}");
         }
 
         /// <summary>
@@ -2639,14 +3042,14 @@ if (isTamed)
   {
  if (!FiresCore.Bridge.CompanionVaultBridge.IsVaultAvailable() || ownerPlayerId == 0 || string.IsNullOrEmpty(companionId))
     {
-     Debug.Log($"[CompanionController] Cannot restore from vault - missing prerequisites");
+     FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Cannot restore from vault - missing prerequisites");
      return;
 }
 
             // CHECKPOINT: bracket TryRestoreEquipmentFromVault. If a freeze repro
             // log shows ENTER without EXIT, the resolver / inventory restore is
             // the cause.
-            Debug.Log($"[CompanionController.TryRestoreEquipmentFromVault] ENTER companionId={companionId} ownerPlayerId={ownerPlayerId}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController.TryRestoreEquipmentFromVault] ENTER companionId={companionId} ownerPlayerId={ownerPlayerId}");
 
    try
          {
@@ -2655,11 +3058,11 @@ if (isTamed)
 
             if (savedData == null)
          {
-    Debug.Log($"[CompanionController] No save data found for companion {companionId}");
+    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] No save data found for companion {companionId}");
         return;
 }
 
-Debug.Log($"[CompanionController] Found save data for {companionName} with {savedData.EquipmentPrefabs?.Count ?? 0} equipment items");
+FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Found save data for {companionName} with {savedData.EquipmentPrefabs?.Count ?? 0} equipment items");
 
   // Restore equipment from vault
            if (savedData.EquipmentPrefabs != null && savedData.EquipmentPrefabs.Count > 0)
@@ -2675,7 +3078,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
    ? savedData.EquipmentStacks[kvp.Key] : 1;
 
     _inventory.RestoreEquipmentFromVault(slot, kvp.Value, quality, stack);
-     Debug.Log($"[CompanionController] Restored equipment {slot} = {kvp.Value} (quality {quality}, stack {stack})");
+     FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Restored equipment {slot} = {kvp.Value} (quality {quality}, stack {stack})");
        }
   catch (Exception ex)
     {
@@ -2697,7 +3100,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
       {
  var pkg = new ZPackage(savedData.StorageInventoryData);
    storageInv.Load(pkg);
-  Debug.Log($"[CompanionController] Restored storage inventory with {storageInv.GetAllItems().Count} items from vault");
+  FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Restored storage inventory with {storageInv.GetAllItems().Count} items from vault");
     }
    }
              catch (Exception ex)
@@ -2705,33 +3108,36 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
       Debug.LogWarning($"[CompanionController] Failed to restore storage inventory: {ex.Message}");
        }
      }
-         
+
+            // Legacy vault equipment placed synchronously right after the bag load (idempotent)
+            _inventory?.CommitLegacyVaultEquipment("controller vault restore");
+
   // Restore skills from vault
           if (!string.IsNullOrEmpty(savedData.SkillsData) && _skills != null)
     {
    _skills.RestoreSkillsFromVault(savedData.SkillsData);
-     Debug.Log($"[CompanionController] Restored skills from vault for {companionName}");
+     FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Restored skills from vault for {companionName}");
 }
 
             // Restore progression data from vault
             if (!string.IsNullOrEmpty(savedData.ProgressionData) && _progression != null)
             {
                 _progression.RestoreProgressionFromVault(savedData.ProgressionData);
-                Debug.Log($"[CompanionController] Restored progression from vault for {companionName}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Restored progression from vault for {companionName}");
             }
 
             // Restore stats data from vault
             if (!string.IsNullOrEmpty(savedData.StatsData) && _stats != null)
             {
                 _stats.RestoreStatsFromVault(savedData.StatsData);
-                Debug.Log($"[CompanionController] Restored stats from vault for {companionName}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Restored stats from vault for {companionName}");
             }
 
             // Restore kill tracker data from vault
             if (!string.IsNullOrEmpty(savedData.KillsData) && _killTracker != null)
             {
                 _killTracker.RestoreKillsFromVault(savedData.KillsData);
-                Debug.Log($"[CompanionController] Restored kill tracker from vault for {companionName}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Restored kill tracker from vault for {companionName}");
             }
 
  _inventory?.SaveToZDO();
@@ -2741,14 +3147,14 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
             _killTracker?.SaveToZDO();
        SaveToZDO();
      
-        Debug.Log($"[CompanionController] Successfully restored companion data from vault for {companionName}");
+        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Successfully restored companion data from vault for {companionName}");
    }
    catch (Exception ex)
   {
       Debug.LogWarning($"[CompanionController] TryRestoreEquipmentFromVault failed: {ex.Message}");
        }
 
-            Debug.Log($"[CompanionController.TryRestoreEquipmentFromVault] EXIT companionId={companionId}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController.TryRestoreEquipmentFromVault] EXIT companionId={companionId}");
         }
 
         private void ApplyVisualEquipmentDelayed()
@@ -2813,6 +3219,8 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
                 HairColorR = saveData.HairColorR, HairColorG = saveData.HairColorG, HairColorB = saveData.HairColorB,
                 SkinColorR = saveData.SkinColorR, SkinColorG = saveData.SkinColorG, SkinColorB = saveData.SkinColorB,
                 EyeColorR = saveData.EyeColorR, EyeColorG = saveData.EyeColorG, EyeColorB = saveData.EyeColorB,
+                HasBeardColor = saveData.HasBeardColor, BeardColorR = saveData.BeardColorR, BeardColorG = saveData.BeardColorG, BeardColorB = saveData.BeardColorB,
+                FccModel = saveData.FccModel,
                 HasAppearanceData = saveData.HasAppearanceData,
                 Scale = saveData.Scale, IsGiant = saveData.IsGiant, IsDwarf = saveData.IsDwarf,
 
@@ -2861,6 +3269,8 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
                 HairColorR = saveState.HairColorR, HairColorG = saveState.HairColorG, HairColorB = saveState.HairColorB,
                 SkinColorR = saveState.SkinColorR, SkinColorG = saveState.SkinColorG, SkinColorB = saveState.SkinColorB,
                 EyeColorR = saveState.EyeColorR, EyeColorG = saveState.EyeColorG, EyeColorB = saveState.EyeColorB,
+                HasBeardColor = saveState.HasBeardColor, BeardColorR = saveState.BeardColorR, BeardColorG = saveState.BeardColorG, BeardColorB = saveState.BeardColorB,
+                FccModel = saveState.FccModel,
                 HasAppearanceData = saveState.HasAppearanceData,
                 Scale = saveState.Scale, IsGiant = saveState.IsGiant, IsDwarf = saveState.IsDwarf,
 
@@ -2992,7 +3402,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
             {
                 FiresCore.Npc.Persistence.CompanionKennel.CaptureAndStore(
                     ownerPlayerId, this, FiresCore.Bridge.DormancyKind.Alive, 0L);
-                Debug.Log($"[CompanionController] Kennel backstop: filled missing Alive entry for {companionName} (client-owned, no prior entry).");
+                FiresCore.Logging.FiresLogger.LogInfo($"[CompanionController] Kennel backstop: filled missing Alive entry for {companionName} (client-owned, no prior entry).");
             }
             catch (Exception ex)
             {
@@ -3048,6 +3458,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
             {
                 PlayerFollowingRegistry.SetFollowing(owner, companionId, follow);
             }
+            else FiresCore.Logging.FiresLogger.LogDebug($"[PlayerFollowingRegistry] {companionName} ({companionId}) follow={follow} NOT written: owner not found (owner id {ownerPlayerId}, in respawn or loading {IsInRespawnOrLoadingState()})");
 
             // Mirror to the companion's own ZDO so the LOAD path still works when
             // the player isn't in game yet (e.g. the companion's prefab streams in
@@ -3060,7 +3471,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
             if (zdo == null) return;
 
             zdo.Set("companion_wasfollowing", follow);
-            Debug.Log($"[CompanionController] Persistent follow intent for {companionName} ({companionId}) -> {follow}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Persistent follow intent for {companionName} ({companionId}) -> {follow}");
         }
 
         /// <summary>
@@ -3157,7 +3568,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         /// </summary>
         public bool ShouldBeFollowing => _companionAI?.ShouldBeFollowing ?? false;
 
-        // ---- Haul (Core 0.2.220, Tools\COMPANION_HAUL.md; the brain is FiresCore.Npc.AI.Haul, shared with the FDT bot bodies) ----
+        // ---- Haul (the brain is FiresCore.Npc.AI.Haul, shared with the FDT bot bodies) ----
 
         /// <summary>
         /// Starts a haul: gather to <paramref name="quota"/> (item prefab → count), carry it home at 80 % of the carry limit, deposit
@@ -3174,11 +3585,31 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
             HaulJob job = Haul.Start(new CompanionTaskBody(this), home, quota, pickFood,
                 () => _inventory != null ? _inventory.GetMaxCarryWeight() : 300f);
             if (job == null) return null;
-            if (ShouldBeFollowing) CommandStay(home);
+            // Group membership changes only on the player's Follow / Stay: the haul parks the RUNTIME AI only; the
+            // persistent follow intent / roster stay as the player set them (CommandStay wrote both and dropped it from the group)
+            if (ShouldBeFollowing) HaulRuntimeStay(home);
             if (runner == null) runner = gameObject.AddComponent<CompanionHaulRunner>();
             runner.Job = job;
             runner.WasFollowing = wasFollowing;
             return job;
+        }
+
+        /// <summary>Runtime-only stay for a job (haul): AI flag + anchor, NOT the persistent intent / roster. Add-only.</summary>
+        public void HaulRuntimeStay(Vector3 home)
+        {
+            if (_companionAI == null) return;
+            ReleaseAllMovementLocks();
+            _companionAI.SetShouldFollow(false);
+            _companionAI.SetStayPosition(home);
+        }
+
+        /// <summary>Runtime-only follow back to <paramref name="owner"/> after a job, NOT a membership change. Add-only.</summary>
+        public void HaulRuntimeFollow(Player owner)
+        {
+            if (_companionAI == null || owner == null) return;
+            _companionAI.ClearStayPosition();
+            _companionAI.SetShouldFollow(true);
+            _companionAI.SetFollowTarget(owner.gameObject);
         }
 
         /// <summary>Stops the running haul (the job logs "stopped: …"); the runner then ends it.</summary>
@@ -3332,7 +3763,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
                 if (_animator != null)
                 {
                     animEvent = _animator.gameObject.AddComponent<CharacterAnimEvent>();
-                    Debug.Log($"[CompanionController] Added CharacterAnimEvent to {_animator.gameObject.name} at runtime");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Added CharacterAnimEvent to {_animator.gameObject.name} at runtime");
                 }
                 else
                 {
@@ -3355,13 +3786,13 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
                     {
                         // The reference is null - set it manually
                         charField.SetValue(animEvent, _character);
-                        Debug.Log($"[CompanionController] Set CharacterAnimEvent.m_character reference for {companionName}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Set CharacterAnimEvent.m_character reference for {companionName}");
                     }
                     else if (currentCharRef != _character)
                     {
                         // Wrong reference - fix it
                         charField.SetValue(animEvent, _character);
-                        Debug.Log($"[CompanionController] Fixed CharacterAnimEvent.m_character reference for {companionName}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Fixed CharacterAnimEvent.m_character reference for {companionName}");
                     }
                 }
                 
@@ -3375,7 +3806,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
                     if (currentNView == null)
                     {
                         nviewField.SetValue(animEvent, _nview);
-                        Debug.Log($"[CompanionController] Set CharacterAnimEvent.m_nview reference for {companionName}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Set CharacterAnimEvent.m_nview reference for {companionName}");
                     }
                 }
                 
@@ -3389,7 +3820,7 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
                     if (currentAnimator == null)
                     {
                         animatorField.SetValue(animEvent, _animator);
-                        Debug.Log($"[CompanionController] Set CharacterAnimEvent.m_animator reference for {companionName}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[CompanionController] Set CharacterAnimEvent.m_animator reference for {companionName}");
                     }
                 }
             }
@@ -3450,6 +3881,11 @@ Debug.Log($"[CompanionController] Found save data for {companionName} with {save
         public float EyeColorR;
         public float EyeColorG;
         public float EyeColorB;
+        public bool HasBeardColor;      // Independent beard colour (else the hair colour)
+        public float BeardColorR;
+        public float BeardColorG;
+        public float BeardColorB;
+        public string FccModel;         // The companion ZDO key "fcc_model", carried over death/respawn
         public bool HasAppearanceData;  // True if appearance data is present
         
         // Scale data for giant/dwarf companions

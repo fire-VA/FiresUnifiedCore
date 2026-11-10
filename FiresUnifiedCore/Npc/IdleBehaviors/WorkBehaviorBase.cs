@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using UnityEngine;
 using FiresCore.Npc.Core;
 using FiresCore.Npc.Animation;
@@ -239,10 +239,10 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         protected void SetPhase(TPhase newPhase)
         {
-            // Always on (0.2.214, R85 workstation: "STARTED sub-behavior WorkstationInteraction" and then nothing for 150 s, no phase
-            // named): every phase change of a work behaviour, with the time spent in the one it leaves.
+            // Always on:
+            // every phase change of a work behaviour, with the time spent in the one it leaves.
             if (PhaseManager != null && !Equals(CurrentPhase, newPhase))
-                Debug.Log($"[{BehaviorName}] {Companion?.companionName} phase {CurrentPhase} -> {newPhase} (after {TimeInCurrentPhase:0.0} s)");
+                FiresCore.Logging.FiresLogger.LogDebug($"[{BehaviorName}] {Companion?.companionName} phase {CurrentPhase} -> {newPhase} (after {TimeInCurrentPhase:0.0} s)");
             PhaseManager?.SetPhase(newPhase);
         }
         
@@ -275,6 +275,19 @@ namespace FiresCore.Npc.IdleBehaviors
         /// Whether movement is currently active.
         /// </summary>
         protected bool IsMoving => CurrentMoveTarget.HasValue;
+
+        // [ghost] 10-26 (Fire: "if were standing under a chest and look up we get the interaction"): the piece the walk is for.
+        // The walk arrives once the companion's eye is within InteractReach of the piece's closest collider point with a clear
+        // line, as a player's would, so an overhead or wall chest no longer times the chore out at the 2.5 m ground point.
+        protected GameObject InteractTarget;
+        protected bool InInteractReach()
+        {
+            if (InteractTarget == null || Transform == null) return false;
+            if (!FiresCore.Npc.Core.CompanionReach.InInteractReach(Transform, InteractTarget.transform, out float d)) return false;   // one reach rule (CompanionReach)
+            if (CompanionIdleBehavior.VerboseLogging)
+                Debug.Log($"[{BehaviorName}] {Companion?.companionName} in interact reach of {InteractTarget.name} ({d:F1} m)");
+            return true;
+        }
         
         /// <summary>
         /// Sets a movement target. Call this once to start moving.
@@ -307,9 +320,10 @@ namespace FiresCore.Npc.IdleBehaviors
             
             // Check if arrived - use forgiving threshold since pathfinding may not reach exact spot
             float dist = DistanceTo(CurrentMoveTarget.Value);
-            if (dist < InteractionPointHelper.ARRIVAL_THRESHOLD)
+            if (dist < InteractionPointHelper.ARRIVAL_THRESHOLD || InInteractReach())
             {
                 CurrentMoveTarget = null;
+                InteractTarget = null;
                 return true;
             }
             
@@ -327,16 +341,11 @@ namespace FiresCore.Npc.IdleBehaviors
         protected new void StopMovement()
         {
             CurrentMoveTarget = null;
+            InteractTarget = null;
             
             // Use base class authority-aware stop
             base.StopMovement();
             
-            // Also zero velocity directly for immediate effect
-            if (Rigidbody != null && !Rigidbody.isKinematic)
-            {
-                Vector3 vel = Rigidbody.linearVelocity;
-                Rigidbody.linearVelocity = new Vector3(0, vel.y, 0);
-            }
         }
         
         /// <summary>
@@ -358,13 +367,8 @@ namespace FiresCore.Npc.IdleBehaviors
                 return;
             }
 
-            dir.Normalize();
-            Quaternion targetRot = Quaternion.LookRotation(dir);
-            if (float.IsNaN(targetRot.x) || float.IsNaN(targetRot.y) || float.IsNaN(targetRot.z) || float.IsNaN(targetRot.w))
-            {
-                return;
-            }
-            Transform.rotation = Quaternion.Slerp(Transform.rotation, targetRot, Time.deltaTime * 5f);
+            // Vanilla SetLookDir (UpdateRotation turns at m_turnSpeed), not a rotation write.
+            Character?.SetLookDir(dir.normalized);
         }
         
         /// <summary>
@@ -472,6 +476,8 @@ namespace FiresCore.Npc.IdleBehaviors
         /// </summary>
         protected void LogVerbose(string message)
         {
+            // 0.2.844 (lead): a CanStart refusal is kept (logging on or off) so a direct starter (the Job Board) can say why
+            if (message != null && message.StartsWith("CanStart: FALSE")) LastRefusal = message.Substring("CanStart: FALSE".Length).TrimStart(' ', '-');
             if (CompanionIdleBehavior.VerboseLogging)
             {
                 Debug.Log($"[{BehaviorName}] {Companion?.companionName} {message}");

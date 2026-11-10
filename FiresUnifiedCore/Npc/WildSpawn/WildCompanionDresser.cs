@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -136,7 +136,7 @@ namespace FiresCore.Npc.WildSpawn
             string existingId = zdo.GetString("companion_id", string.Empty);
             if (!string.IsNullOrEmpty(existingId))
             {
-                Debug.Log($"[WildCompanionDresser] {gameObject.name}: skipping - already has companion_id '{existingId}'.");
+                FiresCore.Logging.FiresLogger.LogDebug($"[WildCompanionDresser] {gameObject.name}: skipping - already has companion_id '{existingId}'.");
                 yield break;
             }
 
@@ -206,13 +206,15 @@ namespace FiresCore.Npc.WildSpawn
             zdo.Set(ZDO_ROLLED_ARCHETYPE, (int)archetype);
             zdo.Set(ZDO_ROLLED_STARS, stars);
             zdo.Set(ZDO_FACTION, (int)faction);
+            // Race companions: the race is rolled here, server-side, once; looks + traits only, never faction or AI.
+            FiresCore.Npc.Races.CompanionRaces.RollInto(zdo, rng, gameObject.name);
 
             // GenerateRandomLoadout is left to CompanionRandomLoadout's own delayed call: running it this early, before
             // NpcVisEquipment sets up the player models, silently skipped hair and beards.
 
             WildCompanionSquad.ElectAndAssign(this, GetComponent<WildCompanionSeed>());
 
-            Debug.Log($"[WildCompanionDresser] DRESSED ({faction} {archetype}, {stars}*, biome={biome}) " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[WildCompanionDresser] DRESSED ({faction} {archetype}, {stars}*, biome={biome}) " +
                       $"at {transform.position.ToString("F0")}. m_faction = {character?.m_faction}");
         }
 

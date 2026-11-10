@@ -39,10 +39,10 @@ namespace FiresCore.Sync
                 Terminal.ConsoleEvent handler = HandleDeleteCommand;
                 Terminal.ConsoleOptionsFetcher fetcher = ConfigPushService.BuildCompletionOptions;
                 const string help = "Delete BepInEx config file(s) ON THE SERVER (admin only). Lists matches first; append 'confirm' to actually delete. e.g. 'deleteconfig expand_world* confirm'";
-                new Terminal.ConsoleCommand("deleteconfig", help, handler, optionsFetcher: fetcher, alwaysRefreshTabOptions: true);
-                new Terminal.ConsoleCommand("deleteconfigs", "(alias) deleteconfig", handler, optionsFetcher: fetcher, alwaysRefreshTabOptions: true);
-                new Terminal.ConsoleCommand("removeconfig", "(alias) deleteconfig", handler, optionsFetcher: fetcher, alwaysRefreshTabOptions: true);
-                new Terminal.ConsoleCommand("removeconfigs", "(alias) deleteconfig", handler, optionsFetcher: fetcher, alwaysRefreshTabOptions: true);
+                new Terminal.ConsoleCommand("deleteconfig", help, handler, optionsFetcher: fetcher, alwaysRefreshTabOptions: true, isCheat: true /* 0.2.1159 Fire rule */);
+                new Terminal.ConsoleCommand("deleteconfigs", "(alias) deleteconfig", handler, optionsFetcher: fetcher, alwaysRefreshTabOptions: true, isCheat: true /* 0.2.1159 Fire rule */);
+                new Terminal.ConsoleCommand("removeconfig", "(alias) deleteconfig", handler, optionsFetcher: fetcher, alwaysRefreshTabOptions: true, isCheat: true /* 0.2.1159 Fire rule */);
+                new Terminal.ConsoleCommand("removeconfigs", "(alias) deleteconfig", handler, optionsFetcher: fetcher, alwaysRefreshTabOptions: true, isCheat: true /* 0.2.1159 Fire rule */);
             }
         }
 

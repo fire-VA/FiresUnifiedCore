@@ -6,32 +6,23 @@ using UnityEngine;
 namespace FiresCore.Npc.WildSpawn
 {
     /// <summary>
-    /// Keeps wild companions from loitering on doorsteps (R73/R74: the same Dverger-faction wild companion parked at the
-    /// mausoleum crypt entrance round after round, blocked the class drill and fought the test bot). A wild companion's home
+    /// Keeps wild companions from loitering on doorsteps (a wild companion parked at a dungeon entrance blocks
+    /// players and fights them). A wild companion's home
     /// (its spawn point, or its squad leader's position for a follower) within <see cref="Radius"/> m of a dungeon entrance
     /// (a loaded Teleport) or a configured spot is pushed out along the away direction to that radius. The world keeps its
     /// wild companions; they just don't settle there. SERVER-synced config: [WildSpawn] No-park spots / No-park radius.
     /// </summary>
     internal static class WildNoPark
     {
-        private static ConfigEntry<string> s_spots;
-        private static ConfigEntry<float> s_radius;
         private static string s_parsedFrom;
         private static readonly List<Vector2> s_spotList = new List<Vector2>();
         private static Teleport[] s_entrances;
         private static float s_entrancesUntil;
 
         internal static void Bind(ConfigFile config, FiresCore.Sync.ConfigSync configSync)
-        {
-            s_spots = config.Bind("WildSpawn", "No-park spots", "-838,-404; -760,-440; -256,0",
-                "SERVER. x,z points (';'-separated) wild companions may not make their home near (test spots, dungeon doors that aren't Teleports). Dungeon entrances (Teleports) always count.");
-            s_radius = config.Bind("WildSpawn", "No-park radius", 30f,
-                new ConfigDescription("SERVER. How far (m) a wild companion's home is kept from each no-park place.", new AcceptableValueRange<float>(0f, 200f)));
-            configSync?.AddConfigEntry(s_spots);
-            configSync?.AddConfigEntry(s_radius);
-        }
+        { }   // 1086 ([generator], Fire 11-01: configs live in their own mods): [WildSpawn] is bound and synced by FiresCompanions; Core reads the owner's value (old default without it)
 
-        internal static float Radius => s_radius != null ? s_radius.Value : 30f;
+        internal static float Radius => FiresCore.Config.CoreSettings.Get("WildSpawn", "No-park radius", 30f);
 
         /// <summary>
         /// <paramref name="home"/> pushed out of every no-park place it is inside; true (with the place and how far) when it moved.
@@ -74,7 +65,7 @@ namespace FiresCore.Npc.WildSpawn
 
         private static List<Vector2> Spots()
         {
-            string text = s_spots != null ? s_spots.Value : "";
+            string text = FiresCore.Config.CoreSettings.Get("WildSpawn", "No-park spots", "");
             if (text == s_parsedFrom) return s_spotList;
             s_parsedFrom = text;
             s_spotList.Clear();

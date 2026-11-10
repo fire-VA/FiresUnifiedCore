@@ -30,9 +30,17 @@ namespace FiresCore.Config
 
         public ConfigEntry<bool> configVerboseLogging;
         public ConfigEntry<bool> configServerAuthority;
-        public ConfigEntry<bool> configCompanionFollowDiag;
-        public ConfigEntry<bool> configCompanionVerbose;
-        public ConfigEntry<bool> configCompanionJobVerbose;
+        // 1086 ([generator], Fire 11-01: configs live in their own mods): the companion diagnostics and gear-up keys are bound by
+        // FiresCompanions; Core reads the owner's value (old default without it). Same member names; .Value still reads.
+        public OwnedSetting<bool> configCompanionFollowDiag = new OwnedSetting<bool>(DebugSection, CompanionFollowDiagKey, false);
+        public OwnedSetting<bool> configCompanionVerbose = new OwnedSetting<bool>(DebugSection, CompanionVerboseKey, false);
+        public ConfigEntry<bool> configPeriodicDiagnostics;   // 1086 ([generator], Fire 11-01: configs live in their own mods): stays in Core (proposal 11-02, question 14)
+        public OwnedSetting<bool> configCompanionJobVerbose = new OwnedSetting<bool>(DebugSection, CompanionJobVerboseKey, false);
+        public ConfigEntry<bool> configPerfLog;
+        // Companions gear up from base chests / craft their own clothing and tools.
+        public OwnedSetting<bool> configGearUp = new OwnedSetting<bool>("Companions", "Companions gear up from base chests", true);
+        public OwnedSetting<int> configSelfCraftPerDay = new OwnedSetting<int>("Companions", "Companion self-craft per day", 1),
+            configSelfCraftKeep = new OwnedSetting<int>("Companions", "Self-craft keeps materials", 5);
 
         public event Action ConfigLockChanged;
 
@@ -42,14 +50,19 @@ namespace FiresCore.Config
 
             configVerboseLogging = config.Bind(GeneralSection, VerboseLoggingKey, false, VerboseLoggingDescription);
             configServerAuthority = config.Bind(GeneralSection, ServerAuthorityKey, true, ServerAuthorityDescription);
-            configCompanionFollowDiag = config.Bind(DebugSection, CompanionFollowDiagKey, false, CompanionFollowDiagDescription);
-            configCompanionVerbose = config.Bind(DebugSection, CompanionVerboseKey, false, CompanionVerboseDescription);
-            configCompanionJobVerbose = config.Bind(DebugSection, CompanionJobVerboseKey, false, CompanionJobVerboseDescription);
+            // 1086 ([generator], Fire 11-01: configs live in their own mods): the 4 Debug companion keys and the 3 gear-up keys are no longer bound here.
+            configPeriodicDiagnostics = config.Bind(DebugSection, "PeriodicDiagnostics", false,
+                "Dev diagnostic (off by default): periodic timing lines (companion census passes, the teleport census/heartbeat split, the kinematic sync summary). They also need the Core log level at Debug.");
+            FiresCore.Logging.Diag.Periodic = configPeriodicDiagnostics.Value;
+            configPeriodicDiagnostics.SettingChanged += (_, __) => FiresCore.Logging.Diag.Periodic = configPeriodicDiagnostics.Value;
+            // A "[Perf]" line every 10 s on a client; a test round turns it on
+            configPerfLog = config.Bind(DebugSection, "PerfLog", false,
+                "Dev diagnostic (off by default): every 10 s one [Perf] line with the average / worst frame time and FPS (clients only).");
 
             // The companion classes keep their verbose flags as statics, so drive them from here and on every change.
             Npc.CompanionDebugLogging.Apply(configCompanionVerbose.Value, configCompanionJobVerbose.Value);
-            configCompanionVerbose.SettingChanged += (_, __) => Npc.CompanionDebugLogging.Apply(configCompanionVerbose.Value, configCompanionJobVerbose.Value);
-            configCompanionJobVerbose.SettingChanged += (_, __) => Npc.CompanionDebugLogging.Apply(configCompanionVerbose.Value, configCompanionJobVerbose.Value);
+            configCompanionVerbose.Changed += () => Npc.CompanionDebugLogging.Apply(configCompanionVerbose.Value, configCompanionJobVerbose.Value);
+            configCompanionJobVerbose.Changed += () => Npc.CompanionDebugLogging.Apply(configCompanionVerbose.Value, configCompanionJobVerbose.Value);
         }
 
         public void OnConfigLockChanged()

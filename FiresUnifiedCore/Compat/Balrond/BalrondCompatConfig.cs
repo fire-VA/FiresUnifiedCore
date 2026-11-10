@@ -1,3 +1,5 @@
+// 1086 ([generator], Fire 11-01: configs live in their own mods): commented out and unwired, kept for a later rewire (proposal 11-02).
+#if FIRES_BALROND_COMPAT
 using BepInEx.Configuration;
 using FiresCore.Sync;
 
@@ -90,6 +92,10 @@ namespace FiresCore.Compat.Balrond
             if (RemoveSwampFog != null) configSync.AddConfigEntry(RemoveSwampFog);
             if (NegateMistSicknessDebuff != null) configSync.AddConfigEntry(NegateMistSicknessDebuff);
             if (PoisonGeyserDensityScale != null) configSync.AddConfigEntry(PoisonGeyserDensityScale);
+            FiresCore.Config.OwnerGatedConfig.Gate(FiresCore.Config.OwnerGatedConfig.Owners.BALROND, true,
+                RestrictMistlandsLocations, RestrictMistAreaVegetation, RemoveSwampFog, NegateMistSicknessDebuff, PoisonGeyserDensityScale);
         }
     }
 }
+
+#endif

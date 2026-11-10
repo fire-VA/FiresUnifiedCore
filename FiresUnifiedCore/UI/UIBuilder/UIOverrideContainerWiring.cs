@@ -181,7 +181,7 @@ namespace FiresCore.UI
         {
             try
             {
-                var onChanged = fi_onChanged?.GetValue(inv) as Action;
+                var onChanged = FiresCore.Utilities.VanillaRefs.InvOnChanged(inv);   // 1074 ([generator] event-driven/cache): typed delegate
                 onChanged?.Invoke();
             }
             catch { }
@@ -194,7 +194,7 @@ namespace FiresCore.UI
             if (InventoryGui.instance == null) return null;
             try
             {
-                return fi_currentContainer?.GetValue(InventoryGui.instance) as Container;
+                return FiresCore.Utilities.VanillaRefs.CurrentContainer(InventoryGui.instance);   // 1074 ([generator] event-driven/cache): typed delegate
             }
             catch
             {
@@ -271,7 +271,7 @@ namespace FiresCore.UI
                 }
             }
 
-            Debug.Log($"[UIOverrideContainerWiring] Built {width}x{height} container grid ({_slotGOs.Count} slots)");
+            FiresCore.Logging.FiresLogger.LogDebug($"[UIOverrideContainerWiring] Built {width}x{height} container grid ({_slotGOs.Count} slots)");
         }
 
         private GameObject CreateContainerSlotElement(string name, int gridX, int gridY)

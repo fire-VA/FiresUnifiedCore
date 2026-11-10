@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -85,7 +85,7 @@ namespace FiresCore.Npc.WildSpawn
 
             if (candidates.Count > 1)
             {
-                Debug.Log($"[WildCompanionSquad] {seed.Faction} squad formed: " +
+                FiresCore.Logging.FiresLogger.LogDebug($"[WildCompanionSquad] {seed.Faction} squad formed: " +
                           $"{candidates.Count} members, leader hash 0x{leaderHash:X8}.");
             }
         }

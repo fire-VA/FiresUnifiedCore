@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc;
 using FiresCore.Npc.Archetypes.StatusEffects;
@@ -197,7 +197,7 @@ namespace FiresCore.Npc.Archetypes
                 // Notify synergy manager
                 GroupSynergyManager.Instance?.OnAbilityUsed(_companion, _hybridDef.SpecialAbilityName);
                 
-                Debug.Log($"[HybridAbility] {_companion.companionName} used {_hybridDef.SpecialAbilityName}!");
+                FiresCore.Logging.FiresLogger.LogDebug($"[HybridAbility] {_companion.companionName} used {_hybridDef.SpecialAbilityName}!");
             }
         }
         

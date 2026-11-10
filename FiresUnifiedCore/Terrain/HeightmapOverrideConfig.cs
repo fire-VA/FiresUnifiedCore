@@ -17,12 +17,14 @@ namespace FiresCore.Terrain
         public static ConfigEntry<bool>  Enabled;
         public static ConfigEntry<float> MaxHeight;
         public static ConfigEntry<float> MinHeight;
+        internal static ConfigSync Sync;
 
         public static void Initialize(ConfigFile config)
         {
             Enabled = config.Bind(
-                Section, "Enabled", true,
+                Section, "Enabled", true,   // Core 0.2.1086 (Fire 11-02, Tools\CONFIG_PROPOSAL_20261102.md): back in Core, default ON
                 "Lift Valheim's 8 m limit on raising and lowering terrain, to the MaxHeight / MinHeight below. " +
+                "On a client it only applies when the server runs Core with this on (a vanilla server keeps vanilla limits). " +
                 "Applies live, no restart. The log reports the limits in force. [Synced with Server]");
 
             MaxHeight = config.Bind(
@@ -44,11 +46,15 @@ namespace FiresCore.Terrain
 
         public static void BindToSync(ConfigSync configSync)
         {
+            // 0.2.971 (Fire 10-28: "it needs to stay off if the mod is not installed on the server as well"): a client follows the
+            // override only once the server's Core config package arrived (IsSourceOfTruth false); a vanilla server never sends one
+            Sync = configSync;
+            configSync.SourceOfTruthChanged += _ => { HeightmapOverrideStatus.ReportLimits(); HeightmapOverrideReapply.Check("server config arrived / left"); };
             configSync.AddConfigEntry(Enabled);
             configSync.AddConfigEntry(MaxHeight);
             configSync.AddConfigEntry(MinHeight);
         }
 
-        private static void OnLimitsChanged(object sender, System.EventArgs e) => HeightmapOverrideStatus.ReportLimits();
+        private static void OnLimitsChanged(object sender, System.EventArgs e) { HeightmapOverrideStatus.ReportLimits(); HeightmapOverrideReapply.Check("a limit setting changed"); }
     }
 }

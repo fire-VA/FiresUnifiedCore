@@ -221,17 +221,88 @@ namespace FiresCore.Npc.Combat
             InitializeDirectionSamples();
         }
 
+        // Perf fix ([lead] 10-30, perf_probe_r7 stall trees on Fire's RPGWorld town: "TerrainAwareness.Update x10 = 113-133 ms" in one
+        // frame, 40-52 ms per scan among the town's pieces): every companion ran the FULL scan every 0.25 s in or out of combat, and the
+        // scans landed in the same frames. Now:
+        //  - the full scan (direction scores, cliffs, fire, lava, AOE) runs only while the companion fights (its AI / combat movement is in
+        //    combat, or its agent has a target) - the only time anything reads the direction scores;
+        //  - out of combat only the AOE check runs (the idle AI reads IsInAoeHazard / GetAoeEscapeDirection), once a second;
+        //  - all scans share a per-frame budget, and each instance starts at a random offset, so they spread over frames;
+        //  - the first scan after a fight starts never waits for the budget. Masks and detection are unchanged.
+        // Key [Companions] "Terrain scan only in combat" (FiresCompanions owns it; ON by default); off = the old every-0.25 s full scan for everyone.
+        private const float IdleAoeInterval = 1f, FrameBudgetMs = 2f, MaxDeferSeconds = 1f;
+        private static int s_budgetFrame = -1;
+        private static double s_budgetSpentMs;
+        private static int s_full, s_idle, s_deferred, s_skippedIdle;
+        private static double s_ms, s_worstMs, s_msFull, s_msAoe, s_worstFull, s_worstAoe;
+        private static float s_statsAt;
+        private bool _wasActive, _offsetDone;
+        // The key is FiresCompanions' (config-move rule: companion settings live there); Core reads it, ON until FiresCompanions provides it.
+        private static bool OnlyInCombat => FiresCore.Config.CoreSettings.Get("Companions", "Terrain scan only in combat", true);
+
+        private bool Active
+        {
+            get
+            {
+                if (_companion != null && _companion.IsInCombat) return true;
+                if (_combatMovement != null && _combatMovement.IsInCombat) return true;
+                try { return _agent != null && _agent.Target != null; } catch { return false; }
+            }
+        }
+
         private void Update()
         {
             // Allow both tamed AND wild companions to use terrain awareness
             if (_companion == null && _agent == null) return;
 
-            // Throttled scanning
-            if (Time.time - _lastScanTime >= scanInterval)
+            if (!OnlyInCombat)
             {
-                _lastScanTime = Time.time;
-                ScanEnvironment();
+                // the old behaviour: full scan every scanInterval for everyone
+                if (Time.time - _lastScanTime >= scanInterval) { _lastScanTime = Time.time; ScanEnvironment(); }
+                return;
             }
+            if (!_offsetDone) { _offsetDone = true; _lastScanTime = Time.time - UnityEngine.Random.Range(0f, scanInterval); }
+
+            bool active = Active;
+            bool fightStarted = active && !_wasActive;
+            _wasActive = active;
+            float interval = active ? scanInterval : IdleAoeInterval;
+            float since = Time.time - _lastScanTime;
+            if (!fightStarted && since < interval) return;
+
+            // the shared per-frame budget (a fight's first scan and a scan overdue by a second always run)
+            if (Time.frameCount != s_budgetFrame) { s_budgetFrame = Time.frameCount; s_budgetSpentMs = 0; }
+            if (!fightStarted && since < interval + MaxDeferSeconds && s_budgetSpentMs >= FrameBudgetMs) { s_deferred++; Stats(); return; }
+
+            _lastScanTime = Time.time;
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (active) { ScanEnvironment(); s_full++; }
+            else { ScanAoeOnly(); s_idle++; s_skippedIdle++; }
+            double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            s_budgetSpentMs += ms; s_ms += ms; if (ms > s_worstMs) s_worstMs = ms;   // both kinds count against the shared frame budget
+            if (active) { s_msFull += ms; if (ms > s_worstFull) s_worstFull = ms; } else { s_msAoe += ms; if (ms > s_worstAoe) s_worstAoe = ms; }
+            Stats();
+        }
+
+        // out of combat: only the AOE part the idle AI reads (IsInAoeHazard / GetAoeEscapeDirection); the rest keeps its last values
+        private void ScanAoeOnly()
+        {
+            _lastAoeScanTime = Time.time;
+            _hazardMapAoe.Clear();   // CheckForAoeHazards appends to it (a full scan clears it in ScanEnvironment)
+            _currentHazards.AoeHazardNearby = false; _currentHazards.DistanceToAoe = float.MaxValue;
+            CheckForAoeHazards(transform.position);
+            _isNearAoe = _activeAoeHazards.Count > 0;
+        }
+
+        private static void Stats()
+        {
+            float now = Time.unscaledTime;
+            if (now < s_statsAt) return;
+            bool first = s_statsAt == 0f; s_statsAt = now + 10f;
+            if (!first && s_full + s_idle + s_deferred > 0)
+                FiresCore.Logging.FiresLogger.LogDebug($"[TerrainScan] last 10 s: {s_full / 10f:0.#} full scans/s (in combat), {s_idle / 10f:0.#} AOE-only/s (idle, full scan skipped), "
+                    + $"{s_deferred / 10f:0.#} deferred/s by the {FrameBudgetMs:0} ms frame budget; {s_ms / 10.0:0.00} ms/s (full {s_msFull / 10.0:0.00} ms/s, worst {s_worstFull:0.00} ms; AOE-only {s_msAoe / 10.0:0.00} ms/s, worst {s_worstAoe:0.00} ms); AOE from vanilla lists: {s_aoeListSize} source(s), {s_aoeListChecks / 10f:0.#} checks/s, {s_aoeListMs / 10.0:0.00} ms/s, worst {s_aoeListWorst:0.00} ms");
+            s_full = s_idle = s_deferred = s_skippedIdle = 0; s_ms = 0; s_worstMs = 0; s_msFull = s_msAoe = s_worstFull = s_worstAoe = 0; s_aoeListChecks = 0; s_aoeListMs = s_aoeListWorst = 0;
         }
 
         #endregion
@@ -970,6 +1041,44 @@ namespace FiresCore.Npc.Combat
 
             float aoeCheckRange = hazardCheckDistance * AoeCheckRangeMultiplier;
 
+            // Perf fix ([lead] 10-30, Core 1058 live in Fire's town: "8.9 AOE-only/s = 69 ms/s, worst 29 ms" - one AllLayers overlap
+            // returned the town's thousands of piece colliders): the AOE sources are read from VANILLA's own live lists instead - every
+            // enabled Aoe (Aoe.Instances) and every EffectArea (EffectArea.GetAllAreas) - tested by distance, with the SAME classification
+            // (Describe / ProcessAoeComponent / AddAoeHazard) as before. Key [Companions] "AOE check from vanilla lists" (FiresCompanions
+            // owns it; ON): off = the old AllLayers overlap.
+            if (AoeFromLists)
+            {
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                int seen = 0;
+                var aoes = Aoe.Instances;
+                for (int a = 0; a < aoes.Count; a++)
+                {
+                    if (!(aoes[a] is Aoe aoe) || aoe == null || !aoe.isActiveAndEnabled) continue;
+                    seen++;
+                    Vector3 at = aoe.transform.position;
+                    if ((at - pos).sqrMagnitude > (aoeCheckRange + aoe.m_radius) * (aoeCheckRange + aoe.m_radius)) continue;
+                    ProcessAoeComponent(aoe, aoe.gameObject.name, at);
+                }
+                var areas = EffectArea.GetAllAreas();
+                for (int e = 0; e < areas.Count; e++)
+                {
+                    var area = areas[e];
+                    if (area == null || !area.isActiveAndEnabled) continue;
+                    var col = area.GetComponent<Collider>();
+                    if (col == null || !col.enabled) continue;
+                    seen++;
+                    if ((col.ClosestPoint(pos) - pos).sqrMagnitude > aoeCheckRange * aoeCheckRange) continue;
+                    ColliderInfo info = Describe(col);
+                    if (info.Aoe != null) continue;   // its Aoe was taken from Aoe.Instances above
+                    if (info.AoeKind != HazardType.None)
+                        AddAoeHazard(col.transform.position, GetAoeRadius(col), info.AoeKind, info.AoeName);
+                }
+                double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                s_aoeListChecks++; s_aoeListMs += ms; if (ms > s_aoeListWorst) s_aoeListWorst = ms; s_aoeListSize = seen;
+                FinishAoeHazards();
+                return;
+            }
+
             // Find all potential AOE objects in range
             int count = Overlap(pos, aoeCheckRange, Physics.AllLayers);
             for (int c = 0; c < count; c++)
@@ -990,6 +1099,13 @@ namespace FiresCore.Npc.Combat
                     AddAoeHazard(collider.transform.position, GetAoeRadius(collider), info.AoeKind, info.AoeName);
             }
 
+            FinishAoeHazards();
+        }
+
+        // the hazard map update, the same for both ways of finding the AOEs
+        private void FinishAoeHazards()
+        {
+            Vector3 pos = transform.position;
             // Update hazard map
             if (_activeAoeHazards.Count > 0)
             {
@@ -1010,6 +1126,10 @@ namespace FiresCore.Npc.Combat
                 }
             }
         }
+
+        private static bool AoeFromLists => FiresCore.Config.CoreSettings.Get("Companions", "AOE check from vanilla lists", true);
+        private static int s_aoeListChecks, s_aoeListSize;
+        private static double s_aoeListMs, s_aoeListWorst;
 
         /// <summary>
         /// Processes a Valheim Aoe component.

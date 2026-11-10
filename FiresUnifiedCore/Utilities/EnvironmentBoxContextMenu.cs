@@ -22,7 +22,7 @@ namespace FiresCore.Utilities
             _registered = true;
             _claim = HandleClaim;
             FiresContextMenu.RegisterClaim(_claim);
-            Debug.Log("[FiresCore] environment-box config claim registered (Shift+Alt right-click a box).");
+            if (FiresCore.Logging.FiresLogLevel.DebugOn) Debug.Log("[FiresCore] environment-box config claim registered (Shift+Alt right-click a box).");
         }
 
         private static bool HandleClaim(ContextTarget target, Vector2 screenPos)

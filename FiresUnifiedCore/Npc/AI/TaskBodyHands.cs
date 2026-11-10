@@ -3,7 +3,7 @@ using System.Collections.Generic;
 namespace FiresCore.Npc.AI
 {
     /// <summary>
-    /// A body whose hand and pack aren't the vanilla ones (Core 0.2.220): a companion keeps its equipment in CompanionInventory
+    /// A body whose hand and pack aren't the vanilla ones: a companion keeps its equipment in CompanionInventory
     /// beside its storage Inventory and never sets Humanoid.m_rightItem, so GetCurrentWeapon() reads unarmed and the storage
     /// misses the equipped axe. ChoreBrain and the haul ask through <see cref="TaskBodyHands"/>; a player body needs nothing.
     /// </summary>

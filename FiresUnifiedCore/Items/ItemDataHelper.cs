@@ -215,7 +215,7 @@ namespace FiresCore.Items
                 {
                     item.m_dropPrefab = prefab;
                     fixedAnything = true;
-                    Debug.Log($"[ItemDataHelper] Restored m_dropPrefab for {item.m_shared.m_name}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[ItemDataHelper] Restored m_dropPrefab for {item.m_shared.m_name}");
                 }
             }
             

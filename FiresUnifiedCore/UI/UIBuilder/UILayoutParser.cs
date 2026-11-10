@@ -744,7 +744,7 @@ namespace FiresCore.UI
                             node.SetMeta("captured_onClick", captured);
                             // Use the first listener's method name as a hint for the action
                             node.ButtonData.ClickAction = "captured:" + actionParts[0];
-                            Debug.Log($"[UILayoutParser] Captured onClick for '{go.name}': {captured}");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Captured onClick for '{go.name}': {captured}");
                         }
                     }
                 }
@@ -1249,7 +1249,7 @@ namespace FiresCore.UI
 
                 // Call UpdateInventory to create the slot GameObjects
                 invGrid.UpdateInventory(playerInv, Player.m_localPlayer, null);
-                Debug.Log($"[UILayoutParser] Force-populated InventoryGrid '{invGrid.gameObject.name}' with {invGrid.m_gridRoot.childCount} slots via UpdateInventory");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Force-populated InventoryGrid '{invGrid.gameObject.name}' with {invGrid.m_gridRoot.childCount} slots via UpdateInventory");
                 return invGrid.m_gridRoot.childCount > 0;
             }
             catch (Exception ex)
@@ -1311,7 +1311,7 @@ namespace FiresCore.UI
                     gridRoot.gameObject.name = gridRoot.gameObject.name; // ensure it exists
                 }
 
-                Debug.Log($"[UILayoutParser] Detected InventoryGrid on '{go.name}': {gridWidth}x{gridHeight}, spacing={elementSpace}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Detected InventoryGrid on '{go.name}': {gridWidth}x{gridHeight}, spacing={elementSpace}");
             }
             catch (Exception ex)
             {
@@ -1464,8 +1464,8 @@ namespace FiresCore.UI
                         }
                     }
                     if (hiddenSlots > 0)
-                        Debug.Log($"[UILayoutParser] Skipped {hiddenSlots} hidden equipment slots beyond visible grid ({gridWidth}x{gridHeight})");
-                    Debug.Log($"[UILayoutParser] Captured {capturedSlots - hiddenSlots}/{visibleSlots} live inventory grid slots from '{go.name}' ({gridWidth}x{gridHeight})");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Skipped {hiddenSlots} hidden equipment slots beyond visible grid ({gridWidth}x{gridHeight})");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Captured {capturedSlots - hiddenSlots}/{visibleSlots} live inventory grid slots from '{go.name}' ({gridWidth}x{gridHeight})");
 
                     // If fewer visible captured slots than totalSlots, clone the first
                     // captured slot to fill the remaining visible grid positions.
@@ -1503,7 +1503,7 @@ namespace FiresCore.UI
                                 }
                                 catch { /* clone failed - skip slot */ }
                             }
-                            Debug.Log($"[UILayoutParser] Generated {generated} additional slots to fill {totalSlots} total for '{go.name}'");
+                            FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Generated {generated} additional slots to fill {totalSlots} total for '{go.name}'");
                         }
                     }
                 }
@@ -1511,7 +1511,7 @@ namespace FiresCore.UI
                 {
                     // No live children - InventoryGrid.UpdateGui() hasn't run yet.
                     // Parse the element prefab as a template and duplicate it to fill the grid.
-                    Debug.Log($"[UILayoutParser] Grid root '{go.name}' has 0 children - using m_elementPrefab as template");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Grid root '{go.name}' has 0 children - using m_elementPrefab as template");
 
                     var templateNode = ParseNode(elementPrefab);
                     if (templateNode != null)
@@ -1552,7 +1552,7 @@ namespace FiresCore.UI
                             catch { /* clone failed - skip slot */ }
                         }
                         int total = 1 + slotsToGenerate;
-                        Debug.Log($"[UILayoutParser] Synthesized {total}/{totalSlots} inventory grid slots from prefab for '{go.name}' ({gridWidth}x{gridHeight})");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Synthesized {total}/{totalSlots} inventory grid slots from prefab for '{go.name}' ({gridWidth}x{gridHeight})");
                     }
                     else
                     {
@@ -2396,7 +2396,7 @@ namespace FiresCore.UI
 
                 recipeListNode.SetMeta("recipe_list_synthesized", "true");
                 recipeListNode.SetMeta("recipe_count", recipeCount.ToString());
-                Debug.Log($"[UILayoutParser] Synthesized {recipeCount} placeholder recipe entries for crafting recipe list");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Synthesized {recipeCount} placeholder recipe entries for crafting recipe list");
             }
             catch (Exception ex)
             {
@@ -2411,7 +2411,7 @@ namespace FiresCore.UI
         /// that are toggled via GameObject.SetActive() by UpdateGui() and should default
         /// to inactive. Only includes elements where Valheim calls .gameObject.SetActive().
         ///
-        /// From decompiled InventoryGrid.UpdateGui():
+        /// Matches the layout vanilla InventoryGrid.UpdateGui() produces:
         ///   - selected: element.m_selected.SetActive(flag1 && ...) - uses SetActive
         ///   - durability: element.m_durability.gameObject.SetActive(flag2) - uses SetActive
         /// </summary>
@@ -2464,7 +2464,7 @@ namespace FiresCore.UI
         /// <summary>
         /// Additional element names that are dynamically toggled via SetActive() throughout
         /// the inventory UI and should default to inactive for a clean capture.
-        /// Derived from decompiled InventoryGui: UpdateRecipe(), UpdateRepair(),
+        /// Matches what vanilla InventoryGui shows in UpdateRecipe(), UpdateRepair(),
         /// AddRecipeToList(), and related methods.
         /// </summary>
         private static readonly HashSet<string> _defaultInactiveElements =
@@ -2522,7 +2522,7 @@ namespace FiresCore.UI
             {
                 layout.SetMeta("visibility_normalized", "true");
                 layout.SetMeta("visibility_normalized_count", normalized.ToString());
-                Debug.Log($"[UILayoutParser] Normalized {normalized} dynamically-toggled elements to default inactive state.");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Normalized {normalized} dynamically-toggled elements to default inactive state.");
             }
         }
 
@@ -2660,7 +2660,7 @@ namespace FiresCore.UI
                 string[] arr = new string[bundles.Count];
                 bundles.CopyTo(arr);
                 layout.SetMeta("required_bundles", string.Join(",", arr));
-                Debug.Log($"[UILayoutParser] Aggregated {bundles.Count} required bundle(s): {string.Join(", ", arr)}");
+                FiresCore.Logging.FiresLogger.LogDebug($"[UILayoutParser] Aggregated {bundles.Count} required bundle(s): {string.Join(", ", arr)}");
 
                 // Cache the raw .bundle files to disk so they can be loaded later
                 // even when the source mod is no longer installed.

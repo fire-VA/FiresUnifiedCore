@@ -90,7 +90,7 @@ namespace FiresCore.Npc.WildSpawn
 
             if (drops > 0)
             {
-                Debug.Log($"[WildCompanionLootOnDeath] {faction} '{_character?.m_name}' dropped {drops} piece(s) (stars={stars}).");
+                FiresCore.Logging.FiresLogger.LogDebug($"[WildCompanionLootOnDeath] {faction} '{_character?.m_name}' dropped {drops} piece(s) (stars={stars}).");
             }
         }
 

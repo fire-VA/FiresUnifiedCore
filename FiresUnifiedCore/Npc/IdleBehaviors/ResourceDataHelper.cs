@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 
 namespace FiresCore.Npc.IdleBehaviors
@@ -138,10 +138,29 @@ namespace FiresCore.Npc.IdleBehaviors
                 return CreatePickableItemData(pickableItem);
             }
 
-            // 0.2.268 ([lead], HR3): a build piece (anything with a Piece: walls, decorations, a player's stone or wood work) is never a
+            // A build piece (anything with a Piece: walls, decorations, a player's stone or wood work) is never a
             // tree, log or deposit to chop or mine, in players' bases too. Real nodes (MineRock, MineRock5, Destructible, TreeBase, TreeLog)
-            // carry no Piece, even when a builder placed them (the homestead's iron mudpile stays a target).
-            if (obj.GetComponentInParent<Piece>() != null) return null;
+            // carry no Piece, even when a builder placed them (a placed iron mudpile stays a target).
+            // FAP's Nature tab makes vanilla trees placeable, so a Piece alone doesn't mean "player-built". A
+            // real TreeBase/TreeLog is gatherable unless a PLAYER placed it (the piece has a creator: decor someone built).
+            var asPiece = obj.GetComponentInParent<Piece>();
+            if (asPiece != null)
+            {
+                bool treeOrLog = obj.GetComponentInParent<TreeBase>() != null || obj.GetComponentInParent<TreeLog>() != null;
+                // 0.2.932 (Fire 10-27 in game: "all the minerocks are now mineable and the companions still do not mine them"; his log: "196
+                // deposit(s) ... 58 not pickaxe work, 0 mineable"): ore rocks placed with the hammer (FAP / Infinity Hammer make MineRock /
+                // MineRock5 placeable) carry a Piece, so they were never deposits. A placed mine rock IS a deposit; one placed as decoration
+                // with infinite health is still skipped by ResourceHealth.Skip (Fire: decorations keep their health)
+                bool placedRock = obj.GetComponentInParent<MineRock5>() != null || obj.GetComponentInParent<MineRock>() != null;
+                if (placedRock) { LogPlacedRock(obj); }
+                else if (!treeOrLog) return null;
+                long creator = placedRock ? 0L : asPiece.GetCreator();   // a placed mine rock is mined whoever placed it (trees keep the decor rule)
+                if (creator != 0L)
+                {
+                    LogPlacedDecor(obj, creator);
+                    return null;
+                }
+            }
 
             // Check for TreeBase
             var treeBase = obj.GetComponent<TreeBase>() ?? obj.GetComponentInParent<TreeBase>();
@@ -198,6 +217,37 @@ namespace FiresCore.Npc.IdleBehaviors
             return null;
         }
         
+        private static float s_nextDecorLog;
+
+        /// <summary>"[Tools] &lt;tree&gt;: refused: player-placed decor by &lt;creator&gt;" (Debug, at most every 5 s).</summary>
+        private static readonly HashSet<string> s_placedRockSaid = new HashSet<string>();
+        private static void LogPlacedRock(GameObject obj)
+        {
+            string n = Utils.GetPrefabName(obj);
+            if (s_placedRockSaid.Add(n)) FiresCore.Logging.FiresLogger.LogDebug($"[Tools] {n}: a hammer-placed mine rock (has a Piece): treated as a deposit (0.2.932)");
+        }
+
+        private static void LogPlacedDecor(GameObject obj, long creator)
+        {
+            if (Time.time < s_nextDecorLog) return;
+            s_nextDecorLog = Time.time + 5f;
+            FiresCore.Logging.FiresLogger.LogDebug($"[Tools] {Utils.GetPrefabName(obj)}: refused: player-placed decor by {creator}");
+        }
+
+        /// <summary>Why <see cref="GetResourceData"/> refused an object (for logs): "no object", "a build piece",
+        /// "a berry bush", "no TreeBase/TreeLog/MineRock/Destructible", or "ok".</summary>
+        public static string WhyNotGatherable(GameObject obj)
+        {
+            if (obj == null) return "no object (destroyed or unloaded)";
+            var data = GetResourceData(obj);
+            if (data != null && data.IsValid) return "ok";
+            var piece = obj.GetComponentInParent<MineRock5>() != null || obj.GetComponentInParent<MineRock>() != null ? null : obj.GetComponentInParent<Piece>();   // 0.2.932: a placed mine rock is not refused as a piece
+            if (piece != null && piece.GetCreator() != 0L) return $"'{obj.name}' is player-placed decor (creator {piece.GetCreator()})";
+            if (piece != null) return $"'{obj.name}' is a build piece";
+            if (obj.GetComponentInParent<Pickable>() != null) return $"'{obj.name}' is a pickable/bush";
+            return $"'{obj.name}' has no TreeBase/TreeLog/MineRock/Destructible";
+        }
+
         /// <summary>
         /// Checks if a GameObject is a gatherable resource.
         /// CRITICAL: Returns false for berry bushes that have no berries - those should not be gathered/attacked.
@@ -657,8 +707,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private const float LogDamageMultiplier = 0.5f;        // Logs take ~2 hits
         private const float RockDamageMultiplier = 0.4f;       // Rocks take multiple hits
         
-        // ── 0.2.271 (Fire, watching the stream: "Companions get stuck in the minerock... make them do some damage or something if they
-        // cannot properly aim and connect with the minerock meshes when they break up into multiple parts"). One aim for every body
+        // ── Companions must be able to hit rocks that break up into several mesh parts. One aim for every body
         // that mines (companions here; FDT's bot can call the same): a rock is aimed at the closest point of its nearest live surface,
         // never its root, which sits inside a fractured rock.
 
@@ -958,7 +1007,7 @@ namespace FiresCore.Npc.IdleBehaviors
             if (!inventory.CanAddItem(itemPrefab, recipe.m_amount)) return false;
 
             foreach (var requirement in GetCraftCosts(recipe))
-                inventory.RemoveItem(requirement.m_resItem.m_itemData.m_shared.m_name, requirement.GetAmount(CraftQuality));
+                CompanionInventory.RemoveFromStorage(inventory, requirement.m_resItem.m_itemData.m_shared.m_name, requirement.GetAmount(CraftQuality));
             return inventory.AddItem(itemPrefab, recipe.m_amount);
         }
 
@@ -993,7 +1042,7 @@ namespace FiresCore.Npc.IdleBehaviors
         private static bool HasCraftingResources(Recipe recipe, Inventory inventory)
         {
             foreach (var requirement in GetCraftCosts(recipe))
-                if (inventory.CountItems(requirement.m_resItem.m_itemData.m_shared.m_name) < requirement.GetAmount(CraftQuality))
+                if (CompanionInventory.CountStorage(inventory, requirement.m_resItem.m_itemData.m_shared.m_name) < requirement.GetAmount(CraftQuality))
                     return false;
             return true;
         }
@@ -1188,11 +1237,11 @@ namespace FiresCore.Npc.IdleBehaviors
         {
             if (data == null)
             {
-                Debug.Log($"[ResourceDataHelper] {context} - No resource data");
+                FiresCore.Logging.FiresLogger.LogDebug($"[ResourceDataHelper] {context} - No resource data");
                 return;
             }
             
-            Debug.Log($"[ResourceDataHelper] {context} - Resource: {data.Name}\n" +
+            FiresCore.Logging.FiresLogger.LogDebug($"[ResourceDataHelper] {context} - Resource: {data.Name}\n" +
                 $"  Type: {data.Type}, RequiredTool: {data.RequiredTool}, MinTier: {data.MinToolTier}\n" +
                 $"  IsPickable: {data.IsPickable}, RequiresCombat: {data.RequiresCombat}\n" +
                 $"  InteractionPos: {data.InteractionPosition}, Radius: {data.InteractionRadius}");

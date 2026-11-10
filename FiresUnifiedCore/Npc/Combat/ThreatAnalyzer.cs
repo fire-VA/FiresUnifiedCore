@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.AI;
 
@@ -380,15 +380,13 @@ namespace FiresCore.Npc.Combat
         {
             var profile = GetThreatProfile(enemy);
             
-            // Use secondaries on dangerous+ enemies
-            if (profile.Classification >= EnemyClass.Dangerous) return true;
+            // Elite+ asks for the secondary always, a Dangerous foe 30 % of the picks
+            if (profile.Classification >= EnemyClass.Elite) return true;
+            if (profile.Classification == EnemyClass.Dangerous && UnityEngine.Random.value < 0.3f) return true;
             
-            // Use on low health enemies to finish them
-            if (profile.HealthPercent < 0.25f) return true;
-            
-            // Use if we're healthy and enemy can be staggered
-            if (_currentSituation.CompanionHealthPercent > 0.7f && profile.CanBeStaggered) return true;
-            
+            // "Enemy below 25 %" and "we are healthy and it can be
+            // staggered" were true for nearly every fight, so the secondary (the kick when unarmed) fired on every cooldown. Only a
+            // Dangerous+ foe asks for it here; staggered / blocking targets are WeaponBehavior's own reasons.
             return false;
         }
 
@@ -482,8 +480,8 @@ namespace FiresCore.Npc.Combat
                 OwnerHealthPercent = ownerHealthPercent,
                 RecentDamageReceived = recentDamage,
                 IsOwnerInDanger = targetingOwner > 0 || ownerHealthPercent < 0.5f,
-                // Several dangerous enemies only put a companion in danger once it is hurt (R59: Fire's companions fled a pack of
-                // level-3 Greylings at 100 % health, next to their owner and a healer, and never hit a monster).
+                // Several dangerous enemies only put a companion in danger once it is hurt (otherwise companions flee packs at
+                // full health next to their owner and a healer).
                 IsCompanionInDanger = companionHealthPercent < survivalHealthThreshold
                                       || (dangerousEnemies > 1 && companionHealthPercent < cautiousHealthThreshold),
                 AlliesNearby = CountAlliesNearby(myPos)

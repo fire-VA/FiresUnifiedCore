@@ -43,7 +43,23 @@ namespace FiresCore.Terrain
 
         public static float MinAbs() => Math.Abs(Min());
 
-        public static bool IsActive() => IsEnabled() && ActiveSuppressor() == null;
+        // 0.2.995: Heightmap.LevelTerrain's clamp is compiled as double math (ldc.r8 8.0; vanilla source "(double)h - 8.0"), so its
+        // replacements must push a double, not a float
+        public static double MaxD() => Max();
+        public static double MinD() => Min();
+        public static double MinAbsD() => MinAbs();
+
+        public static bool IsActive() => IsEnabled() && ServerAllows() && ActiveSuppressor() == null;
+
+        /// <summary>0.2.971: true on a server / host / single player (its own cfg), and on a client only once the server's Core
+        /// config arrived (so the server runs Core and its Enabled value is what this client reads). Vanilla server = false.</summary>
+        public static bool ServerAllows()
+        {
+            var zn = ZNet.instance;
+            if (zn == null || zn.IsServer()) return true;
+            var sync = HeightmapOverrideConfig.Sync;
+            return sync != null && !sync.IsSourceOfTruth;
+        }
 
         public static bool IsEnabled() =>
             HeightmapOverrideConfig.Enabled != null && HeightmapOverrideConfig.Enabled.Value;

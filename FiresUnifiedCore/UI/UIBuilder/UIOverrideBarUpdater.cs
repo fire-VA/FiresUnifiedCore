@@ -35,9 +35,7 @@ namespace FiresCore.UI
         private float _targetFill;
         private const float SlowFillSpeed = 0.5f;
 
-        private static FieldInfo _foodsField;
-        private static FieldInfo _guardianCooldownField;
-        private static bool _reflectionLookedUp;
+        // 1074 ([generator] event-driven/cache): m_foods / m_guardianPowerCooldown read via VanillaRefs typed delegates.
 
         // Throttle updates to reduce canvas rebuilds — stats don't need 60fps precision
         private float _updateTimer;
@@ -51,15 +49,6 @@ namespace FiresCore.UI
 
             var player = Player.m_localPlayer;
             if (player == null) return;
-
-            if (!_reflectionLookedUp)
-            {
-                _reflectionLookedUp = true;
-                _foodsField = typeof(Player).GetField("m_foods",
-                    BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
-                _guardianCooldownField = typeof(Player).GetField("m_guardianPowerCooldown",
-                    BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
-            }
 
             float current = 0f;
             float max = 0f;
@@ -79,11 +68,11 @@ namespace FiresCore.UI
                     max = player.GetMaxEitr();
                     break;
                 case BarType.Food:
-                    if (_foodsField != null)
+                    if (FiresCore.Utilities.VanillaRefs.F_PlayerFoods != null)
                     {
                         try
                         {
-                            var foods = _foodsField.GetValue(player) as System.Collections.IList;
+                            var foods = FiresCore.Utilities.VanillaRefs.PlayerFoods(player);
                             if (foods != null && foods.Count > 0)
                             {
                                 // Show aggregate food time remaining as a fraction
@@ -95,11 +84,11 @@ namespace FiresCore.UI
                     }
                     break;
                 case BarType.GuardianPower:
-                    if (_guardianCooldownField != null)
+                    if (FiresCore.Utilities.VanillaRefs.F_GuardianCooldown != null)
                     {
                         try
                         {
-                            float cooldown = (float)_guardianCooldownField.GetValue(player);
+                            float cooldown = FiresCore.Utilities.VanillaRefs.GuardianCooldown(player);
                             max = cooldown;
                             // Guardian power: full bar = ready, empty = on cooldown
                             current = Mathf.Max(0f, cooldown);

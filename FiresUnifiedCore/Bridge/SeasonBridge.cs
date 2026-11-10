@@ -181,7 +181,7 @@ namespace FiresCore.Bridge
 
             _bound = true;
             HandOverPending();
-            FiresUnifiedCore.Log?.LogInfo($"[SeasonBridge] Vedr API v{apiVersion} bound: seasons, snow masks and providers are live for the Fires mods.");
+            FiresCore.Logging.FiresLogger.LogDebug($"[SeasonBridge] Vedr API v{apiVersion} bound: seasons, snow masks and providers are live for the Fires mods.");
         }
 
         private static void BindMembers(Type api, int apiVersion)

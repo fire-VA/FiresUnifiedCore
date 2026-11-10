@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
@@ -31,20 +31,20 @@ namespace FiresCore.Npc.Archetypes
             {
                 if (args.Length < 2)
                 {
-                    Debug.Log("Usage: testfx <prefab_name> [scale]");
+                    FiresCore.Logging.FiresLogger.LogDebug("Usage: testfx <prefab_name> [scale]");
                     return;
                 }
                 
                 string prefabName = args[1];
                 float scale = args.Length > 2 ? float.Parse(args[2]) : 1f;
                 TestFX(prefabName, scale);
-            });
+            }, isCheat: true /* 0.2.1159 Fire rule */);
             
             new Terminal.ConsoleCommand("listfxcategory", "Lists FX by category. Usage: listfxcategory <shield|fire|ice|lightning|heal|impact|aura>", (args) =>
             {
                 if (args.Length < 2)
                 {
-                    Debug.Log("Usage: listfxcategory <shield|fire|ice|lightning|heal|impact|aura|poison|spirit>");
+                    FiresCore.Logging.FiresLogger.LogDebug("Usage: listfxcategory <shield|fire|ice|lightning|heal|impact|aura|poison|spirit>");
                     return;
                 }
                 
@@ -61,18 +61,18 @@ namespace FiresCore.Npc.Archetypes
             {
                 if (args.Length < 2)
                 {
-                    Debug.Log("Usage: testsfx <prefab_name>");
+                    FiresCore.Logging.FiresLogger.LogDebug("Usage: testsfx <prefab_name>");
                     return;
                 }
                 
                 TestSFX(args[1]);
-            });
+            }, isCheat: true /* 0.2.1159 Fire rule */);
             
             new Terminal.ConsoleCommand("listsfxcategory", "Lists SFX by category. Usage: listsfxcategory <attack|creature|ambient|ui|building>", (args) =>
             {
                 if (args.Length < 2)
                 {
-                    Debug.Log("Usage: listsfxcategory <attack|creature|ambient|ui|building|weapon|footstep|voice>");
+                    FiresCore.Logging.FiresLogger.LogDebug("Usage: listsfxcategory <attack|creature|ambient|ui|building|weapon|footstep|voice>");
                     return;
                 }
                 
@@ -89,7 +89,7 @@ namespace FiresCore.Npc.Archetypes
             {
                 if (args.Length < 2)
                 {
-                    Debug.Log("Usage: testemote <emote_name>");
+                    FiresCore.Logging.FiresLogger.LogDebug("Usage: testemote <emote_name>");
                     return;
                 }
                 
@@ -112,8 +112,8 @@ namespace FiresCore.Npc.Archetypes
             {
                 if (args.Length < 2)
                 {
-                    Debug.Log("Usage: setgrassmat <clutter_name>");
-                    Debug.Log("Use 'listclutter grass' to see available grass clutter entries");
+                    FiresCore.Logging.FiresLogger.LogDebug("Usage: setgrassmat <clutter_name>");
+                    FiresCore.Logging.FiresLogger.LogDebug("Use 'listclutter grass' to see available grass clutter entries");
                     return;
                 }
                 
@@ -344,8 +344,8 @@ namespace FiresCore.Npc.Archetypes
             string filePath = Path.Combine(configPath, "fx_dump.txt");
             
             File.WriteAllText(filePath, output.ToString());
-            Debug.Log($"[DebugFXEnumerator] FX dump saved to: {filePath}");
-            Debug.Log($"[DebugFXEnumerator] Found {vfxPrefabs.Count} vfx_, {fxPrefabs.Count} fx_, {sfxPrefabs.Count} sfx_ prefabs");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] FX dump saved to: {filePath}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Found {vfxPrefabs.Count} vfx_, {fxPrefabs.Count} fx_, {sfxPrefabs.Count} sfx_ prefabs");
         }
         
         /// <summary>
@@ -422,7 +422,7 @@ namespace FiresCore.Npc.Archetypes
                 instance.transform.localScale *= scale;
             }
             
-            Debug.Log($"[DebugFXEnumerator] Spawned {prefabName} at {pos} with scale {scale}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Spawned {prefabName} at {pos} with scale {scale}");
         }
         
         /// <summary>
@@ -470,8 +470,8 @@ namespace FiresCore.Npc.Archetypes
                     searchTerms = new[] { "spirit", "ghost", "wraith", "despawn", "soul" };
                     break;
                 default:
-                    Debug.Log($"Unknown category: {category}");
-                    Debug.Log("Valid categories: shield, fire, ice, lightning, heal, impact, aura, poison, spirit");
+                    FiresCore.Logging.FiresLogger.LogDebug($"Unknown category: {category}");
+                    FiresCore.Logging.FiresLogger.LogDebug("Valid categories: shield, fire, ice, lightning, heal, impact, aura, poison, spirit");
                     return;
             }
             
@@ -495,10 +495,10 @@ namespace FiresCore.Npc.Archetypes
             
             matches.Sort();
             
-            Debug.Log($"=== {category.ToUpper()} EFFECTS ({matches.Count} found) ===");
+            FiresCore.Logging.FiresLogger.LogDebug($"=== {category.ToUpper()} EFFECTS ({matches.Count} found) ===");
             foreach (var match in matches)
             {
-                Debug.Log($"  {match}");
+                FiresCore.Logging.FiresLogger.LogDebug($"  {match}");
             }
         }
         
@@ -584,8 +584,8 @@ namespace FiresCore.Npc.Archetypes
             string filePath = Path.Combine(configPath, "sfx_dump.txt");
             
             File.WriteAllText(filePath, output.ToString());
-            Debug.Log($"[DebugFXEnumerator] SFX dump saved to: {filePath}");
-            Debug.Log($"[DebugFXEnumerator] Found {sfxList.Count} sfx_ prefabs");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] SFX dump saved to: {filePath}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Found {sfxList.Count} sfx_ prefabs");
         }
         
         private class SFXInfo
@@ -750,7 +750,7 @@ namespace FiresCore.Npc.Archetypes
             Vector3 pos = Player.m_localPlayer.transform.position;
             var instance = Object.Instantiate(prefab, pos, Quaternion.identity);
             
-            Debug.Log($"[DebugFXEnumerator] Playing SFX {prefabName} at {pos}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Playing SFX {prefabName} at {pos}");
         }
         
         /// <summary>
@@ -794,8 +794,8 @@ namespace FiresCore.Npc.Archetypes
                     filter = IsFootstepSFX;
                     break;
                 default:
-                    Debug.Log($"Unknown category: {category}");
-                    Debug.Log("Valid categories: creature, attack/weapon, ambient/environment, building/crafting, ui/feedback, footstep/movement");
+                    FiresCore.Logging.FiresLogger.LogDebug($"Unknown category: {category}");
+                    FiresCore.Logging.FiresLogger.LogDebug("Valid categories: creature, attack/weapon, ambient/environment, building/crafting, ui/feedback, footstep/movement");
                     return;
             }
             
@@ -814,10 +814,10 @@ namespace FiresCore.Npc.Archetypes
             
             matches.Sort();
             
-            Debug.Log($"=== {category.ToUpper()} SFX ({matches.Count} found) ===");
+            FiresCore.Logging.FiresLogger.LogDebug($"=== {category.ToUpper()} SFX ({matches.Count} found) ===");
             foreach (var match in matches)
             {
-                Debug.Log($"  {match}");
+                FiresCore.Logging.FiresLogger.LogDebug($"  {match}");
             }
         }
         
@@ -966,7 +966,7 @@ namespace FiresCore.Npc.Archetypes
             string filePath = Path.Combine(configPath, "emotes_dump.txt");
             
             File.WriteAllText(filePath, output.ToString());
-            Debug.Log($"[DebugFXEnumerator] Emotes dump saved to: {filePath}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Emotes dump saved to: {filePath}");
         }
         
         /// <summary>
@@ -1095,8 +1095,8 @@ namespace FiresCore.Npc.Archetypes
             string filePath = Path.Combine(configPath, "animations_dump.txt");
             
             File.WriteAllText(filePath, output.ToString());
-            Debug.Log($"[DebugFXEnumerator] Animations dump saved to: {filePath}");
-            Debug.Log($"[DebugFXEnumerator] Found {clips.Length} animation clips");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Animations dump saved to: {filePath}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Found {clips.Length} animation clips");
         }
         
         /// <summary>
@@ -1118,7 +1118,7 @@ namespace FiresCore.Npc.Archetypes
                 if (startEmoteMethod != null)
                 {
                     startEmoteMethod.Invoke(Player.m_localPlayer, new object[] { emoteName, false });
-                    Debug.Log($"[DebugFXEnumerator] Playing emote: {emoteName}");
+                    FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Playing emote: {emoteName}");
                 }
                 else
                 {
@@ -1127,7 +1127,7 @@ namespace FiresCore.Npc.Archetypes
                     if (animator != null)
                     {
                         animator.SetTrigger(emoteName);
-                        Debug.Log($"[DebugFXEnumerator] Triggered animation: {emoteName}");
+                        FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Triggered animation: {emoteName}");
                     }
                 }
             }
@@ -1239,14 +1239,14 @@ namespace FiresCore.Npc.Archetypes
             string filePath = Path.Combine(configPath, "clutter_dump.txt");
             
             File.WriteAllText(filePath, output.ToString());
-            Debug.Log($"[DebugFXEnumerator] Clutter dump saved to: {filePath}");
-            Debug.Log($"[DebugFXEnumerator] Found {grassEntries.Count} grass entries, {otherEntries.Count} other entries");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Clutter dump saved to: {filePath}");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Found {grassEntries.Count} grass entries, {otherEntries.Count} other entries");
             
             // Also output top recommendations to console
-            Debug.Log("=== TOP GRASS MATERIALS ===");
+            FiresCore.Logging.FiresLogger.LogDebug("=== TOP GRASS MATERIALS ===");
             foreach (var info in recommended.Take(5))
             {
-                Debug.Log($"  {info.Name} - {info.MaterialName} ({info.TextureName})");
+                FiresCore.Logging.FiresLogger.LogDebug($"  {info.Name} - {info.MaterialName} ({info.TextureName})");
             }
         }
         
@@ -1399,7 +1399,7 @@ namespace FiresCore.Npc.Archetypes
             if (found == null)
             {
                 Debug.LogWarning($"[DebugFXEnumerator] Clutter entry not found: {clutterName}");
-                Debug.Log("Use 'listclutter grass' to see available entries");
+                FiresCore.Logging.FiresLogger.LogDebug("Use 'listclutter grass' to see available entries");
                 return;
             }
             
@@ -1430,8 +1430,8 @@ namespace FiresCore.Npc.Archetypes
             // Set it in GrassOverlayController
             Debug.LogWarning($"[DebugFXEnumerator] grass material override unavailable - terrain decoupled: {clutterName}");
             
-            Debug.Log($"[DebugFXEnumerator] Set grass material to: {clutterName} ({mat.name})");
-            Debug.Log("New dirt floor pieces will use this material. Existing ones won't change.");
+            FiresCore.Logging.FiresLogger.LogDebug($"[DebugFXEnumerator] Set grass material to: {clutterName} ({mat.name})");
+            FiresCore.Logging.FiresLogger.LogDebug("New dirt floor pieces will use this material. Existing ones won't change.");
         }
         
         #endregion

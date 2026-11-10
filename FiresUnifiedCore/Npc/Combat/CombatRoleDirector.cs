@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections.Generic;
 using FiresCore.Npc.Archetypes;
 
@@ -134,7 +134,7 @@ namespace FiresCore.Npc.Combat
                 if (archetype.IsTank)
                 {
                     IssueTankDirective(companion, archetype, player, threatTable, healthMonitor);
-                    // Tanks spread with the melee too (they took the same spot as the first DPS before 0.2.201).
+                    // Tanks spread with the melee too.
                     if (archetype.IsMelee)
                         _meleeCompanions.Add(companion);
                 }
@@ -282,7 +282,7 @@ namespace FiresCore.Npc.Combat
             // Check if we have a current target from the threat table
             var assignedTarget = threatTable.GetAssignedTarget(companion.companionId);
 
-            // The foe on the owner first (0.2.204, Fire: "two companions on one weak foe while another hits the owner" is wrong): a threat
+            // The foe on the owner first (two companions on one weak foe while another hits the owner is wrong): a threat
             // attacking the player beats the current pick unless that pick is on the player too.
             SharedThreatTable.ThreatEntry onOwner = null, assignedEntry = null;
             foreach (var threat in threatTable.AllThreats)
@@ -298,9 +298,22 @@ namespace FiresCore.Npc.Combat
                 directive.TargetEnemy = onOwner.Enemy;
                 directive.Priority = 70f;
                 threatTable.AssignCompanionToTarget(companion.companionId, onOwner.Enemy);
-                Debug.Log($"[GroupTactics] {companion.companionName} target {onOwner.Enemy.m_name} because it is on the owner" +
+                FiresCore.Logging.FiresLogger.LogDebug($"[GroupTactics] {companion.companionName} target {onOwner.Enemy.m_name} because it is on the owner" +
                           $"{(assignedTarget != null ? $" (was {assignedTarget.m_name})" : "")}");
                 return;
+            }
+
+            // The kept pick must re-check the party rule (e.g. after PvP is turned off, companions must not keep a slot on another
+            // player's companions). A player or tame pick that is no longer a valid enemy is dropped here, once, with a line;
+            // a monster pick is kept exactly as before. The threat table is not the test (it may not hold the other side's
+            // companion); the real hostility rule (party, PvP both on, alliance) is
+            if (assignedTarget != null && assignedEntry == null && (assignedTarget.IsPlayer() || assignedTarget.IsTamed())
+                && !ClassTargeting.IsEnemyTarget(companion.GetComponent<Character>(), assignedTarget))
+            {
+                FiresCore.Logging.FiresLogger.LogDebug($"[GroupTactics] {companion.companionName} dropped target {assignedTarget.m_name}: no longer an enemy of this party (PvP off or allied)");
+                threatTable.ClearAssignment(companion.companionId);
+                if (directive.TargetEnemy == assignedTarget) directive.TargetEnemy = null;
+                assignedTarget = null;
             }
 
             // If current target is still alive and not almost dead, keep it (target consistency)
@@ -375,9 +388,9 @@ namespace FiresCore.Npc.Combat
         /// </summary>
         private void AssignFlankingAngles(Player player)
         {
-            // The STACK watchdog over every melee companion with a target (0.2.204).
+            // The STACK watchdog over every melee companion with a target.
             GroupTactics.Watch(_meleeCompanions, c => GetDirective(c.companionId)?.TargetEnemy);
-            // One melee companion too (0.2.204): it keeps out of its owner's line of attack.
+            // One melee companion too: it keeps out of its owner's line of attack.
             if (_meleeCompanions.Count < 1) return;
 
             // Group melee companions by their target
@@ -396,7 +409,7 @@ namespace FiresCore.Npc.Combat
                 group.Add(companion);
             }
 
-            // Slots round each foe (0.2.204, GroupTactics): from the owner's side, the owner's line kept clear, slots taken by anyone
+            // Slots round each foe (GroupTactics): from the owner's side, the owner's line kept clear, slots taken by anyone
             // already standing there left alone, each companion's slot kept while it's free. "[GroupTactics] <name> slot …" per change.
             foreach (var kvp in targetGroups)
             {
@@ -429,8 +442,8 @@ namespace FiresCore.Npc.Combat
 
         #region Emergency
 
-        // One line per group every SessionLogSeconds while its combat session ticks (0.2.208, R79: companions fought and not one
-        // "[GroupTactics]" line came out; this names the gate that closed: no threats, a forced regroup, no melee with a target).
+        // One line per group every SessionLogSeconds while its combat session ticks, naming the gate that closed: no threats,
+        // a forced regroup, no melee with a target.
         private const float SessionLogSeconds = 10f;
         private float _sessionLoggedAt = -999f;
 
@@ -444,7 +457,7 @@ namespace FiresCore.Npc.Combat
                 var d = c != null ? GetDirective(c.companionId) : null;
                 if (d != null && d.TargetEnemy != null) withTarget++;
             }
-            Debug.Log($"[GroupTactics] group of {(player != null ? player.GetPlayerName() : "?")}: {companions.Count} companion(s), {threats.ThreatCount} threat(s), " +
+            FiresCore.Logging.FiresLogger.LogDebug($"[GroupTactics] group of {(player != null ? player.GetPlayerName() : "?")}: {companions.Count} companion(s), {threats.ThreatCount} threat(s), " +
                       $"owner hp {health.PlayerHealthPercent * 100f:0}%, {(regroup ? "REGROUP (no slots this tick)" : $"{_meleeCompanions.Count} melee, {withTarget} with a target")}");
         }
 

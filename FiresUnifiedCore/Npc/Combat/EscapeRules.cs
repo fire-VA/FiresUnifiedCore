@@ -5,8 +5,8 @@ using UnityEngine;
 namespace FiresCore.Npc.Combat
 {
     /// <summary>
-    /// Never cornered, and fighting a group one at a time (COMBAT_TACTICS §2-§3; Fire, R72 Crypt4: "Retreat, run past them, split
-    /// them up to handle one at a time if he can"). The body keeps a breadcrumb of where it came from (a point every
+    /// Never cornered, and fighting a group one at a time (COMBAT_TACTICS §2-§3: retreat, run past them, split them up to
+    /// handle one at a time). The body keeps a breadcrumb of where it came from (a point every
     /// <see cref="CrumbStep"/> m, the last <see cref="CrumbCount"/>). From that:
     /// - <see cref="RunPastGap"/>: cornered, the widest gap between the foes round it that is free of walls, to sprint through;
     /// - <see cref="PullPoint"/>: three or more coming, a crumb back along the way in to back off toward until they string out;
@@ -14,6 +14,7 @@ namespace FiresCore.Npc.Combat
     ///   <see cref="ChokeWidth"/> m wide, to hold so only one or two can reach.
     /// Crumbs are kept for the local player (the body this peer drives); companions get them from their own movement later.
     /// </summary>
+    [FiresCore.Config.FiresOwnedFeature(FiresCore.Config.CoreFeatures.NpcBrain)]
     public static class EscapeRules
     {
         public const float CrumbStep = 2f, ChokeWidth = 3f, ChokeSearch = 15f, PullBack = 8f, GapMinDegrees = 70f;

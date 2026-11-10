@@ -7,6 +7,8 @@ namespace FiresCore.Npc.Archetypes.Effects
         Heal,
         Buff,
         Damage,
+        /// <summary>Placement mode: the placement marker where the skill can't be placed. Caster only.</summary>
+        Invalid,
     }
 
     public enum GroundRingRipple
@@ -36,6 +38,9 @@ namespace FiresCore.Npc.Archetypes.Effects
         private const float HealBlindR = 0.310f, HealBlindG = 0.820f, HealBlindB = 0.878f;
         private const float BuffBlindR = 0.690f, BuffBlindG = 0.545f, BuffBlindB = 0.910f;
         private const float DamageBlindR = 0.941f, DamageBlindG = 0.541f, DamageBlindB = 0.165f;
+        private const float InvalidStandardR = 0.55f, InvalidStandardG = 0.16f, InvalidStandardB = 0.16f;   // dark red
+        private const float InvalidBlindR = 0.55f, InvalidBlindG = 0.55f, InvalidBlindB = 0.55f;   // grey: no hue to confuse
+        private const int InvalidSegments = 24, InvalidDashStride = 2, InvalidCrossTicks = 8;   // still, gapped and ticked: readable without colour
 
         private const int HealSegments = 28;
         private const int BuffSegments = 32;
@@ -70,6 +75,10 @@ namespace FiresCore.Npc.Archetypes.Effects
                     return colorBlindPalette
                         ? new Color(DamageBlindR, DamageBlindG, DamageBlindB, 1f)
                         : new Color(DamageStandardR, DamageStandardG, DamageStandardB, 1f);
+                case GroundRingKind.Invalid:
+                    return colorBlindPalette
+                        ? new Color(InvalidBlindR, InvalidBlindG, InvalidBlindB, 1f)
+                        : new Color(InvalidStandardR, InvalidStandardG, InvalidStandardB, 1f);
             }
             Debug.LogError($"[GroundRingPalette] No colour defined for ring kind {kind}");
             return Color.white;
@@ -108,6 +117,16 @@ namespace FiresCore.Npc.Archetypes.Effects
                         Ripple = GroundRingRipple.Outward,
                         SawtoothFraction = DamageSawtoothFraction,
                         CrossTickCount = NoCrossTicks,
+                    };
+                case GroundRingKind.Invalid:
+                    return new GroundRingPattern
+                    {
+                        SegmentCount = InvalidSegments,
+                        TurnsPerSecond = 0f,
+                        DashStride = InvalidDashStride,
+                        Ripple = GroundRingRipple.None,
+                        SawtoothFraction = NoSawtooth,
+                        CrossTickCount = InvalidCrossTicks,
                     };
             }
             Debug.LogError($"[GroundRingPalette] No pattern defined for ring kind {kind}");

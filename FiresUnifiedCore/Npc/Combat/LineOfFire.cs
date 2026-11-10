@@ -16,8 +16,8 @@ namespace FiresCore.Npc.Combat
     }
 
     /// <summary>
-    /// Is a shot from a shooter to its target clear? (Fire 2026-09-29: the bot shot an enemy through its own workbench and
-    /// damaged it, "they need to understand line of sight".) Blocked by any solid on the flight (a piece, own or not, terrain, a
+    /// Is a shot from a shooter to its target clear? Bodies must not shoot through their own pieces or allies.
+    /// Blocked by any solid on the flight (a piece, own or not, terrain, a
     /// rock or tree: <see cref="ArcCheck.Mask"/>) and by any character that is not an enemy of the shooter (a companion, a
     /// player, a tame) in the lane. <see cref="Shot"/> traces the real arrow: vanilla's spawn point for the bow's attack, its
     /// full-draw speed with the ammo, the projectile's gravity, the low ballistic launch that hits the target's centre. One
